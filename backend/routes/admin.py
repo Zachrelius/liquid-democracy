@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -8,6 +9,7 @@ import models
 import schemas
 from database import get_db
 from delegation_engine import engine as delegation_engine
+from settings import settings
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -16,11 +18,16 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 def seed_demo(
     body: schemas.SeedRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth_utils.get_current_admin),
 ):
+    """Public endpoint — seeds demo data. Only available in debug mode."""
+    if not settings.debug:
+        raise HTTPException(
+            status_code=403,
+            detail="Seed endpoint is only available in debug mode.",
+        )
     from seed_data import run_seed
-    run_seed(db, scenario=body.scenario)
-    return {"detail": f"Scenario '{body.scenario}' loaded successfully"}
+    result = run_seed(db, scenario=body.scenario)
+    return result or {"message": f"Scenario '{body.scenario}' loaded. Log in as alice / demo1234."}
 
 
 @router.post("/time-simulation", status_code=200)
@@ -29,10 +36,12 @@ def simulate_time(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_admin),
 ):
-    """
-    Take a tally snapshot for a proposal at the given simulated time.
-    Used by the demo time-forward control.
-    """
+    """Take a tally snapshot for a proposal at the given simulated time. Debug only."""
+    if not settings.debug:
+        raise HTTPException(
+            status_code=403,
+            detail="Time simulation endpoint is only available in debug mode.",
+        )
     proposal = db.get(models.Proposal, body.proposal_id)
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found")
@@ -115,3 +124,40 @@ def make_admin(
     db.commit()
     db.refresh(user)
     return user
+
+
+@router.get("/audit", response_model=list[schemas.AuditLogOut])
+def get_audit_log(
+    action: Optional[str] = Query(None, description="Filter by action type, e.g. 'vote.cast'"),
+    actor_id: Optional[str] = Query(None, description="Filter by actor user ID"),
+    target_id: Optional[str] = Query(None, description="Filter by target entity ID"),
+    since: Optional[datetime] = Query(None, description="Filter entries at or after this datetime (ISO 8601)"),
+    until: Optional[datetime] = Query(None, description="Filter entries at or before this datetime (ISO 8601)"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_admin),
+):
+    """
+    Paginated, filterable audit log viewer (admin only).
+    Results are ordered newest-first.
+    """
+    q = db.query(models.AuditLog)
+
+    if action:
+        q = q.filter(models.AuditLog.action == action)
+    if actor_id:
+        q = q.filter(models.AuditLog.actor_id == actor_id)
+    if target_id:
+        q = q.filter(models.AuditLog.target_id == target_id)
+    if since:
+        q = q.filter(models.AuditLog.timestamp >= since)
+    if until:
+        q = q.filter(models.AuditLog.timestamp <= until)
+
+    return (
+        q.order_by(models.AuditLog.timestamp.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )

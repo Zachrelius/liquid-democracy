@@ -1,14 +1,16 @@
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
 import models
 import schemas
+from audit_utils import log_audit_event
 from database import get_db
-from delegation_engine import engine as delegation_engine
+from delegation_engine import engine as delegation_engine, resolve_vote_pure
+from permissions import can_see_votes
 
 router = APIRouter(prefix="/api/proposals", tags=["proposals"])
 
@@ -27,7 +29,6 @@ def _proposal_or_404(proposal_id: str, db: Session) -> models.Proposal:
 
 
 def _build_proposal_out(proposal: models.Proposal) -> schemas.ProposalOut:
-    topics = [pt.topic for pt in proposal.proposal_topics]
     return schemas.ProposalOut(
         id=proposal.id,
         title=proposal.title,
@@ -42,7 +43,7 @@ def _build_proposal_out(proposal: models.Proposal) -> schemas.ProposalOut:
         quorum_threshold=proposal.quorum_threshold,
         created_at=proposal.created_at,
         updated_at=proposal.updated_at,
-        topics=topics,
+        topics=proposal.proposal_topics,  # ProposalTopicOut (from_attributes)
     )
 
 
@@ -50,9 +51,12 @@ def _build_proposal_out(proposal: models.Proposal) -> schemas.ProposalOut:
 def list_proposals(
     status_filter: Optional[str] = Query(None, alias="status"),
     topic_id: Optional[str] = Query(None),
+    org_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
     q = db.query(models.Proposal)
+    if org_id:
+        q = q.filter(models.Proposal.org_id == org_id)
     if status_filter:
         q = q.filter(models.Proposal.status == status_filter)
     if topic_id:
@@ -64,13 +68,13 @@ def list_proposals(
 @router.post("", response_model=schemas.ProposalOut, status_code=status.HTTP_201_CREATED)
 def create_proposal(
     body: schemas.ProposalCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
-    # Validate topic IDs
-    for tid in body.topic_ids:
-        if not db.get(models.Topic, tid):
-            raise HTTPException(status_code=400, detail=f"Topic {tid} not found")
+    for t in body.topics:
+        if not db.get(models.Topic, t.topic_id):
+            raise HTTPException(status_code=400, detail=f"Topic {t.topic_id} not found")
 
     proposal = models.Proposal(
         title=body.title,
@@ -82,8 +86,21 @@ def create_proposal(
     db.add(proposal)
     db.flush()
 
-    for tid in body.topic_ids:
-        db.add(models.ProposalTopic(proposal_id=proposal.id, topic_id=tid))
+    for t in body.topics:
+        db.add(models.ProposalTopic(
+            proposal_id=proposal.id, topic_id=t.topic_id, relevance=t.relevance
+        ))
+    db.flush()
+
+    log_audit_event(
+        db,
+        action="proposal.created",
+        target_type="proposal",
+        target_id=proposal.id,
+        actor_id=current_user.id,
+        details={"title": proposal.title, "topic_ids": [t.topic_id for t in body.topics]},
+        ip_address=request.client.host if request.client else None,
+    )
 
     db.commit()
     db.refresh(proposal)
@@ -113,14 +130,16 @@ def update_proposal(
         proposal.title = body.title
     if body.body is not None:
         proposal.body = body.body
-    if body.topic_ids is not None:
+    if body.topics is not None:
         for pt in list(proposal.proposal_topics):
             db.delete(pt)
         db.flush()
-        for tid in body.topic_ids:
-            if not db.get(models.Topic, tid):
-                raise HTTPException(status_code=400, detail=f"Topic {tid} not found")
-            db.add(models.ProposalTopic(proposal_id=proposal.id, topic_id=tid))
+        for t in body.topics:
+            if not db.get(models.Topic, t.topic_id):
+                raise HTTPException(status_code=400, detail=f"Topic {t.topic_id} not found")
+            db.add(models.ProposalTopic(
+                proposal_id=proposal.id, topic_id=t.topic_id, relevance=t.relevance
+            ))
 
     db.commit()
     db.refresh(proposal)
@@ -131,6 +150,7 @@ def update_proposal(
 def advance_proposal(
     proposal_id: str,
     body: schemas.AdvanceProposalRequest,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
@@ -143,6 +163,7 @@ def advance_proposal(
     if next_status is None:
         raise HTTPException(status_code=400, detail=f"Cannot advance from status '{proposal.status}'")
 
+    old_status = proposal.status
     now = datetime.now(timezone.utc)
 
     if next_status == "deliberation":
@@ -152,7 +173,6 @@ def advance_proposal(
         if body.voting_end:
             proposal.voting_end = body.voting_end
     elif next_status == "passed":
-        # Admin is closing the vote; determine actual outcome
         tally = delegation_engine.compute_tally(proposal, db)
         if tally.threshold_met(proposal.pass_threshold) and tally.quorum_met(proposal.quorum_threshold):
             next_status = "passed"
@@ -160,6 +180,18 @@ def advance_proposal(
             next_status = "failed"
 
     proposal.status = next_status
+    db.flush()
+
+    log_audit_event(
+        db,
+        action="proposal.status_changed",
+        target_type="proposal",
+        target_id=proposal.id,
+        actor_id=current_user.id,
+        details={"proposal_id": proposal.id, "old_status": old_status, "new_status": next_status},
+        ip_address=request.client.host if request.client else None,
+    )
+
     db.commit()
     db.refresh(proposal)
     return _build_proposal_out(proposal)
@@ -248,4 +280,201 @@ def my_vote_status(
         delegate_chain=result.delegate_chain,
         cast_by=cast_by_user,
         message=msg,
+    )
+
+
+@router.get("/{proposal_id}/vote-graph", response_model=schemas.VoteFlowGraph)
+def get_vote_graph(
+    proposal_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """
+    Returns the delegation network for a specific proposal showing how every
+    vote was cast or delegated, with privacy-aware node labelling.
+    """
+    proposal = _proposal_or_404(proposal_id, db)
+    if proposal.status not in ("voting", "passed", "failed"):
+        raise HTTPException(status_code=400, detail="Vote graph only available for voting/passed/failed proposals")
+
+    # Build context for vote resolution
+    ctx = delegation_engine._build_context(proposal, db)
+    all_users = db.query(models.User).all()
+    user_map = {u.id: u for u in all_users}
+    proposal_topic_ids = [pt.topic_id for pt in proposal.proposal_topics]
+
+    # Identify public delegates for this proposal's topics
+    pub_delegate_ids: set[str] = set()
+    for pt in proposal.proposal_topics:
+        profiles = db.query(models.DelegateProfile).filter(
+            models.DelegateProfile.topic_id == pt.topic_id,
+            models.DelegateProfile.is_active.is_(True),
+        ).all()
+        for p in profiles:
+            pub_delegate_ids.add(p.user_id)
+
+    # Follow relationships of the current user (for visibility)
+    following_ids: set[str] = set()
+    for rel in db.query(models.FollowRelationship).filter(
+        models.FollowRelationship.follower_id == current_user.id,
+    ).all():
+        following_ids.add(rel.followed_id)
+
+    # Users who privately delegate TO the current user via a follow relationship
+    # (not through a public delegate profile — those stay anonymous)
+    private_follow_ids: set[str] = set()
+    for rel in db.query(models.FollowRelationship).filter(
+        models.FollowRelationship.followed_id == current_user.id,
+        models.FollowRelationship.permission_level == "delegation_allowed",
+    ).all():
+        private_follow_ids.add(rel.follower_id)
+
+    delegators_to_me: set[str] = set()
+    for d in db.query(models.Delegation).filter(
+        models.Delegation.delegate_id == current_user.id,
+    ).all():
+        # Only reveal name if they delegate via a private follow relationship
+        if d.delegator_id in private_follow_ids:
+            delegators_to_me.add(d.delegator_id)
+
+    # Resolve every user's vote
+    vote_results: dict[str, Optional[object]] = {}
+    for uid in user_map:
+        vote_results[uid] = resolve_vote_pure(uid, ctx)
+
+    # Build delegation edges: for each user who delegates, find their delegate
+    edges: list[schemas.VoteFlowEdge] = []
+    delegator_counts: dict[str, int] = {}  # delegate_id -> count of delegators
+
+    # Topic map for edge colours
+    topic_map: dict[str, models.Topic] = {}
+    for t in db.query(models.Topic).all():
+        topic_map[t.id] = t
+
+    for uid, result in vote_results.items():
+        if result and not result.is_direct and result.delegate_chain:
+            # This user's vote comes via delegation
+            direct_delegate_id = result.delegate_chain[0]
+
+            # Determine which topic matched this delegation
+            user_delegations = ctx.all_delegations.get(uid, {})
+            user_precedences = ctx.all_precedences.get(uid, {})
+            from delegation_engine import find_delegate_pure
+            matched_delegation = find_delegate_pure(uid, proposal_topic_ids, user_precedences, user_delegations)
+            matched_topic_id = matched_delegation.topic_id if matched_delegation else None
+
+            topic_name = None
+            topic_color = "#95a5a6"
+            if matched_topic_id and matched_topic_id in topic_map:
+                topic_name = topic_map[matched_topic_id].name
+                topic_color = topic_map[matched_topic_id].color
+            elif matched_topic_id is None:
+                topic_name = "Global"
+                topic_color = "#95a5a6"
+
+            # Privacy: only show edge if current user is involved, or delegate is public
+            can_see_edge = (
+                uid == current_user.id
+                or direct_delegate_id == current_user.id
+                or direct_delegate_id in pub_delegate_ids
+            )
+            if can_see_edge:
+                edges.append(schemas.VoteFlowEdge(
+                    source=uid,
+                    target=direct_delegate_id,
+                    topic=topic_name,
+                    topic_color=topic_color,
+                    is_active=True,
+                ))
+
+            delegator_counts[direct_delegate_id] = delegator_counts.get(direct_delegate_id, 0) + 1
+
+            # Chain edges (A->B->C)
+            if len(result.delegate_chain) > 1:
+                for i in range(len(result.delegate_chain) - 1):
+                    chain_src = result.delegate_chain[i]
+                    chain_tgt = result.delegate_chain[i + 1]
+                    can_see_chain = (
+                        chain_src == current_user.id
+                        or chain_tgt == current_user.id
+                        or chain_tgt in pub_delegate_ids
+                    )
+                    if can_see_chain:
+                        edges.append(schemas.VoteFlowEdge(
+                            source=chain_src,
+                            target=chain_tgt,
+                            topic=topic_name,
+                            topic_color=topic_color,
+                            is_active=True,
+                        ))
+
+    # Build nodes
+    nodes: list[schemas.VoteFlowNode] = []
+
+    for uid, result in vote_results.items():
+        user = user_map.get(uid)
+        if not user:
+            continue
+
+        is_self = uid == current_user.id
+        is_pub = uid in pub_delegate_ids
+        is_followed = uid in following_ids
+        is_delegator_to_me = uid in delegators_to_me
+
+        # Privacy: show real name if self, public delegate, followed, or they privately delegate to you
+        can_see_identity = is_self or is_pub or is_followed or is_delegator_to_me
+        label = user.display_name if can_see_identity else ""
+
+        if result is None:
+            node_type = "non_voter"
+            vote = None
+            vote_source = None
+            weight = 0
+        elif result.is_direct:
+            node_type = "direct_voter"
+            vote = result.vote_value
+            vote_source = "direct"
+            weight = 1 + delegator_counts.get(uid, 0)
+        else:
+            node_type = "delegator"
+            vote = result.vote_value
+            vote_source = "delegation"
+            weight = 1
+
+        nodes.append(schemas.VoteFlowNode(
+            id=uid,
+            label=label,
+            type=node_type,
+            vote=vote,
+            vote_source=vote_source,
+            is_public_delegate=is_pub,
+            is_current_user=is_self,
+            delegator_count=delegator_counts.get(uid, 0),
+            total_vote_weight=weight,
+        ))
+
+    # Build clusters
+    clusters = {"yes": {"count": 0, "direct": 0, "delegated": 0},
+                "no": {"count": 0, "direct": 0, "delegated": 0},
+                "abstain": {"count": 0, "direct": 0, "delegated": 0},
+                "not_cast": {"count": 0}}
+
+    for uid, result in vote_results.items():
+        if result is None:
+            clusters["not_cast"]["count"] += 1
+        else:
+            bucket = clusters.get(result.vote_value, clusters["abstain"])
+            bucket["count"] += 1
+            if result.is_direct:
+                bucket["direct"] += 1
+            else:
+                bucket["delegated"] += 1
+
+    return schemas.VoteFlowGraph(
+        proposal_id=proposal.id,
+        proposal_title=proposal.title,
+        total_eligible=len(all_users),
+        nodes=nodes,
+        edges=edges,
+        clusters=schemas.VoteFlowClusters(**clusters),
     )

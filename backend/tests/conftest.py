@@ -10,11 +10,15 @@ from sqlalchemy.orm import sessionmaker, Session
 
 from database import Base
 import models  # noqa: F401 — registers ORM classes with Base
-from delegation_engine import DelegationGraphStore, DelegationEngine
+from delegation_engine import (
+    DelegationGraphStore,
+    DelegationEngine,
+    DelegationData,
+    ProposalContext,
+)
 
 # A valid bcrypt hash for "test" — avoids bcrypt backend issues in tests
 _DUMMY_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewrwKJuRxm5pJmJi"
-
 
 TEST_DB_URL = "sqlite:///:memory:"
 
@@ -43,7 +47,7 @@ def engine_obj(store: DelegationGraphStore) -> DelegationEngine:
 
 
 # ---------------------------------------------------------------------------
-# Helpers used by tests
+# DB helper factories
 # ---------------------------------------------------------------------------
 
 def make_user(db: Session, username: str, display_name: str | None = None) -> models.User:
@@ -51,6 +55,8 @@ def make_user(db: Session, username: str, display_name: str | None = None) -> mo
         username=username,
         display_name=display_name or username,
         password_hash=_DUMMY_HASH,
+        email=f"{username}@test.example",
+        email_verified=True,
     )
     db.add(u)
     db.flush()
@@ -64,7 +70,9 @@ def make_topic(db: Session, name: str) -> models.Topic:
     return t
 
 
-def make_proposal(db: Session, author: models.User, topic_ids: list[str] | None = None) -> models.Proposal:
+def make_proposal(
+    db: Session, author: models.User, topic_ids: list[str] | None = None
+) -> models.Proposal:
     p = models.Proposal(
         title="Test Proposal",
         body="",
@@ -79,7 +87,9 @@ def make_proposal(db: Session, author: models.User, topic_ids: list[str] | None 
     return p
 
 
-def cast_direct_vote(db: Session, user: models.User, proposal: models.Proposal, value: str) -> models.Vote:
+def cast_direct_vote(
+    db: Session, user: models.User, proposal: models.Proposal, value: str
+) -> models.Vote:
     v = models.Vote(
         proposal_id=proposal.id,
         user_id=user.id,
@@ -126,3 +136,36 @@ def set_precedence(
             )
         )
     db.flush()
+
+
+# ---------------------------------------------------------------------------
+# Pure-layer helpers (no DB needed)
+# ---------------------------------------------------------------------------
+
+def make_context(
+    proposal_topics: list[str],
+    delegations: dict,       # {(delegator_id, topic_id): (delegate_id, chain_behavior)}
+    precedences: dict,       # {(user_id, topic_id): priority}
+    direct_votes: dict,      # {user_id: vote_value}
+) -> ProposalContext:
+    """Build a ProposalContext directly for pure-function unit tests."""
+    all_delegations: dict = {}
+    for (delegator_id, topic_id), (delegate_id, chain_behavior) in delegations.items():
+        dd = DelegationData(
+            delegator_id=delegator_id,
+            delegate_id=delegate_id,
+            topic_id=topic_id,
+            chain_behavior=chain_behavior,
+        )
+        all_delegations.setdefault(delegator_id, {})[topic_id] = dd
+
+    all_precedences: dict = {}
+    for (user_id, topic_id), priority in precedences.items():
+        all_precedences.setdefault(user_id, {})[topic_id] = priority
+
+    return ProposalContext(
+        proposal_topics=proposal_topics,
+        all_delegations=all_delegations,
+        all_precedences=all_precedences,
+        direct_votes=direct_votes,
+    )

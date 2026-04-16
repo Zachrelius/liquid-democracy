@@ -28,6 +28,8 @@ users
   username: string (unique)
   display_name: string
   password_hash: string
+  user_type: enum [human, ai_agent] (default: human)
+    — for future AI delegation support; all demo users are human
   created_at: datetime
 ```
 
@@ -455,3 +457,268 @@ liquid-democracy/
 The UI should feel serious and trustworthy — this represents democratic infrastructure, not a social media app. Think: clean data visualization, muted color palette with strong accent colors for vote indicators (green/yes, red/no, gray/abstain), clear information hierarchy, and generous whitespace. The delegation graph visualization is the "wow" moment — make it interactive and visually compelling, showing how votes flow through the network in real time.
 
 Avoid: gamification aesthetics, playful/casual tone, dark patterns, anything that feels like it's trying to manipulate engagement. This should feel like a tool for civic empowerment.
+
+---
+
+## Architecture Notes: Production-Readiness Foundations
+
+This is a demo, but it's designed to evolve into a platform that civic organizations and potentially municipalities could use. The following foundations should be built into the demo now because they're trivial to implement early and painful to retrofit later. They also demonstrate to anyone evaluating the project that security and integrity were considered from the start.
+
+### 1. Audit Log (Implement Now)
+
+Create an append-only audit log table that records every state-changing action in the system. This is the single most important production-readiness feature.
+
+```
+audit_log
+  id: UUID (primary key)
+  timestamp: datetime (server-generated, not client-supplied)
+  actor_id: FK -> users (who performed the action)
+  action: string (enum-like, e.g. "vote.cast", "vote.retracted", "delegation.created",
+          "delegation.revoked", "delegation.updated", "proposal.created",
+          "proposal.status_changed", "user.registered", "user.login")
+  target_type: string (e.g. "proposal", "delegation", "vote", "user")
+  target_id: UUID (the ID of the affected entity)
+  details: JSON (action-specific data — see below)
+  ip_address: string (nullable, for future abuse detection)
+```
+
+**What to store in the details JSON for each action type:**
+
+- `vote.cast`: `{ proposal_id, vote_value, is_direct, previous_value (if changing), delegate_chain }`
+- `vote.retracted`: `{ proposal_id, previous_value }`
+- `delegation.created`: `{ delegate_id, topic_id, chain_behavior }`
+- `delegation.updated`: `{ delegate_id, topic_id, chain_behavior, previous_delegate_id, previous_chain_behavior }`
+- `delegation.revoked`: `{ previous_delegate_id, topic_id }`
+- `proposal.status_changed`: `{ proposal_id, old_status, new_status }`
+- `proposal.created`: `{ proposal_id, title, topic_ids }`
+
+**Critical implementation rules:**
+
+- The audit log is **append-only**. No UPDATE or DELETE operations, ever. No API endpoint to modify or remove entries. This is a write-once ledger.
+- Audit writes should happen in the **same database transaction** as the action they record. If the vote insert succeeds but the audit write fails, the whole transaction rolls back. This guarantees the log is complete.
+- Add an API endpoint `GET /api/audit` (admin-only) that returns paginated audit entries with filtering by action type, actor, target, and date range. This becomes the foundation for transparency reporting.
+- In the frontend admin panel, add a simple audit log viewer that shows recent actions in a scrollable table.
+
+### 2. Request/Response Logging Middleware (Implement Now)
+
+Add FastAPI middleware that logs every API request with:
+- Timestamp
+- HTTP method and path
+- Authenticated user ID (if any)
+- Response status code
+- Response time in milliseconds
+
+Use Python's standard `logging` module writing to a structured format (JSON lines). Don't log request/response bodies (they may contain sensitive data) — the audit log handles action-specific details.
+
+This is ~20 lines of middleware code and provides invaluable debugging information for both development and future incident response.
+
+### 3. Input Validation and Sanitization (Implement Now)
+
+Pydantic (which FastAPI uses natively) handles most of this, but be explicit about:
+
+- **String length limits** on all text fields. Username: 3-50 chars. Display name: 1-100 chars. Proposal title: 1-500 chars. Proposal body: 1-50000 chars. Topic name: 1-100 chars.
+- **Enum validation** for all enum fields (vote_value, status, chain_behavior). Reject anything not in the allowed set.
+- **UUID validation** for all ID fields. Don't accept arbitrary strings.
+- **Markdown sanitization** for proposal bodies. Strip or escape any HTML tags to prevent XSS. Use a library like `bleach` or `nh3` to sanitize rendered markdown output.
+- **Rate limiting** on auth endpoints. At minimum, add a simple in-memory rate limiter (5 login attempts per minute per IP) to prevent brute-force attacks. Use `slowapi` or a simple custom middleware.
+
+### 4. Separation of Concerns in the Delegation Engine (Implement Now)
+
+The delegation resolution logic in `delegation_engine.py` should be a pure, stateless module that:
+
+- Takes inputs (user_id, proposal_id, and query functions/data)
+- Returns outputs (resolved vote, delegation chain, metadata)
+- Has **no direct database access**. Instead, it receives data through passed-in functions or pre-fetched data objects.
+
+This separation matters for three reasons: it makes the algorithm independently testable without database fixtures, it makes it possible to swap the data layer later (e.g., moving to PostgreSQL or adding caching) without touching the core logic, and it makes the algorithm auditable — someone reviewing the system for a civic deployment can read the delegation engine in isolation and verify its correctness without understanding the web framework or database layer.
+
+```python
+# Good: delegation engine is a pure function
+def resolve_vote(
+    user_id: str,
+    proposal_topics: list[str],
+    user_precedences: dict[str, int],
+    delegations: dict[str, Delegation],
+    direct_votes: dict[str, VoteValue],
+) -> VoteResult | None:
+    ...
+
+# Bad: delegation engine queries the database directly
+def resolve_vote(user_id: str, proposal_id: str, db: Session):
+    vote = db.query(Vote).filter(...).first()  # Don't do this inside the engine
+    ...
+```
+
+### 5. Configuration Management (Implement Now)
+
+Use environment variables (via `python-dotenv` and Pydantic's `BaseSettings`) for all configuration:
+
+```python
+class Settings(BaseSettings):
+    database_url: str = "sqlite:///./liquid_democracy.db"
+    secret_key: str  # No default — must be set
+    jwt_expiration_minutes: int = 60
+    cors_origins: list[str] = ["http://localhost:5173"]
+    debug: bool = False
+    log_level: str = "INFO"
+
+    class Config:
+        env_file = ".env"
+```
+
+Never hardcode secrets, database URLs, or environment-specific values. This is a 10-minute setup that prevents the most common class of deployment security issues.
+
+### 6. Database Migration Support (Implement Now)
+
+Set up **Alembic** for database migrations from the start, even though you're using SQLite:
+
+```bash
+pip install alembic
+alembic init migrations
+```
+
+Configure it to auto-generate migrations from SQLAlchemy model changes. Every schema change should be a versioned migration, not a "drop and recreate the database" operation.
+
+This costs 15 minutes to set up and means that when the project moves to PostgreSQL with real user data, schema changes can be applied without data loss. It also provides a history of every schema change, which is part of the audit story for civic deployments.
+
+### 7. Test Coverage Targets (Implement Now)
+
+Write tests for the delegation engine that cover every edge case. These tests are the project's most valuable long-term asset — they define what "correct" means and protect against regressions as the codebase evolves. Target cases:
+
+**Delegation resolution:**
+- Direct vote always overrides delegation
+- Topic precedence ordering determines which delegate is used for multi-topic proposals
+- Global delegation is used as fallback when no topic-specific delegation exists
+- `accept_sub` follows one level of sub-delegation
+- `revert_direct` returns None when delegate hasn't voted
+- `abstain` returns None when delegate hasn't voted
+- Delegation to a user who hasn't voted and has no sub-delegation returns None
+- Changing a delegation during a voting window immediately changes resolved vote
+- Retracting a direct vote reverts to delegation result
+
+**Cycle prevention:**
+- Direct cycle (A→B, B→A) is rejected
+- Indirect cycle detection (A→B, B→C, C→A) is rejected
+- Cycle check is per-topic (A→B on healthcare, B→A on economy is allowed)
+- Global delegation cycle detection works correctly
+
+**Sustained majority:**
+- Proposal passes when threshold met at close and never dropped below floor
+- Proposal fails when threshold met at close but dropped below floor during window
+- Proposal fails when threshold not met at close even if it was met earlier
+- Quorum calculation correctly counts delegated votes
+
+**Edge cases:**
+- User with no delegations and no direct vote has no resolved vote
+- Proposal with no topic tags uses only global delegations
+- User with delegations for all of a proposal's topics but different delegates uses highest-precedence topic
+- Deleting a delegate's account or deactivating it properly handles orphaned delegations
+
+### 8. CORS and Security Headers (Implement Now)
+
+Configure FastAPI's CORS middleware strictly:
+
+```python
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,  # Explicit list, never ["*"] in production
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+```
+
+Add security headers middleware:
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: DENY`
+- `X-XSS-Protection: 1; mode=block`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+
+These are a few lines of middleware that cost nothing and prevent entire categories of attacks.
+
+---
+
+## Roadmap: Demo → Pilot → Civic Deployment
+
+This section is for reference — it maps what additional work is needed at each stage beyond the demo. It does not need to be built now but informs architectural decisions.
+
+### Pilot Stage (civic organization internal use)
+
+What changes from the demo:
+- **Auth**: Email verification + admin approval for membership. Consider integration with OAuth providers (Google, GitHub) for convenience.
+- **Database**: Migrate to PostgreSQL. Set up automated daily backups.
+- **Deployment**: Docker containerization. Deploy to a reliable cloud host (Railway, Fly.io, or AWS). HTTPS via Let's Encrypt.
+- **Privacy**: Privacy policy and terms of service. GDPR-compliant data export/deletion if serving EU users.
+- **Monitoring**: Error tracking (Sentry), uptime monitoring, basic performance dashboards.
+
+What carries forward unchanged from the demo:
+- Data model and delegation engine
+- API design and business logic
+- Frontend application
+- Audit logging infrastructure
+- Test suite
+
+### Municipal Proof-of-Concept Stage
+
+What changes from the pilot:
+- **Identity verification**: Integration with government ID or voter registration systems. In-person registration option with kiosk support. This is a major sub-project.
+- **Security audit**: Formal penetration testing and code review by an independent security firm.
+- **Accessibility**: Full WCAG 2.1 AA compliance. Screen reader testing. Multilingual support.
+- **Legal review**: Analysis of legal authority for the municipality to use the platform, liability framework, open records compliance.
+- **Availability**: Multi-region deployment, database replication, 99.9% uptime SLA.
+- **Institutional structure**: Nonprofit organization or government contract to house the project. Advisory board with technical, legal, and civic representation.
+
+What carries forward unchanged from the pilot:
+- Core data model (may have minor extensions)
+- Delegation resolution algorithm
+- API structure (with added endpoints for admin/reporting)
+- Audit log (with extended retention and reporting)
+- Test suite (expanded)
+
+### AI Delegation Agents (Optional Module — Municipal Stage or Later)
+
+AI delegation allows users to delegate their votes to an AI agent configured with their personal values and priorities, rather than (or in addition to) human delegates. The AI reads proposed legislation, compares it against the user's stated priorities, and either votes on their behalf or sends them a summary with recommendations. This is framed as a regulated add-on, not a core system feature — it extends the delegation model rather than replacing it.
+
+**Why it matters:** AI delegation makes the principal-agent alignment problem explicit and programmable. Instead of hoping a human delegate shares your values, you specify them directly. An AI agent with a well-defined constitution may actually represent a voter's preferences more faithfully than a human delegate who has their own interests and blind spots.
+
+**Current architecture decisions that support future AI delegation:**
+
+- Add a `user_type` field to the users table now: `user_type: enum [human, ai_agent] (default: human)`. This is a one-line addition that avoids a schema migration later. AI agents are registered as a special type of user — they can receive delegations, cast votes, and appear in the delegation graph just like human delegates.
+- The delegation resolution algorithm already works unchanged — it follows the graph and finds a vote regardless of whether the voter is human or AI.
+- The audit log's JSON `details` field can accommodate AI-specific metadata (model used, prompt/constitution hash, confidence level, reasoning summary) without schema changes.
+- The pure-function delegation engine design means AI agent logic lives in a separate module that feeds votes into the same resolution pipeline.
+
+**Design guardrails for AI delegation:**
+
+- **Confirmation model (default: opt-in per vote cycle).** AI agents pre-register votes during the deliberation period. The human receives a digest notification: "Your AI assistant plans to vote YES on Healthcare Reform (reason: aligns with your priority for universal coverage), NO on Defense Budget Increase (reason: conflicts with your spending reduction priority). Tap any vote to override." Unlike human delegations where silence means consent, AI delegations should default to requiring explicit confirmation — at least initially. Users can opt into auto-approval after building trust with their agent's judgment.
+- **Transparency requirements.** AI agents are subject to the same (or stricter) disclosure requirements as high-delegation-count human delegates. Their voting rationale must be publicly inspectable: anyone can see that an AI agent voted a particular way because its constitution prioritizes certain values. The prompt/constitution that defines the agent's values is viewable by the delegating user and optionally public.
+- **No AI-to-AI chains.** An AI agent cannot delegate to another AI agent. Delegation chains must terminate at either a direct AI vote or a human vote. This prevents fully autonomous delegation cascades with no human in the loop.
+- **Regulatory framework.** AI agents may be subject to additional rules set by the system operator: maximum percentage of total votes that can be AI-cast, mandatory human confirmation for proposals above a significance threshold, periodic re-confirmation of the agent's constitution by the user, and public reporting of aggregate AI vs. human voting patterns.
+
+**Implementation sketch (not for current development):**
+
+```
+ai_agents (extends users with user_type='ai_agent')
+  user_id: FK -> users
+  owner_id: FK -> users (the human who created and controls this agent)
+  model_provider: string (e.g. "anthropic", "openai", "local")
+  constitution: text (the values/priorities prompt)
+  constitution_hash: string (for audit trail — detect if constitution changed)
+  confirmation_mode: enum [require_all, require_uncertain, auto_approve]
+  uncertainty_threshold: float (0-1, at what confidence level to escalate to human)
+  created_at: datetime
+  updated_at: datetime
+
+ai_vote_drafts (pre-registered votes awaiting human confirmation)
+  id: UUID
+  agent_id: FK -> users
+  proposal_id: FK -> proposals
+  recommended_value: enum [yes, no, abstain]
+  confidence: float (0-1)
+  reasoning: text (human-readable explanation)
+  status: enum [pending_review, confirmed, overridden, expired]
+  confirmed_at: datetime (nullable)
+  confirmed_by: FK -> users (nullable — the human owner)
+```
+
+**What this means for the demo:** No AI delegation code needs to be written now. The only current action item is adding the `user_type` field to the users model. Everything else is a future module that plugs into the existing delegation architecture.

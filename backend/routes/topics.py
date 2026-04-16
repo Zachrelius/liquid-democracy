@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -10,8 +12,14 @@ router = APIRouter(prefix="/api/topics", tags=["topics"])
 
 
 @router.get("", response_model=list[schemas.TopicOut])
-def list_topics(db: Session = Depends(get_db)):
-    return db.query(models.Topic).order_by(models.Topic.name).all()
+def list_topics(
+    org_id: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    q = db.query(models.Topic)
+    if org_id:
+        q = q.filter(models.Topic.org_id == org_id)
+    return q.order_by(models.Topic.name).all()
 
 
 @router.post("", response_model=schemas.TopicOut, status_code=status.HTTP_201_CREATED)

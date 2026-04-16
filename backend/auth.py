@@ -8,11 +8,10 @@ from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
 from database import get_db
+from settings import settings
 import models
 
-SECRET_KEY = "change-me-in-production-use-a-long-random-string"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -27,9 +26,11 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 def create_access_token(user_id: str, expires_delta: Optional[timedelta] = None) -> str:
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(timezone.utc) + (
+        expires_delta or timedelta(minutes=settings.jwt_expiration_minutes)
+    )
     payload = {"sub": user_id, "exp": expire}
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
 
 def _get_user_from_token(token: str, db: Session) -> models.User:
@@ -39,7 +40,7 @@ def _get_user_from_token(token: str, db: Session) -> models.User:
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
         user_id: Optional[str] = payload.get("sub")
         if user_id is None:
             raise credentials_exc

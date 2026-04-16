@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Liquid Democracy — Your Government Should Answer to You</title>
+  <meta name="description" content="Liquid democracy lets you vote on the issues you care about and delegate your voice to people you trust on everything else. No more waiting four years to be heard.">
+  <meta name="theme-color" content="#1B2A4A">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Liquid Democracy — Your Government Should Answer to You">
+  <meta property="og:description" content="Liquid democracy lets you vote on the issues you care about and delegate your voice to people you trust on everything else. No more waiting four years to be heard.">
+  <meta property="og:url" content="https://liquiddemocracy.org">
+  <meta property="og:site_name" content="Liquid Democracy">
+  <meta property="og:locale" content="en_US">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Liquid Democracy — Your Government Should Answer to You">
+  <meta name="twitter:description" content="Liquid democracy lets you vote on the issues you care about and delegate your voice to people you trust on everything else.">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Lora:ital,wght@0,600;0,700;1,600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+
+  <!-- Skip to content -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <!-- Header / Navigation -->
+  <header class="site-header" role="banner">
+    <div class="container header-inner">
+      <a href="/" class="site-logo" aria-label="Liquid Democracy home">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="16" cy="8" r="3" stroke="currentColor" stroke-width="2" fill="none"/>
+          <circle cx="8" cy="22" r="3" stroke="currentColor" stroke-width="2" fill="none"/>
+          <circle cx="24" cy="22" r="3" stroke="currentColor" stroke-width="2" fill="none"/>
+          <line x1="16" y1="11" x2="9.5" y2="19.5" stroke="currentColor" stroke-width="1.5"/>
+          <line x1="16" y1="11" x2="22.5" y2="19.5" stroke="currentColor" stroke-width="1.5"/>
+          <line x1="11" y1="22" x2="21" y2="22" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+        <span>Liquid Democracy</span>
+      </a>
+      <nav class="main-nav" id="main-nav" aria-label="Main navigation">
+        <ul class="nav-list">
+          <li><a href="#how-it-works" class="nav-link">How It Works</a></li>
+          <li><a href="#precedents" class="nav-link">Precedents</a></li>
+          <li><a href="#platform" class="nav-link">The Platform</a></li>
+          <li><a href="#get-involved" class="nav-link">Get Involved</a></li>
+        </ul>
+      </nav>
+      <button class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="main-nav" aria-label="Open menu">
+        <span class="nav-toggle-bar"></span>
+        <span class="nav-toggle-bar"></span>
+        <span class="nav-toggle-bar"></span>
+      </button>
+    </div>
+  </header>
+
+  <main id="main-content">
+
+    <!-- Hero Section -->
+    <section class="hero" aria-labelledby="hero-heading">
+      <!-- Network SVG background -->
+      <svg class="hero-network" aria-hidden="true" viewBox="0 0 1200 800" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+        <!-- Nodes -->
+        <circle cx="200" cy="150" r="6" fill="#F7F5F2"/>
+        <circle cx="350" cy="80" r="4" fill="#F7F5F2"/>
+        <circle cx="500" cy="200" r="8" fill="#F7F5F2"/>
+        <circle cx="650" cy="120" r="5" fill="#F7F5F2"/>
+        <circle cx="800" cy="180" r="7" fill="#F7F5F2"/>
+        <circle cx="950" cy="100" r="4" fill="#F7F5F2"/>
+        <circle cx="1050" cy="200" r="6" fill="#F7F5F2"/>
+        <circle cx="150" cy="350" r="5" fill="#F7F5F2"/>
+        <circle cx="300" cy="400" r="7" fill="#F7F5F2"/>
+        <circle cx="450" cy="320" r="4" fill="#F7F5F2"/>
+        <circle cx="600" cy="420" r="9" fill="#F7F5F2"/>
+        <circle cx="750" cy="350" r="5" fill="#F7F5F2"/>
+        <circle cx="900" cy="400" r="6" fill="#F7F5F2"/>
+        <circle cx="1050" cy="380" r="4" fill="#F7F5F2"/>
+        <circle cx="100" cy="550" r="4" fill="#F7F5F2"/>
+        <circle cx="250" cy="600" r="6" fill="#F7F5F2"/>
+        <circle cx="400" cy="520" r="5" fill="#F7F5F2"/>
+        <circle cx="550" cy="620" r="7" fill="#F7F5F2"/>
+        <circle cx="700" cy="560" r="4" fill="#F7F5F2"/>
+        <circle cx="850" cy="600" r="8" fill="#F7F5F2"/>
+        <circle cx="1000" cy="550" r="5" fill="#F7F5F2"/>
+        <circle cx="1100" cy="650" r="6" fill="#F7F5F2"/>
+        <circle cx="300" cy="700" r="4" fill="#F7F5F2"/>
+        <circle cx="600" cy="720" r="5" fill="#F7F5F2"/>
+        <circle cx="900" cy="700" r="6" fill="#F7F5F2"/>
+        <!-- Edges -->
+        <line x1="200" y1="150" x2="350" y2="80" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="350" y1="80" x2="500" y2="200" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="500" y1="200" x2="650" y2="120" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="650" y1="120" x2="800" y2="180" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="800" y1="180" x2="950" y2="100" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="950" y1="100" x2="1050" y2="200" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="200" y1="150" x2="150" y2="350" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="200" y1="150" x2="300" y2="400" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="500" y1="200" x2="450" y2="320" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="500" y1="200" x2="600" y2="420" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="650" y1="120" x2="750" y2="350" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="800" y1="180" x2="900" y2="400" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="1050" y1="200" x2="1050" y2="380" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="150" y1="350" x2="100" y2="550" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="300" y1="400" x2="250" y2="600" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="450" y1="320" x2="400" y2="520" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="600" y1="420" x2="550" y2="620" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="600" y1="420" x2="700" y2="560" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="750" y1="350" x2="700" y2="560" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="900" y1="400" x2="850" y2="600" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="1050" y1="380" x2="1000" y2="550" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="1000" y1="550" x2="1100" y2="650" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="250" y1="600" x2="300" y2="700" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="550" y1="620" x2="600" y2="720" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="850" y1="600" x2="900" y2="700" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="300" y1="400" x2="450" y2="320" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="750" y1="350" x2="900" y2="400" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="400" y1="520" x2="550" y2="620" stroke="#F7F5F2" stroke-width="1"/>
+        <line x1="700" y1="560" x2="850" y2="600" stroke="#F7F5F2" stroke-width="1"/>
+      </svg>
+      <div class="hero-content">
+        <h1 id="hero-heading" class="hero-headline">Your Government Should Answer to You</h1>
+        <p class="hero-sub">Liquid democracy lets you vote on the issues you care about and delegate your voice to people you trust on everything else. No more waiting four years to be heard.</p>
+        <a href="#how-it-works" class="btn btn-primary-dark">See How It Works</a>
+      </div>
+      <div class="scroll-indicator" aria-hidden="true">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#F7F5F2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 12 15 18 9"></polyline>
+        </svg>
+      </div>
+    </section>
+
+    <!-- The Problem Section -->
+    <section class="section section--white" id="the-problem" aria-labelledby="problem-heading">
+      <div class="container container--medium">
+        <h2 id="problem-heading" class="section-heading text-center">A System That Wasn't Built for This</h2>
+        <div class="stats-list">
+          <div class="stat-block fade-up">
+            <p class="stat-number" data-count="91" data-suffix="%">91%</p>
+            <p class="stat-desc">of Americans believe elected officials don't care what people like them think.</p>
+          </div>
+          <div class="stat-block fade-up">
+            <p class="stat-number" data-count="760000" data-suffix="" data-prefix="" data-format="comma">760,000</p>
+            <p class="stat-desc">The average member of Congress represents <strong>760,000 people</strong> — and votes on hundreds of issues every session with no obligation to ask any of them.</p>
+          </div>
+          <div class="stat-block fade-up">
+            <p class="stat-number" data-count="14.4" data-suffix=" billion" data-prefix="$">$14.4 billion</p>
+            <p class="stat-desc">was spent on the 2020 federal elections. Exposed to that kind of money, representatives consistently vote with their donors, not their constituents.</p>
+          </div>
+          <div class="stat-block fade-up">
+            <p class="stat-number stat-number--text">All or nothing</p>
+            <p class="stat-desc">Most Americans don't fit neatly into either party. Yet the two-party system forces you to hand your entire voice to one side — on every issue, all or nothing.</p>
+          </div>
+        </div>
+        <p class="transition-line fade-up">These aren't failures of individual politicians. They're failures of a structure that was designed before the telephone existed. What if we built something better?</p>
+      </div>
+    </section>
+
+    <!-- How Liquid Democracy Works Section -->
+    <section class="section section--offwhite" id="how-it-works" aria-labelledby="how-heading">
+      <div class="container container--narrow">
+        <h2 id="how-heading" class="section-heading text-center">How Liquid Democracy Works</h2>
+        <p class="section-intro text-center">Liquid democracy is a simple idea: you should be able to participate in the decisions that affect your life, on your own terms. Here's how.</p>
+
+        <div class="steps">
+          <div class="step fade-up" data-step="1">
+            <div class="step-number-wrap">
+              <span class="step-number" aria-hidden="true">1</span>
+              <!-- Icon: ballot/check -->
+              <svg class="step-icon" width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+                <rect x="8" y="6" width="24" height="28" rx="2" stroke="#D4922A" stroke-width="2" fill="none"/>
+                <polyline points="14,20 18,24 26,16" stroke="#D4922A" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                <line x1="14" y1="12" x2="26" y2="12" stroke="#D4922A" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div class="step-content">
+              <h3>Vote directly on the issues you care about</h3>
+              <p>You have opinions on education, or healthcare, or housing policy. In a liquid democracy, you don't need to find a candidate who happens to agree with you on all of them. You vote on each issue yourself — directly, the way you'd vote in a town hall meeting.</p>
+              <p>Every proposal is published openly. You read it, you weigh in, your vote counts. No intermediary needed.</p>
+            </div>
+          </div>
+
+          <div class="step fade-up" data-step="2">
+            <div class="step-number-wrap">
+              <span class="step-number" aria-hidden="true">2</span>
+              <!-- Icon: delegation/handshake -->
+              <svg class="step-icon" width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="12" cy="14" r="5" stroke="#D4922A" stroke-width="2" fill="none"/>
+                <circle cx="28" cy="14" r="5" stroke="#D4922A" stroke-width="2" fill="none"/>
+                <path d="M17 14 L23 14" stroke="#D4922A" stroke-width="2" stroke-linecap="round" marker-end="url(#arrowhead)"/>
+                <path d="M8 24 C8 20 12 20 12 20" stroke="#D4922A" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+                <path d="M32 24 C32 20 28 20 28 20" stroke="#D4922A" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+                <rect x="4" y="24" width="12" height="10" rx="2" stroke="#D4922A" stroke-width="1.5" fill="none"/>
+                <rect x="24" y="24" width="12" height="10" rx="2" stroke="#D4922A" stroke-width="1.5" fill="none"/>
+              </svg>
+            </div>
+            <div class="step-content">
+              <h3>Choose someone you trust for the rest</h3>
+              <p>Nobody has time to research every issue. That's fine. In liquid democracy, you can delegate your vote to someone you actually trust — a friend who follows environmental policy closely, a local economist, a community leader whose judgment you respect.</p>
+              <p>This isn't like choosing a representative once every few years and hoping for the best. You pick specific people for specific topics, and you do it because you genuinely believe they'll vote the way you would if you had the time.</p>
+            </div>
+          </div>
+
+          <div class="step fade-up" data-step="3">
+            <div class="step-number-wrap">
+              <span class="step-number" aria-hidden="true">3</span>
+              <!-- Icon: revoke/undo -->
+              <svg class="step-icon" width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 20 C12 14 18 10 24 12 C30 14 30 22 24 24 C20 25.5 16 24 14 22" stroke="#D4922A" stroke-width="2" fill="none" stroke-linecap="round"/>
+                <polyline points="10,17 12,21 16,18" stroke="#D4922A" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                <line x1="20" y1="28" x2="20" y2="34" stroke="#D4922A" stroke-width="1.5" stroke-linecap="round"/>
+                <line x1="14" y1="31" x2="26" y2="31" stroke="#D4922A" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div class="step-content">
+              <h3>Change your mind anytime</h3>
+              <p>Delegation is never permanent. If the person you trusted starts voting in ways you disagree with, you take your vote back — instantly, no waiting for the next election cycle.</p>
+              <p>You can also override your delegate on any individual issue. Delegated your healthcare votes to a doctor friend but feel strongly about a particular proposal? Vote on that one yourself. Your delegate handles the rest.</p>
+            </div>
+          </div>
+
+          <div class="step fade-up" data-step="4">
+            <div class="step-number-wrap">
+              <span class="step-number" aria-hidden="true">4</span>
+              <!-- Icon: eye/transparency -->
+              <svg class="step-icon" width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+                <path d="M4 20 C4 20 10 10 20 10 C30 10 36 20 36 20 C36 20 30 30 20 30 C10 30 4 20 4 20Z" stroke="#D4922A" stroke-width="2" fill="none"/>
+                <circle cx="20" cy="20" r="5" stroke="#D4922A" stroke-width="2" fill="none"/>
+                <circle cx="20" cy="20" r="2" fill="#D4922A"/>
+              </svg>
+            </div>
+            <div class="step-content">
+              <h3>Your delegate's votes are transparent</h3>
+              <p>In the current system, you often don't know how your representative voted — and when you do find out, there's nothing you can do about it until the next election.</p>
+              <p>In liquid democracy, every delegate's voting record is public. You can see exactly how they voted, on what, and when. Accountability isn't something that happens every two or four years. It's constant.</p>
+            </div>
+          </div>
+
+          <div class="step fade-up" data-step="5">
+            <div class="step-number-wrap">
+              <span class="step-number" aria-hidden="true">5</span>
+              <!-- Icon: branching/topics -->
+              <svg class="step-icon" width="40" height="40" viewBox="0 0 40 40" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+                <circle cx="10" cy="20" r="4" stroke="#D4922A" stroke-width="2" fill="none"/>
+                <circle cx="30" cy="10" r="3" stroke="#D4922A" stroke-width="2" fill="none"/>
+                <circle cx="30" cy="20" r="3" stroke="#D4922A" stroke-width="2" fill="none"/>
+                <circle cx="30" cy="30" r="3" stroke="#D4922A" stroke-width="2" fill="none"/>
+                <line x1="14" y1="18" x2="27" y2="10" stroke="#D4922A" stroke-width="1.5"/>
+                <line x1="14" y1="20" x2="27" y2="20" stroke="#D4922A" stroke-width="1.5"/>
+                <line x1="14" y1="22" x2="27" y2="30" stroke="#D4922A" stroke-width="1.5"/>
+              </svg>
+            </div>
+            <div class="step-content">
+              <h3>It works on every issue, independently</h3>
+              <p>You don't delegate to just one person for everything. You might trust one person on environmental issues, another on fiscal policy, and vote directly on civil liberties questions yourself.</p>
+              <p>This means no one person — and no party — controls your full voice. Your representation actually reflects how you think, issue by issue.</p>
+            </div>
+          </div>
+        </div>
+
+        <p class="closing-line fade-up">That's it. You're always represented, always in control. And the people making decisions are accountable to you — not to donors, not to party leadership, not to the loudest voices on television.</p>
+      </div>
+    </section>
+
+    <!-- Real Precedents Section -->
+    <section class="section section--white" id="precedents" aria-labelledby="precedents-heading">
+      <div class="container container--medium">
+        <h2 id="precedents-heading" class="section-heading text-center">This Isn't Theoretical</h2>
+        <p class="section-intro text-center">Elements of liquid democracy are already working in real democracies around the world.</p>
+
+        <div class="card-grid card-grid--2x2">
+          <article class="card fade-up">
+            <h3>Switzerland</h3>
+            <p>The Swiss have held over 600 federal referendums since 1848. Citizens vote directly on policy multiple times per year — on everything from immigration to infrastructure spending. Turnout is modest on routine issues and high on ones people care about. The system works because people participate when it matters to them.</p>
+          </article>
+          <article class="card fade-up">
+            <h3>Taiwan</h3>
+            <p>Through platforms like Pol.is and Join, Taiwan has built a digital deliberation system where millions of citizens help shape policy. During the COVID-19 pandemic, Taiwan's open governance approach led to one of the most effective responses in the world — because government and citizens were already in the habit of working together.</p>
+          </article>
+          <article class="card fade-up">
+            <h3>Ireland</h3>
+            <p>In 2016, Ireland assembled 99 randomly selected citizens to deliberate on constitutional questions the legislature had stalled on for decades. The Citizens' Assembly recommended legalizing same-sex marriage and reforming abortion law — both passed by popular referendum. Ordinary people, given real information and real responsibility, made serious and broadly supported decisions.</p>
+          </article>
+          <article class="card fade-up">
+            <h3>Estonia</h3>
+            <p>Estonia has built the most advanced digital governance infrastructure in the world. Citizens vote online, access government services digitally, and participate in policy discussions through the Rahvaalgatus platform. They've demonstrated that secure, accessible digital participation at a national scale is not just possible — it's practical.</p>
+          </article>
+        </div>
+
+        <p class="text-center" style="margin-top: var(--space-xl);">
+          <a href="#" class="text-link">Learn more about the research behind liquid democracy <span aria-hidden="true">&rarr;</span></a>
+        </p>
+      </div>
+    </section>
+
+    <!-- The Platform Section -->
+    <section class="section section--navy" id="platform" aria-labelledby="platform-heading">
+      <div class="container container--medium">
+        <h2 id="platform-heading" class="section-heading text-center">We're Building It</h2>
+        <p class="section-intro text-center">This isn't a white paper or a manifesto. It's working software. The Liquid Democracy Platform is an open-source tool for communities, organizations, and — eventually — governments to practice liquid democracy.</p>
+
+        <div class="feature-grid card-grid--2x2">
+          <div class="feature-card fade-up">
+            <!-- Icon: node/arrow for delegation -->
+            <svg class="feature-icon" width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="6" cy="16" r="4" stroke="#D4922A" stroke-width="2" fill="none"/>
+              <circle cx="26" cy="16" r="4" stroke="#D4922A" stroke-width="2" fill="none"/>
+              <line x1="10" y1="16" x2="20" y2="16" stroke="#D4922A" stroke-width="2"/>
+              <polyline points="17,12 21,16 17,20" stroke="#D4922A" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <h4>Topic-Based Delegation</h4>
+            <p>Delegate your vote to different people on different issues. Your trust is specific, not a blank check.</p>
+          </div>
+          <div class="feature-card fade-up">
+            <!-- Icon: eye for transparency -->
+            <svg class="feature-icon" width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+              <path d="M2 16 C2 16 7 8 16 8 C25 8 30 16 30 16 C30 16 25 24 16 24 C7 24 2 16 2 16Z" stroke="#D4922A" stroke-width="2" fill="none"/>
+              <circle cx="16" cy="16" r="4" stroke="#D4922A" stroke-width="2" fill="none"/>
+              <circle cx="16" cy="16" r="1.5" fill="#D4922A"/>
+            </svg>
+            <h4>Transparent Voting Records</h4>
+            <p>Every delegate's votes are public and auditable. See exactly how your voice was used.</p>
+          </div>
+          <div class="feature-card fade-up">
+            <!-- Icon: group for councils -->
+            <svg class="feature-icon" width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="16" cy="10" r="4" stroke="#D4922A" stroke-width="2" fill="none"/>
+              <circle cx="7" cy="14" r="3" stroke="#D4922A" stroke-width="1.5" fill="none"/>
+              <circle cx="25" cy="14" r="3" stroke="#D4922A" stroke-width="1.5" fill="none"/>
+              <path d="M10 26 C10 21 13 19 16 19 C19 19 22 21 22 26" stroke="#D4922A" stroke-width="2" fill="none" stroke-linecap="round"/>
+              <path d="M3 24 C3 20 5 19 7 19 C8.5 19 9.5 19.5 10.5 20.5" stroke="#D4922A" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+              <path d="M29 24 C29 20 27 19 25 19 C23.5 19 22.5 19.5 21.5 20.5" stroke="#D4922A" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+            </svg>
+            <h4>Citizens' Councils</h4>
+            <p>Randomly selected groups of participants deliberate on complex issues before they go to a vote — informed decision-making, not snap reactions.</p>
+          </div>
+          <div class="feature-card fade-up">
+            <!-- Icon: shield for security -->
+            <svg class="feature-icon" width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+              <path d="M16 3 L4 8 L4 16 C4 22 9 27 16 29 C23 27 28 22 28 16 L28 8 Z" stroke="#D4922A" stroke-width="2" fill="none"/>
+              <polyline points="11,16 14,19 21,12" stroke="#D4922A" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <h4>Graduated Security</h4>
+            <p>Security measures scale with the stakes. A neighborhood poll doesn't need the same protections as a binding municipal vote, and the platform handles both.</p>
+          </div>
+        </div>
+
+        <blockquote class="platform-quote fade-up">
+          The platform is open source and community-driven. Every line of code is public. There is no company behind this looking for an exit. This is civic infrastructure, built by people who believe democracy should work.
+        </blockquote>
+
+        <div class="text-center">
+          <a href="https://github.com" class="btn btn-secondary-dark" target="_blank" rel="noopener noreferrer">View on GitHub</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Get Involved Section -->
+    <section class="section section--offwhite" id="get-involved" aria-labelledby="involved-heading">
+      <div class="container container--wide">
+        <h2 id="involved-heading" class="section-heading text-center">This Doesn't Happen Without You</h2>
+
+        <div class="involve-grid">
+          <div class="involve-col fade-up">
+            <h3>Join the movement</h3>
+            <p>You don't need to be a developer or a policy expert. If you believe democracy should actually represent people, you're the right person. Sign up for updates, share the idea with your community, or connect with reform organizations already pushing for change.</p>
+            <a href="#" class="btn btn-secondary">Get Updates</a>
+          </div>
+          <div class="involve-col fade-up">
+            <h3>Help build it</h3>
+            <p>The platform is open source and there's real work to do — backend infrastructure, frontend design, security architecture, testing. If you write code and want it to matter, this is a meaningful place to put it.</p>
+            <a href="https://github.com" class="btn btn-secondary" target="_blank" rel="noopener noreferrer">Contribute on GitHub</a>
+          </div>
+          <div class="involve-col fade-up">
+            <h3>Run a pilot</h3>
+            <p>If you lead a civic organization, a neighborhood association, a union, a co-op, or any group that makes collective decisions, the platform is built for you. We're looking for communities willing to try liquid democracy in practice and help us learn what works.</p>
+            <a href="#" class="btn btn-secondary">Get in Touch</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="site-footer" role="contentinfo">
+    <div class="container">
+      <p class="footer-tagline">Built with hope for democracy.</p>
+      <nav class="footer-nav" aria-label="Footer navigation">
+        <ul class="footer-links">
+          <li><a href="#how-it-works">How It Works</a></li>
+          <li><a href="#">The Reform Agenda</a></li>
+          <li><a href="#">About the Project</a></li>
+          <li><a href="#">FAQ</a></li>
+          <li><a href="https://github.com" target="_blank" rel="noopener noreferrer">GitHub</a></li>
+          <li><a href="#">Contact</a></li>
+        </ul>
+      </nav>
+      <p class="footer-bottom">An open-source project. No tracking. No data collection. No ads. Ever.</p>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>

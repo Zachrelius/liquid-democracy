@@ -2,11 +2,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker, Session
 from typing import Generator
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./liquid_democracy.db"
+from settings import settings
 
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    settings.database_url,
+    connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {},
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

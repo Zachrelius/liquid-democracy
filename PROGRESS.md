@@ -1,0 +1,632 @@
+# Liquid Democracy — Build Progress
+
+## Phase 1: Core Backend ✅ Complete
+
+FastAPI backend with SQLAlchemy/SQLite, JWT auth, delegation engine (pure + service layers), audit log, security middleware, Alembic migrations, 36 tests. See git history for full details.
+
+Key files: `backend/main.py`, `backend/delegation_engine.py`, `backend/routes/`, `backend/migrations/`
+
+---
+
+## Phase 2: Frontend MVP ✅ Complete
+
+React 18 + Vite + Tailwind CSS frontend. Three screens: Login/Register (with Load Demo), Proposals list+detail with vote panel, My Delegations with drag-to-reorder precedence and delegate search modal.
+
+Run: `cd frontend && npm run dev` → http://localhost:5173
+
+---
+
+## Phase 3a: Delegation Permissions Backend ✅ Complete
+
+### New data models
+
+**`delegate_profiles`** — Public delegate registration per topic.
+- Fields: `user_id`, `topic_id`, `bio`, `is_active` (default true), `created_at`
+- Unique on `(user_id, topic_id)`
+- Effect: votes on registered topics are publicly visible; anyone can delegate without prior permission
+
+**`follow_requests`** — Consent-gated delegation flow.
+- Fields: `requester_id`, `target_id`, `status` (pending/approved/denied), `permission_level` (view_only/delegation_allowed), `message`, `requested_at`, `responded_at`
+- Unique on `(requester_id, target_id)`. Record kept after resolution for audit.
+
+**`follow_relationships`** — Active follow after approval or auto-approve.
+- Fields: `follower_id`, `followed_id`, `permission_level`, `created_at`
+
+**`users.default_follow_policy`** (new column) — `require_approval` | `auto_approve_view` | `auto_approve_delegate`. Default: `require_approval`.
+
+Alembic migration: `ef697ad0c0da_phase3a_delegation_permissions.py`
+
+### Permission logic (`permissions.py`)
+
+`can_delegate_to(db, delegator_id, delegate_id, topic_id)`:
+1. Active `delegate_profile` for the topic → allowed
+2. `follow_relationship` with `delegation_allowed` → allowed
+3. Global (topic=None): any active profile OR delegation_allowed follow → allowed
+4. Else → False (endpoint returns 403)
+
+`can_see_votes(db, viewer_id, target_id, topic_ids)`:
+- Self → always visible
+- Target is public delegate on a matching topic → visible
+- Any follow relationship → visible
+- Else → hidden (API returns `visible=false`, `vote_value=null`)
+
+### Delegation permission check
+
+`PUT /api/delegations` now calls `can_delegate_to()` before the cycle check. Returns HTTP 403 with a plain-English message if permission is missing.
+
+### New API endpoints
+
+**Delegate profiles** (`/api/delegates`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/delegates/public` | Browse public delegates (optional `?topic_id=`) |
+| GET | `/api/delegates/public/{topic_id}` | Public delegates for topic, sorted by delegation count |
+| POST | `/api/delegates/register` | Register as public delegate `{ topic_id, bio }` |
+| DELETE | `/api/delegates/register/{topic_id}` | Deactivate profile (existing delegations stay) |
+
+**Follow system** (`/api/follows`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/follows/request` | Send follow request; auto-approves per target policy |
+| GET | `/api/follows/requests/incoming` | Pending requests for current user |
+| GET | `/api/follows/requests/outgoing` | Requests current user has sent |
+| PUT | `/api/follows/requests/{id}/respond` | Approve/deny `{ status, permission_level }` |
+| GET | `/api/follows/following` | Users the current user follows |
+| GET | `/api/follows/followers` | Users who follow the current user |
+| PUT | `/api/follows/{id}/permission` | Change permission level (followed party only) |
+| DELETE | `/api/follows/{id}` | Revoke + cascade-revoke dependent delegations |
+
+**Updated user endpoints** (`/api/users`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/users/search?q=` | Search by name/username (auth required, no voting data) |
+| GET | `/api/users` | Same (backward compat for delegation modal) |
+| GET | `/api/users/{id}/profile` | Public profile with delegate registrations + filtered votes |
+| GET | `/api/users/{id}/votes` | Vote history with per-vote visibility flags |
+
+### Cascade revocation
+
+`DELETE /api/follows/{id}` automatically revokes any delegations from follower to followed that are not independently covered by a delegate_profile. Each revoked delegation gets its own `delegation.revoked` audit log entry with `reason: "follow_relationship_revoked"`.
+
+### Auto-approve policies
+
+When `POST /api/follows/request` is called and target has a non-default policy:
+- `auto_approve_view` → immediately creates relationship at `view_only`
+- `auto_approve_delegate` → immediately creates relationship at `delegation_allowed`
+- `require_approval` → stays pending
+
+### Audit events added
+
+`follow.requested`, `follow.approved`, `follow.denied`, `follow.revoked` (includes `delegations_revoked` list), `delegate_profile.created`, `delegate_profile.deactivated`
+
+### Seed data (Phase 3a additions)
+
+Public delegates: `dr_chen` (Healthcare + Economy), `econ_bob` (Economy), `env_emma` (Environment), `rights_raj` (Civil Rights), all with bios.
+
+`dr_chen` and `econ_bob` set to `auto_approve_view` policy.
+
+Follow relationships: alice follows dr_chen/econ_bob/rights_raj (delegation_allowed); dave follows alice (delegation_allowed); carol follows dr_chen (view_only); voters 1-4 follow dr_chen + econ_bob; voters 5-8 follow env_emma.
+
+Pending requests: voter08 → alice (wants to delegate civil rights), voter09 → carol.
+
+### Design decisions
+
+- **Existing delegations not retroactively validated on migration**: The seed re-creates valid delegations. A production system would run a cleanup job, but retroactive revocation in a migration is risky.
+- **`GET /api/users` kept for backward compat**: Delegation modal searches `/api/users?q=` — kept working alongside new `/api/users/search`.
+- **Permission check at creation only**: Delegations are not continuously re-validated. Revocation triggers only on explicit follow revoke.
+
+### Tests — 64/64 passing
+
+28 new Phase 3a tests in `tests/test_phase3a_permissions.py` covering all spec-required scenarios.
+
+---
+
+## Phase 3b: Delegation Permissions Frontend ✅ Complete
+
+### Backend: Delegation Intent System
+
+**New model: `delegation_intents`** — queued delegations that auto-activate when a follow request is approved with `delegation_allowed`.
+
+Fields: `delegator_id`, `delegate_id`, `topic_id`, `chain_behavior`, `follow_request_id`, `status` (pending/activated/expired/cancelled), `expires_at` (30 days default), `created_at`, `activated_at`.
+
+Migration: `7f4e8c4f07c9_add_delegation_intents.py`
+
+**New endpoints:**
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/delegations/request` | Smart delegation: creates directly if permitted, otherwise queues follow_request + intent |
+| GET | `/api/delegations/intents` | List current user's delegation intents (with lazy expiration) |
+| DELETE | `/api/delegations/intents/{id}` | Cancel a pending intent |
+
+**Key logic:**
+- `POST /api/delegations/request` checks `can_delegate_to()` first — if permission exists, creates delegation directly (same as existing PUT). If not, creates a follow_request + delegation_intent in one action.
+- Auto-approve policies are respected: if target has `auto_approve_delegate`, the delegation is created immediately without waiting.
+- When follow request is approved with `delegation_allowed`, `activate_intents_for_follow()` is called automatically in both manual and auto-approve paths.
+- Lazy expiration: intents past `expires_at` are marked `expired` on read.
+
+**Audit events:** `delegation_intent.created`, `delegation_intent.activated`, `delegation_intent.expired`, `delegation_intent.cancelled`
+
+9 new tests in `tests/test_delegation_intents.py`.
+
+### Frontend: Updated Delegate Selection Modal
+
+New `components/DelegateModal.jsx` replaces the old inline modal. Search results now show permission-aware context for each user:
+
+- **Public delegates** show green badge, bio, and a direct "Delegate" button
+- **Following with delegation_allowed** shows follow status and a direct "Delegate" button
+- **Following with view_only** shows "Request Delegate" button (creates intent + requests permission upgrade)
+- **Not following** shows both "Request Follow" and "Request Delegate" buttons
+- **Pending request** shows pending status
+
+Backend search endpoint `GET /api/users/search` now returns `UserSearchResultWithContext` including `delegate_profiles`, `follow_status`, `follow_permission`, and `has_pending_intent` fields.
+
+### Frontend: Follow Request Management
+
+New `components/FollowRequests.jsx` appears at the bottom of the My Delegations page when there are pending requests.
+
+**Incoming requests** show requester info, optional message, and three response buttons: Deny, Accept Follow (view only), Accept Delegate.
+
+**Outgoing requests** show target info, status, associated delegation intent info (topic + auto-activate note), and Cancel button.
+
+### Frontend: User Profile Page (`/users/:id`)
+
+New `pages/UserProfile.jsx` with permission-gated content:
+
+- Header with display name, username, public delegate badge (if applicable)
+- Action buttons: Request Follow, Request Delegate
+- **Public Delegate Topics** section showing registered topics with bios
+- **Voting Record** table showing visible votes with proposal links, vote value, and date
+- Hidden votes shown as "Private" with a prompt to follow the user
+- Own profile view shows all data
+
+### Frontend: Navigation Updates
+
+- **Notification badge** (`components/NotificationBadge.jsx`) in the nav bar shows count of pending follow requests + proposals needing attention
+- Clicking opens a dropdown with brief descriptions linking to relevant pages
+- **User dropdown menu** with Profile and Sign out links
+
+### Seed Data Updates
+
+- Added "frank" user (unfollowed by anyone — for testing follow request flow)
+- Added delegation intent from voter10 to carol on Economy (pending, linked to a follow request)
+- All demo users have password reset on re-seed (BUG-2 fix from earlier)
+- 204 response handling fixed in frontend `api.js` (BUG-1 fix)
+
+### Design Decisions
+
+- **`POST /api/delegations/request` is the new primary delegation endpoint for the frontend** — it handles both direct delegation and intent creation transparently. The old `PUT /api/delegations` still works for direct delegation when the caller knows permission exists.
+- **`UserSearchResultWithContext` is returned by all user search endpoints** — this gives the modal everything it needs in a single API call per search, avoiding N+1 queries for follow status.
+- **Lazy intent expiration** — no background job. Intents are checked for expiry only when read via the `GET /intents` endpoint or when follow approval triggers `activate_intents_for_follow`.
+- **FollowRequests component auto-hides when empty** — it only renders on the My Delegations page when there are pending incoming or outgoing requests.
+
+### Tests — 73/73 passing
+
+9 new delegation intent tests covering: creation, activation on delegation_allowed approval, non-activation on view_only, expiry, lazy expiration, public delegate bypass, follow bypass, cancellation, multiple topic activation.
+
+---
+
+## Phase 3c: Delegation Graph Visualization ✅ Complete
+
+### Quick Fix from Phase 3b
+
+Fixed permission-gated vote visibility on user profiles. The backend `GET /api/users/{id}/profile` now returns hidden votes with `visible=False` (instead of silently omitting them), so the frontend can distinguish "no votes" from "private votes." The frontend shows "Follow [name] to see their voting record" with a Request Follow button when viewing another user's profile with no visible votes.
+
+### Backend: Graph Data Endpoints
+
+**Proposal Vote Flow Graph** — `GET /api/proposals/{id}/vote-graph`
+
+Returns the complete delegation network for a specific proposal. Available for proposals in `voting`, `passed`, or `failed` status.
+
+Response includes:
+- `nodes[]` — every eligible user with `type` (direct_voter, delegator, chain_delegate, non_voter), vote value, public delegate flag, vote weight, current user flag
+- `edges[]` — delegation arrows from delegator to delegate with topic name and colour
+- `clusters` — aggregate counts for yes/no/abstain/not_cast broken down by direct vs delegated
+
+**Privacy rules:**
+- Current user always sees their own node with full detail
+- Public delegates' names and votes are always visible
+- Users the current user follows are shown with real names
+- All other users appear as "Voter #N" to preserve ballot privacy
+- Delegation edges are only visible if the delegate is a public delegate or the current user is a party to the edge
+
+**Personal Delegation Network** — `GET /api/delegations/network`
+
+Returns the current user's one-hop delegation star graph:
+- `center` — the current user with outgoing/incoming counts
+- `nodes[]` — each delegate and delegator with relationship direction, topic list, public delegate status, total delegator count
+- `edges[]` — grouped by user pair with topic name+colour arrays
+
+### Frontend: Proposal Vote Flow Graph (`VoteFlowGraph.jsx`)
+
+D3.js v7 force-directed graph rendered in SVG on the Proposal Detail page:
+
+- **Vote clustering**: Yes nodes gravitate left (green zone), No nodes gravitate right (red zone), Abstain at bottom, non-voters faded at edges
+- **Node sizing**: proportional to `total_vote_weight` — a delegate carrying 10 votes is visually larger
+- **Node styling**: coloured border by vote (green/red/gray), current user highlighted with gold border, public delegates get a dashed double-ring, non-voters are small dotted circles
+- **Edge styling**: arrows from delegator to delegate, coloured by matched topic, arrow markers via SVG defs
+- **Hover**: highlights connected edges, dims others, shows tooltip with vote value, delegate status, delegator count
+- **Click**: opens detail panel showing full node info, delegation chain details
+- **Zoom/pan**: mouse wheel zoom with `d3.zoom()`, drag to pan, "Reset view" button
+- **Responsive**: collapsed by default on mobile (<768px), expanded on desktop. Mobile uses initials instead of full names.
+
+Integrated into ProposalDetail page as a collapsible "Vote Network" section below the vote results bar, with legend showing colour codes for Yes/No/Abstain/Not voted/Delegation/Public delegate/You, and cluster summary showing direct vs delegated counts.
+
+### Frontend: Personal Delegation Network (`DelegationNetworkGraph.jsx`)
+
+D3.js v7 star/ego graph rendered in SVG on the My Delegations page:
+
+- **Layout**: current user at center (large dark node with "You" label), delegates on the right (blue tint), delegators on the left (yellow tint)
+- **Edge styling**: coloured by topic, arrow markers, topic labels at edge midpoints
+- **Node sizing**: delegates and delegators sized by their `total_delegators` count
+- **Public delegate badge**: dashed double-ring on public delegate nodes
+- **Hover**: highlights connected edges, shows tooltip with relationship details and topics
+- **Drag**: nodes are draggable within the simulation
+
+Integrated into Delegations page as a collapsible "Your Delegation Network" section between Topic Priority and Follow Requests, with simple legend.
+
+### New Schemas
+
+`VoteFlowNode`, `VoteFlowEdge`, `VoteFlowClusters`, `VoteFlowGraph` — for proposal vote graph
+`PersonalNetworkCenter`, `PersonalNetworkNode`, `PersonalNetworkEdgeTopic`, `PersonalNetworkEdge`, `PersonalDelegationNetwork` — for personal network graph
+
+### Design Decisions
+
+- **D3.js v7 in SVG mode** — SVG chosen over Canvas for individual element interactivity (hover, click, drag). D3 force simulation handles layout with vote-clustering via `d3.forceX` with different target x-positions per vote value.
+- **Privacy in vote graph via anonymization** — rather than excluding private users, they appear as "Voter #N" nodes. This preserves the visual structure of the delegation network (you can see clustering patterns and vote flow) without revealing individual identities. Only public delegates, followed users, and the current user show real names.
+- **No separate migration needed** — Phase 3c is purely read-only endpoints consuming existing data structures.
+- **Edge deduplication** — the vote flow graph deduplicates source-target pairs to prevent visual clutter from multiple delegation paths.
+- **Graph data fetched non-blocking** — if the graph endpoint fails, the page still renders normally. The graph is treated as an enhancement, not a requirement.
+- **"What if" simulation not implemented** — listed as stretch goal in spec, deferred to avoid scope creep.
+
+### Tests — 73/73 passing (no regressions)
+
+No new backend tests added (Phase 3c endpoints are read-only views over existing data). All 73 existing tests continue to pass.
+
+### Phase 3c Polish Fixes ✅ Complete
+
+9 fixes addressing visual bugs and design improvements identified by human review and QA:
+
+**Fix 1 — Background region layout**: Changed from bounded rectangles to large half-plane fills (10000px) that survive zoom/pan. Yes region covers left half, No region covers right half, both ending at ~78% height. Bottom area left uncoloured for abstain/non-voter nodes. Updated y-force to push abstain/null-vote nodes down with strength 0.3.
+
+**Fix 2 — Public delegate legend icon**: Replaced broken offset `<span>` circles with a proper inline `<svg>` showing concentric circles (solid inner ring, dashed outer ring) matching the actual graph node rendering.
+
+**Fix 3 — Overlapping topic labels**: Replaced edge-midpoint text labels with per-node stacked topic labels. Topics are deduplicated per node, displayed vertically below the node name (max 2 shown + "+N more" indicator). Collision radius increased for nodes with multiple topic labels.
+
+**Fix 4 — Missing approved delegator**: Investigated and confirmed as case (a) — the pending demo requests (voter08→alice, voter09→carol) are follow-only requests with no delegation intent, so approving them correctly creates follow relationships but no delegations. Fixed by: (1) updating seed data messages to clearly indicate follow-only intent, (2) adding explanatory text to incoming follow requests ("choose Accept Delegate if you want them to delegate to you"), (3) labelling outgoing requests as "Follow request" vs "Delegation request" based on whether an intent is attached.
+
+**Fix 5 — Unicode escapes**: Replaced `\u2192`, `\u2190`, `\u25b4`, `\u25be` with actual Unicode characters (`→`, `←`) and HTML entities (`&#x25b4;`, `&#x25be;`) in JSX text content where backslash escapes render literally.
+
+**Fix 6 — Personal network action buttons**: Added click handler and detail panel to DelegationNetworkGraph. Clicking a delegate node (outgoing) shows a panel with "Change delegate" and "Remove delegation" buttons wired to the same API calls as the delegation table. Clicking a delegator node (incoming) shows an informational panel. Parent Delegations page passes callbacks that open the delegate modal or trigger removal.
+
+**Fix 7 — Duplicate topic casing**: Added `[...new Set(topics)]` deduplication in DelegationNetworkGraph tooltips and detail panel to prevent showing "Healthcare, healthcare" etc.
+
+**Fix 8 — Reset view zoom level**: Reset now calculates the bounding box of all visible nodes and applies a `d3.zoomIdentity.translate().scale()` transform to fit them with 40px padding, capped at 1.5x zoom. No longer resets to identity (which zoomed out too far).
+
+**Fix 9 — Non-voter toggle**: Non-voter nodes hidden by default. Toggle button "Show non-voters (N)" / "Hide non-voters (N)" appears in top-right controls alongside Reset View. When hidden, nodes with `type === 'non_voter'` are filtered out before D3 simulation. `showNonVoters` state added as a dependency to the D3 effect.
+
+### Additional Graph Polish (post-fix)
+
+- **Zone clamping**: Yes/No nodes are soft-clamped to their half of the graph (yes stays left of center, no stays right), abstain/non-voters nudged below the coloured zones. Forces retuned (lower charge, gentler x/y strength) so nodes spread naturally in 2D rather than collapsing into horizontal lines.
+- **Arrow tips**: Edge lines are shortened on each tick to stop at the target node's circumference + 3px gap, so arrow markers always sit at the circle border regardless of node size.
+- **Private delegator names**: Backend vote-graph endpoint now reveals real names of users who privately delegate to you (via `delegation_allowed` follow relationship). Users who delegate through a public delegate profile stay anonymous.
+- **Anonymous labels removed**: Backend returns empty string for anonymous nodes instead of "Voter #N", decluttering the graph.
+- **Toggle text fixed**: Removed stale HTML entities from show/hide toggle buttons.
+
+### Tests — 73/73 passing (no regressions)
+
+---
+
+## Phase 3 Cleanup ✅ Complete
+
+### 1. UserLink Component — Clickable User Names Everywhere
+
+Created reusable `<UserLink>` component (`components/UserLink.jsx`) that renders a user's display name as a styled link to `/users/{id}`. Deployed in:
+
+- **ProposalDetail** — vote status panel ("Via Dr. Chen" is now a link)
+- **VoteFlowGraph** — node detail panel includes "View Profile" link
+- **Delegations page** — delegation table rows and global default section use UserLink for delegate names
+- **DelegationNetworkGraph** — node detail panel includes "View Profile" link
+- **DelegateModal** — search results show a profile info icon (opens in new tab)
+- **FollowRequests** — both incoming and outgoing request cards use UserLink for requester/target names
+
+### 2. Settings Page (`/settings`)
+
+New settings page with four sections:
+
+**Profile Information** — Editable display name field with save button. Updates via `PATCH /api/auth/me`.
+
+**Follow & Delegation Preferences** — Radio buttons for `default_follow_policy`: require approval, auto-approve view, auto-approve delegate. Each option has a brief explanation. Updates via `PATCH /api/auth/me`.
+
+**Public Delegate Registration** — Card for each topic showing current status (Not registered / Active). Actions:
+- "Become a Delegate" — inline form with bio textarea (min 50 chars), registers via `POST /api/delegates/register`
+- "Edit Bio" — inline edit mode, saves via the same endpoint (upserts)
+- "Step Down" — confirmation dialog, deactivates via `DELETE /api/delegates/register/{topic_id}`
+
+**Account** — Change password form (current + new + confirm). Updates via `POST /api/auth/change-password`.
+
+### New Backend Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| PATCH | `/api/auth/me` | Update display_name and/or default_follow_policy |
+| POST | `/api/auth/change-password` | Change password (requires current password) |
+
+### New Schemas
+
+`UserUpdate` — optional `display_name` and `default_follow_policy` fields
+`ChangePasswordRequest` — `current_password` and `new_password`
+
+### 3. Profile Page Verification
+
+Verified and enhanced `UserProfile.jsx`:
+- Own profile now shows "Edit settings" link to `/settings` instead of follow/delegate buttons
+- Public delegate badge, topic cards with bios, and permission-gated voting record all present
+- Proposal titles in voting record are linked to proposal detail pages
+
+### 4. Additional Items Verified
+
+- **Delegate modal profile preview**: Profile info icon added to each search result card, opens profile in new tab
+- **Follow request messages**: Seed data messages already updated to be realistic and distinguish follow-only vs delegation intent
+- **Nav dropdown**: Updated to show "My Profile" and "Settings" links plus "Sign out"
+
+### Tests — 73/73 passing (no regressions)
+
+---
+
+## Phase 4a: Deployment and Infrastructure ✅ Complete
+
+### Docker Containerization
+
+**Backend Dockerfile** (`backend/Dockerfile`): Python 3.11-slim, psycopg2 system deps, non-root user, healthcheck via curl to `/api/health`, startup script runs Alembic migrations then uvicorn.
+
+**Frontend Dockerfile** (`frontend/Dockerfile`): Two-stage build — Node 20 Alpine for Vite build, nginx Alpine for serving. Custom nginx config with SPA fallback, API proxy to backend, WebSocket proxy, static asset caching (1 year), gzip compression.
+
+**Docker Compose** (`docker-compose.yml`): Three services — PostgreSQL 16 Alpine (with healthcheck and persistent volume), backend (depends on healthy db), frontend (depends on backend). All config via `.env` file.
+
+**`.env.example`**: Template with all required variables (DB_USER, DB_PASSWORD, SECRET_KEY, CORS_ORIGINS, BASE_URL, SMTP settings).
+
+### Health Check Endpoints
+
+- `GET /api/health` → `{"status": "ok", "version": "0.1.0"}`
+- `GET /api/health/ready` → Tests database connectivity with `SELECT 1`, returns 200 with `{"status": "ok", "database": "connected"}` or 503 with `{"status": "error", "database": "disconnected"}`
+
+### Database: PostgreSQL Support
+
+- `backend/database.py` updated to handle both SQLite and PostgreSQL URLs (conditional `check_same_thread` for SQLite only)
+- `backend/settings.py` updated with SMTP settings (`smtp_host`, `smtp_port`, `smtp_user`, `smtp_password`, `from_email`) and `base_url` — all optional with sensible defaults
+- `requirements.txt` updated with `psycopg2-binary==2.9.9` and `aiosmtplib==3.0.1`
+- SQLite remains default for local dev/tests; PostgreSQL used in Docker via `DATABASE_URL` env var
+
+### Production Logging
+
+- Structured JSON logging to stdout in production (debug=False): timestamp, level, message, logger name
+- Human-readable console format in debug mode
+- Per-request structured JSON access logs: request_id (UUID), user_id, method, path, status_code, response_time_ms
+- `X-Request-ID` response header on every request (exposed via CORS)
+- `configure_logging()` called at startup
+
+### Startup Script
+
+`backend/start.sh`: Runs `alembic upgrade head` then `uvicorn main:app` with configurable worker count (`WORKERS` env var, default 4).
+
+### Deployment Documentation
+
+`DEPLOYMENT.md`: Quick Start (Docker Compose), cloud deployment (Railway, Fly.io, VPS), HTTPS setup (Caddy, Certbot, nginx-proxy), backup/restore instructions, full environment variables reference, troubleshooting section.
+
+### Docker Ignore Files
+
+`.dockerignore` files in both `backend/` and `frontend/` to exclude unnecessary files from Docker builds.
+
+### QA Results — 7/7 PASS
+
+All health endpoints, login, voting, delegations, user profiles, settings, and X-Request-ID header verified working.
+
+### Tests — 73/73 passing (no regressions)
+
+---
+
+## Phase 4b: Authentication Hardening ✅ Complete
+
+### Email Field on Users
+
+Added `email` (unique, nullable for migration compat) and `email_verified` (Boolean, default False) to User model. All demo users get `{username}@demo.example` emails with `email_verified = True`. Registration now requires email. Alembic migration: `3835b0e1b4e4_phase4b_auth_hardening.py`.
+
+### Email Service (`email_service.py`)
+
+Async email sending via SMTP with TLS. When `smtp_host` is not configured (dev mode), emails are printed to console so developers can see verification links. Functions: `send_email()`, `send_verification_email()`, `send_password_reset_email()`, `send_invitation_email()` (Phase 4c stub).
+
+### Email Verification Flow
+
+- `EmailVerification` model: user_id, email, token (64 chars URL-safe), expires_at (24h), verified_at, created_at
+- `POST /api/auth/verify-email` — validates single-use time-limited token, sets `email_verified = True`
+- `POST /api/auth/resend-verification` — requires auth, rate-limited 1/min
+- Registration automatically creates verification record and sends email
+- Unverified users see yellow banner: "Please verify your email to participate in votes and create delegations"
+- Voting and delegation creation blocked for unverified users (403)
+
+### Password Reset Flow
+
+- `PasswordReset` model: user_id, token (64 chars URL-safe), expires_at (1h), used_at, created_at
+- `POST /api/auth/forgot-password` — rate-limited 3/hour, always returns same message (prevents account enumeration)
+- `POST /api/auth/reset-password` — validates single-use time-limited token, updates password, invalidates all refresh tokens
+
+### Refresh Token Mechanism
+
+- `RefreshToken` model: user_id, token (64 chars URL-safe), expires_at (7 days), revoked_at, created_at
+- Access tokens now expire in 15 minutes (was 24 hours)
+- Login returns both `access_token` and `refresh_token`
+- `POST /api/auth/refresh` — rotates tokens
+- `POST /api/auth/logout` — revokes single refresh token
+- `POST /api/auth/logout-all` — revokes all refresh tokens for user
+- Change password also invalidates all refresh tokens
+- Frontend api.js automatically refreshes on 401
+
+### Login Security
+
+Login returns "Invalid username or password" for both unknown user and wrong password (prevents account enumeration).
+
+### Audit Logging
+
+New audit events: `user.registered`, `user.email_verified`, `user.password_reset_requested`, `user.password_reset_completed`, `user.login`, `user.logout`, `user.logout_all`
+
+### Frontend Pages
+
+- `VerifyEmail.jsx` — `/verify-email?token=...` — shows success/error after verification attempt
+- `ForgotPassword.jsx` — `/forgot-password` — email input, sends reset link
+- `ResetPassword.jsx` — `/reset-password?token=...` — new password form
+- `EmailVerificationBanner.jsx` — yellow banner for unverified users with resend link
+- Login page updated: email field in registration, "Forgot password?" link
+- Settings page: "Log out of all devices" button
+- AuthContext: stores refresh token, auto-refreshes on load
+
+### QA Results — 9/9 PASS (Suite E)
+
+E1 health check, E2 registration with email, E3 unverified user blocked, E4 verification page, E5 password reset flow, E6 login error messages identical, E7 existing functionality regression, E8 forgot password link, E9 email field in registration.
+
+### Tests — 73/73 passing (no regressions)
+
+---
+
+## Phase 4c: Admin Portal and Multi-Tenancy ✅ Complete
+
+### New Data Models
+
+**`Organization`**: name, slug (unique), description, join_policy (invite_only/approval_required/open), settings (JSON with voting defaults), timestamps.
+
+**`OrgMembership`**: links users to orgs with role (member/moderator/admin/owner) and status (active/suspended/pending_approval). Unique on (user_id, org_id).
+
+**`Invitation`**: email invitations with token, expiry (7 days), status tracking (pending/accepted/expired/revoked).
+
+**`DelegateApplication`**: applications to become a public delegate, reviewed by admins. Status: pending/approved/denied with optional feedback.
+
+Added `org_id` foreign keys (nullable for migration compat) to: `Topic`, `Proposal`, `DelegateProfile`.
+
+Alembic migration: `d909c6da9b8c_phase4c_organizations_and_multitenancy.py`
+
+### Org-Scoped API (`/api/orgs/{org_slug}/...`)
+
+**Middleware** (`org_middleware.py`): `get_org_context`, `require_org_membership`, `require_org_admin`, `require_org_owner` dependency functions.
+
+**29 endpoints** in `routes/organizations.py`:
+- Org CRUD: create, list, get, update, delete
+- Members: list, change role, remove, suspend
+- Join flow: request join, approve/deny (respects org join_policy)
+- Invitations: create (bulk), list, revoke, resend, accept by token
+- Delegate applications: submit, list pending, approve, deny with feedback
+- Topics (org-scoped): list, create, update, deactivate
+- Proposals (org-scoped): list, create, get
+- Analytics: participation rates, delegation patterns, proposal outcomes, active members
+
+### Admin Portal Frontend (6 pages)
+
+**`admin/OrgSettings.jsx`**: Edit org name/description, join policy radio buttons, voting defaults (deliberation/voting days, pass/quorum thresholds with sliders), public delegate policy toggle, danger zone delete.
+
+**`admin/Members.jsx`**: Searchable member table with expandable role editing, suspend/remove actions. Pending join requests section. Invite section with multi-email textarea. Pending invitations table.
+
+**`admin/ProposalManagement.jsx`**: Proposal table with create form (title, body, topic selection, pass/quorum thresholds). Stage advancement and withdrawal actions.
+
+**`admin/Topics.jsx`**: Topic CRUD with preset color picker, inline editing, soft deactivation.
+
+**`admin/DelegateApplications.jsx`**: Pending application cards with approve/deny and feedback. Active delegates list.
+
+**`admin/Analytics.jsx`**: Recharts dashboard — participation bar chart, delegation pie chart, proposal outcome metrics, member activity stats.
+
+### Org Context and Navigation
+
+**`OrgContext.jsx`**: React context managing current org. Auto-selects single org, shows selector for multi-org users. Provides `currentOrg`, `isAdmin`, `isOwner`.
+
+**Nav updates**: Shows org name, admin dropdown (visible only to admin/owner), org switcher for multi-org users.
+
+**`OrgSelector.jsx`**: Grid of org cards for multi-org users.
+
+**`CreateOrg.jsx`**: Organization creation form with auto-slug generation.
+
+### First-Run Experience
+
+**`SetupWizard.jsx`**: 4-step wizard for first-time setup:
+1. Create Organization (name, slug, description, join policy)
+2. Create Topics (pre-populated suggestions + custom)
+3. Invite Members (email textarea, skip option)
+4. Completion with next-step links
+
+First registered user auto-verified, gets admin privileges. `GET /api/orgs/setup-status` endpoint for frontend redirection.
+
+### Production Guards
+
+Seed endpoint (`POST /api/admin/seed`) and time simulation endpoint return 403 when `DEBUG=false`.
+
+### Org-Scoped Page Updates
+
+Proposals, Delegations, and Settings pages now fetch from org-scoped endpoints when org is selected. Delegate registration shows admin-approval notice when applicable.
+
+### Seed Data
+
+Demo org "Demo Organization" (slug: "demo") created with all users as members. Admin user is owner, alice is admin. All topics, proposals, and delegate profiles scoped to demo org.
+
+### QA Results — 9/9 PASS (Suite F)
+
+F1 admin nav visibility, F2 org settings CRUD, F3 member management, F4 proposal management, F5 topic CRUD (verified end-to-end), F6 analytics dashboard, F7 existing functionality regression, F8 seed endpoint debug guard, F9 org auto-selector.
+
+### Tests — 73/73 passing (no regressions)
+
+---
+
+## Phase 4d: Security Review and Final Polish ✅ Complete
+
+### OWASP Top 10 Security Review
+
+Full security audit documented in `SECURITY_REVIEW.md`. All 10 categories passed:
+
+| Category | Status |
+|----------|--------|
+| A01 Broken Access Control | PASS — org membership, admin role, ownership checks |
+| A02 Cryptographic Failures | PASS — bcrypt, env-based JWT secret, secure tokens |
+| A03 Injection | PASS — SQLAlchemy ORM, HTML escaping, Pydantic validation |
+| A04 Insecure Design | PASS — rate limiting, anti-enumeration, single-use tokens |
+| A05 Security Misconfiguration | PASS — debug gating, CORS, security headers |
+| A06 Vulnerable Components | NOTE — recommend automated dependency scanning |
+| A07 Authentication Failures | PASS — short-lived tokens, session invalidation |
+| A08 Data Integrity | PASS — append-only audit log, computed tallies |
+| A09 Logging and Monitoring | PASS — comprehensive audit logging, no sensitive data |
+| A10 SSRF | PASS — no user-supplied URL fetching |
+
+### UI Polish
+
+**Loading states**: `Spinner.jsx` component added to all data-fetching pages (Proposals, ProposalDetail, Delegations, Settings, UserProfile, all admin pages).
+
+**Error states**: `ErrorMessage.jsx` component with status-code-aware messaging and retry button. Integrated into key pages.
+
+**Empty states**: Contextual messages when lists are empty (no proposals, no delegations, no topics).
+
+### Demo Quick-Switch Login
+
+`GET /api/auth/demo-users` endpoint (debug-only, returns 404 in production). Login page shows "Quick Login (Demo Mode)" section with clickable user cards (Admin, Alice, Carol, Dave, Dr. Chen, Frank) for instant login.
+
+### Privacy Policy and Terms of Service
+
+`/privacy` and `/terms` pages with plain-language template content. Linked from login page footer and registration form.
+
+### Mobile Responsive
+
+Nav.jsx updated with hamburger menu, mobile slide-down navigation. Responsive Tailwind classes throughout (forms full-width, tables scrollable, vote buttons tappable).
+
+### QA Results — 8/8 PASS (Suite G)
+
+G1 access control, G2 login error messages, G3 seed endpoint guard, G4 loading states, G5 demo quick-switch, G6 privacy/terms pages, G7 mobile responsive, G8 full regression (all pages and features).
+
+### Tests — 73/73 passing (no regressions)
+
+---
+
+## Phase 4 Complete ✅
+
+The liquid democracy platform is now pilot-ready. All four sub-phases delivered:
+- **4a**: Docker containerization, PostgreSQL support, health endpoints, production logging, deployment guide
+- **4b**: Email verification, password reset, refresh tokens, invitation system, audit logging
+- **4c**: Multi-tenant orgs, admin portal (settings, members, proposals, topics, delegates, analytics), first-run wizard
+- **4d**: OWASP security review, UI polish (loading/error/empty states), demo quick-login, privacy/terms, mobile responsive
+
+Total QA tests: 33/33 PASS across Suites E, F, G. Backend: 73/73 tests passing.
