@@ -201,9 +201,7 @@ def update_organization(
     if body.join_policy is not None:
         org.join_policy = body.join_policy
     if body.settings is not None:
-        current_settings = org.settings or {}
-        current_settings.update(body.settings)
-        org.settings = current_settings
+        org.settings = {**(org.settings or {}), **body.settings}
 
     db.commit()
     db.refresh(org)
