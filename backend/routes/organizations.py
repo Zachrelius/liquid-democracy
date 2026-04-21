@@ -1028,6 +1028,72 @@ def get_org_proposal(
     return _build_proposal_out(proposal)
 
 
+@router.post("/{org_slug}/proposals/{proposal_id}/advance", response_model=schemas.ProposalOut)
+def advance_org_proposal(
+    org_slug: str,
+    proposal_id: str,
+    body: schemas.AdvanceProposalRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
+):
+    """Advance proposal status within org. Moderators can only advance their
+    own proposals; admins/owners can advance any."""
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    proposal = db.query(models.Proposal).filter(
+        models.Proposal.id == proposal_id,
+        models.Proposal.org_id == org.id,
+    ).first()
+    if not proposal:
+        raise HTTPException(status_code=404, detail="Proposal not found in this organization")
+
+    if membership.role == "moderator" and proposal.author_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Moderators can only advance proposals they created")
+
+    from routes.proposals import STATUS_TRANSITIONS
+    next_status = STATUS_TRANSITIONS.get(proposal.status)
+    if next_status is None:
+        raise HTTPException(status_code=400, detail=f"Cannot advance from status '{proposal.status}'")
+
+    old_status = proposal.status
+    now = _now()
+
+    if next_status == "deliberation":
+        proposal.deliberation_start = now
+    elif next_status == "voting":
+        proposal.voting_start = now
+        if body.voting_end:
+            proposal.voting_end = body.voting_end
+    elif next_status == "passed":
+        from delegation_engine import engine as delegation_engine
+        tally = delegation_engine.compute_tally(proposal, db)
+        if tally.threshold_met(proposal.pass_threshold) and tally.quorum_met(proposal.quorum_threshold):
+            next_status = "passed"
+        else:
+            next_status = "failed"
+
+    proposal.status = next_status
+    db.flush()
+
+    log_audit_event(
+        db,
+        action="proposal.status_changed",
+        target_type="proposal",
+        target_id=proposal.id,
+        actor_id=current_user.id,
+        details={"proposal_id": proposal.id, "old_status": old_status, "new_status": next_status},
+        ip_address=request.client.host if request.client else None,
+    )
+
+    db.commit()
+    db.refresh(proposal)
+    from routes.proposals import _build_proposal_out
+    return _build_proposal_out(proposal)
+
+
 # ============================================================================
 # Analytics (admin)
 # ============================================================================

@@ -199,9 +199,8 @@ export default function ProposalManagement() {
 
   async function handleAdvance(proposalId) {
     try {
-      // Calculate a voting_end 7 days from now if advancing to voting
       const votingEnd = new Date(Date.now() + 7 * 86400000).toISOString();
-      await api.post(`/api/admin/proposals/${proposalId}/advance`, { voting_end: votingEnd });
+      await api.post(`/api/orgs/${slug}/proposals/${proposalId}/advance`, { voting_end: votingEnd });
       load();
     } catch (e) {
       alert(e.message);
@@ -211,7 +210,7 @@ export default function ProposalManagement() {
   async function handleWithdraw(proposalId) {
     if (!window.confirm('Withdraw this proposal? It will be marked as failed.')) return;
     try {
-      await api.post(`/api/admin/proposals/${proposalId}/advance`, {});
+      await api.post(`/api/orgs/${slug}/proposals/${proposalId}/advance`, {});
       load();
     } catch (e) {
       alert(e.message);
@@ -268,6 +267,22 @@ export default function ProposalManagement() {
               </div>
               {expandedId === p.id && (
                 <div className="px-4 py-3 bg-gray-50 flex items-center gap-3">
+                  {p.status === 'draft' && (
+                    <>
+                      <button
+                        onClick={() => handleAdvance(p.id)}
+                        className="text-xs px-3 py-1.5 bg-[#2E75B6] text-white rounded-lg hover:bg-[#1B3A5C]"
+                      >
+                        Advance to Deliberation
+                      </button>
+                      <a
+                        href={`/proposals/${p.id}`}
+                        className="text-xs px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-100"
+                      >
+                        Edit Draft
+                      </a>
+                    </>
+                  )}
                   {p.status === 'deliberation' && (
                     <button
                       onClick={() => handleAdvance(p.id)}
@@ -284,7 +299,7 @@ export default function ProposalManagement() {
                       Close Voting
                     </button>
                   )}
-                  {(p.status === 'deliberation' || p.status === 'voting') && (
+                  {(p.status === 'draft' || p.status === 'deliberation' || p.status === 'voting') && (
                     <button
                       onClick={() => handleWithdraw(p.id)}
                       className="text-xs px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
