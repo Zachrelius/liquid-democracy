@@ -2,7 +2,7 @@ import { Navigate } from 'react-router-dom';
 import { useOrg } from './OrgContext';
 
 export default function AdminRoute({ children }) {
-  const { isAdmin, loading, currentOrg } = useOrg();
+  const { isModeratorOrAdmin, loading, currentOrg } = useOrg();
 
   if (loading) {
     return (
@@ -16,7 +16,7 @@ export default function AdminRoute({ children }) {
     return <Navigate to="/orgs" replace />;
   }
 
-  if (!isAdmin) {
+  if (!isModeratorOrAdmin) {
     return <Navigate to="/proposals" replace />;
   }
 

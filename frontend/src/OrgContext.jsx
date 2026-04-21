@@ -58,6 +58,8 @@ export function OrgProvider({ children }) {
 
   const isAdmin = !!(currentOrg && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'owner'));
   const isOwner = !!(currentOrg && currentOrg.user_role === 'owner');
+  const isModerator = !!(currentOrg && currentOrg.user_role === 'moderator');
+  const isModeratorOrAdmin = isAdmin || isModerator;
 
   return (
     <OrgContext.Provider value={{
@@ -66,6 +68,8 @@ export function OrgProvider({ children }) {
       userOrgs,
       isAdmin,
       isOwner,
+      isModerator,
+      isModeratorOrAdmin,
       loading,
       refreshOrgs,
     }}>

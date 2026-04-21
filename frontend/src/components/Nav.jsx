@@ -6,7 +6,7 @@ import NotificationBadge from './NotificationBadge';
 
 export default function Nav() {
   const { user, logout } = useAuth();
-  const { currentOrg, userOrgs, isAdmin } = useOrg();
+  const { currentOrg, userOrgs, isAdmin, isModeratorOrAdmin } = useOrg();
   const [menuOpen, setMenuOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -65,8 +65,8 @@ export default function Nav() {
               My Delegations
             </NavLink>
 
-            {/* Admin dropdown */}
-            {isAdmin && (
+            {/* Admin dropdown — visible to moderators, admins, owners */}
+            {isModeratorOrAdmin && (
               <div ref={adminRef} className="relative">
                 <button
                   onClick={() => setAdminOpen(!adminOpen)}
@@ -82,13 +82,13 @@ export default function Nav() {
                 {adminOpen && (
                   <div className="absolute left-0 top-full mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden">
                     {[
-                      { to: '/admin/settings', label: 'Org Settings' },
+                      isAdmin && { to: '/admin/settings', label: 'Org Settings' },
                       { to: '/admin/members', label: 'Members' },
                       { to: '/admin/proposals', label: 'Proposals' },
                       { to: '/admin/topics', label: 'Topics' },
-                      { to: '/admin/delegates', label: 'Delegate Applications' },
-                      { to: '/admin/analytics', label: 'Analytics' },
-                    ].map((item, i) => (
+                      isAdmin && { to: '/admin/delegates', label: 'Delegate Applications' },
+                      isAdmin && { to: '/admin/analytics', label: 'Analytics' },
+                    ].filter(Boolean).map((item, i) => (
                       <Link
                         key={item.to}
                         to={item.to}
@@ -197,19 +197,19 @@ export default function Nav() {
           >
             My Delegations
           </Link>
-          {isAdmin && (
+          {isModeratorOrAdmin && (
             <>
               <div className="pt-2 mt-2 border-t border-blue-900">
                 <p className="text-xs text-blue-300 mb-1">Admin</p>
               </div>
               {[
-                { to: '/admin/settings', label: 'Org Settings' },
+                isAdmin && { to: '/admin/settings', label: 'Org Settings' },
                 { to: '/admin/members', label: 'Members' },
                 { to: '/admin/proposals', label: 'Proposals' },
                 { to: '/admin/topics', label: 'Topics' },
-                { to: '/admin/delegates', label: 'Delegate Apps' },
-                { to: '/admin/analytics', label: 'Analytics' },
-              ].map(item => (
+                isAdmin && { to: '/admin/delegates', label: 'Delegate Apps' },
+                isAdmin && { to: '/admin/analytics', label: 'Analytics' },
+              ].filter(Boolean).map(item => (
                 <Link
                   key={item.to}
                   to={item.to}

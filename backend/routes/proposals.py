@@ -154,9 +154,29 @@ def advance_proposal(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
+    # Permissions: platform admin, org admin/owner, proposal author, or org
+    # moderator (own proposals only). Moderators get 403 on others' proposals.
     proposal = _proposal_or_404(proposal_id, db)
 
-    if proposal.author_id != current_user.id and not current_user.is_admin:
+    is_author = proposal.author_id == current_user.id
+    is_platform_admin = current_user.is_admin
+    is_org_admin_or_owner = False
+    is_org_moderator = False
+    if proposal.org_id:
+        membership = db.query(models.OrgMembership).filter(
+            models.OrgMembership.org_id == proposal.org_id,
+            models.OrgMembership.user_id == current_user.id,
+            models.OrgMembership.status == "active",
+        ).first()
+        if membership:
+            if membership.role in ("admin", "owner"):
+                is_org_admin_or_owner = True
+            elif membership.role == "moderator":
+                is_org_moderator = True
+
+    if is_org_moderator and not is_author:
+        raise HTTPException(status_code=403, detail="Moderators can only advance proposals they created")
+    if not (is_author or is_platform_admin or is_org_admin_or_owner or is_org_moderator):
         raise HTTPException(status_code=403, detail="Not the proposal author or admin")
 
     next_status = STATUS_TRANSITIONS.get(proposal.status)

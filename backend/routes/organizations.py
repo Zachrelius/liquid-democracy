@@ -18,6 +18,7 @@ from database import get_db
 from org_middleware import (
     get_org_context,
     require_org_membership,
+    require_org_moderator_or_admin,
     require_org_admin,
     require_org_owner,
 )
@@ -325,9 +326,9 @@ def suspend_member(
     user_id: str,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
-    admin_membership: models.OrgMembership = Depends(require_org_admin),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
 ):
-    """Suspend member (requires admin)."""
+    """Suspend member (moderator, admin, or owner). Moderators cannot remove members."""
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
@@ -428,9 +429,9 @@ def approve_join_request(
     user_id: str,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
-    admin_membership: models.OrgMembership = Depends(require_org_admin),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
 ):
-    """Approve join request (admin)."""
+    """Approve join request (moderator, admin, or owner)."""
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
@@ -883,9 +884,9 @@ def update_org_topic(
     body: schemas.TopicCreate,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
-    admin_membership: models.OrgMembership = Depends(require_org_admin),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
 ):
-    """Update topic (admin)."""
+    """Update topic (moderator, admin, or owner). Delete requires admin."""
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
@@ -961,9 +962,9 @@ def create_org_proposal(
     request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
-    admin_membership: models.OrgMembership = Depends(require_org_admin),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
 ):
-    """Create proposal within org (admin)."""
+    """Create proposal within org (moderator, admin, or owner)."""
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()

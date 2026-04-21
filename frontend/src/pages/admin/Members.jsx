@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
 
-function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove }) {
+function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, isAdmin }) {
   const [expanded, setExpanded] = useState(false);
   const [role, setRole] = useState(member.role);
   const [saving, setSaving] = useState(false);
@@ -43,27 +43,31 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove }) 
       </div>
       {expanded && !isOwner && (
         <div className="px-4 py-3 bg-gray-50 flex items-center gap-3 flex-wrap">
-          <select
-            value={role}
-            onChange={e => setRole(e.target.value)}
-            className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#2E75B6]"
-          >
-            <option value="member">Member</option>
-            <option value="moderator">Moderator</option>
-            <option value="admin">Admin</option>
-          </select>
-          <button
-            onClick={async () => {
-              setSaving(true);
-              await onChangeRole(member.user_id, role);
-              setSaving(false);
-              setExpanded(false);
-            }}
-            disabled={saving || role === member.role}
-            className="text-xs px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
-          >
-            {saving ? 'Saving...' : 'Update Role'}
-          </button>
+          {isAdmin && (
+            <>
+              <select
+                value={role}
+                onChange={e => setRole(e.target.value)}
+                className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#2E75B6]"
+              >
+                <option value="member">Member</option>
+                <option value="moderator">Moderator</option>
+                <option value="admin">Admin</option>
+              </select>
+              <button
+                onClick={async () => {
+                  setSaving(true);
+                  await onChangeRole(member.user_id, role);
+                  setSaving(false);
+                  setExpanded(false);
+                }}
+                disabled={saving || role === member.role}
+                className="text-xs px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
+              >
+                {saving ? 'Saving...' : 'Update Role'}
+              </button>
+            </>
+          )}
           <div className="flex-1" />
           {member.status === 'active' ? (
             <button
@@ -80,16 +84,18 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove }) 
               Reactivate
             </button>
           ) : null}
-          <button
-            onClick={() => {
-              if (window.confirm(`Remove ${member.display_name} from the organization?`)) {
-                onRemove(member.user_id);
-              }
-            }}
-            className="text-xs px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
-          >
-            Remove
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => {
+                if (window.confirm(`Remove ${member.display_name} from the organization?`)) {
+                  onRemove(member.user_id);
+                }
+              }}
+              className="text-xs px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
+            >
+              Remove
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -97,7 +103,7 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove }) 
 }
 
 export default function Members() {
-  const { currentOrg } = useOrg();
+  const { currentOrg, isAdmin } = useOrg();
   const [members, setMembers] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [invitations, setInvitations] = useState([]);
@@ -300,14 +306,15 @@ export default function Members() {
                 onSuspend={handleSuspend}
                 onReactivate={handleReactivate}
                 onRemove={handleRemove}
+                isAdmin={isAdmin}
               />
             ))
           )}
         </div>
       </section>
 
-      {/* Invite Members */}
-      <section className="space-y-3">
+      {/* Invite Members (admin only) */}
+      {isAdmin && <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Invite Members</h2>
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
           <div>
@@ -346,10 +353,10 @@ export default function Members() {
             <p className={`text-xs ${inviteMsg.includes('sent') ? 'text-green-600' : 'text-red-600'}`}>{inviteMsg}</p>
           )}
         </div>
-      </section>
+      </section>}
 
-      {/* Pending Invitations */}
-      {invitations.length > 0 && (
+      {/* Pending Invitations (admin only) */}
+      {isAdmin && invitations.length > 0 && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
             Invitations ({invitations.length})

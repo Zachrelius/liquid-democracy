@@ -36,6 +36,15 @@ async def require_org_membership(
     return membership
 
 
+async def require_org_moderator_or_admin(
+    membership: OrgMembership = Depends(require_org_membership),
+):
+    """Verify current user is a moderator, admin, or owner of the org."""
+    if membership.role not in ("moderator", "admin", "owner"):
+        raise HTTPException(status_code=403, detail="Moderator access required")
+    return membership
+
+
 async def require_org_admin(
     membership: OrgMembership = Depends(require_org_membership),
 ):
