@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
 
-function MemberRow({ member, onChangeRole, onSuspend, onRemove }) {
+function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove }) {
   const [expanded, setExpanded] = useState(false);
   const [role, setRole] = useState(member.role);
   const [saving, setSaving] = useState(false);
@@ -72,6 +72,13 @@ function MemberRow({ member, onChangeRole, onSuspend, onRemove }) {
             >
               Suspend
             </button>
+          ) : member.status === 'suspended' ? (
+            <button
+              onClick={() => onReactivate(member.user_id)}
+              className="text-xs px-3 py-1.5 border border-green-400 text-green-700 rounded-lg hover:bg-green-50"
+            >
+              Reactivate
+            </button>
           ) : null}
           <button
             onClick={() => {
@@ -135,6 +142,15 @@ export default function Members() {
   async function handleSuspend(userId) {
     try {
       await api.post(`/api/orgs/${slug}/members/${userId}/suspend`);
+      load();
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function handleReactivate(userId) {
+    try {
+      await api.post(`/api/orgs/${slug}/members/${userId}/reactivate`);
       load();
     } catch (e) {
       alert(e.message);
@@ -282,6 +298,7 @@ export default function Members() {
                 member={m}
                 onChangeRole={handleChangeRole}
                 onSuspend={handleSuspend}
+                onReactivate={handleReactivate}
                 onRemove={handleRemove}
               />
             ))

@@ -344,6 +344,31 @@ def suspend_member(
     return {"message": "Member suspended"}
 
 
+@router.post("/{org_slug}/members/{user_id}/reactivate", status_code=200)
+def reactivate_member(
+    org_slug: str,
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    admin_membership: models.OrgMembership = Depends(require_org_admin),
+):
+    """Reactivate a suspended member (requires admin)."""
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    m = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == org.id,
+        models.OrgMembership.user_id == user_id,
+    ).first()
+    if not m:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if m.status != "suspended":
+        raise HTTPException(status_code=400, detail="Member is not suspended")
+    m.status = "active"
+    db.commit()
+    return {"message": "Member reactivated"}
+
+
 # ============================================================================
 # Join Flow
 # ============================================================================
