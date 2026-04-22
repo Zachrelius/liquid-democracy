@@ -1,6 +1,8 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './AuthContext';
 import { OrgProvider } from './OrgContext';
+import { ToastProvider } from './components/Toast';
+import { ConfirmProvider } from './components/ConfirmDialog';
 import ProtectedRoute from './ProtectedRoute';
 import AdminRoute from './AdminRoute';
 import AdminOnlyRoute from './AdminOnlyRoute';
@@ -40,6 +42,8 @@ function Layout({ children }) {
 export default function App() {
   return (
     <AuthProvider>
+      <ToastProvider>
+      <ConfirmProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
@@ -206,6 +210,8 @@ export default function App() {
         <Route path="/" element={<Navigate to="/proposals" replace />} />
         <Route path="*" element={<Navigate to="/proposals" replace />} />
       </Routes>
+      </ConfirmProvider>
+      </ToastProvider>
     </AuthProvider>
   );
 }

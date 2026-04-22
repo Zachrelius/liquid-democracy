@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
+import { useToast } from '../../components/Toast';
+import { useConfirm } from '../../components/ConfirmDialog';
 
 const PRESET_COLORS = [
   '#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
@@ -10,6 +12,8 @@ const PRESET_COLORS = [
 
 export default function Topics() {
   const { currentOrg } = useOrg();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [topics, setTopics] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -56,7 +60,7 @@ export default function Topics() {
       setShowCreate(false);
       load();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   }
 
@@ -66,17 +70,22 @@ export default function Topics() {
       setEditingId(null);
       load();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   }
 
   async function handleDeactivate(topicId, topicName) {
-    if (!window.confirm(`Deactivate topic "${topicName}"? It will be removed from the organization.`)) return;
+    const ok = await confirm({
+      title: 'Deactivate Topic',
+      message: `Deactivate topic "${topicName}"? It will be removed from the organization.`,
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await api.delete(`/api/orgs/${slug}/topics/${topicId}`);
       load();
     } catch (err) {
-      alert(err.message);
+      toast.error(err.message);
     }
   }
 

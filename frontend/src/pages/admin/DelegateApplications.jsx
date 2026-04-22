@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
+import { useToast } from '../../components/Toast';
 
 export default function DelegateApplications() {
   const { currentOrg } = useOrg();
+  const toast = useToast();
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [denyId, setDenyId] = useState(null);
@@ -49,7 +51,7 @@ export default function DelegateApplications() {
       await api.post(`/api/orgs/${slug}/delegate-applications/${appId}/approve`);
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -60,7 +62,7 @@ export default function DelegateApplications() {
       setFeedback('');
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 

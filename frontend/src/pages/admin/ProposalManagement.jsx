@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
 import StatusBadge from '../../components/StatusBadge';
+import { useToast } from '../../components/Toast';
+import { useConfirm } from '../../components/ConfirmDialog';
 
 function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) {
   const [title, setTitle] = useState('');
@@ -166,6 +168,8 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
 
 export default function ProposalManagement() {
   const { currentOrg } = useOrg();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [proposals, setProposals] = useState([]);
   const [topics, setTopics] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -203,17 +207,22 @@ export default function ProposalManagement() {
       await api.post(`/api/orgs/${slug}/proposals/${proposalId}/advance`, { voting_end: votingEnd });
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
   async function handleWithdraw(proposalId) {
-    if (!window.confirm('Withdraw this proposal? It will be marked as failed.')) return;
+    const ok = await confirm({
+      title: 'Withdraw Proposal',
+      message: 'Withdraw this proposal? It will be marked as failed.',
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await api.post(`/api/orgs/${slug}/proposals/${proposalId}/advance`, {});
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 

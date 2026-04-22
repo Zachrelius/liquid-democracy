@@ -3,6 +3,8 @@ import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 import api from '../api';
 import TopicBadge from '../components/TopicBadge';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
 
 const POLICY_OPTIONS = [
   {
@@ -22,7 +24,7 @@ const POLICY_OPTIONS = [
   },
 ];
 
-function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown }) {
+function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown, confirm }) {
   const [editing, setEditing] = useState(false);
   const [bio, setBio] = useState(profile?.bio || '');
   const [registering, setRegistering] = useState(false);
@@ -98,10 +100,13 @@ function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown }) {
             </button>
           )}
           <button
-            onClick={() => {
-              if (window.confirm(`This will remove you as a public delegate for ${topic.name}. People who delegated to you on this topic will need to choose a new delegate. Are you sure?`)) {
-                onStepDown(topic.id);
-              }
+            onClick={async () => {
+              const ok = await confirm({
+                title: 'Step Down as Delegate',
+                message: `This will remove you as a public delegate for ${topic.name}. People who delegated to you on this topic will need to choose a new delegate. Are you sure?`,
+                destructive: true,
+              });
+              if (ok) onStepDown(topic.id);
             }}
             className="text-xs text-red-500 hover:underline"
           >
@@ -143,6 +148,8 @@ function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown }) {
 export default function Settings() {
   const { user: authUser, logout } = useAuth();
   const { currentOrg } = useOrg();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [user, setUser] = useState(null);
   const [topics, setTopics] = useState([]);
   const [profiles, setProfiles] = useState([]);
@@ -207,7 +214,7 @@ export default function Settings() {
       await api.post('/api/delegates/register', { topic_id: topicId, bio });
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -216,7 +223,7 @@ export default function Settings() {
       await api.post('/api/delegates/register', { topic_id: topicId, bio });
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -225,7 +232,7 @@ export default function Settings() {
       await api.delete(`/api/delegates/register/${topicId}`);
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -247,7 +254,12 @@ export default function Settings() {
 
   async function handleLogoutAll() {
     setLogoutAllMsg('');
-    if (!window.confirm('This will log you out of all devices, including this one. Continue?')) return;
+    const ok = await confirm({
+      title: 'Log Out Everywhere',
+      message: 'This will log you out of all devices, including this one. Continue?',
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       const res = await api.post('/api/auth/logout-all', {});
       setLogoutAllMsg(res.message || 'Logged out of all devices');
@@ -357,6 +369,7 @@ export default function Settings() {
               onRegister={handleRegister}
               onEdit={handleEditBio}
               onStepDown={handleStepDown}
+              confirm={confirm}
             />
           ))}
         </div>

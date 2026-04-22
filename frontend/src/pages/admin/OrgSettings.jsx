@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
+import { useToast } from '../../components/Toast';
 
 export default function OrgSettings() {
   const { currentOrg, refreshOrgs, isOwner } = useOrg();
+  const toast = useToast();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [joinPolicy, setJoinPolicy] = useState('approval_required');
@@ -51,7 +53,7 @@ export default function OrgSettings() {
       localStorage.removeItem('currentOrgSlug');
       window.location.href = '/orgs';
     } catch (e) {
-      alert(e.message || 'Failed to delete');
+      toast.error(e.message || 'Failed to delete');
     }
   }
 

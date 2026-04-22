@@ -2,8 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
 import ErrorMessage from '../../components/ErrorMessage';
+import { useToast } from '../../components/Toast';
+import { useConfirm } from '../../components/ConfirmDialog';
 
-function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, isAdmin }) {
+function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, isAdmin, confirm }) {
   const [expanded, setExpanded] = useState(false);
   const [role, setRole] = useState(member.role);
   const [saving, setSaving] = useState(false);
@@ -77,7 +79,7 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, is
             >
               Suspend
             </button>
-          ) : member.status === 'suspended' && isAdmin ? (
+          ) : member.status === 'suspended' ? (
             <button
               onClick={() => onReactivate(member.user_id)}
               className="text-xs px-3 py-1.5 border border-green-400 text-green-700 rounded-lg hover:bg-green-50"
@@ -87,10 +89,13 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, is
           ) : null}
           {isAdmin && (
             <button
-              onClick={() => {
-                if (window.confirm(`Remove ${member.display_name} from the organization?`)) {
-                  onRemove(member.user_id);
-                }
+              onClick={async () => {
+                const ok = await confirm({
+                  title: 'Remove Member',
+                  message: `Remove ${member.display_name} from the organization?`,
+                  destructive: true,
+                });
+                if (ok) onRemove(member.user_id);
               }}
               className="text-xs px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
             >
@@ -105,6 +110,8 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, is
 
 export default function Members() {
   const { currentOrg, isAdmin } = useOrg();
+  const toast = useToast();
+  const confirm = useConfirm();
   const [members, setMembers] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [invitations, setInvitations] = useState([]);
@@ -113,31 +120,25 @@ export default function Members() {
   const [inviteEmails, setInviteEmails] = useState('');
   const [inviteRole, setInviteRole] = useState('member');
   const [inviteMsg, setInviteMsg] = useState('');
-  const [error, setError] = useState('');
 
   const slug = currentOrg?.slug;
 
   const load = useCallback(async () => {
     if (!slug) return;
-    setError('');
     try {
-      const mems = await api.get(`/api/orgs/${slug}/members`);
+      const [mems, invs] = await Promise.all([
+        api.get(`/api/orgs/${slug}/members`),
+        api.get(`/api/orgs/${slug}/invitations`),
+      ]);
       const active = mems.filter(m => m.status !== 'pending_approval');
       const pending = mems.filter(m => m.status === 'pending_approval');
       setMembers(active);
       setPendingRequests(pending);
-    } catch (e) {
-      setError(e.message || 'Failed to load members');
+      setInvitations(invs);
+    } catch { /* ignore */ } finally {
+      setLoading(false);
     }
-    // Fetch invitations only for admins (moderators get 403)
-    if (isAdmin) {
-      try {
-        const invs = await api.get(`/api/orgs/${slug}/invitations`);
-        setInvitations(invs);
-      } catch { /* ignore — invitations are admin-only */ }
-    }
-    setLoading(false);
-  }, [slug, isAdmin]);
+  }, [slug]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -148,7 +149,7 @@ export default function Members() {
       await api.patch(`/api/orgs/${slug}/members/${userId}`, { role });
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -157,7 +158,7 @@ export default function Members() {
       await api.post(`/api/orgs/${slug}/members/${userId}/suspend`);
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -166,7 +167,7 @@ export default function Members() {
       await api.post(`/api/orgs/${slug}/members/${userId}/reactivate`);
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -175,7 +176,7 @@ export default function Members() {
       await api.delete(`/api/orgs/${slug}/members/${userId}`);
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -184,7 +185,7 @@ export default function Members() {
       await api.post(`/api/orgs/${slug}/join/approve/${userId}`);
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -193,7 +194,7 @@ export default function Members() {
       await api.post(`/api/orgs/${slug}/join/deny/${userId}`);
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -217,7 +218,7 @@ export default function Members() {
       await api.post(`/api/orgs/${slug}/invitations/${invId}/resend`);
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -226,7 +227,7 @@ export default function Members() {
       await api.delete(`/api/orgs/${slug}/invitations/${invId}`);
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -238,12 +239,6 @@ export default function Members() {
   if (loading) return (
     <div className="flex justify-center items-center py-20">
       <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
-    </div>
-  );
-
-  if (error) return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <ErrorMessage error={error} onRetry={load} />
     </div>
   );
 
@@ -320,6 +315,7 @@ export default function Members() {
                 onReactivate={handleReactivate}
                 onRemove={handleRemove}
                 isAdmin={isAdmin}
+                confirm={confirm}
               />
             ))
           )}
