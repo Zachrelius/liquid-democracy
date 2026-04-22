@@ -1,0 +1,163 @@
+# Liquid Democracy — Build Progress
+
+## Phase 1: Core Backend ✅ Complete
+
+### What was built
+
+A fully functional FastAPI backend implementing the liquid democracy delegation model described in the brief.
+
+**Project layout:**
+```
+backend/
+├── main.py                  # FastAPI app, CORS, WebSocket endpoint, startup
+├── database.py              # SQLAlchemy engine + session factory
+├── models.py                # ORM models (User, Topic, Proposal, Delegation, Vote, …)
+├── schemas.py               # Pydantic v2 request/response schemas
+├── auth.py                  # JWT (python-jose) + bcrypt password hashing
+├── delegation_engine.py     # Core delegation resolution + NetworkX graph store
+├── websocket.py             # WebSocket connection manager (live tally broadcasts)
+├── seed_data.py             # Demo scenario generator
+├── requirements.txt
+├── routes/
+│   ├── auth.py              # POST /register, /login; GET /me
+│   ├── topics.py            # GET/POST /api/topics
+│   ├── proposals.py         # CRUD, /advance, /results, /my-vote
+│   ├── delegations.py       # Upsert, revoke, graph, topic precedence
+│   ├── votes.py             # Cast and retract direct votes
+│   ├── admin.py             # Seed, time-simulation, system graph, user management
+│   └── users.py             # Public profile, delegation tree, vote history
+└── tests/
+    ├── conftest.py
+    └── test_delegation_engine.py   # 18 tests, all passing
+```
+
+---
+
+### Delegation engine
+
+The heart of the system lives in `delegation_engine.py`. It implements the algorithm from the brief:
+
+1. **Direct vote** — if the user voted directly, use that (overrides everything).
+2. **Find delegate** — sort the proposal's topics by the user's precedence ordering; use the first topic that has an active delegation. Fall back to the global (topic=null) delegation.
+3. **Non-transitive default** — check if the delegate voted directly. If yes, use their vote.
+4. **Chain behavior** — if the delegate did not vote directly:
+   - `accept_sub` — follow one level of the delegate's own delegation chain.
+   - `revert_direct` — return None (user must vote themselves).
+   - `abstain` — return None (vote not cast).
+
+**Cycle detection** uses a per-topic `networkx.DiGraph`. Before any delegation is saved, `would_create_cycle()` temporarily adds the edge and checks `is_directed_acyclic_graph`. The check runs on both the topic-specific graph and the global graph.
+
+**Tally computation** iterates all users and calls `resolve_vote` for each. This runs on-read (not stored), so delegation changes during a voting window are reflected immediately.
+
+---
+
+### API surface
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/auth/register` | Create account |
+| POST | `/api/auth/login` | Get JWT token |
+| GET | `/api/auth/me` | Current user |
+| GET | `/api/topics` | List topics |
+| POST | `/api/topics` | Create topic (admin) |
+| GET | `/api/proposals` | List proposals (filterable by status, topic) |
+| POST | `/api/proposals` | Create proposal |
+| GET | `/api/proposals/{id}` | Get proposal |
+| PATCH | `/api/proposals/{id}` | Update proposal (author, draft only) |
+| POST | `/api/proposals/{id}/advance` | Advance proposal status |
+| GET | `/api/proposals/{id}/results` | Tally + time-series snapshots |
+| GET | `/api/proposals/{id}/my-vote` | How the current user's vote resolves |
+| GET | `/api/delegations` | List my delegations |
+| PUT | `/api/delegations` | Set/update delegation (cycle-checked upsert) |
+| DELETE | `/api/delegations/{topic_id}` | Revoke delegation |
+| GET | `/api/delegations/graph` | My delegation neighbourhood |
+| PUT | `/api/delegations/precedence` | Set topic priority ordering |
+| POST | `/api/proposals/{id}/vote` | Cast direct vote |
+| DELETE | `/api/proposals/{id}/vote` | Retract direct vote |
+| GET | `/api/users/{id}` | Public profile |
+| GET | `/api/users/{id}/delegation-tree` | Delegation tree for a user |
+| GET | `/api/users/{id}/votes` | Public vote history |
+| POST | `/api/admin/seed` | Load demo scenario |
+| POST | `/api/admin/time-simulation` | Take a tally snapshot at a simulated time |
+| GET | `/api/admin/delegation-graph` | System-wide delegation graph |
+| WS | `/ws/proposals/{id}` | Live tally updates |
+
+---
+
+### Demo scenarios (seed data)
+
+**Scenario A — Healthcare Reform Act** (`POST /api/admin/seed` with `{"scenario": "healthcare"}`)
+- 20 users + Dr. Chen + EconExpert
+- Proposal tagged `healthcare` + `economy`
+- Users 1–10: healthcare > economy precedence → follow Dr. Chen → **YES**
+- Users 11–15: economy > healthcare precedence → follow EconExpert → **NO**
+- Users 16–18: direct votes (YES / NO / ABSTAIN), overriding their delegations
+- Demonstrates topic precedence and direct-vote override
+
+**Scenario B — Environmental Budget Allocation** (`POST /api/admin/seed` with `{"scenario": "environment"}`)
+- Delegate A (no vote) sub-delegates to Delegate B (votes YES)
+- Group 1 (`accept_sub`): chain follows to Delegate B → **YES**
+- Group 2 (`revert_direct`): flagged, vote unresolved
+- Group 3 (`abstain`): vote not cast
+- Demonstrates all three `chain_behavior` modes
+
+---
+
+### Tests — 18/18 passing
+
+| Test | What it covers |
+|------|---------------|
+| `test_direct_vote_beats_delegation` | Direct vote overrides any delegation |
+| `test_delegation_used_when_no_direct_vote` | Delegate's vote used when user hasn't voted |
+| `test_no_vote_when_no_delegation_no_direct` | Returns None with no delegation and no vote |
+| `test_topic_precedence_highest_priority_wins` | Highest-priority topic's delegate is used |
+| `test_topic_precedence_second_priority_wins` | Second topic wins when it has higher priority |
+| `test_global_delegation_fallback` | Global delegation used when no topic-specific one |
+| `test_topic_delegation_takes_precedence_over_global` | Topic-specific beats global |
+| `test_chain_accept_sub_follows_sub_delegate` | accept_sub traverses one extra hop |
+| `test_chain_accept_sub_returns_none_when_sub_delegate_also_absent` | Chain dead-end returns None |
+| `test_chain_revert_direct_returns_none` | revert_direct returns None |
+| `test_chain_abstain_returns_none` | abstain returns None |
+| `test_cycle_prevention_simple` | A→B, B→A blocked |
+| `test_cycle_prevention_transitive` | A→B→C, C→A blocked |
+| `test_no_false_positive_cycle` | A→B, A→C allowed |
+| `test_cycle_prevention_per_topic` | Cycle check is per-topic graph |
+| `test_tally_updates_when_delegation_changes` | Re-delegating mid-window changes tally |
+| `test_compute_tally` | Full tally aggregation across all users |
+| `test_self_delegation_cycle` | A→A blocked |
+
+---
+
+### Running locally
+
+```bash
+cd backend
+# One-time setup (Python 3.12 required; uses uv)
+uv venv --python 3.12 .venv
+uv pip install -r requirements.txt
+
+# Run server
+.venv/Scripts/python.exe -m uvicorn main:app --reload
+# Interactive docs: http://localhost:8000/docs
+
+# Run tests
+.venv/Scripts/python.exe -m pytest tests/ -v
+```
+
+---
+
+## Phase 2: Core Frontend — Not started
+
+- React + Vite + Tailwind CSS
+- Auth flow (login / register)
+- Proposal list and detail pages
+- Vote panel with delegation status display
+- My Delegations page with topic precedence drag-and-drop
+
+## Phase 3: Visualization & Polish — Not started
+
+- D3 force-directed delegation graph
+- Live results with WebSocket updates
+- Sustained majority time-series chart
+- Time simulation controls
+- Mobile responsive design
