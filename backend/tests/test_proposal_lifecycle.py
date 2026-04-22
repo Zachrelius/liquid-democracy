@@ -175,7 +175,7 @@ def test_draft_edit_then_advance(client, test_db):
 
 
 def test_cannot_edit_non_draft(client, test_db):
-    """Editing a non-draft proposal should return 400."""
+    """Editing a voting proposal should return 400."""
     org = _create_org(test_db)
     admin = _create_user(test_db, "admin")
     _create_membership(test_db, org, admin, role="admin")
@@ -184,7 +184,7 @@ def test_cannot_edit_non_draft(client, test_db):
 
     headers = _auth_header(admin)
 
-    # Create and advance to deliberation
+    # Create and advance to deliberation, then voting
     resp = client.post(f"/api/orgs/test-org/proposals", headers=headers, json={
         "title": "No Edit",
         "body": "Body",
@@ -194,8 +194,9 @@ def test_cannot_edit_non_draft(client, test_db):
     })
     pid = resp.json()["id"]
     client.post(f"/api/orgs/test-org/proposals/{pid}/advance", headers=headers, json={})
+    client.post(f"/api/orgs/test-org/proposals/{pid}/advance", headers=headers, json={})
 
-    # Try to edit — should fail
+    # Try to edit — should fail (voting status)
     resp = client.patch(f"/api/proposals/{pid}", headers=headers, json={"title": "Hack"})
     assert resp.status_code == 400
 

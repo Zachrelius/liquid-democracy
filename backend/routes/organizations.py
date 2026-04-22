@@ -971,6 +971,9 @@ def create_org_proposal(
         models.Organization.slug == org_slug
     ).first()
 
+    from routes.proposals import _validate_proposal_creation, _create_proposal_options
+    _validate_proposal_creation(body, org)
+
     for t in body.topics:
         if not db.get(models.Topic, t.topic_id):
             raise HTTPException(status_code=400, detail=f"Topic {t.topic_id} not found")
@@ -980,6 +983,8 @@ def create_org_proposal(
         body=body.body,
         author_id=current_user.id,
         org_id=org.id,
+        voting_method=body.voting_method,
+        num_winners=body.num_winners,
         pass_threshold=body.pass_threshold,
         quorum_threshold=body.quorum_threshold,
     )
@@ -992,13 +997,16 @@ def create_org_proposal(
         ))
     db.flush()
 
+    if body.voting_method == "approval" and body.options:
+        _create_proposal_options(db, proposal.id, body.options)
+
     log_audit_event(
         db,
         action="proposal.created",
         target_type="proposal",
         target_id=proposal.id,
         actor_id=current_user.id,
-        details={"title": proposal.title, "org_id": org.id},
+        details={"title": proposal.title, "org_id": org.id, "voting_method": body.voting_method},
         ip_address=request.client.host if request.client else None,
     )
 

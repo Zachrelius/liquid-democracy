@@ -36,6 +36,9 @@ def _build_proposal_out(proposal: models.Proposal) -> schemas.ProposalOut:
         author_id=proposal.author_id,
         author=proposal.author,
         status=proposal.status,
+        voting_method=proposal.voting_method,
+        num_winners=proposal.num_winners,
+        tie_resolution=proposal.tie_resolution,
         deliberation_start=proposal.deliberation_start,
         voting_start=proposal.voting_start,
         voting_end=proposal.voting_end,
@@ -43,8 +46,97 @@ def _build_proposal_out(proposal: models.Proposal) -> schemas.ProposalOut:
         quorum_threshold=proposal.quorum_threshold,
         created_at=proposal.created_at,
         updated_at=proposal.updated_at,
-        topics=proposal.proposal_topics,  # ProposalTopicOut (from_attributes)
+        topics=proposal.proposal_topics,
+        options=proposal.options,
     )
+
+
+def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[models.Organization] = None):
+    """Validate voting_method and options for proposal creation."""
+    if body.voting_method == "ranked_choice":
+        raise HTTPException(
+            status_code=400,
+            detail="Ranked-choice voting is planned for a future release",
+        )
+    # Check org allowed_voting_methods
+    if org and org.settings:
+        allowed = org.settings.get("allowed_voting_methods", ["binary", "approval"])
+        if body.voting_method not in allowed:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Voting method '{body.voting_method}' is not allowed by this organization",
+            )
+    if body.voting_method == "binary":
+        if body.options:
+            raise HTTPException(
+                status_code=400,
+                detail="Binary proposals must not have options",
+            )
+    elif body.voting_method == "approval":
+        if len(body.options) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail="Approval proposals require at least 2 options",
+            )
+        if len(body.options) > 20:
+            raise HTTPException(
+                status_code=400,
+                detail="Approval proposals may have at most 20 options",
+            )
+        seen_labels: set[str] = set()
+        for opt in body.options:
+            lower = opt.label.strip().lower()
+            if lower in seen_labels:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Duplicate option label: {opt.label}",
+                )
+            seen_labels.add(lower)
+    if body.num_winners != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="num_winners must be 1",
+        )
+
+
+def _create_proposal_options(db: Session, proposal_id: str, options: list[schemas.OptionCreate]):
+    """Create ProposalOption rows for an approval proposal."""
+    for i, opt in enumerate(options):
+        db.add(models.ProposalOption(
+            proposal_id=proposal_id,
+            label=opt.label.strip(),
+            description=opt.description,
+            display_order=i,
+        ))
+    db.flush()
+
+
+def _validate_and_update_options(
+    db: Session,
+    proposal: models.Proposal,
+    options: list[schemas.OptionCreate],
+):
+    """Replace options on an approval proposal (draft/deliberation only)."""
+    if proposal.status in ("voting", "passed", "failed", "withdrawn"):
+        raise HTTPException(
+            status_code=409,
+            detail="Options cannot be edited after voting has started",
+        )
+    if len(options) < 2:
+        raise HTTPException(status_code=400, detail="Approval proposals require at least 2 options")
+    if len(options) > 20:
+        raise HTTPException(status_code=400, detail="Approval proposals may have at most 20 options")
+    seen_labels: set[str] = set()
+    for opt in options:
+        lower = opt.label.strip().lower()
+        if lower in seen_labels:
+            raise HTTPException(status_code=400, detail=f"Duplicate option label: {opt.label}")
+        seen_labels.add(lower)
+    # Delete existing options
+    for existing_opt in list(proposal.options):
+        db.delete(existing_opt)
+    db.flush()
+    _create_proposal_options(db, proposal.id, options)
 
 
 @router.get("", response_model=list[schemas.ProposalOut])
@@ -72,6 +164,8 @@ def create_proposal(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
+    _validate_proposal_creation(body)
+
     for t in body.topics:
         if not db.get(models.Topic, t.topic_id):
             raise HTTPException(status_code=400, detail=f"Topic {t.topic_id} not found")
@@ -80,6 +174,8 @@ def create_proposal(
         title=body.title,
         body=body.body,
         author_id=current_user.id,
+        voting_method=body.voting_method,
+        num_winners=body.num_winners,
         pass_threshold=body.pass_threshold,
         quorum_threshold=body.quorum_threshold,
     )
@@ -91,6 +187,9 @@ def create_proposal(
             proposal_id=proposal.id, topic_id=t.topic_id, relevance=t.relevance
         ))
     db.flush()
+
+    if body.voting_method == "approval" and body.options:
+        _create_proposal_options(db, proposal.id, body.options)
 
     log_audit_event(
         db,
@@ -121,8 +220,8 @@ def update_proposal(
 ):
     proposal = _proposal_or_404(proposal_id, db)
 
-    if proposal.status != "draft":
-        raise HTTPException(status_code=400, detail="Only draft proposals can be edited")
+    if proposal.status not in ("draft", "deliberation"):
+        raise HTTPException(status_code=400, detail="Only draft or deliberation proposals can be edited")
     if proposal.author_id != current_user.id and not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Not the proposal author")
 
@@ -140,6 +239,11 @@ def update_proposal(
             db.add(models.ProposalTopic(
                 proposal_id=proposal.id, topic_id=t.topic_id, relevance=t.relevance
             ))
+
+    if body.options is not None:
+        if proposal.voting_method != "approval":
+            raise HTTPException(status_code=400, detail="Options can only be set on approval proposals")
+        _validate_and_update_options(db, proposal, body.options)
 
     db.commit()
     db.refresh(proposal)
