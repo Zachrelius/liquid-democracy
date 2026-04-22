@@ -200,6 +200,11 @@ class Proposal(Base):
     deliberation_start: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     voting_start: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     voting_end: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    voting_method: Mapped[str] = mapped_column(
+        String, nullable=False, default="binary",
+    )
+    num_winners: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    tie_resolution: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     pass_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.50)
     quorum_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.40)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
@@ -210,6 +215,10 @@ class Proposal(Base):
     proposal_topics: Mapped[list["ProposalTopic"]] = relationship(
         "ProposalTopic", back_populates="proposal", cascade="all, delete-orphan"
     )
+    options: Mapped[list["ProposalOption"]] = relationship(
+        "ProposalOption", back_populates="proposal", cascade="all, delete-orphan",
+        order_by="ProposalOption.display_order",
+    )
     votes: Mapped[list["Vote"]] = relationship("Vote", back_populates="proposal", cascade="all, delete-orphan")
     vote_snapshots: Mapped[list["VoteSnapshot"]] = relationship(
         "VoteSnapshot", back_populates="proposal", cascade="all, delete-orphan"
@@ -218,6 +227,19 @@ class Proposal(Base):
     @property
     def topic_ids(self) -> list[str]:
         return [pt.topic_id for pt in self.proposal_topics]
+
+
+class ProposalOption(Base):
+    __tablename__ = "proposal_options"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    proposal_id: Mapped[str] = mapped_column(String, ForeignKey("proposals.id"), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+
+    proposal: Mapped["Proposal"] = relationship("Proposal", back_populates="options")
 
 
 class ProposalTopic(Base):
@@ -276,10 +298,11 @@ class Vote(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     proposal_id: Mapped[str] = mapped_column(String, ForeignKey("proposals.id"), nullable=False, index=True)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
-    vote_value: Mapped[str] = mapped_column(
+    vote_value: Mapped[Optional[str]] = mapped_column(
         Enum("yes", "no", "abstain", name="vote_value"),
-        nullable=False,
+        nullable=True,
     )
+    ballot: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     is_direct: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     delegate_chain: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     cast_by_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
