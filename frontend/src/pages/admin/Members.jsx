@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
+import ErrorMessage from '../../components/ErrorMessage';
 
 function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, isAdmin }) {
   const [expanded, setExpanded] = useState(false);
@@ -76,7 +77,7 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, is
             >
               Suspend
             </button>
-          ) : member.status === 'suspended' ? (
+          ) : member.status === 'suspended' && isAdmin ? (
             <button
               onClick={() => onReactivate(member.user_id)}
               className="text-xs px-3 py-1.5 border border-green-400 text-green-700 rounded-lg hover:bg-green-50"
@@ -112,25 +113,31 @@ export default function Members() {
   const [inviteEmails, setInviteEmails] = useState('');
   const [inviteRole, setInviteRole] = useState('member');
   const [inviteMsg, setInviteMsg] = useState('');
+  const [error, setError] = useState('');
 
   const slug = currentOrg?.slug;
 
   const load = useCallback(async () => {
     if (!slug) return;
+    setError('');
     try {
-      const [mems, invs] = await Promise.all([
-        api.get(`/api/orgs/${slug}/members`),
-        api.get(`/api/orgs/${slug}/invitations`),
-      ]);
+      const mems = await api.get(`/api/orgs/${slug}/members`);
       const active = mems.filter(m => m.status !== 'pending_approval');
       const pending = mems.filter(m => m.status === 'pending_approval');
       setMembers(active);
       setPendingRequests(pending);
-      setInvitations(invs);
-    } catch { /* ignore */ } finally {
-      setLoading(false);
+    } catch (e) {
+      setError(e.message || 'Failed to load members');
     }
-  }, [slug]);
+    // Fetch invitations only for admins (moderators get 403)
+    if (isAdmin) {
+      try {
+        const invs = await api.get(`/api/orgs/${slug}/invitations`);
+        setInvitations(invs);
+      } catch { /* ignore — invitations are admin-only */ }
+    }
+    setLoading(false);
+  }, [slug, isAdmin]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -231,6 +238,12 @@ export default function Members() {
   if (loading) return (
     <div className="flex justify-center items-center py-20">
       <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+    </div>
+  );
+
+  if (error) return (
+    <div className="max-w-4xl mx-auto px-4 py-8">
+      <ErrorMessage error={error} onRetry={load} />
     </div>
   );
 
