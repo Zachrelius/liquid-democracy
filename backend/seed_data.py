@@ -79,6 +79,8 @@ def _get_or_create_proposal(
     days_ago_voting: int = 1,
     days_ahead_close: Optional[int] = 6,
     org_id: Optional[str] = None,
+    voting_method: str = "binary",
+    options: Optional[list[tuple[str, str]]] = None,  # [(label, description), ...]
 ) -> models.Proposal:
     proposal = db.query(models.Proposal).filter(models.Proposal.title == title).first()
     if proposal:
@@ -94,6 +96,7 @@ def _get_or_create_proposal(
         author_id=author_id,
         org_id=org_id,
         status=status,
+        voting_method=voting_method,
         deliberation_start=now - timedelta(days=days_ago_deliberation),
         voting_start=now - timedelta(days=days_ago_voting) if status != "deliberation" else None,
         voting_end=now + timedelta(days=days_ahead_close) if days_ahead_close and status == "voting" else None,
@@ -108,6 +111,14 @@ def _get_or_create_proposal(
             topic_id=topic.id,
             relevance=relevance,
         ))
+    if options:
+        for i, (label, desc) in enumerate(options):
+            db.add(models.ProposalOption(
+                proposal_id=proposal.id,
+                label=label,
+                description=desc,
+                display_order=i,
+            ))
     db.flush()
     return proposal
 
@@ -243,6 +254,30 @@ def _cast_vote(
     db.flush()
 
 
+def _cast_approval_vote(
+    db: Session, user: models.User, proposal: models.Proposal, option_ids: list[str]
+) -> None:
+    """Cast an approval ballot (list of approved option IDs)."""
+    existing = db.query(models.Vote).filter(
+        models.Vote.proposal_id == proposal.id,
+        models.Vote.user_id == user.id,
+    ).first()
+    ballot = {"approvals": option_ids}
+    if existing:
+        existing.ballot = ballot
+        existing.vote_value = None
+    else:
+        db.add(models.Vote(
+            proposal_id=proposal.id,
+            user_id=user.id,
+            vote_value=None,
+            ballot=ballot,
+            is_direct=True,
+            cast_by_id=user.id,
+        ))
+    db.flush()
+
+
 # ---------------------------------------------------------------------------
 # Full demo scenario
 # ---------------------------------------------------------------------------
@@ -266,6 +301,7 @@ def _get_or_create_org(
                 "public_delegate_policy": "admin_approval",
                 "require_email_verification": True,
                 "sustained_majority_floor": 0.45,
+                "allowed_voting_methods": ["binary", "approval"],
             },
         )
         db.add(org)
@@ -464,6 +500,61 @@ def _seed_demo(db: Session) -> dict:
         org_id=demo_org.id,
     )
 
+    # 6. Community Garden Location — Approval Voting, in voting status
+    garden_options = [
+        ("Riverside Park", "Convert the unused section of Riverside Park into a community garden"),
+        ("School Grounds", "Partner with the local school to use their unused field"),
+        ("Downtown Lot", "Use the vacant lot on Main Street for an urban garden"),
+        ("Rooftop Gardens", "Install rooftop gardens on municipal buildings"),
+    ]
+    garden_prop = _get_or_create_proposal(
+        db,
+        title="Community Garden Location",
+        body=(
+            "## Purpose\n\n"
+            "Select the best location for our new community garden. "
+            "Approve all options you find acceptable.\n\n"
+            "## Evaluation Criteria\n\n"
+            "- Accessibility and public transit access\n"
+            "- Soil quality and sunlight\n"
+            "- Community impact and visibility\n"
+        ),
+        author_id=admin.id,
+        status="voting",
+        topic_relevances=[(environment, 0.8), (economy, 0.3)],
+        days_ago_deliberation=6,
+        days_ago_voting=1,
+        days_ahead_close=5,
+        org_id=demo_org.id,
+        voting_method="approval",
+        options=garden_options,
+    )
+
+    # 7. Office Renovation Style — Approval Voting, passed with tied result
+    reno_options = [
+        ("Modern Minimalist", "Clean lines, open spaces, neutral palette"),
+        ("Biophilic Design", "Natural materials, plants, and nature-inspired elements"),
+        ("Industrial Chic", "Exposed brick, metal accents, warehouse aesthetic"),
+    ]
+    reno_prop = _get_or_create_proposal(
+        db,
+        title="Office Renovation Style",
+        body=(
+            "## Background\n\n"
+            "Select the design style for the office renovation. "
+            "The two most-approved styles will be combined in the final design.\n\n"
+        ),
+        author_id=admin.id,
+        status="passed",
+        topic_relevances=[(economy, 0.5)],
+        days_ago_deliberation=14,
+        days_ago_voting=7,
+        days_ahead_close=None,
+        org_id=demo_org.id,
+        voting_method="approval",
+        options=reno_options,
+    )
+
     # ── Expert votes ───────────────────────────────────────────────────────
     _cast_vote(db, dr_chen,     healthcare_prop, "yes")
     _cast_vote(db, econ_bob,    healthcare_prop, "no")
@@ -520,6 +611,37 @@ def _seed_demo(db: Session) -> dict:
         _cast_vote(db, u, privacy_prop, "yes")
     for u in extra_users[4:8]:
         _cast_vote(db, u, privacy_prop, "no")
+
+    # ── Approval votes — Garden Location ──────────────────────────────────
+    garden_opts = db.query(models.ProposalOption).filter(
+        models.ProposalOption.proposal_id == garden_prop.id,
+    ).order_by(models.ProposalOption.display_order).all()
+    if len(garden_opts) >= 4:
+        # Mixed voting: some approve multiple, some approve one
+        _cast_approval_vote(db, alice, garden_prop, [garden_opts[0].id, garden_opts[1].id])
+        _cast_approval_vote(db, dr_chen, garden_prop, [garden_opts[0].id])
+        _cast_approval_vote(db, econ_bob, garden_prop, [garden_opts[2].id, garden_opts[3].id])
+        _cast_approval_vote(db, carol, garden_prop, [garden_opts[0].id, garden_opts[2].id])
+        _cast_approval_vote(db, env_emma, garden_prop, [garden_opts[0].id, garden_opts[1].id, garden_opts[3].id])
+        _cast_approval_vote(db, rights_raj, garden_prop, [garden_opts[1].id])
+        for u in extra_users[:3]:
+            _cast_approval_vote(db, u, garden_prop, [garden_opts[0].id, garden_opts[1].id])
+        for u in extra_users[3:5]:
+            _cast_approval_vote(db, u, garden_prop, [garden_opts[2].id])
+        # abstain ballot
+        _cast_approval_vote(db, extra_users[5], garden_prop, [])
+
+    # ── Approval votes — Renovation Style (tied result) ───────────────────
+    reno_opts = db.query(models.ProposalOption).filter(
+        models.ProposalOption.proposal_id == reno_prop.id,
+    ).order_by(models.ProposalOption.display_order).all()
+    if len(reno_opts) >= 3:
+        # Intentional tie between first two options (3 approvals each)
+        _cast_approval_vote(db, alice, reno_prop, [reno_opts[0].id, reno_opts[1].id])
+        _cast_approval_vote(db, dr_chen, reno_prop, [reno_opts[0].id])
+        _cast_approval_vote(db, econ_bob, reno_prop, [reno_opts[1].id])
+        _cast_approval_vote(db, carol, reno_prop, [reno_opts[0].id, reno_opts[2].id])
+        _cast_approval_vote(db, env_emma, reno_prop, [reno_opts[1].id, reno_opts[2].id])
 
     # ── Phase 3a: Permission system ───────────────────────────────────────
 

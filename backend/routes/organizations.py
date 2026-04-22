@@ -41,6 +41,7 @@ DEFAULT_ORG_SETTINGS = {
     "public_delegate_policy": "admin_approval",
     "require_email_verification": True,
     "sustained_majority_floor": 0.45,
+    "allowed_voting_methods": ["binary", "approval"],
 }
 
 
