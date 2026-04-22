@@ -697,11 +697,39 @@ Disabled vote and delegate action buttons for unverified users with "Verify your
 
 Created Toast (ToastProvider + useToast hook) and ConfirmDialog (ConfirmProvider + useConfirm hook) components. Replaced 27 callsites: 21 alert() → toast.error(), 6 window.confirm() → await confirm(). Grep verification: zero hits for alert(, window.confirm, window.alert, window.prompt in frontend/src.
 
-### Browser Tests — Suite I: 9/10 passing
+### Browser Tests — Suite I: 11/11 passing
 
-New Suite I in `browser_testing_playbook.md`. I4 (members page for moderator) fails due to pre-existing backend filtering issue, not a Phase 5 regression. All other tests pass including I10 regression checks against Suite H.
+Suite I in `browser_testing_playbook.md` updated after Phase 5.5. I4 now passes. I11 (email verification happy path) added. All tests pass including I10 regression checks.
 
 ### Backend Tests — 96/96 passing (no regressions)
+
+---
+
+## Phase 5.5 — Bug Triage ✅ Complete
+
+Three bugs from Phase 5 diagnosed and resolved. See `phase5_5_spec.md` for full spec.
+
+### Fix 1: Members Page Empty for Moderators (`88b88c9`)
+
+**Root cause:** Phase 5 Fix 2 attempted to decouple the Promise.all fetch but the fix was incomplete — the catch block still prevented `setMembers` from running when invitations 403'd. Phase 5.5 properly separated the two fetches into independent try/catch blocks. The backend endpoint was never broken; `GET /api/orgs/{slug}/members` correctly returns all members for any active org member regardless of role.
+
+**Process note:** This illustrates the spec's retrospective point: "verify the happy path returns the expected data, not just that the error symptom is gone." Phase 5 Fix 2 verified the fetch didn't throw, but didn't verify the response contained populated data.
+
+1 new test in `test_moderator_permissions.py`.
+
+### Fix 2: Email Verification Endpoint 500 (`1e3d83c`)
+
+**Root cause:** `TypeError: can't compare offset-naive and offset-aware datetimes`. The `_now()` helper returned timezone-aware UTC (`datetime.now(timezone.utc)`), but SQLite strips timezone info when storing datetimes. The comparison `record.expires_at < now` in verify_email crashed because `expires_at` was naive (from SQLite) and `now` was aware. Fixed `_now()` across all route modules to return naive UTC via `.replace(tzinfo=None)`.
+
+**Note:** This is exactly the class of bug that dual-DB testing (SQLite vs PostgreSQL) would catch — PostgreSQL preserves timezone info. Filed under existing tech debt.
+
+4 new tests in `test_email_verification.py` (happy path + 3 error paths).
+
+### Fix 3: Registration Auto-Join Gap (`0a9a3d5`)
+
+**Root cause: Scenario B — not a bug.** Registration is intentionally org-independent. After registering, users must explicitly `POST /api/orgs/{slug}/join` to request membership. The QA confusion arose because the tester expected registration to auto-add users to an org when `join_policy=approval_required`. The invitation flow is a separate path that creates membership directly. Documented, no code change.
+
+### Backend Tests — 101/101 passing (5 new, no regressions)
 
 ---
 
@@ -710,18 +738,19 @@ New Suite I in `browser_testing_playbook.md`. I4 (members page for moderator) fa
 ### Resolved in Phase 5
 - ~~**Admin route guard too permissive for moderators**~~ — Fixed: `AdminOnlyRoute` component now gates admin-only pages.
 - ~~**Unverified user UX**~~ — Fixed: Vote/delegate buttons disabled for unverified users with explanation text.
-- ~~**Members page empty for moderators (frontend coupling)**~~ — Fixed: Decoupled fetch. Backend filtering issue remains (see below).
+
+### Resolved in Phase 5.5
+- ~~**Members page empty for moderators**~~ — Fixed: Frontend Promise.all properly decoupled. Backend was never broken.
+- ~~**Email verification endpoint returns 500**~~ — Fixed: Datetime naive/aware comparison. `_now()` returns naive UTC across all route modules.
+- ~~**Registration auto-join gap**~~ — Not a bug. Registration is org-independent by design. Documented.
 
 ### Open Items
-- **Members page backend filtering for moderators**: Backend `/api/orgs/{slug}/members` endpoint returns empty for moderator users. The frontend coupling bug is fixed (Phase 5 Fix 2), but the backend query or permission check additionally filters results. Moderators should see the member list since they can suspend members.
-- **Email verification endpoint returns 500**: `POST /api/auth/verify-email` returns a server error. Pre-existing bug found during Suite I testing. Needs backend investigation.
-- **New user registration doesn't auto-join org**: When join_policy is approval_required, newly registered users aren't added to the org pending approval. Pre-existing.
-- **Toast success gap**: Some success paths (e.g., topic creation) close the form without calling toast.success(). Inconsistent — some actions toast, others don't.
-- **PostgreSQL dual-DB testing**: All tests run on SQLite only. Medium-term: add CI running against both.
-- **URL routing refactor**: Frontend uses flat URLs with org context in React state. Deferred to Phase 4e.
+- **Toast success gap**: Some success paths (e.g., topic creation) close the form without calling toast.success(). Deferred to Phase 6 wrap-up.
+- **PostgreSQL dual-DB testing**: All tests run on SQLite only. The datetime bug (Phase 5.5 Fix 2) is exactly the class of issue that would be caught by dual-DB testing.
+- **URL routing refactor**: Frontend uses flat URLs with org context in React state. Deferred.
 - **Browser testing playbook gaps**: Suites E-G were ad-hoc, not committed. Suite H+ are committed artifacts.
 - **No CI/CD pipeline**: Tests run manually.
 - **Rate limiting limited to auth endpoints**: Most endpoints have no rate limiting.
 - **WebSocket endpoint unused**: Exists in backend but no frontend connects.
 - **Edit Draft UX incomplete**: "Edit Draft" navigates to read-only view. Needs inline edit form.
-- **Blocking JavaScript dialogs are gone**: Toast/ConfirmDialog components in place. Further UX improvements (positioning, animations, keyboard shortcuts beyond Esc/Enter) deferred.
+- **Blocking JavaScript dialogs are gone**: Toast/ConfirmDialog in place. Further UX deferred.

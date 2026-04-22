@@ -1087,7 +1087,7 @@ Demo data: Pre-loaded
 
 **Expected:** Member list populated, Invite/Invitations NOT visible, Suspend button visible for active members.
 
-**Result:** FAIL -- Member list shows "MEMBERS (0)" and "No members found" for moderator. Invite Members and Invitations sections correctly hidden. Cannot verify Suspend button since no members displayed. This is a pre-existing bug (noted in Suite H, H12) where the moderator's API call to list members returns empty results. The backend /members endpoint likely requires admin role or the frontend filters incorrectly for moderators.
+**Result:** PASS -- (Re-tested 2026-04-22 after Fix 1: Members backend decoupled Promise.all for moderators.) Member list shows MEMBERS (23) with full list populated for moderator. Invite Members and Invitations sections correctly hidden. Suspend button visible in expanded member rows (no Update Role or Remove buttons -- correctly limited for moderator). Previously FAIL due to pre-existing bug where backend returned empty member list for moderator users.
 
 ---
 
@@ -1132,7 +1132,7 @@ Demo data: Pre-loaded
 
 **Expected:** No verification banner, all controls enabled and functional.
 
-**Result:** PASS (with note) -- After verification: no yellow banner, Vote Now button enabled (disabled=false, opacity=1), Set Default Delegate and Set Delegate buttons all enabled (disabled=false, opacity=1). Note: verify-email API endpoint returns 500 error (pre-existing backend bug, not introduced by Phase 5). Verification performed via direct database update as workaround. Also, newly registered user was not auto-added to the org (likely because join_policy=approval_required from H4 test); org membership added manually.
+**Result:** PASS (with note) -- After verification: no yellow banner, Vote Now button enabled (disabled=false, opacity=1), Set Default Delegate and Set Delegate buttons all enabled (disabled=false, opacity=1). Note: At time of original I7 test, verify-email API returned 500 (now fixed in Phase 5.5 Fix 2); verification was done via direct DB update. New user registration does not auto-join org when join_policy=approval_required; org membership added manually.
 
 ---
 
@@ -1180,41 +1180,69 @@ Demo data: Pre-loaded
 
 **Expected:** All regression tests pass.
 
-**Result:** PASS -- All 5 regression checks passed:
+**Result:** PASS -- All 5 regression checks passed (re-verified 2026-04-22 after Phase 5.5 fixes):
 - H1: Delegate Applications page loads, shows "Open registration" info message
 - H4: Join Policy persists as "Approval Required"
 - H5: Analytics shows 10 proposals, 23 members, 61% delegation rate, charts render
-- H10: Voting Defaults persisted (Deliberation=21, Voting=10, Public Delegates=Open Registration)
-- H13: Proposal lifecycle buttons present (Advance to Deliberation, Edit Draft, Withdraw)
+- H10: Voting Defaults persisted (Deliberation=21, Voting=10, Pass=60%, Quorum=30%, Public Delegates=Open Registration)
+- H13: Proposal lifecycle buttons present (Advance to Deliberation, Edit Draft, Withdraw) on Draft proposal "Ethical treatment of agents"
+
+---
+
+### I11: Email verification happy path (Phase 5.5)
+
+**Goal:** Verify the verify-email endpoint works end-to-end after Fix 2 (datetime naive/aware comparison crash).
+
+**Steps:**
+1. Register new user qa_verify55 / QA Verify Tester / liquiddemocracy.qa+verify55@gmail.com / demo1234
+2. Verify yellow verification banner appears
+3. Retrieve verification token from email_verifications table
+4. Call POST /api/auth/verify-email with the token
+5. Verify HTTP 200 response (not 500)
+6. Verify email_verified=1 in database
+7. Reload page, verify yellow banner is gone
+
+**Expected:** Registration succeeds, banner appears, verify-email API returns 200, user becomes verified, banner disappears.
+
+**Result:** PASS -- (Tested 2026-04-22)
+1. Registration succeeded, user created and logged in
+2. Yellow banner visible: "Please verify your email to participate in votes and create delegations." with "Resend verification email" link
+3. Token retrieved from email_verifications table
+4. POST /api/auth/verify-email returned HTTP 200 with {"message":"Email verified successfully"} -- no 500 error (Fix 2 confirmed)
+5. Database shows email_verified=1
+6. After page reload, yellow banner is gone
+Note: User was not auto-joined to org (join_policy=approval_required from H4 test). This is expected -- registration is org-independent by design (Fix 3 confirmed).
 
 ---
 
 ### Phase 5 Cleanup Summary
 
 ```
-Suite I (Phase 5 Cleanup Verification):
+Suite I (Phase 5 Cleanup Verification + Phase 5.5 Fixes):
   I1 Admin-only route blocks moderator:    PASS
   I2 Moderator-accessible routes load:     PASS
   I3 Admin routes work for admin:          PASS
-  I4 Members page for moderator:           FAIL (pre-existing bug: 0 members shown)
+  I4 Members page for moderator:           PASS (fixed in Phase 5.5 Fix 1, re-tested 2026-04-22)
   I5 Unverified user disabled votes:       PASS
   I6 Unverified user disabled delegates:   PASS
   I7 Verified user retains control:        PASS (with notes)
   I8 Toast replaces alert:                 PASS
   I9 ConfirmDialog replaces confirm:       PASS
-  I10 Regression (H1,H4,H5,H10,H13):      PASS
+  I10 Regression (H1,H4,H5,H10,H13):      PASS (re-verified 2026-04-22)
+  I11 Email verification happy path:       PASS (added Phase 5.5, tested 2026-04-22)
 
-Total: 9/10 passed, 1 failed
-Failures:
-  - I4: Members page shows 0 members for moderator role (pre-existing bug from Phase 4,
-    not introduced by Phase 5 fixes). Backend /members endpoint returns empty for
-    moderator users. Invite Members and Invitations sections correctly hidden.
+Total: 11/11 passed
+Failures: None
 Notes:
-  - I7: verify-email API endpoint returns 500 (pre-existing backend bug); verification
-    done via direct DB update. New user registration does not auto-join org when
-    join_policy=approval_required.
+  - I4: Previously FAIL (0 members shown for moderator). Fixed in Phase 5.5 Fix 1
+    (Members.jsx Promise.all decoupled). Now shows full member list (23 members),
+    Invite/Invitations hidden, Suspend button visible, no Update Role/Remove buttons.
+  - I7: verify-email API endpoint previously returned 500; now fixed in Phase 5.5 Fix 2.
+    New user registration does not auto-join org when join_policy=approval_required.
   - I8: Success toast not implemented for topic creation (only error toasts); success
     feedback is implicit (form closes, list updates). Error toast works correctly.
+  - I11: Email verification confirmed working end-to-end via API call (HTTP 200).
+    Registration is org-independent by design (Fix 3 confirmed).
   - All window.alert() and window.confirm() calls successfully replaced with in-DOM
     Toast and ConfirmDialog components.
   - Admin route guard correctly distinguishes admin-only (settings, delegates, analytics)
