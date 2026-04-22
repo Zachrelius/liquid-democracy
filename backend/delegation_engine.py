@@ -40,11 +40,35 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 @dataclass
-class VoteResult:
-    vote_value: str               # "yes" | "no" | "abstain"
+class Ballot:
+    """Unified ballot representation for all voting methods."""
+    vote_value: Optional[str] = None       # "yes" | "no" | "abstain" (binary)
+    approvals: Optional[list[str]] = None  # list of option_ids (approval)
+
+    @property
+    def voting_method(self) -> str:
+        if self.vote_value is not None:
+            return "binary"
+        if self.approvals is not None:
+            return "approval"
+        return "unknown"
+
+
+@dataclass
+class BallotResult:
+    """Result of resolving a user's ballot (any voting method)."""
+    ballot: Ballot
     is_direct: bool
-    delegate_chain: list[str]     # user IDs in delegation path
+    delegate_chain: list[str]
     cast_by_id: str
+
+    @property
+    def vote_value(self) -> Optional[str]:
+        return self.ballot.vote_value
+
+
+# Keep VoteResult as alias for backward compatibility
+VoteResult = BallotResult
 
 
 @dataclass
@@ -80,6 +104,26 @@ class ProposalTally:
         return self.yes_pct >= threshold
 
 
+@dataclass
+class ApprovalTally:
+    option_approvals: dict  # {option_id: count}
+    total_ballots_cast: int = 0
+    total_abstain: int = 0    # empty approval lists
+    not_cast: int = 0
+    total_eligible: int = 0
+    winners: list[str] = field(default_factory=list)
+    tied: bool = False
+
+    @property
+    def votes_cast(self) -> int:
+        return self.total_ballots_cast
+
+    def quorum_met(self, threshold: float) -> bool:
+        if self.total_eligible == 0:
+            return False
+        return self.total_ballots_cast / self.total_eligible >= threshold
+
+
 # ---------------------------------------------------------------------------
 # Pure-layer data containers
 # ---------------------------------------------------------------------------
@@ -104,8 +148,12 @@ class ProposalContext:
     all_delegations: dict[str, dict[Optional[str], DelegationData]]
     # {user_id: {topic_id: priority}}  — lower int = higher priority
     all_precedences: dict[str, dict[str, int]]
-    # {user_id: vote_value}  — ONLY direct votes
+    # {user_id: vote_value}  — ONLY direct votes (binary)
     direct_votes: dict[str, str]
+    # {user_id: Ballot}  — ONLY direct ballots (all methods)
+    direct_ballots: dict[str, Ballot] = field(default_factory=dict)
+    # voting method for the proposal
+    voting_method: str = "binary"
 
 
 # ---------------------------------------------------------------------------
@@ -135,22 +183,35 @@ def find_delegate_pure(
     return user_delegations.get(None)  # global fallback
 
 
+def _get_direct_ballot(user_id: str, ctx: ProposalContext) -> Optional[Ballot]:
+    """Look up a user's direct ballot from the context (any method)."""
+    # Check direct_ballots first (used for all methods in new code)
+    ballot = ctx.direct_ballots.get(user_id)
+    if ballot is not None:
+        return ballot
+    # Fallback to direct_votes for backward compatibility (binary)
+    vote_value = ctx.direct_votes.get(user_id)
+    if vote_value is not None:
+        return Ballot(vote_value=vote_value)
+    return None
+
+
 def resolve_vote_pure(
     user_id: str,
     ctx: ProposalContext,
     _visited: Optional[set[str]] = None,
-) -> Optional[VoteResult]:
+) -> Optional[BallotResult]:
     """
-    Return the effective VoteResult for user_id on the proposal described by
+    Return the effective BallotResult for user_id on the proposal described by
     ctx, or None if the vote cannot be resolved.
 
     Pure function — takes data, returns data, never touches the database.
 
     Steps:
-      1. Direct vote → use it.
+      1. Direct ballot → use it.
       2. Find delegate via topic precedence + global fallback.
-      3. Delegate voted directly → use their vote (non-transitive default).
-      4. Delegate did not vote → apply chain_behavior.
+      3. Delegate has a direct ballot → use it (non-transitive default).
+      4. Delegate has no ballot → apply chain_behavior.
     """
     if _visited is None:
         _visited = set()
@@ -160,11 +221,11 @@ def resolve_vote_pure(
         return None
     _visited.add(user_id)
 
-    # 1. Direct vote
-    direct_value = ctx.direct_votes.get(user_id)
-    if direct_value is not None:
-        return VoteResult(
-            vote_value=direct_value,
+    # 1. Direct ballot
+    direct_ballot = _get_direct_ballot(user_id, ctx)
+    if direct_ballot is not None:
+        return BallotResult(
+            ballot=direct_ballot,
             is_direct=True,
             delegate_chain=[],
             cast_by_id=user_id,
@@ -185,10 +246,10 @@ def resolve_vote_pure(
     delegate_id = delegation.delegate_id
 
     # 3. Did the delegate vote directly?
-    delegate_vote = ctx.direct_votes.get(delegate_id)
-    if delegate_vote is not None:
-        return VoteResult(
-            vote_value=delegate_vote,
+    delegate_ballot = _get_direct_ballot(delegate_id, ctx)
+    if delegate_ballot is not None:
+        return BallotResult(
+            ballot=delegate_ballot,
             is_direct=False,
             delegate_chain=[delegate_id],
             cast_by_id=delegate_id,
@@ -207,10 +268,10 @@ def resolve_vote_pure(
         if sub_delegation is None or sub_delegation.delegate_id in _visited:
             return None
         sub_delegate_id = sub_delegation.delegate_id
-        sub_vote = ctx.direct_votes.get(sub_delegate_id)
-        if sub_vote is not None:
-            return VoteResult(
-                vote_value=sub_vote,
+        sub_ballot = _get_direct_ballot(sub_delegate_id, ctx)
+        if sub_ballot is not None:
+            return BallotResult(
+                ballot=sub_ballot,
                 is_direct=False,
                 delegate_chain=[delegate_id, sub_delegate_id],
                 cast_by_id=sub_delegate_id,
@@ -224,11 +285,21 @@ def resolve_vote_pure(
 def compute_tally_pure(
     user_ids: list[str],
     ctx: ProposalContext,
-) -> ProposalTally:
+) -> ProposalTally | ApprovalTally:
     """
     Compute a full tally by resolving every user's vote.
     Pure function — no DB access.
+    Dispatches on ctx.voting_method.
     """
+    if ctx.voting_method == "approval":
+        return _compute_approval_tally_pure(user_ids, ctx)
+    return _compute_binary_tally_pure(user_ids, ctx)
+
+
+def _compute_binary_tally_pure(
+    user_ids: list[str],
+    ctx: ProposalContext,
+) -> ProposalTally:
     tally = ProposalTally(total_eligible=len(user_ids))
     for uid in user_ids:
         result = resolve_vote_pure(uid, ctx)
@@ -241,6 +312,49 @@ def compute_tally_pure(
         elif result.vote_value == "abstain":
             tally.abstain += 1
     return tally
+
+
+def _compute_approval_tally_pure(
+    user_ids: list[str],
+    ctx: ProposalContext,
+) -> ApprovalTally:
+    """Compute approval tally: count how many ballots approve each option."""
+    option_approvals: dict[str, int] = {}
+    total_ballots_cast = 0
+    total_abstain = 0
+    not_cast = 0
+
+    for uid in user_ids:
+        result = resolve_vote_pure(uid, ctx)
+        if result is None:
+            not_cast += 1
+            continue
+        total_ballots_cast += 1
+        approvals = result.ballot.approvals
+        if approvals is not None:
+            if len(approvals) == 0:
+                total_abstain += 1
+            else:
+                for oid in approvals:
+                    option_approvals[oid] = option_approvals.get(oid, 0) + 1
+
+    # Determine winners: option(s) with highest approval count
+    winners: list[str] = []
+    tied = False
+    if option_approvals:
+        max_approvals = max(option_approvals.values())
+        winners = [oid for oid, count in option_approvals.items() if count == max_approvals]
+        tied = len(winners) > 1
+
+    return ApprovalTally(
+        option_approvals=option_approvals,
+        total_ballots_cast=total_ballots_cast,
+        total_abstain=total_abstain,
+        not_cast=not_cast,
+        total_eligible=len(user_ids),
+        winners=winners,
+        tied=tied,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +485,7 @@ class DelegationService:
         into a ProposalContext.
         """
         proposal_topics = [pt.topic_id for pt in proposal.proposal_topics]
+        voting_method = getattr(proposal, "voting_method", "binary") or "binary"
 
         # All delegations indexed by delegator → topic_id
         all_delegations: dict[str, dict[Optional[str], DelegationData]] = {}
@@ -388,19 +503,28 @@ class DelegationService:
         for row in db.query(models.TopicPrecedence).all():
             all_precedences.setdefault(row.user_id, {})[row.topic_id] = row.priority
 
-        # Direct votes for this proposal only
+        # Direct votes/ballots for this proposal only
         direct_votes: dict[str, str] = {}
+        direct_ballots: dict[str, Ballot] = {}
         for row in db.query(models.Vote).filter(
             models.Vote.proposal_id == proposal.id,
             models.Vote.is_direct.is_(True),
         ).all():
-            direct_votes[row.user_id] = row.vote_value
+            if voting_method == "approval":
+                ballot_data = row.ballot or {}
+                approvals = ballot_data.get("approvals", [])
+                direct_ballots[row.user_id] = Ballot(approvals=approvals)
+            else:
+                if row.vote_value is not None:
+                    direct_votes[row.user_id] = row.vote_value
 
         return ProposalContext(
             proposal_topics=proposal_topics,
             all_delegations=all_delegations,
             all_precedences=all_precedences,
             direct_votes=direct_votes,
+            direct_ballots=direct_ballots,
+            voting_method=voting_method,
         )
 
     # ------------------------------------------------------------------
@@ -471,18 +595,28 @@ class DelegationService:
         return compute_tally_pure(all_user_ids, ctx)
 
     @staticmethod
-    def _get_strategy(user: models.User) -> str:
+    def _get_strategy(user: models.User, voting_method: str = "binary") -> str:
         """
         Read user's delegation_strategy.  Only 'strict_precedence' is
         implemented; anything else falls back with a warning.
+        Non-strict-precedence strategies always fall back to
+        strict_precedence for approval proposals.
         """
         strategy = getattr(user, "delegation_strategy", "strict_precedence")
         if strategy != "strict_precedence":
-            log.warning(
-                "Unknown delegation_strategy %r for user %s — falling back to strict_precedence",
-                strategy,
-                user.id,
-            )
+            if voting_method == "approval":
+                log.info(
+                    "Non-strict-precedence strategy %r for user %s falls back to "
+                    "strict_precedence for approval proposal",
+                    strategy,
+                    user.id,
+                )
+            else:
+                log.warning(
+                    "Unknown delegation_strategy %r for user %s — falling back to strict_precedence",
+                    strategy,
+                    user.id,
+                )
         return "strict_precedence"
 
 
