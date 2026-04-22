@@ -3,6 +3,7 @@ import { AuthProvider } from './AuthContext';
 import { OrgProvider } from './OrgContext';
 import ProtectedRoute from './ProtectedRoute';
 import AdminRoute from './AdminRoute';
+import AdminOnlyRoute from './AdminOnlyRoute';
 import Nav from './components/Nav';
 import EmailVerificationBanner from './components/EmailVerificationBanner';
 import Login from './pages/Login';
@@ -131,9 +132,9 @@ export default function App() {
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <AdminRoute>
+                <AdminOnlyRoute>
                   <Layout><OrgSettings /></Layout>
-                </AdminRoute>
+                </AdminOnlyRoute>
               </OrgProvider>
             </ProtectedRoute>
           }
@@ -179,9 +180,9 @@ export default function App() {
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <AdminRoute>
+                <AdminOnlyRoute>
                   <Layout><DelegateApplications /></Layout>
-                </AdminRoute>
+                </AdminOnlyRoute>
               </OrgProvider>
             </ProtectedRoute>
           }
@@ -191,9 +192,9 @@ export default function App() {
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <AdminRoute>
+                <AdminOnlyRoute>
                   <Layout><Analytics /></Layout>
-                </AdminRoute>
+                </AdminOnlyRoute>
               </OrgProvider>
             </ProtectedRoute>
           }
