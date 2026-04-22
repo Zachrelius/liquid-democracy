@@ -677,17 +677,51 @@ New Suite H in `browser_testing_playbook.md` covers all Phase 4 regressions: H1-
 
 ---
 
+## Phase 5 — Permission-Alignment and Dialog Replacement ✅ Complete
+
+Four frontend fixes closing permission-alignment gaps and replacing blocking dialogs. No new features. See `phase5_spec.md` for full spec.
+
+### Fix 1: Admin Route Guard (`7986431`)
+
+Created `AdminOnlyRoute` component checking `isAdmin`. Wrapped `/admin/settings`, `/admin/delegates`, `/admin/analytics` with it. Moderators navigating to admin-only routes redirect to `/proposals`. `AdminRoute` (moderator-accessible) kept for `/admin/members`, `/admin/proposals`, `/admin/topics`.
+
+### Fix 2: Members Page for Moderators (`81dc803`)
+
+Decoupled members + invitations fetch in Members.jsx. Members fetch runs always; invitations fetch gated on `isAdmin`. Added ErrorMessage on members fetch failure. Gated Reactivate button behind `isAdmin`. **Note:** Frontend coupling bug is fixed, but QA Suite I found the backend `/members` endpoint itself returns empty for moderator users — a separate backend filtering issue. Logged below as ongoing tech debt.
+
+### Fix 3: Unverified User Controls (`5e1a44a`)
+
+Disabled vote and delegate action buttons for unverified users with "Verify your email" messages in ProposalDetail.jsx, Delegations.jsx, and DelegateModal.jsx. `email_verified` was already exposed on the user object — no backend changes needed. Backend enforcement untouched (defense in depth).
+
+### Fix 4: Dialog Replacement (`a037947`)
+
+Created Toast (ToastProvider + useToast hook) and ConfirmDialog (ConfirmProvider + useConfirm hook) components. Replaced 27 callsites: 21 alert() → toast.error(), 6 window.confirm() → await confirm(). Grep verification: zero hits for alert(, window.confirm, window.alert, window.prompt in frontend/src.
+
+### Browser Tests — Suite I: 9/10 passing
+
+New Suite I in `browser_testing_playbook.md`. I4 (members page for moderator) fails due to pre-existing backend filtering issue, not a Phase 5 regression. All other tests pass including I10 regression checks against Suite H.
+
+### Backend Tests — 96/96 passing (no regressions)
+
+---
+
 ## Technical Debt / Follow-up Issues
 
-Items identified during Phase 4 Cleanup that are out of scope for this pass:
+### Resolved in Phase 5
+- ~~**Admin route guard too permissive for moderators**~~ — Fixed: `AdminOnlyRoute` component now gates admin-only pages.
+- ~~**Unverified user UX**~~ — Fixed: Vote/delegate buttons disabled for unverified users with explanation text.
+- ~~**Members page empty for moderators (frontend coupling)**~~ — Fixed: Decoupled fetch. Backend filtering issue remains (see below).
 
-- **PostgreSQL dual-DB testing**: All tests run on SQLite only. The JSON mutation bug (Fix 1) is exactly the kind of issue that manifests differently across databases. Medium-term: add CI configuration running tests against both SQLite and PostgreSQL.
-- **URL routing refactor**: Frontend uses flat URLs with org context in React state/localStorage. Original spec called for path-based org URLs (`/boston-ea/proposals`). Deferred to Phase 4e.
-- **Browser testing playbook gaps**: Suites E-G (Phase 4b/4c/4d) were executed ad-hoc but never committed to `browser_testing_playbook.md`. Going forward, Suite H and all future suites are committed artifacts.
-- **No CI/CD pipeline**: Tests run manually. Should be automated on push.
-- **Rate limiting limited to auth endpoints**: Most API endpoints have no rate limiting (only auth endpoints use slowapi).
-- **WebSocket endpoint unused**: Exists in backend but no frontend component connects to it.
-- **Unverified user UX**: Vote/delegate buttons are visible and clickable for unverified users; backend correctly blocks the action with an error message, but buttons should be disabled in the frontend for better UX.
-- **Admin route guard too permissive for moderators**: `AdminRoute` checks `isModeratorOrAdmin`, so moderators can access `/admin/settings` via direct URL even though it's hidden from nav. Backend blocks unauthorized saves, but the frontend route should distinguish admin-only pages.
-- **Members page empty for moderators**: Admin Members page shows 0 members when viewed by a moderator. Likely a backend query or permission filtering issue — moderators should see the member list (they can suspend members).
-- **Edit Draft UX incomplete**: "Edit Draft" button in admin Proposal Management navigates to the read-only proposal detail page rather than an inline edit form. The PATCH endpoint works, but the frontend edit UI needs a proper form.
+### Open Items
+- **Members page backend filtering for moderators**: Backend `/api/orgs/{slug}/members` endpoint returns empty for moderator users. The frontend coupling bug is fixed (Phase 5 Fix 2), but the backend query or permission check additionally filters results. Moderators should see the member list since they can suspend members.
+- **Email verification endpoint returns 500**: `POST /api/auth/verify-email` returns a server error. Pre-existing bug found during Suite I testing. Needs backend investigation.
+- **New user registration doesn't auto-join org**: When join_policy is approval_required, newly registered users aren't added to the org pending approval. Pre-existing.
+- **Toast success gap**: Some success paths (e.g., topic creation) close the form without calling toast.success(). Inconsistent — some actions toast, others don't.
+- **PostgreSQL dual-DB testing**: All tests run on SQLite only. Medium-term: add CI running against both.
+- **URL routing refactor**: Frontend uses flat URLs with org context in React state. Deferred to Phase 4e.
+- **Browser testing playbook gaps**: Suites E-G were ad-hoc, not committed. Suite H+ are committed artifacts.
+- **No CI/CD pipeline**: Tests run manually.
+- **Rate limiting limited to auth endpoints**: Most endpoints have no rate limiting.
+- **WebSocket endpoint unused**: Exists in backend but no frontend connects.
+- **Edit Draft UX incomplete**: "Edit Draft" navigates to read-only view. Needs inline edit form.
+- **Blocking JavaScript dialogs are gone**: Toast/ConfirmDialog components in place. Further UX improvements (positioning, animations, keyboard shortcuts beyond Esc/Enter) deferred.
