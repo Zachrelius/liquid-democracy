@@ -27,7 +27,9 @@ router = APIRouter(prefix="/api/orgs", tags=["organizations"])
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    """Naive UTC datetime — SQLite strips timezone info on storage, so
+    comparisons between stored and fresh values must both be naive."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 DEFAULT_ORG_SETTINGS = {

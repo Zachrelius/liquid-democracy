@@ -18,7 +18,9 @@ INTENT_EXPIRY_DAYS = 30
 
 
 def _now():
-    return datetime.now(timezone.utc)
+    """Naive UTC datetime — SQLite strips timezone info on storage, so
+    comparisons between stored and fresh values must both be naive."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 @router.get("", response_model=list[schemas.DelegationOut])

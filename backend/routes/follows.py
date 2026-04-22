@@ -17,7 +17,9 @@ router = APIRouter(prefix="/api/follows", tags=["follows"])
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    """Naive UTC datetime — SQLite strips timezone info on storage, so
+    comparisons between stored and fresh values must both be naive."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _revoke_dependent_delegations(

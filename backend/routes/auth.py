@@ -20,7 +20,9 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    """Naive UTC datetime — SQLite strips timezone info on storage, so
+    comparisons between stored and fresh values must both be naive."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _create_refresh_token(db: Session, user_id: str) -> str:

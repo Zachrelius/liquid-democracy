@@ -13,7 +13,7 @@ from tests.conftest import make_user, make_topic, make_proposal, set_delegation
 
 
 def _now():
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _make_follow_request(db, requester, target, status="pending"):
