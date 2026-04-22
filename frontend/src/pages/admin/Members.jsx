@@ -126,18 +126,17 @@ export default function Members() {
   const load = useCallback(async () => {
     if (!slug) return;
     try {
-      const [mems, invs] = await Promise.all([
-        api.get(`/api/orgs/${slug}/members`),
-        api.get(`/api/orgs/${slug}/invitations`),
-      ]);
+      const mems = await api.get(`/api/orgs/${slug}/members`);
       const active = mems.filter(m => m.status !== 'pending_approval');
       const pending = mems.filter(m => m.status === 'pending_approval');
       setMembers(active);
       setPendingRequests(pending);
+    } catch { /* ignore */ }
+    try {
+      const invs = await api.get(`/api/orgs/${slug}/invitations`);
       setInvitations(invs);
-    } catch { /* ignore */ } finally {
-      setLoading(false);
-    }
+    } catch { /* moderators don't have invitation access */ }
+    setLoading(false);
   }, [slug]);
 
   useEffect(() => { load(); }, [load]);

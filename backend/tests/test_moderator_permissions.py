@@ -102,6 +102,28 @@ def _auth_header(user: models.User) -> dict:
 
 # ---- Moderator CAN do ----
 
+def test_moderator_can_list_members(client, test_db):
+    """Moderator calls GET /api/orgs/{slug}/members and gets a populated list."""
+    org = _create_org(test_db)
+    owner = _create_user(test_db, "owner")
+    _create_membership(test_db, org, owner, role="owner")
+    moderator = _create_user(test_db, "mod")
+    _create_membership(test_db, org, moderator, role="moderator")
+    member = _create_user(test_db, "member1")
+    _create_membership(test_db, org, member, role="member")
+    test_db.commit()
+
+    resp = client.get(
+        "/api/orgs/test-org/members",
+        headers=_auth_header(moderator),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 3
+    usernames = {m["username"] for m in data}
+    assert usernames == {"owner", "mod", "member1"}
+
+
 def test_moderator_can_approve_join_request(client, test_db):
     org = _create_org(test_db)
     moderator = _create_user(test_db, "mod")
