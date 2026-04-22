@@ -54,6 +54,7 @@ export default function Topics() {
     e.preventDefault();
     try {
       await api.post(`/api/orgs/${slug}/topics`, { name: newName, description: newDesc, color: newColor });
+      toast.success('Topic created');
       setNewName('');
       setNewDesc('');
       setNewColor('#6366f1');
@@ -67,6 +68,7 @@ export default function Topics() {
   async function handleUpdate(topicId) {
     try {
       await api.patch(`/api/orgs/${slug}/topics/${topicId}`, { name: editName, description: editDesc, color: editColor });
+      toast.success('Topic updated');
       setEditingId(null);
       load();
     } catch (err) {
@@ -83,6 +85,7 @@ export default function Topics() {
     if (!ok) return;
     try {
       await api.delete(`/api/orgs/${slug}/topics/${topicId}`);
+      toast.success('Topic deactivated');
       load();
     } catch (err) {
       toast.error(err.message);

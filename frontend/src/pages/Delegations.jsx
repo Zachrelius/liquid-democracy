@@ -177,6 +177,7 @@ export default function Delegations() {
     if (!ok) return;
     try {
       await api.delete(`/api/delegations/${topicId}`);
+      toast.success('Delegation removed');
       load();
     } catch (e) {
       toast.error(e.message);

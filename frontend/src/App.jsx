@@ -26,6 +26,7 @@ import ProposalManagement from './pages/admin/ProposalManagement';
 import Topics from './pages/admin/Topics';
 import DelegateApplications from './pages/admin/DelegateApplications';
 import Analytics from './pages/admin/Analytics';
+import VotingMethodsHelp from './pages/VotingMethodsHelp';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 
@@ -199,6 +200,17 @@ export default function App() {
                 <AdminOnlyRoute>
                   <Layout><Analytics /></Layout>
                 </AdminOnlyRoute>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/help/voting-methods"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><VotingMethodsHelp /></Layout>
               </OrgProvider>
             </ProtectedRoute>
           }

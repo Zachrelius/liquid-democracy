@@ -167,13 +167,23 @@ export default function UserProfile() {
                       </Link>
                     </td>
                     <td className="px-4 py-3">
-                      <span className={`text-sm font-medium ${
-                        v.vote_value === 'yes' ? 'text-[#2D8A56]'
-                          : v.vote_value === 'no' ? 'text-[#C0392B]'
-                          : 'text-gray-500'
-                      }`}>
-                        {v.vote_value?.toUpperCase()}
-                      </span>
+                      {v.vote_value ? (
+                        <span className={`text-sm font-medium ${
+                          v.vote_value === 'yes' ? 'text-[#2D8A56]'
+                            : v.vote_value === 'no' ? 'text-[#C0392B]'
+                            : 'text-gray-500'
+                        }`}>
+                          {v.vote_value.toUpperCase()}
+                        </span>
+                      ) : v.ballot ? (
+                        <span className="text-sm font-medium text-purple-600">
+                          {v.ballot.approvals?.length > 0
+                            ? `Approved ${v.ballot.approvals.length} option${v.ballot.approvals.length !== 1 ? 's' : ''}`
+                            : 'Abstained'}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-gray-400">-</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-400">
                       {v.cast_at ? new Date(v.cast_at).toLocaleDateString() : ''}

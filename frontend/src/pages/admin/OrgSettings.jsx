@@ -37,6 +37,7 @@ export default function OrgSettings() {
         settings,
       });
       await refreshOrgs();
+      toast.success('Settings saved');
       setMsg('Settings saved');
       setTimeout(() => setMsg(''), 3000);
     } catch (e) {
@@ -169,6 +170,45 @@ export default function OrgSettings() {
               />
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* Voting Methods */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Voting Methods</h2>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+          <label className="flex items-center gap-3">
+            <input type="checkbox" checked disabled className="accent-[#2E75B6]" />
+            <div>
+              <span className="text-sm text-gray-700">Binary (Yes/No/Abstain)</span>
+              <p className="text-xs text-gray-400">Always enabled. Standard yes/no voting.</p>
+            </div>
+          </label>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={(settings.allowed_voting_methods || ['binary']).includes('approval')}
+              onChange={e => {
+                const current = settings.allowed_voting_methods || ['binary'];
+                const updated = e.target.checked
+                  ? [...new Set([...current, 'approval'])]
+                  : current.filter(m => m !== 'approval');
+                updateSetting('allowed_voting_methods', updated);
+              }}
+              className="accent-[#2E75B6]"
+            />
+            <div>
+              <span className="text-sm text-gray-700">Approval Voting</span>
+              <p className="text-xs text-gray-400">Voters approve any number of options. Best for multi-option decisions.</p>
+            </div>
+          </label>
+          <label className="flex items-center gap-3 opacity-50 cursor-not-allowed">
+            <input type="checkbox" disabled className="accent-[#2E75B6]" />
+            <div>
+              <span className="text-sm text-gray-400">Ranked Choice</span>
+              <p className="text-xs text-gray-400">Coming soon. Voters rank options in preference order.</p>
+            </div>
+          </label>
         </div>
       </section>
 

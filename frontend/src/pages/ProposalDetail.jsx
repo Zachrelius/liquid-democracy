@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../AuthContext';
+import { useOrg } from '../OrgContext';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
 import StatusBadge from '../components/StatusBadge';
 import TopicBadge from '../components/TopicBadge';
 import VoteBar from '../components/VoteBar';
@@ -58,7 +61,302 @@ function VoteButtons({ onVote, casting, currentValue, disabled }) {
   );
 }
 
+function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerified }) {
+  const confirm = useConfirm();
+  const toast = useToast();
+  const [selected, setSelected] = useState([]);
+  const [showBallot, setShowBallot] = useState(false);
+  const [casting, setCasting] = useState(false);
+  const [err, setErr] = useState('');
+
+  const hasVote = myVote?.approvals != null;
+  const isDirect = myVote?.is_direct;
+  const unverified = !emailVerified;
+  const options = proposal.options || [];
+
+  function toggleOption(optionId) {
+    setSelected(prev =>
+      prev.includes(optionId)
+        ? prev.filter(id => id !== optionId)
+        : [...prev, optionId]
+    );
+  }
+
+  async function submitBallot() {
+    if (selected.length === 0) {
+      const ok = await confirm({
+        title: 'Submit Empty Ballot?',
+        message: "You haven't approved any options. Submitting now counts as an abstention \u2014 you're saying you don't support any of them. This is different from not voting at all. Continue?",
+        destructive: false,
+      });
+      if (!ok) return;
+    }
+    setCasting(true);
+    setErr('');
+    try {
+      await api.post(`/api/proposals/${proposalId}/vote`, { approvals: selected });
+      toast.success(selected.length > 0 ? 'Ballot submitted' : 'Abstention recorded');
+      setShowBallot(false);
+      onVoteChange();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setCasting(false);
+    }
+  }
+
+  async function retractVote() {
+    setCasting(true);
+    setErr('');
+    try {
+      await api.delete(`/api/proposals/${proposalId}/vote`);
+      toast.success('Vote retracted');
+      setShowBallot(false);
+      onVoteChange();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setCasting(false);
+    }
+  }
+
+  // Build label lookup
+  const optionMap = {};
+  options.forEach(o => { optionMap[o.id] = o; });
+
+  return (
+    <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+      <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Your Ballot</h3>
+
+      {unverified && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Verify your email to vote.
+        </p>
+      )}
+
+      {hasVote && !showBallot ? (
+        <div>
+          {isDirect ? (
+            myVote.approvals.length > 0 ? (
+              <div>
+                <p className="text-sm font-medium text-[#2D8A56] mb-1">You approved:</p>
+                <ul className="text-sm text-gray-700 list-disc list-inside">
+                  {myVote.approvals.map(oid => (
+                    <li key={oid}>{optionMap[oid]?.label || oid}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">You abstained (approved no options)</p>
+            )
+          ) : (
+            <div>
+              <p className="text-sm text-gray-500 mb-1">
+                Via {myVote.cast_by ? <UserLink user={myVote.cast_by} className="text-sm" /> : 'delegate'}
+                {myVote.delegate_chain?.length > 1 ? ' (chain)' : ''}
+              </p>
+              {myVote.approvals.length > 0 ? (
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Delegate approved:</p>
+                  <ul className="text-sm text-gray-700 list-disc list-inside">
+                    {myVote.approvals.map(oid => (
+                      <li key={oid}>{optionMap[oid]?.label || oid}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p className="text-xs text-gray-400">Delegate abstained (approved no options)</p>
+              )}
+            </div>
+          )}
+
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={() => { setSelected(isDirect ? [...myVote.approvals] : []); setShowBallot(true); }}
+              disabled={unverified}
+              className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
+            >
+              {isDirect ? 'Change Ballot' : 'Override \u2014 Vote Directly'}
+            </button>
+            {isDirect && (
+              <button onClick={retractVote} disabled={casting || unverified}
+                className="text-xs px-3 py-1.5 border border-gray-300 text-gray-500 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50">
+                Retract
+              </button>
+            )}
+          </div>
+        </div>
+      ) : !hasVote && !showBallot ? (
+        <div>
+          <p className="text-gray-500 text-sm mb-3">
+            {myVote?.message || 'No ballot cast'}
+          </p>
+          <button
+            onClick={() => { setSelected([]); setShowBallot(true); }}
+            disabled={unverified}
+            className="text-sm px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+          >
+            Cast Ballot
+          </button>
+        </div>
+      ) : null}
+
+      {showBallot && (
+        <div className="space-y-2">
+          <p className="text-xs text-gray-500">Select all options you approve of:</p>
+          {options.map(opt => (
+            <label key={opt.id} className="flex items-start gap-3 p-2 rounded-lg hover:bg-gray-100 cursor-pointer transition-colors">
+              <input
+                type="checkbox"
+                checked={selected.includes(opt.id)}
+                onChange={() => toggleOption(opt.id)}
+                disabled={unverified}
+                className="mt-0.5 accent-[#2E75B6]"
+              />
+              <div>
+                <span className="text-sm font-medium text-gray-800">{opt.label}</span>
+                {opt.description && <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>}
+              </div>
+            </label>
+          ))}
+          <div className="flex gap-2 pt-2">
+            <button
+              onClick={submitBallot}
+              disabled={casting || unverified}
+              className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+            >
+              {casting ? 'Submitting...' : `Submit Ballot${selected.length > 0 ? ` (${selected.length} selected)` : ''}`}
+            </button>
+            <button
+              onClick={() => setShowBallot(false)}
+              className="text-xs text-gray-400 hover:text-gray-600 px-2"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {err && <p className="text-xs text-red-600">{err}</p>}
+    </div>
+  );
+}
+
+function ApprovalResultsPanel({ tally, proposal }) {
+  const { currentOrg, isAdmin } = useOrg();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const [resolving, setResolving] = useState(false);
+
+  if (!tally || !tally.option_approvals) return null;
+
+  const options = proposal.options || [];
+  const optionLabels = tally.option_labels || {};
+  const optionApprovals = tally.option_approvals || {};
+  const maxApprovals = Math.max(1, ...Object.values(optionApprovals));
+  const winners = tally.winners || [];
+  const tied = tally.tied;
+  const tieResolution = tally.tie_resolution || proposal.tie_resolution;
+
+  async function handleResolveTie(optionId) {
+    const label = optionLabels[optionId] || optionId;
+    const ok = await confirm({
+      title: 'Resolve Tie',
+      message: `Select "${label}" as the winning option? This cannot be undone.`,
+      destructive: false,
+    });
+    if (!ok) return;
+    setResolving(true);
+    try {
+      await api.post(`/api/orgs/${currentOrg.slug}/proposals/${proposal.id}/resolve-tie`, {
+        selected_option_id: optionId,
+      });
+      toast.success('Tie resolved');
+      window.location.reload();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setResolving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Approval Results</h3>
+
+      {/* Tie banners */}
+      {tied && !tieResolution && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+          <p className="text-sm font-medium text-amber-800">
+            Tied result \u2014 {winners.length} options received {optionApprovals[winners[0]]} approvals each
+          </p>
+          {isAdmin && (
+            <div className="mt-2 space-y-1">
+              <p className="text-xs text-amber-700">As admin, select the winning option:</p>
+              <div className="flex flex-wrap gap-2">
+                {winners.map(wid => (
+                  <button key={wid} onClick={() => handleResolveTie(wid)} disabled={resolving}
+                    className="text-xs px-3 py-1 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50">
+                    {optionLabels[wid] || wid}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {tieResolution && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <p className="text-sm text-blue-800">
+            Tie resolved. Selected winner: <strong>{optionLabels[tieResolution.selected_option_id] || tieResolution.selected_option_id}</strong>
+            {tieResolution.resolved_at && <span className="text-xs text-blue-600 ml-1">on {new Date(tieResolution.resolved_at).toLocaleDateString()}</span>}
+          </p>
+        </div>
+      )}
+
+      {/* Horizontal bar chart */}
+      <div className="space-y-2">
+        {options.map(opt => {
+          const count = optionApprovals[opt.id] || 0;
+          const pct = maxApprovals > 0 ? (count / maxApprovals) * 100 : 0;
+          const isWinner = winners.includes(opt.id);
+          const isSelectedWinner = tieResolution?.selected_option_id === opt.id;
+          return (
+            <div key={opt.id}>
+              <div className="flex items-center justify-between text-sm mb-0.5">
+                <span className={`font-medium ${isWinner || isSelectedWinner ? 'text-[#2D8A56]' : 'text-gray-700'}`}>
+                  {opt.label}
+                  {isSelectedWinner && ' \u2605'}
+                  {isWinner && !tieResolution && ' \u2713'}
+                </span>
+                <span className="text-xs text-gray-500">{count} approval{count !== 1 ? 's' : ''}</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-4">
+                <div
+                  className={`h-4 rounded-full transition-all ${isWinner || isSelectedWinner ? 'bg-[#2D8A56]' : 'bg-[#2E75B6]'}`}
+                  style={{ width: `${pct}%`, minWidth: count > 0 ? '4px' : '0' }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Summary stats */}
+      <div className="text-sm text-gray-500 space-y-1">
+        <p>{tally.total_ballots_cast ?? 0} ballot{(tally.total_ballots_cast ?? 0) !== 1 ? 's' : ''} cast
+          {tally.total_eligible > 0 && ` of ${tally.total_eligible} eligible (${((tally.total_ballots_cast / tally.total_eligible) * 100).toFixed(1)}%)`}
+        </p>
+        {(tally.total_abstain ?? 0) > 0 && (
+          <p>{tally.total_abstain} empty ballot{tally.total_abstain !== 1 ? 's' : ''} (abstain)</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function VoteStatusBox({ myVote, proposalId, onVoteChange, emailVerified }) {
+  const toast = useToast();
   const [showButtons, setShowButtons] = useState(false);
   const [casting, setCasting] = useState(false);
   const [err, setErr] = useState('');
@@ -71,6 +369,7 @@ function VoteStatusBox({ myVote, proposalId, onVoteChange, emailVerified }) {
     setErr('');
     try {
       await api.post(`/api/proposals/${proposalId}/vote`, { vote_value: value });
+      toast.success(`Voted ${value}`);
       setShowButtons(false);
       onVoteChange();
     } catch (e) {
@@ -85,6 +384,7 @@ function VoteStatusBox({ myVote, proposalId, onVoteChange, emailVerified }) {
     setErr('');
     try {
       await api.delete(`/api/proposals/${proposalId}/vote`);
+      toast.success('Vote retracted');
       setShowButtons(false);
       onVoteChange();
     } catch (e) {
@@ -313,6 +613,9 @@ export default function ProposalDetail() {
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-3">
               <StatusBadge status={proposal.status} />
+              {proposal.voting_method === 'approval' && (
+                <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Approval Vote</span>
+              )}
               {proposal.topics?.map(pt => (
                 <TopicBadge key={pt.topic_id} topic={pt.topic} relevance={pt.relevance} />
               ))}
@@ -338,10 +641,30 @@ export default function ProposalDetail() {
             <p className="text-gray-400 italic text-sm">No description provided.</p>
           )}
 
+          {/* Options list for approval proposals (visible in all states) */}
+          {proposal.voting_method === 'approval' && proposal.options?.length > 0 && !isVoting && (
+            <div className="bg-white border border-gray-200 rounded-xl p-5">
+              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Options</h3>
+              <div className="space-y-2">
+                {proposal.options.map((opt, idx) => (
+                  <div key={opt.id} className="flex items-start gap-3 p-2 bg-gray-50 rounded-lg">
+                    <span className="text-xs text-gray-400 mt-0.5">{idx + 1}.</span>
+                    <div>
+                      <span className="text-sm font-medium text-gray-800">{opt.label}</span>
+                      {opt.description && <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Results (desktop: shown inline; mobile: shown below vote panel) */}
           {(isVoting || isClosed) && tally && (
             <div className="lg:hidden bg-white border border-gray-200 rounded-xl p-5">
-              <ResultsPanel tally={tally} proposal={proposal} />
+              {proposal.voting_method === 'approval'
+                ? <ApprovalResultsPanel tally={tally} proposal={proposal} />
+                : <ResultsPanel tally={tally} proposal={proposal} />}
             </div>
           )}
 
@@ -400,12 +723,22 @@ export default function ProposalDetail() {
           {/* Vote panel */}
           {isVoting && (
             <div className="bg-white border border-gray-200 rounded-xl p-5">
-              <VoteStatusBox
-                myVote={myVote}
-                proposalId={id}
-                onVoteChange={refreshVote}
-                emailVerified={user?.email_verified}
-              />
+              {proposal.voting_method === 'approval' ? (
+                <ApprovalBallot
+                  proposal={proposal}
+                  myVote={myVote}
+                  proposalId={id}
+                  onVoteChange={refreshVote}
+                  emailVerified={user?.email_verified}
+                />
+              ) : (
+                <VoteStatusBox
+                  myVote={myVote}
+                  proposalId={id}
+                  onVoteChange={refreshVote}
+                  emailVerified={user?.email_verified}
+                />
+              )}
             </div>
           )}
 
@@ -423,7 +756,9 @@ export default function ProposalDetail() {
           {/* Results (desktop sidebar) */}
           {(isVoting || isClosed) && tally && (
             <div className="hidden lg:block bg-white border border-gray-200 rounded-xl p-5">
-              <ResultsPanel tally={tally} proposal={proposal} />
+              {proposal.voting_method === 'approval'
+                ? <ApprovalResultsPanel tally={tally} proposal={proposal} />
+                : <ResultsPanel tally={tally} proposal={proposal} />}
             </div>
           )}
 

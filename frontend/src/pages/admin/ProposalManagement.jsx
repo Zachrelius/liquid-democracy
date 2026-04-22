@@ -1,18 +1,117 @@
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
 import StatusBadge from '../../components/StatusBadge';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 
+function OptionsEditor({ options, onChange }) {
+  function updateOption(idx, field, value) {
+    const updated = options.map((o, i) => i === idx ? { ...o, [field]: value } : o);
+    onChange(updated);
+  }
+
+  function addOption() {
+    if (options.length >= 20) return;
+    onChange([...options, { label: '', description: '' }]);
+  }
+
+  function removeOption(idx) {
+    onChange(options.filter((_, i) => i !== idx));
+  }
+
+  function moveOption(idx, direction) {
+    const newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= options.length) return;
+    const updated = [...options];
+    [updated[idx], updated[newIdx]] = [updated[newIdx], updated[idx]];
+    onChange(updated);
+  }
+
+  // Check for duplicate labels (case-insensitive)
+  const labelCounts = {};
+  options.forEach(o => {
+    const key = o.label.trim().toLowerCase();
+    if (key) labelCounts[key] = (labelCounts[key] || 0) + 1;
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <label className="block text-xs text-gray-500">
+          Options ({options.length}/20)
+          {options.length < 2 && <span className="text-amber-600 ml-2">Minimum 2 required</span>}
+        </label>
+        <button
+          type="button"
+          onClick={addOption}
+          disabled={options.length >= 20}
+          className="text-xs px-3 py-1 bg-[#2E75B6] text-white rounded-lg hover:bg-[#1B3A5C] transition-colors disabled:opacity-50"
+        >
+          Add Option
+        </button>
+      </div>
+      {options.map((opt, idx) => {
+        const isDuplicate = opt.label.trim() && labelCounts[opt.label.trim().toLowerCase()] > 1;
+        return (
+          <div key={idx} className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-400 w-6">{idx + 1}.</span>
+              <input
+                type="text"
+                value={opt.label}
+                onChange={e => updateOption(idx, 'label', e.target.value)}
+                placeholder="Option label (required)"
+                maxLength={200}
+                className={`flex-1 px-2 py-1.5 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] ${isDuplicate ? 'border-red-400' : 'border-gray-300'}`}
+              />
+              <div className="flex gap-1">
+                <button type="button" onClick={() => moveOption(idx, -1)} disabled={idx === 0}
+                  className="text-gray-400 hover:text-gray-600 disabled:opacity-30 text-xs px-1">
+                  &#x25b2;
+                </button>
+                <button type="button" onClick={() => moveOption(idx, 1)} disabled={idx === options.length - 1}
+                  className="text-gray-400 hover:text-gray-600 disabled:opacity-30 text-xs px-1">
+                  &#x25bc;
+                </button>
+              </div>
+              <button type="button" onClick={() => removeOption(idx)}
+                className="text-red-400 hover:text-red-600 text-sm px-1">
+                &#x2715;
+              </button>
+            </div>
+            {isDuplicate && <p className="text-xs text-red-500 ml-8">Duplicate label</p>}
+            <textarea
+              value={opt.description}
+              onChange={e => updateOption(idx, 'description', e.target.value)}
+              placeholder="Description (optional)"
+              maxLength={2000}
+              rows={2}
+              className="w-full ml-8 px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+              style={{ width: 'calc(100% - 2rem)' }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) {
+  const toast = useToast();
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [votingMethod, setVotingMethod] = useState('binary');
+  const [options, setOptions] = useState([{ label: '', description: '' }, { label: '', description: '' }]);
   const [selectedTopics, setSelectedTopics] = useState([]);
   const [passThreshold, setPassThreshold] = useState(orgSettings?.default_pass_threshold ?? 0.5);
   const [quorumThreshold, setQuorumThreshold] = useState(orgSettings?.default_quorum_threshold ?? 0.4);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  const allowedMethods = orgSettings?.allowed_voting_methods || ['binary'];
+  const approvalAllowed = allowedMethods.includes('approval');
 
   function toggleTopic(topicId) {
     setSelectedTopics(prev => {
@@ -28,18 +127,40 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
     ));
   }
 
+  // Validation for approval options
+  const hasDuplicateLabels = (() => {
+    if (votingMethod !== 'approval') return false;
+    const labels = options.map(o => o.label.trim().toLowerCase()).filter(Boolean);
+    return new Set(labels).size !== labels.length;
+  })();
+
+  const optionsValid = votingMethod !== 'approval' || (
+    options.length >= 2 &&
+    options.every(o => o.label.trim()) &&
+    !hasDuplicateLabels
+  );
+
   async function handleSubmit(e) {
     e.preventDefault();
     setSaving(true);
     setError('');
     try {
-      await api.post(`/api/orgs/${slug}/proposals`, {
+      const payload = {
         title,
         body,
         topics: selectedTopics,
         pass_threshold: passThreshold,
         quorum_threshold: quorumThreshold,
-      });
+        voting_method: votingMethod,
+      };
+      if (votingMethod === 'approval') {
+        payload.options = options.map(o => ({
+          label: o.label.trim(),
+          description: o.description.trim(),
+        }));
+      }
+      await api.post(`/api/orgs/${slug}/proposals`, payload);
+      toast.success('Proposal created');
       onCreated();
     } catch (err) {
       setError(err.message || 'Failed to create proposal');
@@ -51,6 +172,33 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
   return (
     <form onSubmit={handleSubmit} className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
       <h3 className="text-lg font-semibold text-[#1B3A5C]">Create Proposal</h3>
+
+      {/* Voting Method Selector */}
+      <div>
+        <label className="block text-xs text-gray-500 mb-2">
+          Voting Method
+          <Link to="/help/voting-methods" className="ml-2 text-[#2E75B6] hover:underline">Which should I pick?</Link>
+        </label>
+        <div className="flex gap-3">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="votingMethod" value="binary" checked={votingMethod === 'binary'}
+              onChange={() => setVotingMethod('binary')} className="accent-[#2E75B6]" />
+            <span className="text-sm text-gray-700">Binary (Yes/No)</span>
+          </label>
+          <label className={`flex items-center gap-2 ${approvalAllowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>
+            <input type="radio" name="votingMethod" value="approval" checked={votingMethod === 'approval'}
+              onChange={() => approvalAllowed && setVotingMethod('approval')}
+              disabled={!approvalAllowed} className="accent-[#2E75B6]" />
+            <span className="text-sm text-gray-700">Approval</span>
+            {!approvalAllowed && <span className="text-xs text-amber-600">(Not enabled for this org)</span>}
+          </label>
+          <label className="flex items-center gap-2 opacity-50 cursor-not-allowed" title="Coming soon">
+            <input type="radio" disabled className="accent-[#2E75B6]" />
+            <span className="text-sm text-gray-400">Ranked Choice</span>
+            <span className="text-xs text-gray-400">(Coming soon)</span>
+          </label>
+        </div>
+      </div>
 
       <div>
         <label className="block text-xs text-gray-500 mb-1">Title</label>
@@ -72,6 +220,11 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none font-mono"
         />
       </div>
+
+      {/* Options Editor (approval only) */}
+      {votingMethod === 'approval' && (
+        <OptionsEditor options={options} onChange={setOptions} />
+      )}
 
       {topics.length > 0 && (
         <div>
@@ -149,7 +302,7 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
       <div className="flex gap-2">
         <button
           type="submit"
-          disabled={saving || !title.trim()}
+          disabled={saving || !title.trim() || !optionsValid}
           className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
         >
           {saving ? 'Creating...' : 'Create Proposal'}
@@ -205,6 +358,7 @@ export default function ProposalManagement() {
     try {
       const votingEnd = new Date(Date.now() + 7 * 86400000).toISOString();
       await api.post(`/api/orgs/${slug}/proposals/${proposalId}/advance`, { voting_end: votingEnd });
+      toast.success('Proposal advanced');
       load();
     } catch (e) {
       toast.error(e.message);
@@ -220,6 +374,7 @@ export default function ProposalManagement() {
     if (!ok) return;
     try {
       await api.post(`/api/orgs/${slug}/proposals/${proposalId}/advance`, {});
+      toast.success('Proposal withdrawn');
       load();
     } catch (e) {
       toast.error(e.message);
@@ -267,7 +422,12 @@ export default function ProposalManagement() {
                 onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
                 className="flex items-center gap-4 px-4 py-3 text-sm cursor-pointer hover:bg-gray-50 transition-colors"
               >
-                <span className="flex-1 font-medium text-gray-800">{p.title}</span>
+                <span className="flex-1 font-medium text-gray-800">
+                  {p.title}
+                  {p.voting_method === 'approval' && (
+                    <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Approval</span>
+                  )}
+                </span>
                 <span className="w-24"><StatusBadge status={p.status} /></span>
                 <span className="w-28 text-xs text-gray-400">{new Date(p.created_at).toLocaleDateString()}</span>
                 <svg className={`w-4 h-4 text-gray-400 transition-transform ${expandedId === p.id ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">

@@ -146,6 +146,7 @@ export default function Members() {
   async function handleChangeRole(userId, role) {
     try {
       await api.patch(`/api/orgs/${slug}/members/${userId}`, { role });
+      toast.success('Role updated');
       load();
     } catch (e) {
       toast.error(e.message);
@@ -155,6 +156,7 @@ export default function Members() {
   async function handleSuspend(userId) {
     try {
       await api.post(`/api/orgs/${slug}/members/${userId}/suspend`);
+      toast.success('Member suspended');
       load();
     } catch (e) {
       toast.error(e.message);
@@ -164,6 +166,7 @@ export default function Members() {
   async function handleReactivate(userId) {
     try {
       await api.post(`/api/orgs/${slug}/members/${userId}/reactivate`);
+      toast.success('Member reactivated');
       load();
     } catch (e) {
       toast.error(e.message);
@@ -173,6 +176,7 @@ export default function Members() {
   async function handleRemove(userId) {
     try {
       await api.delete(`/api/orgs/${slug}/members/${userId}`);
+      toast.success('Member removed');
       load();
     } catch (e) {
       toast.error(e.message);
@@ -182,6 +186,7 @@ export default function Members() {
   async function handleApprove(userId) {
     try {
       await api.post(`/api/orgs/${slug}/join/approve/${userId}`);
+      toast.success('Join request approved');
       load();
     } catch (e) {
       toast.error(e.message);
@@ -191,6 +196,7 @@ export default function Members() {
   async function handleDeny(userId) {
     try {
       await api.post(`/api/orgs/${slug}/join/deny/${userId}`);
+      toast.success('Join request denied');
       load();
     } catch (e) {
       toast.error(e.message);
@@ -203,6 +209,7 @@ export default function Members() {
     if (emails.length === 0) return;
     try {
       await api.post(`/api/orgs/${slug}/invitations`, { emails, role: inviteRole });
+      toast.success(`${emails.length} invitation(s) sent`);
       setInviteEmails('');
       setInviteMsg(`${emails.length} invitation(s) sent`);
       load();
@@ -215,6 +222,7 @@ export default function Members() {
   async function handleResendInvite(invId) {
     try {
       await api.post(`/api/orgs/${slug}/invitations/${invId}/resend`);
+      toast.success('Invitation resent');
       load();
     } catch (e) {
       toast.error(e.message);
@@ -224,6 +232,7 @@ export default function Members() {
   async function handleRevokeInvite(invId) {
     try {
       await api.delete(`/api/orgs/${slug}/invitations/${invId}`);
+      toast.success('Invitation revoked');
       load();
     } catch (e) {
       toast.error(e.message);

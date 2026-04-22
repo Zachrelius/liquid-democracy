@@ -49,6 +49,7 @@ export default function DelegateApplications() {
   async function handleApprove(appId) {
     try {
       await api.post(`/api/orgs/${slug}/delegate-applications/${appId}/approve`);
+      toast.success('Application approved');
       load();
     } catch (e) {
       toast.error(e.message);
@@ -58,6 +59,7 @@ export default function DelegateApplications() {
   async function handleDeny(appId) {
     try {
       await api.post(`/api/orgs/${slug}/delegate-applications/${appId}/deny`, { feedback: feedback || null });
+      toast.success('Application denied');
       setDenyId(null);
       setFeedback('');
       load();
