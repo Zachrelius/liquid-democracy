@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
+import { useAuth } from '../AuthContext';
 import TopicBadge from './TopicBadge';
 
 function timeAgo(dateStr) {
@@ -14,7 +15,7 @@ function timeAgo(dateStr) {
   return `${days}d ago`;
 }
 
-function ResultCard({ user, topicId, onDone }) {
+function ResultCard({ user, topicId, onDone, unverified }) {
   const [acting, setActing] = useState(false);
   const [feedback, setFeedback] = useState('');
 
@@ -122,10 +123,13 @@ function ResultCard({ user, topicId, onDone }) {
 
       {/* Action buttons */}
       <div className="flex gap-2 flex-wrap">
+        {unverified && (
+          <span className="text-xs text-amber-700">Verify your email to delegate</span>
+        )}
         {canDelegate && (
           <button
             onClick={doDelegate}
-            disabled={acting}
+            disabled={acting || unverified}
             className="text-xs px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
           >
             Delegate
@@ -134,7 +138,7 @@ function ResultCard({ user, topicId, onDone }) {
         {isFollowing && user.follow_permission === 'view_only' && (
           <button
             onClick={doRequestDelegate}
-            disabled={acting}
+            disabled={acting || unverified}
             className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
           >
             Request Delegate
@@ -144,14 +148,14 @@ function ResultCard({ user, topicId, onDone }) {
           <>
             <button
               onClick={doRequestFollow}
-              disabled={acting}
+              disabled={acting || unverified}
               className="text-xs px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
             >
               Request Follow
             </button>
             <button
               onClick={doRequestDelegate}
-              disabled={acting}
+              disabled={acting || unverified}
               className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
             >
               Request Delegate
@@ -173,6 +177,8 @@ function ResultCard({ user, topicId, onDone }) {
 }
 
 export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
+  const { user } = useAuth();
+  const unverified = !user?.email_verified;
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -217,7 +223,7 @@ export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
           {results.length > 0 && (
             <div className="space-y-2">
               {results.map(u => (
-                <ResultCard key={u.id} user={u} topicId={topicId} onDone={onDone || onClose} />
+                <ResultCard key={u.id} user={u} topicId={topicId} onDone={onDone || onClose} unverified={unverified} />
               ))}
             </div>
           )}

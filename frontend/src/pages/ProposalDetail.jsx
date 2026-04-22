@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../api';
+import { useAuth } from '../AuthContext';
 import StatusBadge from '../components/StatusBadge';
 import TopicBadge from '../components/TopicBadge';
 import VoteBar from '../components/VoteBar';
@@ -32,7 +33,7 @@ const VOTE_COLORS = {
   abstain: { bg: 'bg-[#7F8C8D]', border: 'border-[#7F8C8D]', text: 'text-[#7F8C8D]', hover: 'hover:bg-[#7F8C8D] hover:text-white' },
 };
 
-function VoteButtons({ onVote, casting, currentValue }) {
+function VoteButtons({ onVote, casting, currentValue, disabled }) {
   return (
     <div className="flex gap-2">
       {['yes', 'no', 'abstain'].map(v => {
@@ -42,11 +43,11 @@ function VoteButtons({ onVote, casting, currentValue }) {
           <button
             key={v}
             onClick={() => onVote(v)}
-            disabled={casting}
+            disabled={casting || disabled}
             className={`flex-1 py-2.5 rounded-lg border-2 text-sm font-semibold capitalize transition-colors disabled:opacity-50
               ${active
                 ? `${c.bg} ${c.border} text-white`
-                : `bg-white ${c.border} ${c.text} ${c.hover}`
+                : `bg-white ${c.border} ${c.text} ${disabled ? '' : c.hover}`
               }`}
           >
             {v}
@@ -57,7 +58,7 @@ function VoteButtons({ onVote, casting, currentValue }) {
   );
 }
 
-function VoteStatusBox({ myVote, proposalId, onVoteChange }) {
+function VoteStatusBox({ myVote, proposalId, onVoteChange, emailVerified }) {
   const [showButtons, setShowButtons] = useState(false);
   const [casting, setCasting] = useState(false);
   const [err, setErr] = useState('');
@@ -95,9 +96,17 @@ function VoteStatusBox({ myVote, proposalId, onVoteChange }) {
 
   const voteColor = hasVote ? VOTE_COLORS[myVote.vote_value]?.text : '';
 
+  const unverified = !emailVerified;
+
   return (
     <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
       <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Your Vote</h3>
+
+      {unverified && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Verify your email to vote.
+        </p>
+      )}
 
       {hasVote ? (
         <div>
@@ -116,14 +125,15 @@ function VoteStatusBox({ myVote, proposalId, onVoteChange }) {
             <div className="flex gap-2 mt-3">
               <button
                 onClick={() => setShowButtons(true)}
-                className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors"
+                disabled={unverified}
+                className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
               >
                 {isDirect ? 'Change Vote' : 'Override — Vote Directly'}
               </button>
               {isDirect && (
                 <button
                   onClick={retractVote}
-                  disabled={casting}
+                  disabled={casting || unverified}
                   className="text-xs px-3 py-1.5 border border-gray-300 text-gray-500 rounded-lg hover:bg-gray-100 transition-colors disabled:opacity-50"
                 >
                   Retract
@@ -140,7 +150,8 @@ function VoteStatusBox({ myVote, proposalId, onVoteChange }) {
           {!showButtons && (
             <button
               onClick={() => setShowButtons(true)}
-              className="text-sm px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
+              disabled={unverified}
+              className="text-sm px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
             >
               Vote Now
             </button>
@@ -154,6 +165,7 @@ function VoteStatusBox({ myVote, proposalId, onVoteChange }) {
             onVote={castVote}
             casting={casting}
             currentValue={isDirect ? myVote?.vote_value : null}
+            disabled={unverified}
           />
           <button
             onClick={() => setShowButtons(false)}
@@ -222,6 +234,7 @@ function ResultsPanel({ tally, proposal }) {
 
 export default function ProposalDetail() {
   const { id } = useParams();
+  const { user } = useAuth();
   const [proposal, setProposal] = useState(null);
   const [tally, setTally] = useState(null);
   const [myVote, setMyVote] = useState(null);
@@ -391,6 +404,7 @@ export default function ProposalDetail() {
                 myVote={myVote}
                 proposalId={id}
                 onVoteChange={refreshVote}
+                emailVerified={user?.email_verified}
               />
             </div>
           )}

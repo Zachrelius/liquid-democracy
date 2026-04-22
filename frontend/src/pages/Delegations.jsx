@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import api from '../api';
+import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 import TopicBadge from '../components/TopicBadge';
 import DelegateModal from '../components/DelegateModal';
@@ -9,6 +10,8 @@ import DelegationNetworkGraph from '../components/DelegationNetworkGraph';
 import UserLink from '../components/UserLink';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
+import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
 
 const CHAIN_OPTIONS = [
   { value: 'accept_sub', label: 'Accept sub-delegation' },
@@ -18,7 +21,7 @@ const CHAIN_OPTIONS = [
 
 
 // ── Delegation Row ─────────────────────────────────────────────────────────
-function DelegationRow({ delegation, topic, onChainChange, onChangeDelegate, onRemove }) {
+function DelegationRow({ delegation, topic, onChainChange, onChangeDelegate, onRemove, unverified }) {
   const [saving, setSaving] = useState(false);
 
   async function handleChainChange(e) {
@@ -58,8 +61,8 @@ function DelegationRow({ delegation, topic, onChainChange, onChangeDelegate, onR
       </td>
       <td className="py-3 px-4 text-right">
         <div className="flex gap-2 justify-end">
-          <button onClick={() => onChangeDelegate(delegation)} className="text-xs text-[#2E75B6] hover:underline">Change</button>
-          <button onClick={() => onRemove(delegation)} className="text-xs text-red-500 hover:underline">Remove</button>
+          <button onClick={() => onChangeDelegate(delegation)} disabled={unverified} className="text-xs text-[#2E75B6] hover:underline disabled:opacity-50 disabled:no-underline">Change</button>
+          <button onClick={() => onRemove(delegation)} disabled={unverified} className="text-xs text-red-500 hover:underline disabled:opacity-50 disabled:no-underline">Remove</button>
         </div>
       </td>
     </tr>
@@ -67,7 +70,7 @@ function DelegationRow({ delegation, topic, onChainChange, onChangeDelegate, onR
 }
 
 // ── Mobile Delegation Card ─────────────────────────────────────────────────
-function DelegationCard({ delegation, topic, onChainChange, onChangeDelegate, onRemove }) {
+function DelegationCard({ delegation, topic, onChainChange, onChangeDelegate, onRemove, unverified }) {
   const [saving, setSaving] = useState(false);
 
   async function handleChainChange(e) {
@@ -89,8 +92,8 @@ function DelegationCard({ delegation, topic, onChainChange, onChangeDelegate, on
       <div className="flex items-center justify-between">
         {topic ? <TopicBadge topic={topic} /> : <span className="text-xs italic text-gray-500">Global default</span>}
         <div className="flex gap-3">
-          <button onClick={() => onChangeDelegate(delegation)} className="text-xs text-[#2E75B6] hover:underline">Change</button>
-          <button onClick={() => onRemove(delegation)} className="text-xs text-red-500 hover:underline">Remove</button>
+          <button onClick={() => onChangeDelegate(delegation)} disabled={unverified} className="text-xs text-[#2E75B6] hover:underline disabled:opacity-50 disabled:no-underline">Change</button>
+          <button onClick={() => onRemove(delegation)} disabled={unverified} className="text-xs text-red-500 hover:underline disabled:opacity-50 disabled:no-underline">Remove</button>
         </div>
       </div>
       <div>
@@ -111,7 +114,11 @@ function DelegationCard({ delegation, topic, onChainChange, onChangeDelegate, on
 
 // ── Main Page ──────────────────────────────────────────────────────────────
 export default function Delegations() {
+  const { user } = useAuth();
   const { currentOrg } = useOrg();
+  const toast = useToast();
+  const confirm = useConfirm();
+  const unverified = !user?.email_verified;
   const [delegations, setDelegations] = useState([]);
   const [precedences, setPrecedences] = useState([]);
   const [topics, setTopics] = useState([]);
@@ -162,12 +169,17 @@ export default function Delegations() {
 
   async function handleRemove(delegation) {
     const topicId = delegation.topic_id ?? 'global';
-    if (!window.confirm(`Remove this delegation?`)) return;
+    const ok = await confirm({
+      title: 'Remove Delegation',
+      message: 'Remove this delegation?',
+      destructive: true,
+    });
+    if (!ok) return;
     try {
       await api.delete(`/api/delegations/${topicId}`);
       load();
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
     }
   }
 
@@ -188,7 +200,7 @@ export default function Delegations() {
         ordered_topic_ids: items.map(p => p.topic_id),
       });
     } catch (e) {
-      alert(e.message);
+      toast.error(e.message);
       load(); // revert
     } finally {
       setSavingPrec(false);
@@ -205,6 +217,12 @@ export default function Delegations() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
       <h1 className="text-2xl font-semibold text-[#1B3A5C]">My Delegations</h1>
+
+      {unverified && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Verify your email to manage delegations.
+        </p>
+      )}
 
       {/* ── Section 1: Global default ── */}
       <section>
@@ -224,13 +242,15 @@ export default function Delegations() {
               <div className="flex gap-2">
                 <button
                   onClick={() => setModal({ topicId: undefined, topicName: null, existingDelegation: globalDel })}
-                  className="text-sm px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors"
+                  disabled={unverified}
+                  className="text-sm px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
                 >
                   Change
                 </button>
                 <button
                   onClick={() => handleRemove(globalDel)}
-                  className="text-sm px-3 py-1.5 border border-red-300 text-red-500 rounded-lg hover:bg-red-50 transition-colors"
+                  disabled={unverified}
+                  className="text-sm px-3 py-1.5 border border-red-300 text-red-500 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
                 >
                   Remove
                 </button>
@@ -243,7 +263,8 @@ export default function Delegations() {
               </p>
               <button
                 onClick={() => setModal({ topicId: undefined, topicName: null, existingDelegation: null })}
-                className="text-sm px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
+                disabled={unverified}
+                className="text-sm px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
               >
                 Set Default Delegate
               </button>
@@ -278,6 +299,7 @@ export default function Delegations() {
                   onChainChange={load}
                   onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.name, existingDelegation: del })}
                   onRemove={handleRemove}
+                  unverified={unverified}
                 />
               ))}
               {undelegatedTopics.map(t => (
@@ -288,7 +310,8 @@ export default function Delegations() {
                   <td className="py-3 px-4 text-right">
                     <button
                       onClick={() => setModal({ topicId: t.id, topicName: t.name, existingDelegation: null })}
-                      className="text-xs text-[#2E75B6] hover:underline"
+                      disabled={unverified}
+                      className="text-xs text-[#2E75B6] hover:underline disabled:opacity-50 disabled:no-underline"
                     >
                       Set Delegate
                     </button>
@@ -312,6 +335,7 @@ export default function Delegations() {
               onChainChange={load}
               onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.name, existingDelegation: del })}
               onRemove={handleRemove}
+              unverified={unverified}
             />
           ))}
           {undelegatedTopics.map(t => (
@@ -319,7 +343,8 @@ export default function Delegations() {
               <TopicBadge topic={t} />
               <button
                 onClick={() => setModal({ topicId: t.id, topicName: t.name, existingDelegation: null })}
-                className="text-xs text-[#2E75B6] hover:underline"
+                disabled={unverified}
+                className="text-xs text-[#2E75B6] hover:underline disabled:opacity-50 disabled:no-underline"
               >
                 Set Delegate
               </button>
