@@ -41,6 +41,29 @@ async def cast_vote(
             detail="Please verify your email before voting.",
         )
 
+    # -- Method-specific validation --
+    if proposal.voting_method == "binary":
+        if body.approvals is not None:
+            raise HTTPException(status_code=400, detail="Use vote_value for binary proposals")
+        if body.vote_value is None:
+            raise HTTPException(status_code=400, detail="vote_value is required for binary proposals")
+        vote_value = body.vote_value
+        ballot = None
+    elif proposal.voting_method == "approval":
+        if body.vote_value is not None:
+            raise HTTPException(status_code=400, detail="Use approvals for approval proposals")
+        if body.approvals is None:
+            raise HTTPException(status_code=400, detail="approvals is required for approval proposals")
+        # Validate option IDs belong to this proposal
+        valid_option_ids = {opt.id for opt in proposal.options}
+        for oid in body.approvals:
+            if oid not in valid_option_ids:
+                raise HTTPException(status_code=400, detail=f"Option {oid} does not belong to this proposal")
+        vote_value = None
+        ballot = {"approvals": body.approvals}
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported voting method: {proposal.voting_method}")
+
     existing = (
         db.query(models.Vote)
         .filter(
@@ -54,7 +77,9 @@ async def cast_vote(
 
     if existing:
         previous_value = existing.vote_value
-        existing.vote_value = body.vote_value
+        previous_ballot = existing.ballot
+        existing.vote_value = vote_value
+        existing.ballot = ballot
         existing.is_direct = True
         existing.delegate_chain = None
         existing.cast_by_id = current_user.id
@@ -67,7 +92,8 @@ async def cast_vote(
             actor_id=current_user.id,
             details={
                 "proposal_id": proposal_id,
-                "vote_value": body.vote_value,
+                "vote_value": vote_value,
+                "ballot": ballot,
                 "is_direct": True,
                 "previous_value": previous_value,
                 "delegate_chain": None,
@@ -81,7 +107,8 @@ async def cast_vote(
         vote = models.Vote(
             proposal_id=proposal_id,
             user_id=current_user.id,
-            vote_value=body.vote_value,
+            vote_value=vote_value,
+            ballot=ballot,
             is_direct=True,
             delegate_chain=None,
             cast_by_id=current_user.id,
@@ -96,7 +123,8 @@ async def cast_vote(
             actor_id=current_user.id,
             details={
                 "proposal_id": proposal_id,
-                "vote_value": body.vote_value,
+                "vote_value": vote_value,
+                "ballot": ballot,
                 "is_direct": True,
                 "previous_value": None,
                 "delegate_chain": None,
