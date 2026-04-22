@@ -90,6 +90,102 @@ Proposal Created → Deliberation Phase (Polis active, statements & voting)
 
 **Estimate:** 2-3 days.
 
+### 1.6 Multi-Option Voting (Approval, RCV, STV)
+
+**Problem:** The platform currently only supports binary votes (yes/no/abstain on a single proposal). Civic organizations have many decisions that naturally require more than two options — electing officers from a slate of candidates, picking an event date, choosing a name, selecting among several policy proposals. Forcing these into a sequence of binary votes is awkward and produces worse outcomes (vote splitting, spoiler effects, forcing artificial "this option vs that option" runoffs). If the platform supports these use cases natively, it handles the full range of an organization's voting needs — a significantly stronger adoption case than "use us for yes/no, something else for everything else."
+
+**Solution:** Add multi-option proposals as a distinct proposal type alongside binary proposals. Proposal authors select a voting method at creation time. Launch with three methods, all integrated with the existing delegation engine and public delegate system:
+
+- **Approval voting** (single-winner): Voters check all options they approve of. Option with the most approvals wins. Simple to explain, eliminates vote splitting, strategically robust. Good for: event dates, naming decisions, policy selection from a short list.
+- **Ranked-choice / Instant Runoff (IRV)** (single-winner): Voters rank options. Lowest-ranked eliminated iteratively, votes redistribute, until one option has a majority. Good for: single-officer elections with 3+ candidates, multi-candidate policy decisions where majority preference matters.
+- **Single Transferable Vote (STV)** (multi-winner): Same ballot as IRV but for electing multiple seats proportionally. A minority with 30% support gets roughly 30% of the seats. Good for: electing boards, steering committees, delegates to parent organizations.
+
+**Voting method availability is org-configurable.** Org admins can enable/disable each method via org settings. Some orgs will want to standardize on one method; others will want the full range. Binary voting is always available.
+
+**Use established libraries for tabulation.** RCV and STV have well-known edge cases (tie-breaking during elimination, batch elimination, Meek vs. Scottish STV variants) that have caused real-world controversies. Use `pyrankvote` or equivalent rather than implementing from scratch. Approval voting tabulation is trivial (count approvals per option) so no library needed there.
+
+**Delegation integration:**
+
+- Delegators inherit their delegate's full ballot — the complete ranking for RCV/STV, the complete approval set for approval voting. Same mental model as binary: "my delegate's vote becomes my vote."
+- Chain behavior semantics remain the same: chain behavior (accept_sub / revert_direct / abstain) only kicks in when the delegate submitted no ballot at all. A partial ballot (e.g., only ranking one option in a four-option race) inherits as-is, because that's a deliberate choice by the delegate.
+- Multi-option voting works only with the **strict-precedence delegation strategy** at launch. The more exotic strategies from roadmap item 2.1 (majority-of-delegates, weighted-majority) require aggregating different ballots across delegates, which is its own research area (Kemeny-Young rank aggregation, proportional approval methods). Those remain binary-only for now; revisit when strategy 2.1 is built.
+
+**Public delegate integration:**
+
+- Public delegates' ballots are public on multi-option proposals, same as binary. A ranked or approval ballot is richer data than yes/no — more informative for delegators evaluating who to follow.
+- Delegate profile pages get updated UI to display multi-option votes compactly (e.g., "approved 2 of 4 options" with hover to expand; "ranked 3 of 4" for RCV).
+- Consider (not required at launch) displaying a "completion rate" metric on delegate profiles — how often they submit full vs partial ballots. Public delegates voting on behalf of many people should probably rank all options, and a visible metric nudges toward that norm.
+
+**Interaction with sustained-majority windows:** Sustained-majority windows (see section 1.7) make the most sense for binary votes — "the new law doesn't pass unless support is durable." For multi-option elections, the natural expectation is usually "we need to pick someone/something." Making sustained-majority opt-in per proposal (and off by default for multi-option) is the right call. When sustained-majority is on for a multi-option proposal, the semantics are "stable result" — the computed winner (by whichever method) shouldn't change in the final portion of the window. This avoids the awkward binary-style "must maintain >50%" logic that doesn't map cleanly to approval or RCV.
+
+**Data model changes:**
+
+- `Proposal` gets a `voting_method` enum (`binary`, `approval`, `ranked_choice`), a `num_winners` integer (default 1), and a `sustained_majority_enabled` boolean (default true for binary, false for multi-option).
+- New `ProposalOption` table: `(id, proposal_id, label, description, display_order)`. Binary proposals don't need this; multi-option proposals do.
+- `Vote` gets a `ballot` JSON field for richer payloads: `{"approvals": [option_ids]}` for approval, `{"ranking": [option_ids]}` for RCV. Existing `vote_value` column stays for binary to avoid migration pain.
+- `VoteSnapshot` stores full ballot data for multi-option proposals (needed because RCV/STV tabulation isn't a simple sum — you have to re-run the elimination from the ballots).
+- `Organization.settings` (JSON) gets `allowed_voting_methods` field for org-level configuration.
+
+**Frontend work:**
+
+- Proposal creation form: voting method selector, options editor (add/remove/reorder options with labels and descriptions), num_winners field (conditional on RCV being selected).
+- Proposal detail page: ballot UI that changes based on voting method. Approval = checkbox list. RCV/STV = drag-to-rank interface (reuse the DnD pattern from topic precedence).
+- Results display: bar chart of approvals for approval voting; round-by-round elimination display for IRV/STV (standard visualization — shows each round, who was eliminated, how votes transferred).
+- Delegate profile updates to display multi-option votes.
+- Plain-language documentation page explaining each method ("When should I use approval vs. RCV?"). Pilot orgs will need this.
+
+**Explicit non-goals at launch:**
+
+- Plurality voting (vote splitting defeats the purpose; reform advocates universally consider it inferior)
+- STAR voting, score voting, Condorcet methods (leaves surface area open for future additions; adding more methods later is easy once the architecture supports pluggable methods)
+- Multi-winner approval voting (STV covers the proportional multi-winner case)
+- Amendments during the voting window (changing options mid-vote is a mess; treat as separate feature)
+
+**Estimate:** 4-6 weeks of focused work. Roughly: 1 week backend data model + ballot storage + tabulation integration, 1-2 weeks delegation engine extension and public delegate integration, 1-2 weeks frontend (proposal creation, ballot UI, results display), 1 week documentation and org admin configuration UI.
+
+### 1.7 Sustained-Majority Voting Windows
+
+**Problem:** Proposals currently pass based on a single snapshot at the close of the voting window. This is vulnerable to late-stage manipulation — a delegate casting a controversial vote in the final hours with no time for delegators to react — and rewards narrow, fragile majorities over durable consensus. The original platform design called for sustained-majority windows as a built-in correction mechanism, but the feature hasn't been implemented yet.
+
+**Solution:** Implement configurable sustained-majority voting windows for binary proposals. The default behavior: a proposal must maintain >50% support throughout the voting window and must never drop below 45%. If it does drop below 45% at any point, it fails. This creates structural pressure toward durable consensus and gives delegators time to correct a controversial delegate vote.
+
+**The feature is per-proposal and per-org configurable:**
+
+- Org admins set a default (on or off) in org settings.
+- Proposal authors can override the default on a per-proposal basis (with admin permission, depending on org settings).
+- Configurable parameters: majority threshold (default 50%), drop-below floor (default 45%), window length (default 7 days).
+
+**Multi-option interaction:** As discussed in section 1.6, sustained-majority is off by default for multi-option proposals and uses "stable result" semantics when on (the computed winner shouldn't change in the final portion of the window). The "must maintain majority throughout" logic doesn't map cleanly to approval or RCV.
+
+**Failure handling — a design question worth surfacing:** What happens when a proposal fails the sustained-majority test? Three reasonable options, with real tradeoffs:
+
+1. **Proposal fails, status quo wins** (simplest, matches binary "no" default). Good for binding legislation where "do nothing" is a valid outcome.
+2. **Voting window extends automatically** (e.g., 48 hours additional). Good for close-call situations where a few more delegator reactions might clarify things. Risks indefinite extension if manipulation continues.
+3. **Result declared "unresolved," escalated to org admin or citizens' council.** Good for high-stakes decisions where neither passage nor failure is acceptable without deliberation. Requires org-level governance structure to handle escalations.
+
+The feature should support all three, configurable per-org with a reasonable default (option 1). This is the kind of design depth that makes sustained-majority more than just a flag — it's a real governance feature with org-configurable philosophy.
+
+**Data model changes:**
+
+- `Organization.settings` gets `sustained_majority_default` (on/off), `sustained_majority_threshold` (default 0.5), `sustained_majority_floor` (default 0.45), `sustained_majority_failure_mode` (fail/extend/escalate).
+- `Proposal` gets `sustained_majority_enabled` override field (nullable — null means use org default).
+- `VoteSnapshot` table (already exists) becomes the basis for sustained-majority checking. Snapshots need to be taken frequently enough (every few minutes during active windows) to catch drops below the floor. A background job evaluates snapshots against the threshold and marks proposals as failed when they drop below the floor.
+- `Proposal.status` lifecycle extends: `voting → passed/failed/unresolved` (adding unresolved).
+
+**Frontend work:**
+
+- Proposal detail page: sustained-majority indicator when active, showing current support level and how close to the floor. Historical chart of support over the window.
+- Admin settings page: sustained-majority configuration UI.
+- Proposal creation form: sustained-majority toggle (if org allows per-proposal override).
+- Notification when a user's delegated vote causes the proposal to approach the floor (gives delegators a chance to revoke before it fails).
+
+**Explicit non-goals:**
+
+- Real-time sustained-majority checking during the window. A background job running every few minutes is sufficient; finer resolution adds complexity without value.
+- Sustained-majority for deliberation-phase metrics. This feature is about voting-phase stability only.
+
+**Estimate:** 1-2 weeks. The core logic is a background job plus snapshot analysis; most of the work is the configuration UI, failure-mode handling, and frontend display.
+
 ---
 
 ## Tier 2: Medium Impact, Medium-Term
@@ -111,7 +207,48 @@ The delegation engine is already structured as a pure function with a strategy p
 
 **Estimate:** 3-5 days for all strategies including UI for selecting strategy in user settings.
 
-### 2.2 AI Delegation Agents
+### 2.2 Configurable Organization Role Permissions
+
+**Problem:** The current org role model is too coarse for real civic organizations. Admins have unlimited powers (unilaterally remove members, delete topics, delete proposals, manage invitations, etc.). The `moderator` role exists in the data model but has no special powers — moderators are effectively indistinguishable from regular members. Real organizations distribute governance across multiple trust levels: people trusted to run day-to-day operations (create proposals, approve new members) but not to unilaterally delete org assets, people trusted with destructive actions, and sometimes destructive actions that require multi-admin approval for high-stakes decisions.
+
+This matters for adoption: any civic organization of meaningful size will want at least one tier between "full admin" and "regular member." Without it, either every trusted person gets full admin powers (too risky) or the one admin becomes a bottleneck for routine tasks like approving new members.
+
+**Solution — staged implementation:**
+
+*Stage 1 (initial build — data model + sensible default moderator powers):*
+
+Build the permission system as a proper permissions-per-role data model from day one, but ship with a small set of sensible built-in role presets rather than a configurability UI. Specifically:
+
+- New `role_permissions` model: `(role_id, org_id, permission_key, enabled)`. Role presets: `owner`, `admin`, `moderator`, `member`, each with a default permission set applied when the org is created.
+- Default moderator powers: create proposals, edit own proposals while in draft, advance proposals they created through the lifecycle, approve pending member join requests, suspend members (but not remove them), edit topics (but not delete them).
+- Default admin powers: everything moderator can do, plus delete proposals/topics, remove members, manage invitations, edit org settings, approve delegate applications.
+- Owner: everything admin can do, plus transfer ownership and delete the org itself.
+- Backend enforcement via a permission check helper (`has_permission(user, org, permission_key)`) called by every action endpoint. This replaces the current role-string comparison pattern in `org_middleware.py`.
+
+*Stage 2 (later — full configurability UI):*
+
+Add admin UI to view and edit the permission matrix per role. Org admins can:
+- Toggle individual permissions on/off per role
+- Create custom roles beyond the four defaults
+- Require multi-admin approval for specified destructive actions (e.g., "deleting a topic requires 2 of 3 admin approvals")
+- Copy permission sets between roles as starting points
+
+*Stage 3 (future — action approval workflows):*
+
+For actions gated behind multi-admin approval, a pending-actions queue where admins review and approve/deny each other's high-stakes actions before they take effect. Separate roadmap item when this becomes important.
+
+**Rationale for staging:** The data model is the hardest part to get right — once permissions are keyed on enum strings and checked per endpoint, adding new permissions or changing defaults is straightforward. The admin UI for editing the matrix is purely frontend work that can be deferred. Shipping Stage 1 unblocks the most critical gap (moderators who can do day-to-day work) without requiring the full configurability UI upfront. Orgs that need non-default behavior during Stage 1 can ask the platform admin to adjust via direct database edits — acceptable for pilot-stage deployments.
+
+**Data model changes:**
+
+- New `role_permissions` table as described above, seeded with defaults on org creation.
+- Permission keys defined as an enum in the codebase: `proposal.create`, `proposal.delete`, `proposal.advance`, `member.approve_join`, `member.suspend`, `member.remove`, `topic.create`, `topic.delete`, `org.edit_settings`, `delegate_application.approve`, etc. Start with ~15-20 keys covering the actions that currently exist.
+- Backend: replace role string checks (`if user.role in ("admin", "owner")`) with `has_permission(user, org, "permission.key")` calls throughout `routes/organizations.py` and related files.
+- Migration: existing orgs get default permission sets applied to their existing roles.
+
+**Estimate:** Stage 1: 1-2 weeks (data model + migration + permission check helper + replacing all role-string checks + default preset UX where moderator role does something useful). Stage 2: 1 week (matrix editor UI). Stage 3: 1-2 weeks (approval queue + pending action handling).
+
+### 2.3 AI Delegation Agents
 
 **Problem:** Users who want to participate on every issue but lack time to read every proposal could benefit from AI assistance.
 
@@ -125,7 +262,7 @@ The delegation engine is already structured as a pure function with a strategy p
 
 **Estimate:** On-device advisor: 1-2 weeks. In-system AI delegate: 2-4 weeks including admin controls and monitoring.
 
-### 2.3 Delegate Report Cards and Alignment Scoring
+### 2.4 Delegate Report Cards and Alignment Scoring
 
 **Problem:** Voters have limited tools to evaluate whether their delegate is voting in ways that align with their values.
 
@@ -133,7 +270,7 @@ The delegation engine is already structured as a pure function with a strategy p
 
 **Estimate:** 1-2 weeks including the alignment scoring algorithm and frontend display.
 
-### 2.4 Accessibility Audit (WCAG 2.1 AA)
+### 2.5 Accessibility Audit (WCAG 2.1 AA)
 
 **Problem:** The platform hasn't had a dedicated accessibility review. For civic infrastructure, accessibility isn't optional — it's a requirement for inclusive democratic participation.
 
@@ -141,7 +278,7 @@ The delegation engine is already structured as a pure function with a strategy p
 
 **Estimate:** 1-2 weeks for audit and fixes.
 
-### 2.5 Multi-Language Support / Internationalization
+### 2.6 Multi-Language Support / Internationalization
 
 **Problem:** The platform is English-only, limiting adoption by non-English-speaking communities and international organizations.
 
@@ -149,7 +286,7 @@ The delegation engine is already structured as a pure function with a strategy p
 
 **Estimate:** 1 week for infrastructure + 1-2 days per language for translation.
 
-### 2.6 Advanced Analytics and Reporting
+### 2.7 Advanced Analytics and Reporting
 
 **Problem:** The current analytics dashboard shows basic participation metrics. Org admins and researchers need deeper insights.
 
@@ -157,7 +294,7 @@ The delegation engine is already structured as a pure function with a strategy p
 
 **Estimate:** 1-2 weeks.
 
-### 2.7 Notification System (Email and In-App)
+### 2.8 Notification System (Email and In-App)
 
 **Problem:** Users currently need to check the platform to know when proposals need their attention, when follow requests arrive, or when their delegation changed.
 

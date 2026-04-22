@@ -19,3 +19,5 @@ venv/
 !.vscode/extensions.json
 .idea/
 .DS_Store
+
+qa_credentials.md

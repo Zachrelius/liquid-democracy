@@ -630,3 +630,64 @@ The liquid democracy platform is now pilot-ready. All four sub-phases delivered:
 - **4d**: OWASP security review, UI polish (loading/error/empty states), demo quick-login, privacy/terms, mobile responsive
 
 Total QA tests: 33/33 PASS across Suites E, F, G. Backend: 73/73 tests passing.
+
+---
+
+## Phase 4 Cleanup ✅ Complete
+
+Targeted cleanup of admin portal bugs found during manual testing. No new features — fixes only. See `phase4_cleanup_spec.md` for full spec.
+
+### Fix 1: Org Settings JSON Mutation Persistence (`b9ad6bb`)
+
+SQLAlchemy wasn't detecting in-place dict mutations on `org.settings` JSON column. Replaced `current_settings.update(body.settings)` with new-dict construction `org.settings = {**(org.settings or {}), **body.settings}` in `routes/organizations.py`. Pattern audit found no other instances in the codebase.
+
+4 new tests in `tests/test_org_settings.py`.
+
+### Fix 4: Member Reactivation After Suspension (`85a1a5a`)
+
+Added `POST /api/orgs/{slug}/members/{user_id}/reactivate` endpoint gated by `require_org_admin`. Frontend "Reactivate" button appears for suspended members in admin Members page, replacing Suspend button contextually.
+
+3 new tests in `tests/test_member_reactivation.py`.
+
+### Fix 5: Minimal Moderator Powers (`1e85551`)
+
+Added `require_org_moderator_or_admin` middleware in `org_middleware.py`. Moderators can now: create proposals, approve join requests, suspend members, edit topics, advance their own proposals. Cannot: remove members, delete topics, change roles, edit org settings, manage invitations, approve delegate applications. Frontend hides admin-only controls for moderators.
+
+10 new tests in `tests/test_moderator_permissions.py`.
+
+### Fix 2+3: Proposal Lifecycle + Draft Editability (`2942d19`)
+
+Three connected issues fixed: (a) Frontend advance/withdraw calls changed from nonexistent `/api/admin/proposals/` path to org-scoped `/api/orgs/{slug}/proposals/{id}/advance`; (b) Added "Advance to Deliberation" button for draft proposals plus "Edit Draft" and "Withdraw" options; (c) Added org-scoped advance endpoint with moderator-own/admin-any permission pattern and cross-org 404 protection.
+
+6 new tests in `tests/test_proposal_lifecycle.py`.
+
+### Fix 6: Admin Workflow Pattern Audit (QA)
+
+All 5 admin workflows exercised end-to-end via Claude-in-Chrome browser tests: delegate application flow, topic management CRUD, invitation flow, join request policy, analytics dashboard. All pass. No bugs found.
+
+### Fix 7: Email Verification Enforcement Smoke Test (QA)
+
+Verified unverified users are blocked from voting and delegating. Registration, yellow banner, vote blocking, delegation blocking, read-only browsing, and verification flow all confirmed working. UX note: vote/delegate buttons remain visible to unverified users (backend blocks correctly, but frontend should disable buttons).
+
+### Browser Tests — Suite H: 13/13 passing
+
+New Suite H in `browser_testing_playbook.md` covers all Phase 4 regressions: H1-H9 (admin workflows + email verification), H10-H13 (dev fix verification).
+
+### Backend Tests — 96/96 passing (23 new, no regressions)
+
+---
+
+## Technical Debt / Follow-up Issues
+
+Items identified during Phase 4 Cleanup that are out of scope for this pass:
+
+- **PostgreSQL dual-DB testing**: All tests run on SQLite only. The JSON mutation bug (Fix 1) is exactly the kind of issue that manifests differently across databases. Medium-term: add CI configuration running tests against both SQLite and PostgreSQL.
+- **URL routing refactor**: Frontend uses flat URLs with org context in React state/localStorage. Original spec called for path-based org URLs (`/boston-ea/proposals`). Deferred to Phase 4e.
+- **Browser testing playbook gaps**: Suites E-G (Phase 4b/4c/4d) were executed ad-hoc but never committed to `browser_testing_playbook.md`. Going forward, Suite H and all future suites are committed artifacts.
+- **No CI/CD pipeline**: Tests run manually. Should be automated on push.
+- **Rate limiting limited to auth endpoints**: Most API endpoints have no rate limiting (only auth endpoints use slowapi).
+- **WebSocket endpoint unused**: Exists in backend but no frontend component connects to it.
+- **Unverified user UX**: Vote/delegate buttons are visible and clickable for unverified users; backend correctly blocks the action with an error message, but buttons should be disabled in the frontend for better UX.
+- **Admin route guard too permissive for moderators**: `AdminRoute` checks `isModeratorOrAdmin`, so moderators can access `/admin/settings` via direct URL even though it's hidden from nav. Backend blocks unauthorized saves, but the frontend route should distinguish admin-only pages.
+- **Members page empty for moderators**: Admin Members page shows 0 members when viewed by a moderator. Likely a backend query or permission filtering issue — moderators should see the member list (they can suspend members).
+- **Edit Draft UX incomplete**: "Edit Draft" button in admin Proposal Management navigates to the read-only proposal detail page rather than an inline edit form. The PATCH endpoint works, but the frontend edit UI needs a proper form.
