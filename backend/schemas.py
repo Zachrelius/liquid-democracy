@@ -233,6 +233,22 @@ def _normalise_topics(v: Any) -> list[TopicWithRelevance]:
     return result
 
 
+class OptionCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+
+
+class OptionOut(BaseModel):
+    id: str
+    proposal_id: str
+    label: str
+    description: str
+    display_order: int
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class ProposalCreate(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     body: str = Field(default="", max_length=50000)
@@ -240,6 +256,16 @@ class ProposalCreate(BaseModel):
     topics: list[Any] = Field(default=[])
     pass_threshold: float = Field(default=0.50, ge=0.0, le=1.0)
     quorum_threshold: float = Field(default=0.40, ge=0.0, le=1.0)
+    voting_method: str = "binary"
+    options: list[OptionCreate] = Field(default=[])
+    num_winners: int = Field(default=1, ge=1)
+
+    @field_validator("voting_method")
+    @classmethod
+    def validate_voting_method(cls, v: str) -> str:
+        if v not in ("binary", "approval", "ranked_choice"):
+            raise ValueError("voting_method must be binary, approval, or ranked_choice")
+        return v
 
     @field_validator("topics", mode="before")
     @classmethod
@@ -256,6 +282,7 @@ class ProposalUpdate(BaseModel):
     title: Optional[str] = Field(default=None, min_length=1, max_length=500)
     body: Optional[str] = Field(default=None, max_length=50000)
     topics: Optional[list[Any]] = None
+    options: Optional[list[OptionCreate]] = None
 
     @field_validator("topics", mode="before")
     @classmethod
@@ -279,6 +306,9 @@ class ProposalOut(BaseModel):
     author_id: str
     author: UserOut
     status: str
+    voting_method: str = "binary"
+    num_winners: int = 1
+    tie_resolution: Optional[dict] = None
     deliberation_start: Optional[datetime]
     voting_start: Optional[datetime]
     voting_end: Optional[datetime]
@@ -287,6 +317,7 @@ class ProposalOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     topics: list[ProposalTopicOut] = []
+    options: list[OptionOut] = []
 
     model_config = {"from_attributes": True}
 
@@ -418,14 +449,26 @@ class TopicPrecedenceOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 class VoteCast(BaseModel):
-    vote_value: str
+    vote_value: Optional[str] = None
+    approvals: Optional[list[str]] = None
 
     @field_validator("vote_value")
     @classmethod
-    def validate_vote_value(cls, v: str) -> str:
-        allowed = {"yes", "no", "abstain"}
-        if v not in allowed:
-            raise ValueError(f"vote_value must be one of {allowed}")
+    def validate_vote_value(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            allowed = {"yes", "no", "abstain"}
+            if v not in allowed:
+                raise ValueError(f"vote_value must be one of {allowed}")
+        return v
+
+    @field_validator("approvals")
+    @classmethod
+    def validate_approvals(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is not None:
+            for oid in v:
+                _validate_uuid(oid)
+            if len(v) != len(set(v)):
+                raise ValueError("Duplicate option IDs in approvals")
         return v
 
 
@@ -433,7 +476,8 @@ class VoteOut(BaseModel):
     id: str
     proposal_id: str
     user_id: str
-    vote_value: str
+    vote_value: Optional[str] = None
+    ballot: Optional[dict] = None
     is_direct: bool
     delegate_chain: Optional[list[str]]
     cast_by_id: str
@@ -445,10 +489,11 @@ class VoteOut(BaseModel):
 
 class MyVoteStatus(BaseModel):
     """How the current user's vote is being cast on a proposal."""
-    vote_value: Optional[str]        # None if not cast
-    is_direct: Optional[bool]
-    delegate_chain: Optional[list[str]]
-    cast_by: Optional[UserOut]
+    vote_value: Optional[str] = None       # None if not cast (binary)
+    approvals: Optional[list[str]] = None  # option IDs approved (approval)
+    is_direct: Optional[bool] = None
+    delegate_chain: Optional[list[str]] = None
+    cast_by: Optional[UserOut] = None
     message: str                      # Human-readable explanation
 
 
@@ -467,17 +512,35 @@ class SnapshotPoint(BaseModel):
 
 class ProposalResults(BaseModel):
     proposal_id: str
-    yes: int
-    no: int
-    abstain: int
-    not_cast: int
-    total_eligible: int
-    yes_pct: float
-    no_pct: float
-    abstain_pct: float
-    quorum_met: bool
-    threshold_met: bool
+    voting_method: str = "binary"
+    yes: int = 0
+    no: int = 0
+    abstain: int = 0
+    not_cast: int = 0
+    total_eligible: int = 0
+    yes_pct: float = 0.0
+    no_pct: float = 0.0
+    abstain_pct: float = 0.0
+    quorum_met: bool = False
+    threshold_met: bool = False
     time_series: list[SnapshotPoint] = []
+    # Approval-voting fields (populated only when voting_method == "approval")
+    option_approvals: Optional[dict[str, int]] = None
+    option_labels: Optional[dict[str, str]] = None
+    total_ballots_cast: Optional[int] = None
+    total_abstain: Optional[int] = None
+    winners: Optional[list[str]] = None
+    tied: Optional[bool] = None
+    tie_resolution: Optional[dict] = None
+
+
+class TieResolutionRequest(BaseModel):
+    selected_option_id: str
+
+    @field_validator("selected_option_id")
+    @classmethod
+    def validate_option_id(cls, v: str) -> str:
+        return _validate_uuid(v)
 
 
 # ---------------------------------------------------------------------------
