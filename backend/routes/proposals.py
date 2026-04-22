@@ -9,7 +9,7 @@ import models
 import schemas
 from audit_utils import log_audit_event
 from database import get_db
-from delegation_engine import engine as delegation_engine, resolve_vote_pure
+from delegation_engine import engine as delegation_engine, resolve_vote_pure, ApprovalTally
 from permissions import can_see_votes
 
 router = APIRouter(prefix="/api/proposals", tags=["proposals"])
@@ -298,10 +298,17 @@ def advance_proposal(
             proposal.voting_end = body.voting_end
     elif next_status == "passed":
         tally = delegation_engine.compute_tally(proposal, db)
-        if tally.threshold_met(proposal.pass_threshold) and tally.quorum_met(proposal.quorum_threshold):
-            next_status = "passed"
+        if proposal.voting_method == "approval":
+            # Approval proposals pass if quorum met and at least one option has votes
+            if isinstance(tally, ApprovalTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
+                next_status = "passed"
+            else:
+                next_status = "failed"
         else:
-            next_status = "failed"
+            if tally.threshold_met(proposal.pass_threshold) and tally.quorum_met(proposal.quorum_threshold):
+                next_status = "passed"
+            else:
+                next_status = "failed"
 
     proposal.status = next_status
     db.flush()
@@ -344,8 +351,28 @@ def get_results(proposal_id: str, db: Session = Depends(get_db)):
         for s in snapshots
     ]
 
+    if proposal.voting_method == "approval" and isinstance(tally, ApprovalTally):
+        # Build option label map
+        option_labels = {opt.id: opt.label for opt in proposal.options}
+        return schemas.ProposalResults(
+            proposal_id=proposal_id,
+            voting_method="approval",
+            not_cast=tally.not_cast,
+            total_eligible=tally.total_eligible,
+            quorum_met=tally.quorum_met(proposal.quorum_threshold),
+            option_approvals=tally.option_approvals,
+            option_labels=option_labels,
+            total_ballots_cast=tally.total_ballots_cast,
+            total_abstain=tally.total_abstain,
+            winners=tally.winners,
+            tied=tally.tied,
+            tie_resolution=proposal.tie_resolution,
+            time_series=time_series,
+        )
+
     return schemas.ProposalResults(
         proposal_id=proposal_id,
+        voting_method="binary",
         yes=tally.yes,
         no=tally.no,
         abstain=tally.abstain,
@@ -389,17 +416,30 @@ def my_vote_status(
         )
 
     cast_by_user = db.get(models.User, result.cast_by_id)
-    if result.is_direct:
+    approvals = None
+    if proposal.voting_method == "approval":
+        approvals = result.ballot.approvals if result.ballot.approvals else []
+        n_approved = len(approvals)
+        if result.is_direct:
+            msg = f"You approved {n_approved} option(s) directly."
+        else:
+            chain_names = []
+            for uid in result.delegate_chain:
+                u = db.get(models.User, uid)
+                chain_names.append(u.display_name if u else uid)
+            msg = f"Your ballot ({n_approved} option(s) approved) via {' -> '.join(chain_names)}."
+    elif result.is_direct:
         msg = f"You voted {result.vote_value.upper()} directly."
     else:
         chain_names = []
         for uid in result.delegate_chain:
             u = db.get(models.User, uid)
             chain_names.append(u.display_name if u else uid)
-        msg = f"Your vote is {result.vote_value.upper()} via {' → '.join(chain_names)}."
+        msg = f"Your vote is {result.vote_value.upper()} via {' -> '.join(chain_names)}."
 
     return schemas.MyVoteStatus(
         vote_value=result.vote_value,
+        approvals=approvals,
         is_direct=result.is_direct,
         delegate_chain=result.delegate_chain,
         cast_by=cast_by_user,
