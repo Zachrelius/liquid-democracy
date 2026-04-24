@@ -546,7 +546,7 @@ def _seed_demo(db: Session) -> dict:
         ),
         author_id=admin.id,
         status="passed",
-        topic_relevances=[(economy, 0.5)],
+        topic_relevances=[],  # No topic → delegations don't resolve → tie survives
         days_ago_deliberation=14,
         days_ago_voting=7,
         days_ahead_close=None,

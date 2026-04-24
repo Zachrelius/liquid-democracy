@@ -733,6 +733,118 @@ Three bugs from Phase 5 diagnosed and resolved. See `phase5_5_spec.md` for full 
 
 ---
 
+## Phase 6 — Multi-Option Voting Pass A: Approval Voting ✅ Complete
+
+Full multi-option voting scaffolding shipped with approval voting as the first supported method. Binary voting unchanged. See `phase6_spec.md` for full spec.
+
+### Data Model (Migration: single Alembic migration)
+
+**`Proposal.voting_method`** enum column: `binary`, `approval`, `ranked_choice`. All three values defined now; only binary and approval accepted by validation.
+
+**`Proposal.num_winners`** integer (default 1). No effect on binary or approval; scaffolding for Phase 7 STV.
+
+**`Proposal.tie_resolution`** JSON column. Stores `{selected_option_id, resolved_by, resolved_at}` when admin resolves a tied approval result.
+
+**`ProposalOption`** table: `(id, proposal_id, label, description, display_order, created_at)`. Used by approval proposals; binary proposals don't create options.
+
+**`Vote.ballot`** JSON column: stores `{"approvals": [option_id, ...]}` for approval votes. Binary votes continue using `vote_value`.
+
+**`Organization.settings.allowed_voting_methods`** array: default `["binary", "approval"]` for new orgs.
+
+### Backend
+
+**Validation:**
+- Proposal creation: approval requires 2-20 options with unique labels; binary rejects options/num_winners
+- Proposal editing: options editable only in draft status; voting_method immutable after creation
+- Org must have approval in `allowed_voting_methods` to create approval proposals
+
+**Vote casting:**
+- Endpoint dispatches on `proposal.voting_method`
+- Approval: validates option_ids belong to proposal, stores in `Vote.ballot`
+- Binary: unchanged (`vote_value` field)
+- Empty approval ballot = abstain (ballot stored as `{"approvals": []}`)
+
+**Delegation engine:**
+- `Ballot` dataclass wraps both binary (vote_value) and approval (approvals list)
+- `ApprovalTally` dataclass: per-option approval counts, total_ballots_cast, total_abstain, not_cast, total_eligible, winners list, tied flag
+- Chain behavior respected: `accept_sub`/`revert_direct`/`abstain` apply when delegate has no ballot
+- `majority_of_delegates` strategy falls back to strict-precedence for approval proposals
+- Delegator inherits delegate's full approval set
+
+**Tabulation:**
+- Method-aware results endpoint returns appropriate payload per voting_method
+- Approval: counts approvals per option, identifies winner(s), detects ties
+- Binary: unchanged
+
+**Tie resolution:**
+- `POST /api/orgs/{slug}/proposals/{id}/resolve-tie` (admin-only)
+- Validates: approval method, passed status, tie exists, option among tied winners, not already resolved
+- Stores resolution in `Proposal.tie_resolution`, logs audit event
+
+### Frontend
+
+**Proposal creation (`ProposalManagement.jsx`):**
+- Voting method selector: Binary / Approval / Ranked Choice (disabled, coming soon)
+- `OptionsEditor` component: add/remove/reorder options, duplicate label detection, 2-20 option limit
+- "Which should I pick?" link to help page
+- Approval badge on proposals in list
+
+**Proposal detail (`ProposalDetail.jsx`):**
+- `ApprovalBallot` component: checkbox list of options, zero-approvals ConfirmDialog, post-submission summary, delegated ballot display with override
+- `ApprovalResultsPanel` component: horizontal bar chart, winner highlighting, tie banner, admin tie resolution buttons, resolved tie banner
+- Vote panel dispatches on `voting_method`
+- Results panels dispatch on `voting_method`
+
+**Org settings (`OrgSettings.jsx`):**
+- Voting Methods section: Binary (always on), Approval (toggle), Ranked Choice (disabled, coming soon)
+
+**Help page (`VotingMethodsHelp.jsx` at `/help/voting-methods`):**
+- Binary voting explanation
+- Approval voting explanation with how-it-works steps and delegation note
+- Ranked choice placeholder
+
+**User profile (`UserProfile.jsx`):**
+- Voting record shows "Approved N options" or "Abstained" for ballot-type votes
+
+**Toast success audit (carried from Phase 5 deferred item):**
+- Audited all frontend files for missing `toast.success()` calls
+- Added toast.success to 17 handlers across Topics.jsx (3), Members.jsx (9), DelegateApplications.jsx (2), Delegations.jsx (1), ProposalDetail.jsx (2)
+- All form submissions now consistently fire success toasts
+
+### Seed Data
+
+- Approval proposal in voting status with 4 options and mixed votes from multiple users
+- Tied approval proposal in passed status (two options with equal approval counts)
+
+### Design Decisions
+
+- **Ballot stored as JSON, not normalized table**: Keeps vote casting simple and atomic. One row per user-per-proposal regardless of method.
+- **Strict-precedence only for multi-option**: Other delegation strategies (`majority_of_delegates`, `weighted_majority`) are binary-only. Fallback to strict-precedence for approval prevents undefined rank-aggregation behavior.
+- **Admin tie resolution, not algorithmic**: Keeps the system transparent. Admins pick among tied winners, decision is logged and visible. Algorithmic tiebreakers deferred.
+- **Zero-approvals = abstain**: An empty approval set is stored as `{"approvals": []}` and counted as an abstain in tallies. Users get a confirmation dialog before submitting.
+- **Options immutable after draft**: Once a proposal leaves draft status, options are locked. This prevents ballot invalidation.
+
+### Backend Tests — 136/136 passing (35 new)
+
+35 new tests in `tests/test_approval_voting.py` covering: data model, validation (7 tests), vote casting (6 tests), delegation engine (8 tests), tabulation (4 tests), tie resolution (6 tests), regression (4 tests).
+
+### Browser Tests — Suite J: 14/15 passing (1 pre-existing tech debt)
+
+Suite J executed via Claude-in-Chrome browser automation against running UI (backend :8001, frontend :5173). All 15 tests executed with results recorded in `browser_testing_playbook.md`.
+
+- **14 PASS**: J1 (create), J3 (lifecycle), J4 (cast ballot), J5 (empty ballot dialog), J6 (delegation inheritance), J7 (override), J8 (options locked), J9 (results display), J10 (tied result banner), J11 (admin resolve tie), J12 (non-admin no resolve), J13 (org settings enforcement), J14 (binary regression), J15 (H+I regression spot-check)
+- **1 FAIL**: J2 (edit draft options) — pre-existing tech debt, not a Phase 6 regression. "Edit Draft" link navigates to read-only detail page. Backend PATCH endpoint works but no frontend UI exposes it.
+
+Seed data fix: removed Economy topic relevance from "Office Renovation Style" so delegation chains don't break the intended 3-3 tie (inflated to 4-4 by Dave's global delegation to Alice).
+
+API-level integration tests also passing: 34/34 assertions via test_suite_j.py.
+
+### PostgreSQL Smoke Test
+
+**BLOCKED** — Docker is not installed on the development machine (Windows 10 Home). Manual smoke test against PostgreSQL (via docker-compose) for: create approval proposal, cast approval ballot, tally, resolve tie. Requires Docker installation before execution.
+
+---
+
 ## Technical Debt / Follow-up Issues
 
 ### Resolved in Phase 5
@@ -744,10 +856,50 @@ Three bugs from Phase 5 diagnosed and resolved. See `phase5_5_spec.md` for full 
 - ~~**Email verification endpoint returns 500**~~ — Fixed: Datetime naive/aware comparison. `_now()` returns naive UTC across all route modules.
 - ~~**Registration auto-join gap**~~ — Not a bug. Registration is org-independent by design. Documented.
 
+### Resolved in Phase 6
+- ~~**Toast success gap**~~ — Fixed: Audited all frontend files, added toast.success to 17 handlers. All form submissions now consistently fire success toasts.
+
+---
+
+## Phase 6 PostgreSQL Smoke Test — 2026-04-24 ✅ Pass (2 startup bugs fixed)
+
+End-to-end validation of the Docker/PostgreSQL deployment path for approval voting. Stack brought up via `docker compose up -d --build` from a clean `pgdata` volume.
+
+### Bugs fixed during bringup
+
+1. **CRLF line endings in `backend/start.sh`** (carried over from a previous session's diagnosis). The Dockerfile now strips `\r` from shell/config files (line 24: `find ... -exec sed -i 's/\r$//' {} +`). Without this, `./start.sh` fails on Linux with `/usr/bin/env: 'bash\r'` — anyone cloning the repo on Windows would hit this, so it is a real fix, not a workaround.
+
+2. **Migration ordering assumed pre-existing schema.** The first migration (`58de3df8727f`) does `ALTER TABLE users ADD COLUMN user_type` against an empty DB, causing `psycopg2.errors.UndefinedTable: relation "users" does not exist`. The migration chain was authored post-hoc against an already-shipped SQLAlchemy schema, so it only works incrementally — never on a fresh bootstrap. Fixed `backend/start.sh` to run `Base.metadata.create_all` first (idempotent) and then `alembic stamp head` on a fresh DB (or `alembic upgrade head` if already stamped). This preserves the migration chain for production upgrades while unblocking fresh containers.
+
+No CRLF fix was needed for `frontend/Dockerfile` — it copies `nginx.conf` as-is and runs no shell scripts; the frontend came up on port 80 and served HTTP 200.
+
+### Smoke test flows exercised
+
+| Flow | Method | Result |
+|---|---|---|
+| `GET /api/health` | — | 200 `{"status":"ok"}` |
+| `POST /api/auth/login` (form-encoded) | admin, alice, econ_bob, carol | all 200, tokens returned |
+| Seed via `run_seed(db)` (module has no `__main__`; had to invoke the function directly) | admin | 22 users, 7 proposals, 33 delegations |
+| `POST /api/proposals` (approval, 4 options) | admin | 201 created |
+| `POST /api/proposals/{id}/advance` ×2 | admin | draft → deliberation → voting |
+| `POST /api/proposals/{id}/vote` — 2 approvals | alice | 200, ballot stored |
+| `POST /api/proposals/{id}/vote` — empty ballot (abstain) | econ_bob | 200, `ballot={"approvals":[]}` accepted |
+| `POST /api/proposals/{id}/vote` — 1 approval | carol | 200 |
+| `GET /api/proposals/{id}/results` | anonymous | Correct tallies: Pepperoni=2, Mushroom=2, Pineapple=1, Anchovies=0; `total_ballots_cast=4` (3 direct + 1 delegated-inherited); `tied=true` on Pepperoni/Mushroom |
+| `POST /api/proposals/{id}/advance` (voting → close) | admin | status=failed (quorum 0.4×22=9 not met — correct) |
+| `POST /api/orgs/demo/proposals/{id}/resolve-tie` on seeded `Office Renovation Style` | admin | 200, `tie_resolution={selected_option_label:"Modern Minimalist",...}`; `GET /results` reflects the resolution |
+
+Delegation inheritance in approval proposals is confirmed functional: only 3 direct votes were persisted, but `compute_tally` resolved a 4th ballot at tally-time from a delegator in the seed graph.
+
+`docker compose logs backend` had zero tracebacks, errors, or 500s across the full run.
+
+### Verdict
+**Clean pass.** Phase 6 approval voting is wired end-to-end against PostgreSQL: ballot creation, empty ballots, method-aware tallying, delegation inheritance, and admin tie resolution all work.
+
 ### Open Items
-- **Toast success gap**: Some success paths (e.g., topic creation) close the form without calling toast.success(). Deferred to Phase 6 wrap-up.
-- **PostgreSQL dual-DB testing**: All tests run on SQLite only. The datetime bug (Phase 5.5 Fix 2) is exactly the class of issue that would be caught by dual-DB testing.
-- **URL routing refactor**: Frontend uses flat URLs with org context in React state. Deferred.
+- **PostgreSQL smoke test deferred**: ~~Deferred — now complete (see section above).~~
+- **PostgreSQL dual-DB testing**: All tests run on SQLite only. The datetime bug (Phase 5.5 Fix 2) is exactly the class of issue that would be caught by dual-DB testing. Phase 6 adds new JSON column code paths (ballot storage, tie_resolution) that may also diverge between SQLite and PostgreSQL.
+- **URL routing refactor**: Frontend uses flat URLs with org context in React state. Deferred to Phase 11.
 - **Browser testing playbook gaps**: Suites E-G were ad-hoc, not committed. Suite H+ are committed artifacts.
 - **No CI/CD pipeline**: Tests run manually.
 - **Rate limiting limited to auth endpoints**: Most endpoints have no rate limiting.

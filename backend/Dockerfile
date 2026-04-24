@@ -20,8 +20,9 @@ RUN apt-get purge -y gcc && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 # Copy application code
 COPY . .
 
-# Make start script executable
-RUN chmod +x start.sh
+# Fix Windows CRLF line endings in shell scripts and config files
+RUN find . -type f \( -name "*.sh" -o -name "*.ini" -o -name "*.cfg" -o -name "*.py" -o -name "*.txt" -o -name "*.mako" \) -exec sed -i 's/\r$//' {} + && \
+    chmod +x start.sh
 
 # Change ownership to non-root user
 RUN chown -R appuser:appuser /app
