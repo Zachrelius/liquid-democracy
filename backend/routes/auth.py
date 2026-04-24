@@ -2,7 +2,7 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -97,7 +97,12 @@ def _revoke_all_refresh_tokens(db: Session, user_id: str) -> int:
 # ---------------------------------------------------------------------------
 
 @router.post("/register", response_model=schemas.RegisterResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: schemas.RegisterRequest, request: Request, db: Session = Depends(get_db)):
+async def register(
+    body: schemas.RegisterRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     if db.query(models.User).filter(models.User.username == body.username).first():
         raise HTTPException(status_code=400, detail="Username already taken")
 
@@ -143,9 +148,10 @@ async def register(body: schemas.RegisterRequest, request: Request, db: Session 
     db.commit()
     db.refresh(user)
 
-    # Send verification email (non-blocking — skip for first user)
+    # Send verification email out-of-band so a slow/failing SMTP doesn't
+    # block the registration response (would 504 at the edge proxy).
     if not is_first_user:
-        await send_verification_email(body.email, token, settings.base_url)
+        background_tasks.add_task(send_verification_email, body.email, token, settings.base_url)
 
     # Build response with is_first_user flag
     response = schemas.RegisterResponse.model_validate(user)

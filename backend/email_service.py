@@ -40,10 +40,18 @@ async def send_email(to: str, subject: str, html_body: str) -> bool:
             username=settings.smtp_user or None,
             password=settings.smtp_password or None,
             start_tls=True,
+            timeout=20,
         )
         log.info(f"Email sent to {to}: {subject}")
         return True
-    except Exception:
+    except Exception as e:
+        # Single-line error first (Railway's log viewer flattens multi-line).
+        log.error(
+            f"Failed to send email to {to}: {subject} | "
+            f"{type(e).__name__}: {e} | "
+            f"host={settings.smtp_host}:{settings.smtp_port} user={settings.smtp_user}"
+        )
+        # Full traceback as a separate entry for when the viewer preserves it.
         log.exception(f"Failed to send email to {to}: {subject}")
         return False
 
