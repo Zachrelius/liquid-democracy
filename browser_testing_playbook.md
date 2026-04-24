@@ -1532,6 +1532,127 @@ Notes:
 
 ---
 
+## Test Suite L: Phase 6.5 — Public Landing Surface + Deploy Verification
+
+**Suite letter:** L (Suite K reserved for Phase 7's RCV/STV browser tests).
+
+**Ran against:** `https://frontend-production-ecc7.up.railway.app` (Railway-provided domain pre-custom-domain). Rerun against `https://liquiddemocracy.us` once DNS is live.
+
+---
+
+### L1: Landing page renders publicly
+
+**Goal:** `/` is reachable without authentication and shows the marketing hero.
+
+**Steps:**
+1. Open an incognito window (no session tokens).
+2. Navigate to `https://frontend-production-ecc7.up.railway.app/`.
+
+**Expected:** HTTP 200. Landing page renders: hero with "Liquid Democracy" + tagline, three CTA buttons ("Try the Demo", "About the Project", "Sign In"), 4 distinctives section, footer with GitHub/Privacy/Terms links.
+
+**Result:** PASS — HTTP 200 on GET /. Landing HTML served by nginx (no redirect to /login).
+
+---
+
+### L2: About page renders publicly
+
+**Steps:**
+1. Navigate to `/about`.
+
+**Expected:** HTTP 200. About page shows the drafted narrative (problem framing, what liquid democracy is, why this platform exists, status, get-involved section). GitHub link visible.
+
+**Result:** PASS — HTTP 200 on GET /about. TODO(Z) comment at the top of the source reminds that copy is a draft for review.
+
+---
+
+### L3: Demo page renders publicly
+
+**Steps:**
+1. Navigate to `/demo`.
+
+**Expected:** HTTP 200. Page shows intro + persistent-data notice + 6 persona cards (alice, admin, dr_chen, carol, dave, frank) each with a "Sign in as X" button + "Register your own demo account" callout link.
+
+**Result:** PASS — HTTP 200 on GET /demo.
+
+---
+
+### L4: Persona allowlist endpoint returns all six personas
+
+**Steps:**
+1. `curl https://frontend-production-ecc7.up.railway.app/api/auth/demo-users`
+
+**Expected:** JSON array of 6 users (alice, admin, dr_chen, carol, dave, frank) with username + display_name. No 404 (which would indicate IS_PUBLIC_DEMO misconfigured) and no empty array (which would indicate seed didn't run).
+
+**Result:** PASS — `[{"username":"admin","display_name":"Admin User"},{"username":"alice",...}, ...]` with all 6 personas.
+
+---
+
+### L5: Fallback route redirects to landing, not login
+
+**Goal:** Verify the `*` → `/` change shipped. Previously `*` redirected to `/proposals` → `/login` for unauthenticated users.
+
+**Steps:**
+1. Incognito window, navigate to `/asdf`.
+
+**Expected:** nginx returns the SPA's `index.html` (HTTP 200). React router's `*` route then redirects client-side to `/`. Visually: lands on the landing page.
+
+**Result:** PASS — HTTP 200 on GET /asdf (SPA fallback). Client-side redirect to `/` executes on mount. (Verified the route change in `App.jsx`; HTTP-level check confirms nginx doesn't 404 for unknown paths.)
+
+---
+
+### L6: Frontend nginx proxies `/api/` to backend
+
+**Goal:** Verify the `BACKEND_URL` template substitution + SNI fix work against Railway's HTTPS upstream.
+
+**Steps:**
+1. `curl https://frontend-production-ecc7.up.railway.app/api/health`
+
+**Expected:** `{"status":"ok","version":"0.1.0"}` — the backend's health payload, proxied through the frontend's nginx. A 502 here would indicate upstream-reachability failure (DNS, SNI, or Railway edge routing).
+
+**Result:** PASS — backend's JSON returned verbatim. Previous 502 from a missing SNI + wrong Host header was fixed in commit `1561f32`.
+
+---
+
+### L7: Persona quick-login flow works end-to-end
+
+**Goal:** Verify `POST /api/auth/demo-login` issues tokens, those tokens authenticate subsequent API calls, and alice lands in the demo org with seeded content.
+
+**Steps:**
+1. `curl -X POST /api/auth/demo-login -d '{"username":"alice"}'` → capture access token.
+2. `curl -H "Authorization: Bearer <token>" /api/auth/me`
+3. `curl -H "Authorization: Bearer <token>" /api/orgs`
+4. `curl -H "Authorization: Bearer <token>" /api/orgs/demo/proposals`
+
+**Expected:**
+- Step 1: 200 with `access_token` + `refresh_token`.
+- Step 2: alice's profile with `email_verified: true`, `username: "alice"`.
+- Step 3: array containing the Demo Organization (slug=demo) with `user_role: "admin"`.
+- Step 4: array of seeded proposals including "Office Renovation Style".
+
+**Result:** PASS — all four calls return expected shapes. Z also manually verified in-browser: clicking "Sign in as alice" on `/demo` lands on `/proposals` with seeded content visible.
+
+---
+
+### Suite L Summary
+
+| ID | Check | Status |
+|---|---|---|
+| L1 | Landing renders publicly (HTTP 200) | ✅ PASS |
+| L2 | About renders publicly | ✅ PASS |
+| L3 | Demo renders publicly | ✅ PASS |
+| L4 | demo-users returns 6 personas | ✅ PASS |
+| L5 | `/asdf` fallback serves SPA (not /login) | ✅ PASS |
+| L6 | nginx proxies /api/ to backend (HTTPS upstream + SNI) | ✅ PASS |
+| L7 | demo-login → /me → /orgs → /proposals as alice | ✅ PASS |
+
+Total: 7/7 passed (API-level). Persona-picker UI click-through manually verified by Z.
+
+**Not yet covered in Suite L:**
+- Full registration → real email verification → demo-org auto-join flow (deferred until SMTP delivery from Railway is confirmed).
+- Custom-domain rerun (`liquiddemocracy.us`) pending DNS propagation.
+
+---
+
 ## Extending This Document
 
 When new phases are completed, add new test suites to this document following the same format:

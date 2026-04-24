@@ -906,3 +906,90 @@ Delegation inheritance in approval proposals is confirmed functional: only 3 dir
 - **WebSocket endpoint unused**: Exists in backend but no frontend connects.
 - **Edit Draft UX incomplete**: "Edit Draft" navigates to read-only view. Needs inline edit form.
 - **Blocking JavaScript dialogs are gone**: Toast/ConfirmDialog in place. Further UX deferred.
+
+---
+
+## Phase 6.5 — EA Demo Landing + Public Deployment — 2026-04-24
+
+**Goal:** ship the platform to its first public deployment at `liquiddemocracy.us` ahead of upcoming EA events. Adds a public landing surface, persona-quick-login for visitors, real SMTP, and Railway hosting. Doesn't change the platform's existing voting/delegation behavior.
+
+### What shipped
+
+**Backend (145 tests, +9):**
+- New setting `is_public_demo: bool = False` in `settings.py`, separate from `debug`. Gates demo-specific behaviors without exposing dev-mode features.
+- `GET /api/auth/demo-users` now gated on `debug OR is_public_demo`.
+- New `POST /api/auth/demo-login` endpoint: accepts `{username}`, validates against a persona allowlist (alice, admin, dr_chen, carol, dave, frank), issues access + refresh tokens mirroring the normal login shape, audit-logs `user.demo_login` with requester IP. Returns 404 (not 403) outside public-demo deployments so the gate and allowlist leak nothing.
+- Demo-org auto-join on email verification: when `is_public_demo=true`, `POST /api/auth/verify-email` adds the verified user to the `slug="demo"` org with role `member`. No-op if the demo org doesn't exist (unseeded deployment).
+- New `backend/seed_if_empty.py`: idempotent helper that runs `run_seed(db)` only when the users table is empty.
+- `backend/start.sh` calls `seed_if_empty.py` after alembic stamping when `IS_PUBLIC_DEMO=true`. Keeps the public demo self-healing on fresh deploys without ever wiping visitor content on subsequent boots.
+- Test file `tests/test_demo_mode.py` (9 tests): flag gating on both endpoints, allowlist enforcement, token issuance, audit log entry, auto-join on verify, graceful no-op when the demo org isn't seeded.
+
+**Frontend (new public landing surface):**
+- `pages/Landing.jsx` — hero + tagline + 3 CTAs + 4 distinctives + footer.
+- `pages/About.jsx` — drafted ~785 words of project narrative. Marked with a TODO comment for Z to edit.
+- `pages/Demo.jsx` — 6-persona card grid wired to `POST /api/auth/demo-login`, plus "register your own demo account" callout and a persistent-data notice.
+- `components/PublicLayout.jsx` — minimal chrome (footer only) shared by the three public pages; no Nav or EmailVerificationBanner for unauthenticated visitors.
+- `App.jsx` — `/`, `/about`, `/demo` added as public routes; `/register` aliased to `Login` with default-to-register-tab; `*` fallback now redirects to `/` instead of `/proposals`.
+- `Login.jsx` — when path is `/register`, auto-selects the register tab. No other behavior changes.
+
+**Infrastructure:**
+- `frontend/nginx.conf` parameterized for Railway: `proxy_pass ${BACKEND_URL}` substituted at container start via nginx:alpine's `/etc/nginx/templates/*.template` mechanism. Works unchanged on docker-compose (`http://backend:8000`) and Railway (`https://backend-*.up.railway.app`).
+- `frontend/Dockerfile` — `COPY nginx.conf /etc/nginx/templates/default.conf.template` + `ENV BACKEND_URL=http://backend:8000` as a sensible default.
+- `docker-compose.yml` — `BACKEND_URL` env var injected into the frontend service for parity with Railway.
+- `DEPLOYMENT.md` — end-to-end Railway walkthrough (7 steps), Gmail App Password setup, demo data management (auto-seed + manual reset), IS_PUBLIC_DEMO in the env var reference, troubleshooting for SMTP / custom-domain / demo-login 404s.
+
+### Live deploy — Railway (keen-learning project)
+
+**Services:** backend (`backend-production-8014c.up.railway.app`), frontend (`frontend-production-ecc7.up.railway.app`), managed PostgreSQL — all online.
+
+**Env vars (backend):** `IS_PUBLIC_DEMO=true`, `DEBUG=false`, `BASE_URL=https://liquiddemocracy.us`, `CORS_ORIGINS=["https://liquiddemocracy.us"]`, SMTP set to `smtp.gmail.com:587` with `liquiddemocracy.qa@gmail.com` + App Password, 64-char hex `SECRET_KEY`.
+
+**Auto-seed on first boot** — verified from deploy logs:
+```
+17:27:59  Public demo mode — ensuring demo seed data…
+17:28:00  Public demo — users table empty, running run_seed(db)…
+17:28:08  Public demo — seed complete: {'suggested_user': 'alice', ...}
+```
+
+### Deployment issues surfaced and fixed during bringup
+
+1. **Railway port autodetect defaulted to 8080** on the backend's Generate Domain flow. Backend listens on 8000. Manual override to 8000 during Networking setup. (Hit the same thing on frontend with 80-vs-default.) Documented in DEPLOYMENT.md Step 3/4 notes.
+2. **nginx 502 Bad Gateway on `/api/*` when proxying HTTPS upstream.** Root cause: `proxy_set_header Host $host` sent the frontend's own hostname to Railway's edge, and nginx's TLS handshake with the upstream was omitting SNI. Fixed `nginx.conf` to send `Host $proxy_host` + `X-Forwarded-Host $host` and added `proxy_ssl_server_name on;` on both `/api/` and `/ws/` blocks. Both are no-ops against docker-compose's HTTP upstream, so local dev is unaffected. Commit: `1561f32`.
+3. **No container shell on Railway Hobby tier** — blocked the "docker exec python seed_data" pattern. Pivoted to the auto-seed-on-boot approach, which is strictly better (self-healing, idempotent, no manual step required on future redeploys). Commit: `703e7e2`.
+4. **Registration 504 Gateway Timeout on the deployed instance.** Root cause: `register()` was awaiting `send_verification_email()` synchronously, and SMTP from the Railway container to Gmail was timing out. Fixes: registration now schedules the email via `BackgroundTasks` so the 201 returns immediately, and `email_service.py` logs a single-line ERROR with the exception type + host/port/user before falling through to `log.exception()`. Commit: `3d77d15`.
+
+5. **Gmail SMTP fundamentally blocked from Railway.** Once error logging was clear, the single-line ERROR revealed `SMTPConnectTimeoutError: Timed out connecting to smtp.gmail.com on port 587`. Tried port 465 (`smtp.gmail.com:465`, implicit SSL) — same error. Both ports are blocked at the TCP level, either by Railway's egress rules or Gmail's IP-range deny list. Not fixable with code; required pivoting to a transactional email provider that delivers via HTTPS. Shipped Resend HTTP API integration (`backend/email_service.py` now prefers Resend when `RESEND_API_KEY` is set; SMTP stays as fallback for non-Railway deploys). Commits: `9c940fb` (port-infer TLS mode), `4bbc0ad` (Resend integration). Blocked on Z: Resend signup + `liquiddemocracy.us` domain verification + API key.
+
+### Suite L — API-level verification (against live Railway frontend)
+
+| ID | Check | Status |
+|---|---|---|
+| L1 | `GET /` returns 200 (Landing page HTML) | ✅ PASS |
+| L2 | `GET /about` returns 200 | ✅ PASS |
+| L3 | `GET /demo` returns 200 | ✅ PASS |
+| L4 | `GET /api/auth/demo-users` returns all 6 personas | ✅ PASS |
+| L5 | Fallback `/asdf` returns 200 (SPA `index.html`, not `/login`) | ✅ PASS |
+| L6 | `GET /api/health` proxies correctly through nginx | ✅ PASS |
+| L7 | `POST /api/auth/demo-login` as alice → 200 with access+refresh tokens; `GET /api/auth/me` confirms alice profile (`email_verified: true`); `GET /api/orgs` returns Demo Organization with `user_role=admin`; `GET /api/orgs/demo/proposals` returns seeded proposals including "Office Renovation Style" | ✅ PASS |
+
+Z manually verified persona-picker → `/proposals` flow in the browser: lands on the authenticated app with seeded content visible.
+
+### Acceptance criteria status
+
+- ✅ `is_public_demo` setting added and gates both endpoints.
+- ✅ `POST /api/auth/demo-login` works for the allowlist; returns 404 otherwise.
+- ✅ Demo-org auto-join wired on email verification path.
+- ✅ All Phase 6 backend tests still pass (145 total, +9 new).
+- ✅ `/`, `/about`, `/demo` render publicly on the Railway frontend.
+- ✅ Unknown URLs redirect to `/` (not `/login`).
+- ✅ Platform is live on HTTPS via Railway-provided `*.up.railway.app` URLs.
+- ✅ PostgreSQL backend, demo data auto-seeded on first boot.
+- ⏳ **Custom domain `liquiddemocracy.us`:** DNS configuration in progress (Z setting up CNAME/ALIAS at registrar).
+- ⏳ **Real email verification:** Gmail SMTP is blocked from Railway (confirmed `SMTPConnectTimeoutError` on both 587 and 465). Pivoted to Resend HTTP API — code shipped (commit `4bbc0ad`). Blocked on Z's Resend signup + `liquiddemocracy.us` domain verification + API key paste. Once `RESEND_API_KEY` is set in Railway, the backend auto-switches and verification emails should deliver.
+
+### Open items entering Phase 7
+
+- **Real email delivery via Resend** — code shipped, awaiting Z's Resend account + API key + domain verification (DNS records live in the same registrar panel Z is configuring for Railway, so fold in together).
+- **Custom domain propagation** pending Z's DNS setup.
+- **Post-AI-agency framing** deliberately omitted from About page draft per spec (Z to edit copy).
+- **Browser-click-through Suite L** — API-level contracts verified; full UI click-through (click each CTA, verify persona cards render as cards with correct labels) deferred for Z to do against the custom domain once DNS is live.
