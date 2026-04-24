@@ -1,27 +1,72 @@
 """
-Email service — sends emails via SMTP or logs to console in dev mode.
+Email service — delivers via Resend HTTP API (preferred for cloud deploys),
+falls back to SMTP via aiosmtplib, or logs to console when neither is
+configured.
 """
 
 import logging
+
+import httpx
 
 from settings import settings
 
 log = logging.getLogger(__name__)
 
+RESEND_API_URL = "https://api.resend.com/emails"
+
 
 async def send_email(to: str, subject: str, html_body: str) -> bool:
-    """Send an email. If SMTP is not configured, log to console instead."""
-    if not settings.smtp_host:
-        # Dev mode — print email to console so devs can see links
-        log.info("=" * 60)
-        log.info("EMAIL (console mode — SMTP not configured)")
-        log.info(f"  To:      {to}")
-        log.info(f"  Subject: {subject}")
-        log.info(f"  Body:")
-        print(html_body)
-        log.info("=" * 60)
-        return True
+    """Send an email via Resend (preferred), SMTP (fallback), or console."""
+    if settings.resend_api_key:
+        return await _send_via_resend(to, subject, html_body)
+    if settings.smtp_host:
+        return await _send_via_smtp(to, subject, html_body)
 
+    # Console mode — no provider configured. Log so devs see the link.
+    log.info("=" * 60)
+    log.info("EMAIL (console mode — no email provider configured)")
+    log.info(f"  To:      {to}")
+    log.info(f"  Subject: {subject}")
+    log.info(f"  Body:")
+    print(html_body)
+    log.info("=" * 60)
+    return True
+
+
+async def _send_via_resend(to: str, subject: str, html_body: str) -> bool:
+    """POST the email to Resend's HTTP API."""
+    payload = {
+        "from": settings.from_email,
+        "to": [to],
+        "subject": subject,
+        "html": html_body,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.resend_api_key}",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.post(RESEND_API_URL, json=payload, headers=headers)
+        if resp.status_code >= 400:
+            log.error(
+                f"Resend API rejected send to {to}: {subject} | "
+                f"HTTP {resp.status_code} | body={resp.text[:500]}"
+            )
+            return False
+        log.info(f"Email sent via Resend to {to}: {subject} (id={resp.json().get('id')})")
+        return True
+    except Exception as e:
+        log.error(
+            f"Resend API call failed for {to}: {subject} | "
+            f"{type(e).__name__}: {e}"
+        )
+        log.exception(f"Resend API call failed for {to}: {subject}")
+        return False
+
+
+async def _send_via_smtp(to: str, subject: str, html_body: str) -> bool:
+    """Send via aiosmtplib. Used when Resend isn't configured."""
     try:
         import aiosmtplib
         from email.mime.text import MIMEText
@@ -47,17 +92,15 @@ async def send_email(to: str, subject: str, html_body: str) -> bool:
             start_tls=not use_ssl,
             timeout=20,
         )
-        log.info(f"Email sent to {to}: {subject}")
+        log.info(f"Email sent via SMTP to {to}: {subject}")
         return True
     except Exception as e:
-        # Single-line error first (Railway's log viewer flattens multi-line).
         log.error(
-            f"Failed to send email to {to}: {subject} | "
+            f"Failed to send email via SMTP to {to}: {subject} | "
             f"{type(e).__name__}: {e} | "
             f"host={settings.smtp_host}:{settings.smtp_port} user={settings.smtp_user}"
         )
-        # Full traceback as a separate entry for when the viewer preserves it.
-        log.exception(f"Failed to send email to {to}: {subject}")
+        log.exception(f"Failed to send email via SMTP to {to}: {subject}")
         return False
 
 

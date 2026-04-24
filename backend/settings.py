@@ -28,7 +28,12 @@ class Settings(BaseSettings):
     # is_public_demo = this deployment is the public EA-demo environment.
     is_public_demo: bool = False
 
-    # SMTP settings (all optional — if smtp_host is empty, emails are logged to console)
+    # Email delivery — Resend (preferred for cloud deploys where SMTP is blocked)
+    # takes priority over SMTP when resend_api_key is set.
+    resend_api_key: str = ""
+
+    # SMTP settings (all optional — if both resend_api_key and smtp_host are empty,
+    # emails are logged to console)
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""

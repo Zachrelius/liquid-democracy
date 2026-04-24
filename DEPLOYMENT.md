@@ -281,7 +281,34 @@ docker-compose exec -T db psql -U ${DB_USER} liquid_democracy < backup.sql
 docker-compose up -d
 ```
 
-## Setting Up SMTP (Gmail App Password)
+## Setting Up Email Delivery
+
+The backend supports two delivery backends, picked automatically:
+
+1. **Resend (preferred, required on Railway)** — HTTP API, bypasses all SMTP blocks. Use this for the demo deployment.
+2. **Gmail SMTP** — works on most dev/self-hosted setups, but Railway's network blocks outbound TCP to Gmail's SMTP ports (both 587 and 465). Keep as a fallback for local dev / non-Railway hosts.
+
+When `RESEND_API_KEY` is set, the backend uses Resend and ignores the SMTP vars. When it's empty and `SMTP_HOST` is set, the backend uses SMTP. When both are empty, emails are logged to stdout (dev mode).
+
+### Option A — Resend (recommended for Railway)
+
+**Z performs these steps personally** — signup, domain verification, API key generation.
+
+1. Sign up at [resend.com](https://resend.com) (Google OAuth is fastest).
+2. Domains → Add Domain → enter `liquiddemocracy.us`.
+3. Resend shows 3 DNS records (MX, SPF/TXT, DKIM). Add them in the same registrar's DNS panel where the Railway CNAME lives. Propagation usually within 5 min.
+4. Wait for Resend's domain status to go green (auto-checks).
+5. API Keys → Create API Key → "Full access" or "Sending access" → copy the `re_...` key.
+6. **Add to Railway backend service variables:**
+   - `RESEND_API_KEY=re_...`
+   - `FROM_EMAIL=Liquid Democracy <onboarding@liquiddemocracy.us>` (any address on the verified domain)
+   - (Leave the SMTP_* vars — they'll be ignored when `RESEND_API_KEY` is set, but keep them populated so switching fallback is a single env var flip.)
+7. Redeploy (Railway auto-redeploys on env var change).
+8. Test: register a fresh account; verification email arrives in ~5 seconds.
+
+**Free-tier limits.** 100 emails/day, 3,000/month — far beyond demo needs. Upgrade only if volume spikes post-pilot.
+
+### Option B — Gmail SMTP (NOT on Railway)
 
 For the demo, verification and password-reset emails are sent through a Gmail account using an App Password. This is credible for low-volume demo traffic, no dedicated mail service required.
 
@@ -368,7 +395,8 @@ Do this before EA events if visitor content from previous demos has accumulated 
 | `CORS_ORIGINS` | No | `["http://localhost:5173"]` | JSON array of allowed CORS origins |
 | `BASE_URL` | No | `http://localhost:5173` | Public URL for email links |
 | `IS_PUBLIC_DEMO` | No | `false` | Enables demo-login endpoint, persona-picker endpoint, and demo-org auto-join on verification. Set `true` on the demo deployment, `false` in real production. |
-| `SMTP_HOST` | No | — | SMTP server hostname (leave empty to log emails to console) |
+| `RESEND_API_KEY` | No | — | Resend API key (`re_...`). When set, the backend delivers email via Resend's HTTP API and ignores the SMTP_* vars. Preferred on Railway/other clouds where outbound SMTP is blocked. |
+| `SMTP_HOST` | No | — | SMTP server hostname (ignored when RESEND_API_KEY is set; leave empty with no Resend key to log emails to console) |
 | `SMTP_PORT` | No | `587` | SMTP server port |
 | `SMTP_USER` | No | — | SMTP authentication username |
 | `SMTP_PASSWORD` | No | — | SMTP authentication password |
@@ -436,7 +464,15 @@ To find a specific request:
 docker-compose logs backend | grep "request-id-here"
 ```
 
-### Verification emails not arriving (Gmail SMTP)
+### Verification emails not arriving on Railway (SMTP blocked)
+
+**Symptoms:** Railway deploy logs show `SMTPConnectTimeoutError: Timed out connecting to smtp.gmail.com on port 587` (or 465). Registration succeeds (201), but no email arrives.
+
+**Cause:** Railway's network blocks outbound TCP to Gmail's SMTP ports, on both 587 and 465. This is not a Gmail-auth issue — the TCP connection never establishes.
+
+**Fix:** Switch to Resend's HTTP API (above, under "Setting Up Email Delivery — Option A"). HTTP traffic on 443 is never blocked. Setup is ~5 min; the backend auto-switches once `RESEND_API_KEY` is set.
+
+### Verification emails not arriving (Gmail SMTP — for non-Railway hosts)
 
 **Symptoms:** registration succeeds, but the inbox never receives the verification email, or Railway logs show `SMTPAuthenticationError`.
 
