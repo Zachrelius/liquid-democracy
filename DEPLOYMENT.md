@@ -306,33 +306,53 @@ For the demo, verification and password-reset emails are sent through a Gmail ac
 
 The demo org (`slug=demo`) is seeded once after the first deploy. Visitor-created content persists across sessions — this is intentional for the EA-demo stage, so visitors can see each others' proposals and delegations accumulate. Auto-reset is deferred to a later phase.
 
-### Initial seed (one-time, after first deploy)
+### Initial seed (automatic)
 
-From your machine, against the live Railway deploy:
+Auto-seed on boot: when `IS_PUBLIC_DEMO=true`, `backend/start.sh` runs
+`seed_if_empty.py` before uvicorn starts. The helper checks the users
+table and only runs `run_seed(db)` if it's empty. This means:
 
-```bash
-# Option A — Railway CLI (preferred)
-railway login
-railway link                # pick the project
-railway run --service backend python -c "from database import SessionLocal; from seed_data import run_seed; db = SessionLocal(); run_seed(db); db.close()"
+- Fresh Railway deploy → seed runs automatically on first boot.
+- Subsequent redeploys → seed is skipped (users already present).
+- Visitor content is never wiped by a redeploy.
 
-# Option B — Railway web console
-# Go to the backend service → Deployments → open a shell → run:
-python -c "from database import SessionLocal; from seed_data import run_seed; db = SessionLocal(); run_seed(db); db.close()"
+Verify: `https://liquiddemocracy.us/demo` renders with 6 personas, and clicking "Sign in as alice" lands on `/proposals` with seeded proposals visible. Backend deploy logs should show one of:
+
+```
+Public demo mode — ensuring demo seed data…
+Public demo — users table empty, running run_seed(db)…
+Public demo — seed complete: {...}
 ```
 
-Verify: `https://liquiddemocracy.us/demo` renders with 6 personas, and clicking "Sign in as alice" lands on `/proposals` with seeded proposals visible.
+or on subsequent boots:
+
+```
+Public demo — seed skipped (N users already present).
+```
 
 ### Manual reset (when you want a clean demo)
 
-Wipes all data and re-seeds. Expect ~30 seconds of downtime.
+Two options depending on Railway plan:
+
+**Option A — Railway CLI (requires `railway login`):**
 
 ```bash
+railway link                # pick the project
 railway run --service backend python -c "from database import engine, Base; Base.metadata.drop_all(engine); Base.metadata.create_all(engine)"
-railway run --service backend python -c "from database import SessionLocal; from seed_data import run_seed; db = SessionLocal(); run_seed(db); db.close()"
+# Restart the backend service; auto-seed kicks in because users table is now empty.
+railway redeploy --service backend
 ```
 
-Do this before EA events if visitor content from previous demos has accumulated beyond what you want to show.
+**Option B — Railway dashboard (no CLI):**
+
+1. Railway dashboard → Postgres service → Database tab → run SQL:
+   ```sql
+   DROP SCHEMA public CASCADE; CREATE SCHEMA public;
+   ```
+2. Railway dashboard → backend service → Deployments → Restart.
+3. `start.sh` will re-create the schema and auto-seed because the users table is empty.
+
+Do this before EA events if visitor content from previous demos has accumulated beyond what you want to show. Total downtime ≈ 30 seconds.
 
 **Note:** Because `is_public_demo=true` auto-joins new registrants to the demo org, the reset also wipes any real-user accounts. If/when a real org onboards, migrate to a separate-deployment or auto-reset-with-exclusions model before that happens.
 
