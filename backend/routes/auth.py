@@ -1,3 +1,4 @@
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -15,8 +16,46 @@ from database import get_db
 from email_service import send_verification_email, send_password_reset_email
 from settings import settings
 
+log = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 limiter = Limiter(key_func=get_remote_address)
+
+DEMO_USERNAMES = ["alice", "admin", "dr_chen", "carol", "dave", "frank"]
+DEMO_ORG_SLUG = "demo"
+
+
+def _auto_join_demo_org(db: Session, user: models.User) -> None:
+    """When is_public_demo is enabled, add the verified user to the demo org as
+    a regular member. Missing demo org is logged and tolerated — verification
+    should never fail because the demo fixtures are absent.
+    """
+    if not settings.is_public_demo:
+        return
+    demo_org = db.query(models.Organization).filter(
+        models.Organization.slug == DEMO_ORG_SLUG
+    ).first()
+    if demo_org is None:
+        log.warning(
+            "is_public_demo is true but demo org (slug=%s) not found — skipping auto-join for user %s",
+            DEMO_ORG_SLUG,
+            user.id,
+        )
+        return
+    existing = db.query(models.OrgMembership).filter(
+        models.OrgMembership.user_id == user.id,
+        models.OrgMembership.org_id == demo_org.id,
+    ).first()
+    if existing:
+        return
+    membership = models.OrgMembership(
+        user_id=user.id,
+        org_id=demo_org.id,
+        role="member",
+        status="active",
+    )
+    db.add(membership)
+    db.flush()
 
 
 def _now() -> datetime:
@@ -263,6 +302,8 @@ def verify_email(
     user = db.get(models.User, record.user_id)
     if user:
         user.email_verified = True
+        # Public-demo deployments: auto-add verified users to the demo org.
+        _auto_join_demo_org(db, user)
 
     log_audit_event(
         db,
@@ -405,17 +446,61 @@ def reset_password(
 
 @router.get("/demo-users")
 def demo_users(db: Session = Depends(get_db)):
-    """Return a list of demo users for quick-switch login. Only available in debug mode."""
-    if not settings.debug:
+    """Return a list of demo users for quick-switch login.
+    Available when either debug or is_public_demo is enabled.
+    """
+    if not (settings.debug or settings.is_public_demo):
         raise HTTPException(status_code=404, detail="Not found")
-    demo_usernames = ["alice", "admin", "dr_chen", "carol", "dave", "frank"]
     users = db.query(models.User).filter(
-        models.User.username.in_(demo_usernames)
+        models.User.username.in_(DEMO_USERNAMES)
     ).all()
     return [
         {"username": u.username, "display_name": u.display_name}
         for u in users
     ]
+
+
+@router.post("/demo-login", response_model=schemas.TokenResponse)
+def demo_login(
+    body: schemas.DemoLoginRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Passwordless login for whitelisted demo personas.
+    Available when either debug or is_public_demo is enabled.
+    """
+    if not (settings.debug or settings.is_public_demo):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # 404 (not 403) so the endpoint reveals nothing about the allowlist when
+    # the flag is off — and an unknown username gets the same response as a
+    # real-but-not-allowlisted one.
+    if body.username not in DEMO_USERNAMES:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    user = db.query(models.User).filter(models.User.username == body.username).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    log_audit_event(
+        db,
+        action="user.demo_login",
+        target_type="user",
+        target_id=user.id,
+        actor_id=user.id,
+        details={"username": user.username},
+        ip_address=request.client.host if request.client else None,
+    )
+
+    access_token = auth_utils.create_access_token(user.id)
+    refresh_token = _create_refresh_token(db, user.id)
+
+    db.commit()
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+    }
 
 
 @router.get("/me", response_model=schemas.UserOut)

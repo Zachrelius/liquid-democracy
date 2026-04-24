@@ -28,6 +28,7 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD}
       FROM_EMAIL: ${FROM_EMAIL}
       BASE_URL: ${BASE_URL}
+      DEBUG: ${DEBUG:-false}
     ports:
       - "8000:8000"
 
@@ -35,6 +36,8 @@ services:
     build: ./frontend
     depends_on:
       - backend
+    environment:
+      BACKEND_URL: http://backend:8000
     ports:
       - "80:80"
 

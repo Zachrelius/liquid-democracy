@@ -51,6 +51,11 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class DemoLoginRequest(BaseModel):
+    """Passwordless login for whitelisted demo personas (Phase 6.5)."""
+    username: str = Field(min_length=1, max_length=50)
+
+
 class TokenResponse(BaseModel):
     access_token: str
     refresh_token: Optional[str] = None

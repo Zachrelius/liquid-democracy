@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     debug: bool = False
     log_level: str = "INFO"
 
+    # Public demo deployment flag — enables persona picker + demo-org auto-join.
+    # SEPARATE from `debug`: debug = dev-mode features (seed endpoint, time sim);
+    # is_public_demo = this deployment is the public EA-demo environment.
+    is_public_demo: bool = False
+
     # SMTP settings (all optional — if smtp_host is empty, emails are logged to console)
     smtp_host: str = ""
     smtp_port: int = 587

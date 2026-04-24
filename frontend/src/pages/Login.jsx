@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import api from '../api';
 
 export default function Login() {
   const { login, register } = useAuth();
   const navigate = useNavigate();
-  const [tab, setTab] = useState('login');
+  const location = useLocation();
+  // If the visitor lands on /register, start on the register tab
+  const [tab, setTab] = useState(location.pathname === '/register' ? 'register' : 'login');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 

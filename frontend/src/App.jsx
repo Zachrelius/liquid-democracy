@@ -29,6 +29,9 @@ import Analytics from './pages/admin/Analytics';
 import VotingMethodsHelp from './pages/VotingMethodsHelp';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
+import Landing from './pages/Landing';
+import About from './pages/About';
+import Demo from './pages/Demo';
 
 function Layout({ children }) {
   return (
@@ -47,6 +50,7 @@ export default function App() {
       <ConfirmProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Login />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
@@ -219,8 +223,12 @@ export default function App() {
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
 
-        <Route path="/" element={<Navigate to="/proposals" replace />} />
-        <Route path="*" element={<Navigate to="/proposals" replace />} />
+        {/* Public marketing routes — no auth required, no Nav/EmailVerificationBanner */}
+        <Route path="/" element={<Landing />} />
+        <Route path="/about" element={<About />} />
+        <Route path="/demo" element={<Demo />} />
+
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       </ConfirmProvider>
       </ToastProvider>
