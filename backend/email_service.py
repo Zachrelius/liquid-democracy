@@ -33,13 +33,18 @@ async def send_email(to: str, subject: str, html_body: str) -> bool:
         msg["To"] = to
         msg.attach(MIMEText(html_body, "html"))
 
+        # Infer TLS mode from port: 465 is implicit SSL, everything else
+        # (587, 2525, etc.) uses STARTTLS. Cloud providers sometimes block
+        # port 587 but leave 465 open, so the env var determines the mode.
+        use_ssl = settings.smtp_port == 465
         await aiosmtplib.send(
             msg,
             hostname=settings.smtp_host,
             port=settings.smtp_port,
             username=settings.smtp_user or None,
             password=settings.smtp_password or None,
-            start_tls=True,
+            use_tls=use_ssl,
+            start_tls=not use_ssl,
             timeout=20,
         )
         log.info(f"Email sent to {to}: {subject}")

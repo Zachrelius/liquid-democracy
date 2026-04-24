@@ -291,10 +291,12 @@ For the demo, verification and password-reset emails are sent through a Gmail ac
 2. **Generate an App Password.** Google Account → Security → 2-Step Verification → App passwords (may be linked as "App passwords" in the search bar if hidden). Create a new password, label it "Liquid Democracy Demo." Google displays a 16-character password with spaces — copy it verbatim, spaces and all. Google will not show it again. Paste it into a temporary note for the next step.
 3. **Add to Railway backend service variables:**
    - `SMTP_HOST=smtp.gmail.com`
-   - `SMTP_PORT=587`
+   - `SMTP_PORT=465` (implicit SSL — preferred on cloud providers)
    - `SMTP_USER=<your-gmail-address>` (e.g., `liquiddemocracy.qa@gmail.com`)
    - `SMTP_PASSWORD=<16-char App Password>` (Railway will preserve the spaces; Gmail accepts with or without)
    - `FROM_EMAIL=Liquid Democracy <your-gmail-address>` (the display-name prefix is what recipients see in their inbox)
+
+   **Why port 465 and not 587?** Some cloud hosts (including some Railway tiers) block outbound TCP to port 587 but leave 465 open. Both Gmail endpoints work; the code infers TLS mode from port (465 = implicit SSL, 587 = STARTTLS). If 465 is blocked too, you'll see `SMTPConnectTimeoutError` in the backend logs and will need to switch to a transactional email provider (SendGrid, Postmark, etc.).
 4. **Redeploy the backend service** so it picks up the new env vars.
 5. **Test delivery:** register a fresh account on the deployed site, confirm the verification email arrives in the real inbox within ~30 seconds. If it doesn't, check the **Troubleshooting** section below for SMTP-specific guidance.
 
