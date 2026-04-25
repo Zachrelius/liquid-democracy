@@ -987,11 +987,11 @@ Z manually verified persona-picker → `/proposals` flow in the browser: lands o
 - ✅ Platform is live on HTTPS via Railway-provided `*.up.railway.app` URLs.
 - ✅ PostgreSQL backend, demo data auto-seeded on first boot.
 - ✅ **Custom domain `https://www.liquiddemocracy.us`** live with valid Let's Encrypt cert. GoDaddy doesn't support apex CNAME, so we used `www` as the Railway custom domain and configured GoDaddy 301 forwarding for the apex. Apex on HTTP redirects correctly (2 hops → `https://www.liquiddemocracy.us`); HTTPS apex doesn't resolve (no cert installed at apex — GoDaddy forwarding doesn't TLS-terminate). Acceptable for the demo: marketing links use the `www.` form, and browsers default-try HTTP first when users type the bare domain.
-- ⏳ **Real email verification:** Gmail SMTP is blocked from Railway (confirmed `SMTPConnectTimeoutError` on both 587 and 465). Pivoted to Resend HTTP API — code shipped (commit `4bbc0ad`). Blocked on Z's Resend signup + `liquiddemocracy.us` domain verification + API key paste. Once `RESEND_API_KEY` is set in Railway, the backend auto-switches and verification emails should deliver.
+- ✅ **Real email verification working end-to-end via Resend** (verified 2026-04-25). `RESEND_API_KEY` set in Railway; backend auto-routes through Resend HTTP API. Test registration → verification email arrived in inbox `From: Liquid Democracy <noreply@liquiddemocracy.us>` → click → user verified → auto-joined to demo org → lands on `/proposals` with seeded content. All three acceptance steps pass.
 
 ### Open items entering Phase 7
 
-- **Real email delivery via Resend** — code shipped, awaiting Z's Resend account + API key + domain verification (DNS records live in the same registrar panel Z is configuring for Railway, so fold in together).
+- ~~**Real email delivery via Resend**~~ — done. Resend account, domain verified at GoDaddy, API key wired into Railway. Verification emails deliver in ~5s.
 - **Custom domain propagation** pending Z's DNS setup.
 - **Post-AI-agency framing** deliberately omitted from About page draft per spec (Z to edit copy).
 - **Browser-click-through Suite L** — API-level contracts verified; full UI click-through (click each CTA, verify persona cards render as cards with correct labels) deferred for Z to do against the custom domain once DNS is live.
