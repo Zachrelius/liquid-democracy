@@ -960,6 +960,8 @@ Delegation inheritance in approval proposals is confirmed functional: only 3 dir
 
 5. **Gmail SMTP fundamentally blocked from Railway.** Once error logging was clear, the single-line ERROR revealed `SMTPConnectTimeoutError: Timed out connecting to smtp.gmail.com on port 587`. Tried port 465 (`smtp.gmail.com:465`, implicit SSL) — same error. Both ports are blocked at the TCP level, either by Railway's egress rules or Gmail's IP-range deny list. Not fixable with code; required pivoting to a transactional email provider that delivers via HTTPS. Shipped Resend HTTP API integration (`backend/email_service.py` now prefers Resend when `RESEND_API_KEY` is set; SMTP stays as fallback for non-Railway deploys). Commits: `9c940fb` (port-infer TLS mode), `4bbc0ad` (Resend integration). Blocked on Z: Resend signup + `liquiddemocracy.us` domain verification + API key.
 
+6. **Railway custom-domain validation needed `_railway-verify.www`, not `_railway-verify` at apex.** Railway's "Configure DNS Records" UI lists the TXT name as `_railway-verify.www` but at first glance reads as if it should go at the apex. Z had added it at apex; Railway's validation check at `_railway-verify.www.liquiddemocracy.us` returned NXDOMAIN, so the cert never provisioned. Fixed by editing the TXT host from `_railway-verify` to `_railway-verify.www` in GoDaddy DNS. Cert provisioned via Let's Encrypt within ~90s after the corrected record propagated. Also caught: Railway's port autodetect filled in 8000 for the custom domain (frontend listens on 80) — same gotcha that hit backend (which got 8080 default). Both required manual port override in the Railway custom-domain edit dialog.
+
 ### Suite L — API-level verification (against live Railway frontend)
 
 | ID | Check | Status |
@@ -984,7 +986,7 @@ Z manually verified persona-picker → `/proposals` flow in the browser: lands o
 - ✅ Unknown URLs redirect to `/` (not `/login`).
 - ✅ Platform is live on HTTPS via Railway-provided `*.up.railway.app` URLs.
 - ✅ PostgreSQL backend, demo data auto-seeded on first boot.
-- ⏳ **Custom domain `liquiddemocracy.us`:** DNS configuration in progress (Z setting up CNAME/ALIAS at registrar).
+- ✅ **Custom domain `https://www.liquiddemocracy.us`** live with valid Let's Encrypt cert. GoDaddy doesn't support apex CNAME, so we used `www` as the Railway custom domain and configured GoDaddy 301 forwarding for the apex. Apex on HTTP redirects correctly (2 hops → `https://www.liquiddemocracy.us`); HTTPS apex doesn't resolve (no cert installed at apex — GoDaddy forwarding doesn't TLS-terminate). Acceptable for the demo: marketing links use the `www.` form, and browsers default-try HTTP first when users type the bare domain.
 - ⏳ **Real email verification:** Gmail SMTP is blocked from Railway (confirmed `SMTPConnectTimeoutError` on both 587 and 465). Pivoted to Resend HTTP API — code shipped (commit `4bbc0ad`). Blocked on Z's Resend signup + `liquiddemocracy.us` domain verification + API key paste. Once `RESEND_API_KEY` is set in Railway, the backend auto-switches and verification emails should deliver.
 
 ### Open items entering Phase 7

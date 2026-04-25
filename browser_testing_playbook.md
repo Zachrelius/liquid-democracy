@@ -1536,7 +1536,9 @@ Notes:
 
 **Suite letter:** L (Suite K reserved for Phase 7's RCV/STV browser tests).
 
-**Ran against:** `https://frontend-production-ecc7.up.railway.app` (Railway-provided domain pre-custom-domain). Rerun against `https://liquiddemocracy.us` once DNS is live.
+**Ran against:** Suite L was first run against `https://frontend-production-ecc7.up.railway.app` (Railway-provided domain) and re-run against `https://www.liquiddemocracy.us` after DNS + custom-domain cert went live. Both reruns: 7/7 PASS.
+
+**Apex behavior:** `https://liquiddemocracy.us` (no www) does not serve directly because GoDaddy forwarding doesn't TLS-terminate at the apex. `http://liquiddemocracy.us/` redirects with two hops to `https://www.liquiddemocracy.us/` correctly (GoDaddy forwarding 301). Marketing links should use the `www.` form.
 
 ---
 
