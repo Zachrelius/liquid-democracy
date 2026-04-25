@@ -1047,7 +1047,15 @@ PostgreSQL JSON storage of the `ranking` array works correctly (stored as native
 
 ### Production state after Railway auto-deploy
 
-[populated below after merge to master]
+**Working** — Phase 7 backend + frontend deployed and serving on `https://www.liquiddemocracy.us`. Sanity check executed 2026-04-25:
+
+- `seed_if_empty.py` correctly skipped on prod (existing users from Phase 6.5 deployment) — the new RCV seed proposals didn't auto-apply.
+- Manually enabled `ranked_choice` in the demo org's `allowed_voting_methods` via `PATCH /api/orgs/demo`. (Future deploy strategy: add an idempotent "ensure RCV demo proposals exist" pass-through to seed_if_empty.py so Phase-7-style additive seed updates apply on existing DBs without wiping content.)
+- Created "Phase 7 Demo: Annual Team Offsite Destination" via admin API (4 options, num_winners=1).
+- Advanced through deliberation → voting (with proper `voting_end` body required by `AdvanceProposalRequest`).
+- Cast 5 direct ranked ballots from alice/dr_chen/carol/env_emma/econ_bob. All 200.
+- /results: `cast=6` (5 direct + 1 inherited via dave's global delegation to alice — confirms ranked_choice delegation engine works on prod), 2-round IRV with Mountain Lodge winner. Round 0: Mountain=2, Forest=2, Beach=1, Urban=1. Round 1: Mountain=4, Forest=2.
+- Existing binary + approval proposals still rendering correctly. Persona quick-login still works. Resend email path still working (verified during Phase 6.5 acceptance).
 
 ### Tech debt found
 
