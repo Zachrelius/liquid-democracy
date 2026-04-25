@@ -4,6 +4,75 @@ import { useAuth } from '../AuthContext';
 import api from '../api';
 import TopicBadge from '../components/TopicBadge';
 
+function VoteRecordCell({ vote }) {
+  const [expanded, setExpanded] = useState(false);
+  if (vote.vote_value) {
+    return (
+      <span className={`text-sm font-medium ${
+        vote.vote_value === 'yes' ? 'text-[#2D8A56]'
+          : vote.vote_value === 'no' ? 'text-[#C0392B]'
+          : 'text-gray-500'
+      }`}>
+        {vote.vote_value.toUpperCase()}
+      </span>
+    );
+  }
+
+  if (!vote.ballot) {
+    return <span className="text-sm text-gray-400">-</span>;
+  }
+
+  // Approval ballot
+  if (Array.isArray(vote.ballot.approvals)) {
+    return (
+      <span className="text-sm font-medium text-purple-600">
+        {vote.ballot.approvals.length > 0
+          ? `Approved ${vote.ballot.approvals.length} option${vote.ballot.approvals.length !== 1 ? 's' : ''}`
+          : 'Abstained'}
+      </span>
+    );
+  }
+
+  // Ranked-choice ballot
+  if (Array.isArray(vote.ballot.ranking)) {
+    const ranking = vote.ballot.ranking;
+    const optionLabels = vote.option_labels || {};
+    const totalOptions = vote.proposal_option_count ?? null;
+
+    if (ranking.length === 0) {
+      return <span className="text-sm font-medium text-gray-500">Abstained (no options ranked)</span>;
+    }
+
+    const summary = totalOptions != null
+      ? `Ranked ${ranking.length} of ${totalOptions} option${totalOptions !== 1 ? 's' : ''}`
+      : `Ranked ${ranking.length} option${ranking.length !== 1 ? 's' : ''}`;
+
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={() => setExpanded(v => !v)}
+          className="text-sm font-medium text-indigo-700 hover:underline"
+        >
+          {summary} {expanded ? '▾' : '▸'}
+        </button>
+        {expanded && (
+          <ol className="mt-1 text-xs text-gray-600 space-y-0.5">
+            {ranking.map((oid, idx) => (
+              <li key={oid}>
+                <span className="text-gray-400 mr-1">{idx + 1}.</span>
+                {optionLabels[oid] || oid}
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    );
+  }
+
+  return <span className="text-sm text-gray-400">-</span>;
+}
+
 export default function UserProfile() {
   const { id } = useParams();
   const { user: currentUser } = useAuth();
@@ -167,23 +236,7 @@ export default function UserProfile() {
                       </Link>
                     </td>
                     <td className="px-4 py-3">
-                      {v.vote_value ? (
-                        <span className={`text-sm font-medium ${
-                          v.vote_value === 'yes' ? 'text-[#2D8A56]'
-                            : v.vote_value === 'no' ? 'text-[#C0392B]'
-                            : 'text-gray-500'
-                        }`}>
-                          {v.vote_value.toUpperCase()}
-                        </span>
-                      ) : v.ballot ? (
-                        <span className="text-sm font-medium text-purple-600">
-                          {v.ballot.approvals?.length > 0
-                            ? `Approved ${v.ballot.approvals.length} option${v.ballot.approvals.length !== 1 ? 's' : ''}`
-                            : 'Abstained'}
-                        </span>
-                      ) : (
-                        <span className="text-sm text-gray-400">-</span>
-                      )}
+                      <VoteRecordCell vote={v} />
                     </td>
                     <td className="px-4 py-3 text-xs text-gray-400">
                       {v.cast_at ? new Date(v.cast_at).toLocaleDateString() : ''}

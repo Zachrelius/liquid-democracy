@@ -10,6 +10,11 @@ passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
 python-multipart==0.0.20
 networkx==3.4.2
+# pyrankvote: IRV/STV tabulation (Phase 7). Pin 2.0.6 — algorithms are settled
+# math; pyrankvote was last released Oct 2022 but is the de-facto Python RCV/STV
+# library (MIT, battle-tested). Wrapped in delegation_engine._compute_rcv_tally_pure
+# so we can swap to another library or in-house implementation without API churn.
+pyrankvote==2.0.6
 nh3==0.2.18
 slowapi==0.1.9
 psycopg2-binary==2.9.9

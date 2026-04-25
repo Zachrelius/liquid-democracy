@@ -43,14 +43,14 @@ async def cast_vote(
 
     # -- Method-specific validation --
     if proposal.voting_method == "binary":
-        if body.approvals is not None:
+        if body.approvals is not None or body.ranking is not None:
             raise HTTPException(status_code=400, detail="Use vote_value for binary proposals")
         if body.vote_value is None:
             raise HTTPException(status_code=400, detail="vote_value is required for binary proposals")
         vote_value = body.vote_value
         ballot = None
     elif proposal.voting_method == "approval":
-        if body.vote_value is not None:
+        if body.vote_value is not None or body.ranking is not None:
             raise HTTPException(status_code=400, detail="Use approvals for approval proposals")
         if body.approvals is None:
             raise HTTPException(status_code=400, detail="approvals is required for approval proposals")
@@ -61,6 +61,22 @@ async def cast_vote(
                 raise HTTPException(status_code=400, detail=f"Option {oid} does not belong to this proposal")
         vote_value = None
         ballot = {"approvals": body.approvals}
+    elif proposal.voting_method == "ranked_choice":
+        if body.vote_value is not None or body.approvals is not None:
+            raise HTTPException(status_code=400, detail="Use ranking for ranked-choice proposals")
+        if body.ranking is None:
+            raise HTTPException(status_code=400, detail="ranking is required for ranked-choice proposals")
+        valid_option_ids = {opt.id for opt in proposal.options}
+        if len(body.ranking) > len(valid_option_ids):
+            raise HTTPException(
+                status_code=400,
+                detail="Ranking length exceeds proposal option count",
+            )
+        for oid in body.ranking:
+            if oid not in valid_option_ids:
+                raise HTTPException(status_code=400, detail=f"Option {oid} does not belong to this proposal")
+        vote_value = None
+        ballot = {"ranking": body.ranking}
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported voting method: {proposal.voting_method}")
 

@@ -42,20 +42,32 @@ class ConnectionManager:
         if not conns:
             return
 
-        payload = json.dumps(
-            {
-                "type": "tally_update",
-                "proposal_id": proposal_id,
-                "yes": tally.yes,
-                "no": tally.no,
-                "abstain": tally.abstain,
-                "not_cast": tally.not_cast,
-                "total_eligible": tally.total_eligible,
-                "yes_pct": round(tally.yes_pct, 4),
-                "no_pct": round(tally.no_pct, 4),
-                "abstain_pct": round(tally.abstain_pct, 4),
-            }
-        )
+        # Method-aware payload — binary surfaces yes/no/abstain pcts; approval
+        # and ranked_choice surface ballots-cast counts so the frontend can
+        # render any voting method.
+        msg: dict = {
+            "type": "tally_update",
+            "proposal_id": proposal_id,
+            "not_cast": tally.not_cast,
+            "total_eligible": tally.total_eligible,
+        }
+        if hasattr(tally, "yes") and hasattr(tally, "no"):
+            msg.update(
+                yes=tally.yes,
+                no=tally.no,
+                abstain=tally.abstain,
+                yes_pct=round(tally.yes_pct, 4),
+                no_pct=round(tally.no_pct, 4),
+                abstain_pct=round(tally.abstain_pct, 4),
+            )
+        if hasattr(tally, "total_ballots_cast"):
+            msg["total_ballots_cast"] = tally.total_ballots_cast
+        if hasattr(tally, "winners"):
+            msg["winners"] = list(getattr(tally, "winners", []) or [])
+        if hasattr(tally, "tied"):
+            msg["tied"] = bool(getattr(tally, "tied", False))
+
+        payload = json.dumps(msg)
 
         dead: list[WebSocket] = []
         for ws in conns:

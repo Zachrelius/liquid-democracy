@@ -998,7 +998,7 @@ def create_org_proposal(
         ))
     db.flush()
 
-    if body.voting_method == "approval" and body.options:
+    if body.voting_method in ("approval", "ranked_choice") and body.options:
         _create_proposal_options(db, proposal.id, body.options)
 
     log_audit_event(
@@ -1079,10 +1079,15 @@ def advance_org_proposal(
         if body.voting_end:
             proposal.voting_end = body.voting_end
     elif next_status == "passed":
-        from delegation_engine import engine as delegation_engine, ApprovalTally
+        from delegation_engine import engine as delegation_engine, ApprovalTally, RCVTally
         tally = delegation_engine.compute_tally(proposal, db)
         if proposal.voting_method == "approval":
             if isinstance(tally, ApprovalTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
+                next_status = "passed"
+            else:
+                next_status = "failed"
+        elif proposal.voting_method == "ranked_choice":
+            if isinstance(tally, RCVTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
                 next_status = "passed"
             else:
                 next_status = "failed"
@@ -1136,8 +1141,11 @@ def resolve_tie(
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found in this organization")
 
-    if proposal.voting_method != "approval":
-        raise HTTPException(status_code=400, detail="Tie resolution is only for approval proposals")
+    if proposal.voting_method not in ("approval", "ranked_choice"):
+        raise HTTPException(
+            status_code=400,
+            detail="Tie resolution is only for approval or ranked-choice proposals",
+        )
 
     if proposal.status != "passed":
         raise HTTPException(status_code=400, detail="Proposal must be in passed status to resolve a tie")
@@ -1146,16 +1154,24 @@ def resolve_tie(
         raise HTTPException(status_code=409, detail="Tie has already been resolved")
 
     # Compute current tally to verify there is a tie
-    from delegation_engine import engine as delegation_engine, ApprovalTally
+    from delegation_engine import engine as delegation_engine, ApprovalTally, RCVTally
     tally = delegation_engine.compute_tally(proposal, db)
-    if not isinstance(tally, ApprovalTally) or not tally.tied:
-        raise HTTPException(status_code=400, detail="There is no tie to resolve")
+    if isinstance(tally, ApprovalTally):
+        if not tally.tied:
+            raise HTTPException(status_code=400, detail="There is no tie to resolve")
+        tied_pool = tally.winners
+    elif isinstance(tally, RCVTally):
+        if not tally.tied:
+            raise HTTPException(status_code=400, detail="There is no tie to resolve")
+        tied_pool = tally.winners
+    else:
+        raise HTTPException(status_code=400, detail="Tally type does not support tie resolution")
 
-    # Validate selected_option_id is among the tied winners
-    if body.selected_option_id not in tally.winners:
+    # Validate selected_option_id is among the tied finalists
+    if body.selected_option_id not in tied_pool:
         raise HTTPException(
             status_code=400,
-            detail=f"Option {body.selected_option_id} is not among the tied winners",
+            detail=f"Option {body.selected_option_id} is not among the tied finalists",
         )
 
     # Find the option label
@@ -1180,7 +1196,7 @@ def resolve_tie(
         details={
             "selected_option_id": body.selected_option_id,
             "selected_option_label": option_label,
-            "tied_winners": tally.winners,
+            "tied_winners": tied_pool,
         },
         ip_address=request.client.host if request.client else None,
     )

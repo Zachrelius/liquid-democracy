@@ -44,6 +44,7 @@ class Ballot:
     """Unified ballot representation for all voting methods."""
     vote_value: Optional[str] = None       # "yes" | "no" | "abstain" (binary)
     approvals: Optional[list[str]] = None  # list of option_ids (approval)
+    ranking: Optional[list[str]] = None    # ranked_choice — order matters
 
     @property
     def voting_method(self) -> str:
@@ -51,6 +52,8 @@ class Ballot:
             return "binary"
         if self.approvals is not None:
             return "approval"
+        if self.ranking is not None:
+            return "ranked_choice"
         return "unknown"
 
 
@@ -285,14 +288,23 @@ def resolve_vote_pure(
 def compute_tally_pure(
     user_ids: list[str],
     ctx: ProposalContext,
-) -> ProposalTally | ApprovalTally:
+    option_ids: Optional[list[str]] = None,
+    num_winners: int = 1,
+) -> ProposalTally | ApprovalTally | RCVTally:
     """
     Compute a full tally by resolving every user's vote.
     Pure function — no DB access.
     Dispatches on ctx.voting_method.
+
+    option_ids/num_winners are only consulted for ranked_choice; binary and
+    approval ignore them so existing call sites stay compatible.
     """
     if ctx.voting_method == "approval":
         return _compute_approval_tally_pure(user_ids, ctx)
+    if ctx.voting_method == "ranked_choice":
+        return _compute_rcv_tally_pure(
+            user_ids, ctx, option_ids or [], num_winners=num_winners
+        )
     return _compute_binary_tally_pure(user_ids, ctx)
 
 
@@ -354,6 +366,236 @@ def _compute_approval_tally_pure(
         total_eligible=len(user_ids),
         winners=winners,
         tied=tied,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Ranked-choice (IRV / STV) tabulation via pyrankvote
+# ---------------------------------------------------------------------------
+#
+# pyrankvote (pinned 2.0.6) implements the algorithm internals. The wrapper
+# below maps its ElectionResults object onto our internal RCVTally/RCVRound
+# dataclasses so routes / frontend never touch the library types directly.
+# If we ever swap libraries, only _compute_rcv_tally_pure needs to change.
+
+
+@dataclass
+class RCVRound:
+    round_number: int
+    option_counts: dict[str, float]            # option_id → vote count
+    eliminated: Optional[str] = None           # option_id eliminated this round
+    elected: list[str] = field(default_factory=list)  # option_ids elected this round
+    transferred_from: Optional[str] = None     # option whose votes transferred
+    transfer_breakdown: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class RCVTally:
+    rounds: list[RCVRound] = field(default_factory=list)
+    winners: list[str] = field(default_factory=list)  # option_ids; len > 1 => unresolved final-round tie
+    total_ballots_cast: int = 0
+    total_abstain: int = 0                     # empty rankings
+    not_cast: int = 0
+    total_eligible: int = 0
+    tied: bool = False
+    method: str = "irv"                        # "irv" or "stv"
+    num_winners: int = 1
+
+    @property
+    def votes_cast(self) -> int:
+        return self.total_ballots_cast
+
+    def quorum_met(self, threshold: float) -> bool:
+        if self.total_eligible == 0:
+            return False
+        return self.total_ballots_cast / self.total_eligible >= threshold
+
+
+def _compute_rcv_tally_pure(
+    user_ids: list[str],
+    ctx: ProposalContext,
+    option_ids: list[str],
+    num_winners: int = 1,
+) -> RCVTally:
+    """
+    Resolve ranked ballots through delegation, then run IRV (num_winners=1)
+    or STV (num_winners>1) via pyrankvote and translate the result.
+
+    option_ids: all valid option_ids on the proposal — needed even when no
+    voter ranked them so they appear as 0-vote candidates in the rounds.
+    """
+    # Local import — pyrankvote is heavy and only loaded when ranked-choice
+    # tabulation actually runs.
+    import pyrankvote
+    from pyrankvote.helpers import CandidateStatus
+
+    method = "irv" if num_winners <= 1 else "stv"
+
+    # Resolve every voter's ballot through delegation
+    rankings: list[list[str]] = []
+    total_abstain = 0
+    not_cast = 0
+    total_ballots_cast = 0
+    for uid in user_ids:
+        result = resolve_vote_pure(uid, ctx)
+        if result is None:
+            not_cast += 1
+            continue
+        total_ballots_cast += 1
+        ranking = result.ballot.ranking
+        if ranking is None or len(ranking) == 0:
+            total_abstain += 1
+            continue
+        # Filter out any option_ids no longer in the proposal (defensive)
+        clean = [oid for oid in ranking if oid in set(option_ids)]
+        if not clean:
+            total_abstain += 1
+            continue
+        rankings.append(clean)
+
+    eligible = len(user_ids)
+    valid_option_set = set(option_ids)
+
+    # If there are no valid ballots at all, return an empty tally
+    if not rankings:
+        return RCVTally(
+            rounds=[],
+            winners=[],
+            total_ballots_cast=total_ballots_cast,
+            total_abstain=total_abstain,
+            not_cast=not_cast,
+            total_eligible=eligible,
+            tied=False,
+            method=method,
+            num_winners=num_winners,
+        )
+
+    # Build pyrankvote candidates / ballots
+    candidates = [pyrankvote.Candidate(oid) for oid in option_ids]
+    cand_by_id = {c.name: c for c in candidates}
+
+    pv_ballots = []
+    for ranking in rankings:
+        pv_ballots.append(pyrankvote.Ballot(
+            ranked_candidates=[cand_by_id[oid] for oid in ranking if oid in cand_by_id]
+        ))
+
+    if num_winners <= 1:
+        election = pyrankvote.instant_runoff_voting(candidates, pv_ballots)
+    else:
+        election = pyrankvote.single_transferable_vote(
+            candidates, pv_ballots, number_of_seats=num_winners
+        )
+
+    # Translate ElectionResults → RCVRound list.
+    rounds: list[RCVRound] = []
+    prev_counts: dict[str, float] = {oid: 0.0 for oid in option_ids}
+    prev_elected: set[str] = set()
+    prev_rejected: set[str] = set()
+
+    for i, rr in enumerate(election.rounds):
+        cur_counts: dict[str, float] = {}
+        cur_elected: set[str] = set()
+        cur_rejected: set[str] = set()
+        for cr in rr.candidate_results:
+            oid = cr.candidate.name
+            cur_counts[oid] = float(cr.number_of_votes)
+            status = cr.status
+            # Status comes through as a CandidateStatus enum (string-valued).
+            if status == CandidateStatus.Elected:
+                cur_elected.add(oid)
+            elif status == CandidateStatus.Rejected:
+                cur_rejected.add(oid)
+
+        newly_elected = sorted(cur_elected - prev_elected)
+        newly_rejected = cur_rejected - prev_rejected
+        # Eliminated this round = newly Rejected candidate(s).
+        # pyrankvote eliminates one per round in IRV, but STV may eliminate
+        # multiple at once (rare); pick first deterministically.
+        eliminated: Optional[str] = None
+        if newly_rejected:
+            # Use the option_id ordering for stability when multiple are dropped.
+            eliminated = sorted(newly_rejected)[0]
+
+        # Compute transfer breakdown: where did votes flow this round?
+        # transferred_from = the option whose votes shifted (eliminated, OR
+        # over-quota winner whose surplus moved).
+        transferred_from: Optional[str] = None
+        transfer_breakdown: dict[str, float] = {}
+        if i > 0:
+            # Find option(s) whose count dropped versus previous round
+            dropped = [
+                oid for oid in option_ids
+                if cur_counts.get(oid, 0.0) < prev_counts.get(oid, 0.0) - 1e-9
+            ]
+            gained = {
+                oid: cur_counts.get(oid, 0.0) - prev_counts.get(oid, 0.0)
+                for oid in option_ids
+                if cur_counts.get(oid, 0.0) > prev_counts.get(oid, 0.0) + 1e-9
+            }
+            if dropped:
+                # Pick the largest drop as primary source (typically the
+                # eliminated option in IRV or the elected-with-surplus in STV).
+                transferred_from = max(
+                    dropped,
+                    key=lambda o: prev_counts.get(o, 0.0) - cur_counts.get(o, 0.0),
+                )
+                transfer_breakdown = gained
+
+        rounds.append(RCVRound(
+            round_number=i,
+            option_counts=cur_counts,
+            eliminated=eliminated,
+            elected=newly_elected,
+            transferred_from=transferred_from,
+            transfer_breakdown=transfer_breakdown,
+        ))
+
+        prev_counts = cur_counts
+        prev_elected = cur_elected
+        prev_rejected = cur_rejected
+
+    pv_winners = [c.name for c in election.get_winners()]
+
+    # Detect a final-round tie: in the last round, if any Rejected candidate
+    # has a vote count equal to the lowest Elected candidate, pyrankvote broke
+    # a real tie internally — surface it for admin resolution.
+    tied = False
+    final_winners = list(pv_winners)
+    if rounds and pv_winners:
+        last = rounds[-1]
+        elected_counts = [last.option_counts.get(w, 0.0) for w in pv_winners]
+        # Only consider it a tie if the marginal winner had a non-zero count
+        # (otherwise we are just picking unanimous winners against zeroes).
+        marginal = min(elected_counts) if elected_counts else 0.0
+        if marginal > 0:
+            tied_with: list[str] = []
+            for oid, count in last.option_counts.items():
+                if oid in pv_winners:
+                    continue
+                if abs(count - marginal) < 1e-9:
+                    tied_with.append(oid)
+            if tied_with:
+                tied = True
+                # Final winners list = the marginal pyrankvote winner(s) at
+                # the same vote count + the rejected candidates tied with them.
+                marginal_winners = [w for w in pv_winners if abs(
+                    last.option_counts.get(w, 0.0) - marginal) < 1e-9]
+                # Non-marginal (clear) winners stay as winners; the marginal
+                # ones are still listed as candidates needing resolution.
+                clear_winners = [w for w in pv_winners if w not in marginal_winners]
+                final_winners = clear_winners + sorted(set(marginal_winners + tied_with))
+
+    return RCVTally(
+        rounds=rounds,
+        winners=final_winners,
+        total_ballots_cast=total_ballots_cast,
+        total_abstain=total_abstain,
+        not_cast=not_cast,
+        total_eligible=eligible,
+        tied=tied,
+        method=method,
+        num_winners=num_winners,
     )
 
 
@@ -514,6 +756,10 @@ class DelegationService:
                 ballot_data = row.ballot or {}
                 approvals = ballot_data.get("approvals", [])
                 direct_ballots[row.user_id] = Ballot(approvals=approvals)
+            elif voting_method == "ranked_choice":
+                ballot_data = row.ballot or {}
+                ranking = ballot_data.get("ranking", [])
+                direct_ballots[row.user_id] = Ballot(ranking=ranking)
             else:
                 if row.vote_value is not None:
                     direct_votes[row.user_id] = row.vote_value
@@ -586,13 +832,21 @@ class DelegationService:
 
     def compute_tally(
         self, proposal: models.Proposal, db: Session
-    ) -> ProposalTally:
+    ) -> ProposalTally | ApprovalTally | RCVTally:
         """
         Build context once, resolve all users, return aggregate tally.
         """
         ctx = self._build_context(proposal, db)
         all_user_ids = [u.id for u in db.query(models.User.id).all()]
-        return compute_tally_pure(all_user_ids, ctx)
+        option_ids: list[str] = []
+        num_winners = getattr(proposal, "num_winners", 1) or 1
+        if ctx.voting_method == "ranked_choice":
+            option_ids = [opt.id for opt in proposal.options]
+        return compute_tally_pure(
+            all_user_ids, ctx,
+            option_ids=option_ids,
+            num_winners=num_winners,
+        )
 
     @staticmethod
     def _get_strategy(user: models.User, voting_method: str = "binary") -> str:
@@ -604,12 +858,13 @@ class DelegationService:
         """
         strategy = getattr(user, "delegation_strategy", "strict_precedence")
         if strategy != "strict_precedence":
-            if voting_method == "approval":
+            if voting_method in ("approval", "ranked_choice"):
                 log.info(
                     "Non-strict-precedence strategy %r for user %s falls back to "
-                    "strict_precedence for approval proposal",
+                    "strict_precedence for %s proposal",
                     strategy,
                     user.id,
+                    voting_method,
                 )
             else:
                 log.warning(

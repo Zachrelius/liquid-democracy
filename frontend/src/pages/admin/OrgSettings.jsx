@@ -202,11 +202,22 @@ export default function OrgSettings() {
               <p className="text-xs text-gray-400">Voters approve any number of options. Best for multi-option decisions.</p>
             </div>
           </label>
-          <label className="flex items-center gap-3 opacity-50 cursor-not-allowed">
-            <input type="checkbox" disabled className="accent-[#2E75B6]" />
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={(settings.allowed_voting_methods || ['binary']).includes('ranked_choice')}
+              onChange={e => {
+                const current = settings.allowed_voting_methods || ['binary'];
+                const updated = e.target.checked
+                  ? [...new Set([...current, 'ranked_choice'])]
+                  : current.filter(m => m !== 'ranked_choice');
+                updateSetting('allowed_voting_methods', updated);
+              }}
+              className="accent-[#2E75B6]"
+            />
             <div>
-              <span className="text-sm text-gray-400">Ranked Choice</span>
-              <p className="text-xs text-gray-400">Coming soon. Voters rank options in preference order.</p>
+              <span className="text-sm text-gray-700">Ranked Choice (IRV / STV)</span>
+              <p className="text-xs text-gray-400">Voters rank options in preference order. 1 winner = IRV; multiple winners = STV.</p>
             </div>
           </label>
         </div>

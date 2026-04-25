@@ -104,6 +104,7 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
   const [body, setBody] = useState('');
   const [votingMethod, setVotingMethod] = useState('binary');
   const [options, setOptions] = useState([{ label: '', description: '' }, { label: '', description: '' }]);
+  const [numWinners, setNumWinners] = useState(1);
   const [selectedTopics, setSelectedTopics] = useState([]);
   const [passThreshold, setPassThreshold] = useState(orgSettings?.default_pass_threshold ?? 0.5);
   const [quorumThreshold, setQuorumThreshold] = useState(orgSettings?.default_quorum_threshold ?? 0.4);
@@ -112,6 +113,8 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
 
   const allowedMethods = orgSettings?.allowed_voting_methods || ['binary'];
   const approvalAllowed = allowedMethods.includes('approval');
+  const rankedChoiceAllowed = allowedMethods.includes('ranked_choice');
+  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice';
 
   function toggleTopic(topicId) {
     setSelectedTopics(prev => {
@@ -127,17 +130,21 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
     ));
   }
 
-  // Validation for approval options
+  // Validation for multi-option proposals (approval and ranked_choice)
   const hasDuplicateLabels = (() => {
-    if (votingMethod !== 'approval') return false;
+    if (!isMultiOption) return false;
     const labels = options.map(o => o.label.trim().toLowerCase()).filter(Boolean);
     return new Set(labels).size !== labels.length;
   })();
 
-  const optionsValid = votingMethod !== 'approval' || (
+  const optionsValid = !isMultiOption || (
     options.length >= 2 &&
     options.every(o => o.label.trim()) &&
     !hasDuplicateLabels
+  );
+
+  const numWinnersValid = votingMethod !== 'ranked_choice' || (
+    Number.isInteger(numWinners) && numWinners >= 1 && numWinners <= options.length
   );
 
   async function handleSubmit(e) {
@@ -153,11 +160,14 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
         quorum_threshold: quorumThreshold,
         voting_method: votingMethod,
       };
-      if (votingMethod === 'approval') {
+      if (isMultiOption) {
         payload.options = options.map(o => ({
           label: o.label.trim(),
           description: o.description.trim(),
         }));
+      }
+      if (votingMethod === 'ranked_choice') {
+        payload.num_winners = numWinners;
       }
       await api.post(`/api/orgs/${slug}/proposals`, payload);
       toast.success('Proposal created');
@@ -192,10 +202,12 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
             <span className="text-sm text-gray-700">Approval</span>
             {!approvalAllowed && <span className="text-xs text-amber-600">(Not enabled for this org)</span>}
           </label>
-          <label className="flex items-center gap-2 opacity-50 cursor-not-allowed" title="Coming soon">
-            <input type="radio" disabled className="accent-[#2E75B6]" />
-            <span className="text-sm text-gray-400">Ranked Choice</span>
-            <span className="text-xs text-gray-400">(Coming soon)</span>
+          <label className={`flex items-center gap-2 ${rankedChoiceAllowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>
+            <input type="radio" name="votingMethod" value="ranked_choice" checked={votingMethod === 'ranked_choice'}
+              onChange={() => rankedChoiceAllowed && setVotingMethod('ranked_choice')}
+              disabled={!rankedChoiceAllowed} className="accent-[#2E75B6]" />
+            <span className="text-sm text-gray-700">Ranked Choice</span>
+            {!rankedChoiceAllowed && <span className="text-xs text-amber-600">(Not enabled for this org)</span>}
           </label>
         </div>
       </div>
@@ -221,9 +233,36 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
         />
       </div>
 
-      {/* Options Editor (approval only) */}
-      {votingMethod === 'approval' && (
+      {/* Options Editor (approval and ranked-choice) */}
+      {isMultiOption && (
         <OptionsEditor options={options} onChange={setOptions} />
+      )}
+
+      {/* num_winners input (ranked-choice only) */}
+      {votingMethod === 'ranked_choice' && (
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Number of Winners</label>
+          <input
+            type="number"
+            min={1}
+            max={options.length || 1}
+            value={numWinners}
+            onChange={e => {
+              const v = parseInt(e.target.value, 10);
+              if (Number.isNaN(v)) return;
+              setNumWinners(Math.max(1, Math.min(options.length || 1, v)));
+            }}
+            className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            1 winner = ranked-choice voting (IRV). More than 1 winner = single transferable vote (STV).
+          </p>
+          {!numWinnersValid && (
+            <p className="text-xs text-red-500 mt-1">
+              Number of winners must be between 1 and the number of options ({options.length}).
+            </p>
+          )}
+        </div>
       )}
 
       {topics.length > 0 && (
@@ -302,7 +341,7 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
       <div className="flex gap-2">
         <button
           type="submit"
-          disabled={saving || !title.trim() || !optionsValid}
+          disabled={saving || !title.trim() || !optionsValid || !numWinnersValid}
           className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
         >
           {saving ? 'Creating...' : 'Create Proposal'}
@@ -426,6 +465,11 @@ export default function ProposalManagement() {
                   {p.title}
                   {p.voting_method === 'approval' && (
                     <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Approval</span>
+                  )}
+                  {p.voting_method === 'ranked_choice' && (
+                    <span className="ml-2 text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">
+                      {(p.num_winners ?? 1) > 1 ? `STV (${p.num_winners})` : 'IRV'}
+                    </span>
                   )}
                 </span>
                 <span className="w-24"><StatusBadge status={p.status} /></span>

@@ -456,6 +456,7 @@ class TopicPrecedenceOut(BaseModel):
 class VoteCast(BaseModel):
     vote_value: Optional[str] = None
     approvals: Optional[list[str]] = None
+    ranking: Optional[list[str]] = None
 
     @field_validator("vote_value")
     @classmethod
@@ -474,6 +475,16 @@ class VoteCast(BaseModel):
                 _validate_uuid(oid)
             if len(v) != len(set(v)):
                 raise ValueError("Duplicate option IDs in approvals")
+        return v
+
+    @field_validator("ranking")
+    @classmethod
+    def validate_ranking(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is not None:
+            for oid in v:
+                _validate_uuid(oid)
+            if len(v) != len(set(v)):
+                raise ValueError("Duplicate option IDs in ranking")
         return v
 
 
@@ -496,10 +507,15 @@ class MyVoteStatus(BaseModel):
     """How the current user's vote is being cast on a proposal."""
     vote_value: Optional[str] = None       # None if not cast (binary)
     approvals: Optional[list[str]] = None  # option IDs approved (approval)
+    ranking: Optional[list[str]] = None    # option IDs ordered (ranked_choice)
     is_direct: Optional[bool] = None
     delegate_chain: Optional[list[str]] = None
     cast_by: Optional[UserOut] = None
     message: str                      # Human-readable explanation
+    # True when the user's delegation_strategy is not strict_precedence on a
+    # multi-option proposal — strategy fell back since approval/ranked_choice
+    # only support strict-precedence today. Frontend renders an info note.
+    delegation_strategy_fallback: Optional[bool] = None
 
 
 # ---------------------------------------------------------------------------
@@ -513,6 +529,15 @@ class SnapshotPoint(BaseModel):
     abstain: int
     not_cast: int
     total_eligible: int
+
+
+class RCVRoundOut(BaseModel):
+    round_number: int
+    option_counts: dict[str, float]
+    eliminated: Optional[str] = None
+    elected: list[str] = []
+    transferred_from: Optional[str] = None
+    transfer_breakdown: dict[str, float] = {}
 
 
 class ProposalResults(BaseModel):
@@ -537,6 +562,10 @@ class ProposalResults(BaseModel):
     winners: Optional[list[str]] = None
     tied: Optional[bool] = None
     tie_resolution: Optional[dict] = None
+    # Ranked-choice / STV fields (populated only when voting_method == "ranked_choice")
+    rounds: Optional[list[RCVRoundOut]] = None
+    method: Optional[str] = None      # "irv" or "stv"
+    num_winners: Optional[int] = None
 
 
 class TieResolutionRequest(BaseModel):

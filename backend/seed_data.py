@@ -81,6 +81,7 @@ def _get_or_create_proposal(
     org_id: Optional[str] = None,
     voting_method: str = "binary",
     options: Optional[list[tuple[str, str]]] = None,  # [(label, description), ...]
+    num_winners: int = 1,
 ) -> models.Proposal:
     proposal = db.query(models.Proposal).filter(models.Proposal.title == title).first()
     if proposal:
@@ -97,6 +98,7 @@ def _get_or_create_proposal(
         org_id=org_id,
         status=status,
         voting_method=voting_method,
+        num_winners=num_winners,
         deliberation_start=now - timedelta(days=days_ago_deliberation),
         voting_start=now - timedelta(days=days_ago_voting) if status != "deliberation" else None,
         voting_end=now + timedelta(days=days_ahead_close) if days_ahead_close and status == "voting" else None,
@@ -278,6 +280,30 @@ def _cast_approval_vote(
     db.flush()
 
 
+def _cast_ranked_vote(
+    db: Session, user: models.User, proposal: models.Proposal, ranking: list[str]
+) -> None:
+    """Cast a ranked ballot (ordered list of option IDs — first = highest preference)."""
+    existing = db.query(models.Vote).filter(
+        models.Vote.proposal_id == proposal.id,
+        models.Vote.user_id == user.id,
+    ).first()
+    ballot = {"ranking": ranking}
+    if existing:
+        existing.ballot = ballot
+        existing.vote_value = None
+    else:
+        db.add(models.Vote(
+            proposal_id=proposal.id,
+            user_id=user.id,
+            vote_value=None,
+            ballot=ballot,
+            is_direct=True,
+            cast_by_id=user.id,
+        ))
+    db.flush()
+
+
 # ---------------------------------------------------------------------------
 # Full demo scenario
 # ---------------------------------------------------------------------------
@@ -301,7 +327,7 @@ def _get_or_create_org(
                 "public_delegate_policy": "admin_approval",
                 "require_email_verification": True,
                 "sustained_majority_floor": 0.45,
-                "allowed_voting_methods": ["binary", "approval"],
+                "allowed_voting_methods": ["binary", "approval", "ranked_choice"],
             },
         )
         db.add(org)
@@ -555,6 +581,93 @@ def _seed_demo(db: Session) -> dict:
         options=reno_options,
     )
 
+    # 8. Annual Team Offsite Destination — Ranked Choice (IRV), in voting
+    offsite_options = [
+        ("Mountain Lodge", "Hiking, fireside discussions, off-grid retreat"),
+        ("Beach Resort", "Coastal walks, sun, group dinners with ocean view"),
+        ("Urban Workshop", "City venue, easy travel, evening cultural programming"),
+        ("Forest Cabin", "Quiet woods, board games, slow weekend"),
+    ]
+    offsite_prop = _get_or_create_proposal(
+        db,
+        title="Annual Team Offsite Destination",
+        body=(
+            "## Background\n\n"
+            "Pick this year's offsite destination. Rank the options in order of preference. "
+            "We'll use instant-runoff voting (IRV) to find the option with majority support.\n\n"
+            "Partial rankings are fine — only rank the options you'd actually be happy to attend."
+        ),
+        author_id=admin.id,
+        status="voting",
+        topic_relevances=[],  # No topic context — direct ballots + dave's global delegation only
+        days_ago_deliberation=10,
+        days_ago_voting=2,
+        days_ahead_close=5,
+        org_id=demo_org.id,
+        voting_method="ranked_choice",
+        num_winners=1,
+        options=offsite_options,
+    )
+
+    # 9. Steering Committee Members — STV, passed with two winners
+    committee_options = [
+        ("Aria Chen", "Engineering lead, 8 years in distributed systems"),
+        ("Boris Patel", "Product manager, brings cross-functional perspective"),
+        ("Cara Singh", "Operations, focused on hiring and onboarding"),
+        ("Devon Park", "Designer, advocates for user-research-driven decisions"),
+        ("Eli Rojas", "Finance, long view on budget and headcount planning"),
+    ]
+    committee_prop = _get_or_create_proposal(
+        db,
+        title="Steering Committee — Two New Members",
+        body=(
+            "## Background\n\n"
+            "Elect two new members to the steering committee using single transferable vote (STV). "
+            "STV produces proportional representation: minority preferences still get representation "
+            "if they have enough first-choice votes to meet the quota.\n\n"
+            "Rank as many candidates as you support. Lower-preference rankings only matter if your "
+            "higher choices are eliminated or already elected."
+        ),
+        author_id=admin.id,
+        status="passed",
+        topic_relevances=[],
+        days_ago_deliberation=21,
+        days_ago_voting=14,
+        days_ahead_close=None,
+        org_id=demo_org.id,
+        voting_method="ranked_choice",
+        num_winners=2,
+        options=committee_options,
+    )
+
+    # 10. New Office Coffee Vendor — IRV, passed with tied final round
+    coffee_options = [
+        ("Cafe Verde", "Local roaster, fair-trade beans, slightly higher cost"),
+        ("Coffee Republic", "National chain, consistent quality, mid-tier pricing"),
+        ("Bean & Brew", "Co-op model, rotating single-origins, premium pricing"),
+    ]
+    coffee_prop = _get_or_create_proposal(
+        db,
+        title="New Office Coffee Vendor",
+        body=(
+            "## Background\n\n"
+            "Pick the new office coffee vendor. Rank in order of preference; we'll use "
+            "instant-runoff voting (IRV).\n\n"
+            "*Note: this proposal is here to demonstrate the tied-final-round flow — voting closed "
+            "with a tie that admin must resolve.*"
+        ),
+        author_id=admin.id,
+        status="passed",
+        topic_relevances=[],
+        days_ago_deliberation=14,
+        days_ago_voting=7,
+        days_ahead_close=None,
+        org_id=demo_org.id,
+        voting_method="ranked_choice",
+        num_winners=1,
+        options=coffee_options,
+    )
+
     # ── Expert votes ───────────────────────────────────────────────────────
     _cast_vote(db, dr_chen,     healthcare_prop, "yes")
     _cast_vote(db, econ_bob,    healthcare_prop, "no")
@@ -642,6 +755,64 @@ def _seed_demo(db: Session) -> dict:
         _cast_approval_vote(db, econ_bob, reno_prop, [reno_opts[1].id])
         _cast_approval_vote(db, carol, reno_prop, [reno_opts[0].id, reno_opts[2].id])
         _cast_approval_vote(db, env_emma, reno_prop, [reno_opts[1].id, reno_opts[2].id])
+
+    # ── Ranked-choice votes — Offsite (IRV, in voting, mixed full/partial; dave inherits via global del) ──
+    offsite_opts = db.query(models.ProposalOption).filter(
+        models.ProposalOption.proposal_id == offsite_prop.id,
+    ).order_by(models.ProposalOption.display_order).all()
+    if len(offsite_opts) >= 4:
+        mtn, beach, urban, forest = (o.id for o in offsite_opts[:4])
+        _cast_ranked_vote(db, alice,      offsite_prop, [mtn, beach, forest])      # 3 of 4
+        _cast_ranked_vote(db, dr_chen,    offsite_prop, [beach, urban, mtn, forest])  # full
+        _cast_ranked_vote(db, econ_bob,   offsite_prop, [urban, mtn])              # partial
+        _cast_ranked_vote(db, carol,      offsite_prop, [forest, mtn])             # partial
+        _cast_ranked_vote(db, env_emma,   offsite_prop, [forest, beach, mtn, urban])  # full
+        _cast_ranked_vote(db, extra_users[0], offsite_prop, [mtn, beach])
+        _cast_ranked_vote(db, extra_users[1], offsite_prop, [beach, forest])
+        _cast_ranked_vote(db, extra_users[2], offsite_prop, [urban])               # bullet vote
+        # dave does NOT cast directly — global delegation to alice means his ballot
+        # resolves to alice's ranking [mtn, beach, forest] at tally time.
+
+    # ── Ranked-choice votes — Steering Committee (STV, num_winners=2, passed) ──
+    committee_opts = db.query(models.ProposalOption).filter(
+        models.ProposalOption.proposal_id == committee_prop.id,
+    ).order_by(models.ProposalOption.display_order).all()
+    if len(committee_opts) >= 5:
+        aria, boris, cara, devon, eli = (o.id for o in committee_opts[:5])
+        # Aria has strong first-choice support → wins early
+        _cast_ranked_vote(db, alice,      committee_prop, [aria, devon, boris])
+        _cast_ranked_vote(db, dr_chen,    committee_prop, [aria, eli, boris])
+        _cast_ranked_vote(db, env_emma,   committee_prop, [aria, devon, cara])
+        _cast_ranked_vote(db, extra_users[0], committee_prop, [aria, boris])
+        _cast_ranked_vote(db, extra_users[1], committee_prop, [aria, devon])
+        # Boris and Devon split second-tier support
+        _cast_ranked_vote(db, econ_bob,   committee_prop, [boris, eli, aria])
+        _cast_ranked_vote(db, rights_raj, committee_prop, [devon, cara, aria])
+        _cast_ranked_vote(db, carol,      committee_prop, [boris, aria])
+        _cast_ranked_vote(db, extra_users[2], committee_prop, [boris, devon])
+        _cast_ranked_vote(db, extra_users[3], committee_prop, [devon, cara])
+        _cast_ranked_vote(db, extra_users[4], committee_prop, [boris, aria])
+        _cast_ranked_vote(db, extra_users[5], committee_prop, [devon, eli])
+        # Minority support — Cara/Eli — won't reach quota, votes transfer
+        _cast_ranked_vote(db, extra_users[6], committee_prop, [cara, eli])
+        _cast_ranked_vote(db, extra_users[7], committee_prop, [eli, cara])
+
+    # ── Ranked-choice votes — Coffee Vendor (IRV, passed, deliberately tied final round) ──
+    coffee_opts = db.query(models.ProposalOption).filter(
+        models.ProposalOption.proposal_id == coffee_prop.id,
+    ).order_by(models.ProposalOption.display_order).all()
+    if len(coffee_opts) >= 3:
+        verde, republic, brew = (o.id for o in coffee_opts[:3])
+        # 3 voters prefer Verde > Brew > Republic; 3 prefer Republic > Brew > Verde.
+        # (alice's ballot is inherited by dave via global delegation, so the verde
+        # side has alice + dr_chen + dave; republic has econ_bob + carol + rights_raj.)
+        # Round 1: Verde=3, Republic=3, Brew=0 → Brew eliminated (no transfers).
+        # Round 2: Verde=3, Republic=3 → final-round tie. Admin must resolve.
+        _cast_ranked_vote(db, alice,      coffee_prop, [verde, brew, republic])
+        _cast_ranked_vote(db, dr_chen,    coffee_prop, [verde, brew, republic])
+        _cast_ranked_vote(db, econ_bob,   coffee_prop, [republic, brew, verde])
+        _cast_ranked_vote(db, carol,      coffee_prop, [republic, brew, verde])
+        _cast_ranked_vote(db, rights_raj, coffee_prop, [republic, brew, verde])
 
     # ── Phase 3a: Permission system ───────────────────────────────────────
 

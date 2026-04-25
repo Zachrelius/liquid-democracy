@@ -12,6 +12,8 @@ import VoteFlowGraph from '../components/VoteFlowGraph';
 import UserLink from '../components/UserLink';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
+import RankedBallot from '../components/RankedBallot';
+import RCVResultsPanel from '../components/RCVResultsPanel';
 
 // Simple markdown renderer (no external dep needed for basics)
 function renderMarkdown(text) {
@@ -616,6 +618,11 @@ export default function ProposalDetail() {
               {proposal.voting_method === 'approval' && (
                 <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Approval Vote</span>
               )}
+              {proposal.voting_method === 'ranked_choice' && (
+                <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">
+                  {(proposal.num_winners ?? 1) > 1 ? `STV · ${proposal.num_winners} winners` : 'Ranked-Choice (IRV)'}
+                </span>
+              )}
               {proposal.topics?.map(pt => (
                 <TopicBadge key={pt.topic_id} topic={pt.topic} relevance={pt.relevance} />
               ))}
@@ -641,8 +648,8 @@ export default function ProposalDetail() {
             <p className="text-gray-400 italic text-sm">No description provided.</p>
           )}
 
-          {/* Options list for approval proposals (visible in all states) */}
-          {proposal.voting_method === 'approval' && proposal.options?.length > 0 && !isVoting && (
+          {/* Options list for multi-option proposals (visible when not actively voting) */}
+          {(proposal.voting_method === 'approval' || proposal.voting_method === 'ranked_choice') && proposal.options?.length > 0 && !isVoting && (
             <div className="bg-white border border-gray-200 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Options</h3>
               <div className="space-y-2">
@@ -662,9 +669,13 @@ export default function ProposalDetail() {
           {/* Results (desktop: shown inline; mobile: shown below vote panel) */}
           {(isVoting || isClosed) && tally && (
             <div className="lg:hidden bg-white border border-gray-200 rounded-xl p-5">
-              {proposal.voting_method === 'approval'
-                ? <ApprovalResultsPanel tally={tally} proposal={proposal} />
-                : <ResultsPanel tally={tally} proposal={proposal} />}
+              {proposal.voting_method === 'approval' ? (
+                <ApprovalResultsPanel tally={tally} proposal={proposal} />
+              ) : proposal.voting_method === 'ranked_choice' ? (
+                <RCVResultsPanel tally={tally} proposal={proposal} />
+              ) : (
+                <ResultsPanel tally={tally} proposal={proposal} />
+              )}
             </div>
           )}
 
@@ -731,6 +742,14 @@ export default function ProposalDetail() {
                   onVoteChange={refreshVote}
                   emailVerified={user?.email_verified}
                 />
+              ) : proposal.voting_method === 'ranked_choice' ? (
+                <RankedBallot
+                  proposal={proposal}
+                  myVote={myVote}
+                  proposalId={id}
+                  onVoteChange={refreshVote}
+                  emailVerified={user?.email_verified}
+                />
               ) : (
                 <VoteStatusBox
                   myVote={myVote}
@@ -756,9 +775,13 @@ export default function ProposalDetail() {
           {/* Results (desktop sidebar) */}
           {(isVoting || isClosed) && tally && (
             <div className="hidden lg:block bg-white border border-gray-200 rounded-xl p-5">
-              {proposal.voting_method === 'approval'
-                ? <ApprovalResultsPanel tally={tally} proposal={proposal} />
-                : <ResultsPanel tally={tally} proposal={proposal} />}
+              {proposal.voting_method === 'approval' ? (
+                <ApprovalResultsPanel tally={tally} proposal={proposal} />
+              ) : proposal.voting_method === 'ranked_choice' ? (
+                <RCVResultsPanel tally={tally} proposal={proposal} />
+              ) : (
+                <ResultsPanel tally={tally} proposal={proposal} />
+              )}
             </div>
           )}
 

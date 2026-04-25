@@ -9,7 +9,7 @@ import models
 import schemas
 from audit_utils import log_audit_event
 from database import get_db
-from delegation_engine import engine as delegation_engine, resolve_vote_pure, ApprovalTally
+from delegation_engine import engine as delegation_engine, resolve_vote_pure, ApprovalTally, RCVTally
 from permissions import can_see_votes
 
 router = APIRouter(prefix="/api/proposals", tags=["proposals"])
@@ -53,17 +53,15 @@ def _build_proposal_out(proposal: models.Proposal) -> schemas.ProposalOut:
 
 def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[models.Organization] = None):
     """Validate voting_method and options for proposal creation."""
-    if body.voting_method == "ranked_choice":
-        raise HTTPException(
-            status_code=400,
-            detail="Ranked-choice voting is planned for a future release",
-        )
-    # Check org allowed_voting_methods
+    # Check org allowed_voting_methods. Ranked-choice in particular is
+    # opt-in per org — return 403 (not 400) when the method is not enabled,
+    # matching the Phase 7 spec.
     if org and org.settings:
         allowed = org.settings.get("allowed_voting_methods", ["binary", "approval"])
         if body.voting_method not in allowed:
+            status_code = 403 if body.voting_method == "ranked_choice" else 400
             raise HTTPException(
-                status_code=400,
+                status_code=status_code,
                 detail=f"Voting method '{body.voting_method}' is not allowed by this organization",
             )
     if body.voting_method == "binary":
@@ -71,6 +69,11 @@ def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[mode
             raise HTTPException(
                 status_code=400,
                 detail="Binary proposals must not have options",
+            )
+        if body.num_winners != 1:
+            raise HTTPException(
+                status_code=400,
+                detail="num_winners must be 1 for binary proposals",
             )
     elif body.voting_method == "approval":
         if len(body.options) < 2:
@@ -92,11 +95,36 @@ def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[mode
                     detail=f"Duplicate option label: {opt.label}",
                 )
             seen_labels.add(lower)
-    if body.num_winners != 1:
-        raise HTTPException(
-            status_code=400,
-            detail="num_winners must be 1",
-        )
+        if body.num_winners != 1:
+            raise HTTPException(
+                status_code=400,
+                detail="num_winners must be 1 for approval proposals",
+            )
+    elif body.voting_method == "ranked_choice":
+        if len(body.options) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail="Ranked-choice proposals require at least 2 options",
+            )
+        if len(body.options) > 20:
+            raise HTTPException(
+                status_code=400,
+                detail="Ranked-choice proposals may have at most 20 options",
+            )
+        seen_labels: set[str] = set()
+        for opt in body.options:
+            lower = opt.label.strip().lower()
+            if lower in seen_labels:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Duplicate option label: {opt.label}",
+                )
+            seen_labels.add(lower)
+        if body.num_winners < 1 or body.num_winners > len(body.options):
+            raise HTTPException(
+                status_code=400,
+                detail="num_winners must be between 1 and the number of options",
+            )
 
 
 def _create_proposal_options(db: Session, proposal_id: str, options: list[schemas.OptionCreate]):
@@ -116,16 +144,25 @@ def _validate_and_update_options(
     proposal: models.Proposal,
     options: list[schemas.OptionCreate],
 ):
-    """Replace options on an approval proposal (draft/deliberation only)."""
+    """Replace options on a multi-option proposal (draft/deliberation only)."""
     if proposal.status in ("voting", "passed", "failed", "withdrawn"):
         raise HTTPException(
             status_code=409,
             detail="Options cannot be edited after voting has started",
         )
+    label_method = "Approval" if proposal.voting_method == "approval" else "Ranked-choice"
     if len(options) < 2:
-        raise HTTPException(status_code=400, detail="Approval proposals require at least 2 options")
+        raise HTTPException(status_code=400, detail=f"{label_method} proposals require at least 2 options")
     if len(options) > 20:
-        raise HTTPException(status_code=400, detail="Approval proposals may have at most 20 options")
+        raise HTTPException(status_code=400, detail=f"{label_method} proposals may have at most 20 options")
+    if proposal.voting_method == "ranked_choice":
+        # num_winners is immutable after creation, but if options shrink below
+        # num_winners, the proposal becomes inconsistent — reject.
+        if proposal.num_winners > len(options):
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot reduce options below num_winners",
+            )
     seen_labels: set[str] = set()
     for opt in options:
         lower = opt.label.strip().lower()
@@ -188,7 +225,7 @@ def create_proposal(
         ))
     db.flush()
 
-    if body.voting_method == "approval" and body.options:
+    if body.voting_method in ("approval", "ranked_choice") and body.options:
         _create_proposal_options(db, proposal.id, body.options)
 
     log_audit_event(
@@ -241,8 +278,11 @@ def update_proposal(
             ))
 
     if body.options is not None:
-        if proposal.voting_method != "approval":
-            raise HTTPException(status_code=400, detail="Options can only be set on approval proposals")
+        if proposal.voting_method not in ("approval", "ranked_choice"):
+            raise HTTPException(
+                status_code=400,
+                detail="Options can only be set on approval or ranked-choice proposals",
+            )
         _validate_and_update_options(db, proposal, body.options)
 
     db.commit()
@@ -301,6 +341,12 @@ def advance_proposal(
         if proposal.voting_method == "approval":
             # Approval proposals pass if quorum met and at least one option has votes
             if isinstance(tally, ApprovalTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
+                next_status = "passed"
+            else:
+                next_status = "failed"
+        elif proposal.voting_method == "ranked_choice":
+            # RCV/STV passes if quorum met and at least one winner emerged
+            if isinstance(tally, RCVTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
                 next_status = "passed"
             else:
                 next_status = "failed"
@@ -370,6 +416,37 @@ def get_results(proposal_id: str, db: Session = Depends(get_db)):
             time_series=time_series,
         )
 
+    if proposal.voting_method == "ranked_choice" and isinstance(tally, RCVTally):
+        option_labels = {opt.id: opt.label for opt in proposal.options}
+        rounds_out = [
+            schemas.RCVRoundOut(
+                round_number=r.round_number,
+                option_counts=r.option_counts,
+                eliminated=r.eliminated,
+                elected=r.elected,
+                transferred_from=r.transferred_from,
+                transfer_breakdown=r.transfer_breakdown,
+            )
+            for r in tally.rounds
+        ]
+        return schemas.ProposalResults(
+            proposal_id=proposal_id,
+            voting_method="ranked_choice",
+            not_cast=tally.not_cast,
+            total_eligible=tally.total_eligible,
+            quorum_met=tally.quorum_met(proposal.quorum_threshold),
+            option_labels=option_labels,
+            total_ballots_cast=tally.total_ballots_cast,
+            total_abstain=tally.total_abstain,
+            winners=tally.winners,
+            tied=tally.tied,
+            tie_resolution=proposal.tie_resolution,
+            rounds=rounds_out,
+            method=tally.method,
+            num_winners=tally.num_winners,
+            time_series=time_series,
+        )
+
     return schemas.ProposalResults(
         proposal_id=proposal_id,
         voting_method="binary",
@@ -396,6 +473,14 @@ def my_vote_status(
     proposal = _proposal_or_404(proposal_id, db)
     result = delegation_engine.resolve_vote(current_user.id, proposal.id, db)
 
+    # Multi-option proposals only support strict_precedence delegation today.
+    # Other strategies fall back; surface that to the frontend so it can
+    # render the explanatory note.
+    fallback = (
+        proposal.voting_method in ("approval", "ranked_choice")
+        and (current_user.delegation_strategy or "strict_precedence") != "strict_precedence"
+    )
+
     if result is None:
         delegate_result = delegation_engine.find_delegate(current_user.id, proposal.id, db)
         if delegate_result:
@@ -413,10 +498,12 @@ def my_vote_status(
             delegate_chain=None,
             cast_by=None,
             message=msg,
+            delegation_strategy_fallback=fallback or None,
         )
 
     cast_by_user = db.get(models.User, result.cast_by_id)
     approvals = None
+    ranking = None
     if proposal.voting_method == "approval":
         approvals = result.ballot.approvals if result.ballot.approvals else []
         n_approved = len(approvals)
@@ -428,6 +515,17 @@ def my_vote_status(
                 u = db.get(models.User, uid)
                 chain_names.append(u.display_name if u else uid)
             msg = f"Your ballot ({n_approved} option(s) approved) via {' -> '.join(chain_names)}."
+    elif proposal.voting_method == "ranked_choice":
+        ranking = result.ballot.ranking if result.ballot.ranking else []
+        n_ranked = len(ranking)
+        if result.is_direct:
+            msg = f"You ranked {n_ranked} option(s) directly."
+        else:
+            chain_names = []
+            for uid in result.delegate_chain:
+                u = db.get(models.User, uid)
+                chain_names.append(u.display_name if u else uid)
+            msg = f"Your ballot ({n_ranked} option(s) ranked) via {' -> '.join(chain_names)}."
     elif result.is_direct:
         msg = f"You voted {result.vote_value.upper()} directly."
     else:
@@ -440,10 +538,12 @@ def my_vote_status(
     return schemas.MyVoteStatus(
         vote_value=result.vote_value,
         approvals=approvals,
+        ranking=ranking,
         is_direct=result.is_direct,
         delegate_chain=result.delegate_chain,
         cast_by=cast_by_user,
         message=msg,
+        delegation_strategy_fallback=fallback or None,
     )
 
 
