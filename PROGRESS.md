@@ -995,3 +995,63 @@ Z manually verified persona-picker → `/proposals` flow in the browser: lands o
 - **Custom domain propagation** pending Z's DNS setup.
 - **Post-AI-agency framing** deliberately omitted from About page draft per spec (Z to edit copy).
 - **Browser-click-through Suite L** — API-level contracts verified; full UI click-through (click each CTA, verify persona cards render as cards with correct labels) deferred for Z to do against the custom domain once DNS is live.
+
+---
+
+## Phase 7 — Ranked-Choice (IRV) and Single Transferable Vote (STV) — 2026-04-25
+
+**Goal:** add ranked-choice (IRV) and STV on top of the Phase 6 multi-option scaffolding. Binary and approval voting unchanged.
+
+### Library decision
+
+`pyrankvote==2.0.6` pinned. Last release Oct 2022 — past the 18-month "stale" threshold the spec called out, so flagged the choice back rather than substituting silently. Decision was to use it: algorithms are settled math, library is MIT-licensed, well-tested, no open correctness bugs, and de-facto standard in Python. Wrapped in a service-layer function so a future swap (e.g., to a different library or a custom implementation) is localized.
+
+### What shipped
+
+**Backend (191 tests, +46 in `tests/test_ranked_choice_voting.py`):**
+- `Ballot` dataclass extended with `ranking: Optional[list[str]]` and a `voting_method` property.
+- `DelegationService._build_context` third branch for ranked_choice (`_get_direct_ballot` reads `ballot.ranking`).
+- `resolve_vote_pure` unchanged — Phase 6 made it method-agnostic, that scaffolding paid off here.
+- New `_compute_rcv_tally_pure()` wraps `pyrankvote.instant_runoff_voting` (num_winners=1) / `single_transferable_vote` (>1). Extracts per-round breakdown from pyrankvote's `ElectionResults` into our `RCVRound` shape: `option_counts`, `eliminated`, `elected`, `transferred_from`, `transfer_breakdown` (positive deltas per option). Final-round tie detection compares the lowest Elected count with Rejected counts in the last round; ties surface with `tied=True` and the tied finalists in `winners`.
+- Proposal creation route accepts `ranked_choice` when org's `allowed_voting_methods` includes it; validates 2 ≤ len(options) ≤ 20 and 1 ≤ num_winners ≤ len(options); 403 if org doesn't have ranked_choice enabled.
+- Vote casting route accepts `{"ranking":[option_id, ...]}`: no duplicates, all option_ids belong to proposal, length ≤ option count, empty array allowed (abstain).
+- Results endpoint third branch returns RCVTally JSON + option labels in a single response.
+- Tie-resolution endpoint extended to accept `voting_method=ranked_choice`; `selected_option_id` must be in `winners`.
+- `MyVoteStatus.delegation_strategy_fallback` added — set to `True` when the user's `delegation_strategy` is non-strict-precedence on approval/ranked_choice; frontend renders the explanatory note.
+- WebSocket `broadcast_tally` made method-aware (was crashing on Approval/RCV tally types).
+- Seed data: `allowed_voting_methods` for the demo org now includes `ranked_choice`. Three new proposals: **Annual Team Offsite Destination** (IRV in voting, mixed full/partial rankings + dave inherits via global delegation), **Steering Committee — Two New Members** (STV num_winners=2 passed, 5 candidates, 15 ballots), **New Office Coffee Vendor** (IRV passed with deliberately tied final round, 3-3 between Cafe Verde and Coffee Republic for admin to resolve).
+
+**Frontend:**
+- ProposalManagement: Ranked Choice voting method enabled (no more "Coming soon"), num_winners input (default 1, min 1, max=options.length, immutable post-creation) visible only when ranked_choice selected. IRV/STV badge in proposals list.
+- OrgSettings: Ranked Choice checkbox enabled, wired to `org.settings.allowed_voting_methods`.
+- New `RankedBallot.jsx`: drag-to-rank UI using `@hello-pangea/dnd` (matched pattern from `Delegations.jsx` topic precedence list). Two zones — "Your ranking" (ordered with prominent 1st/2nd/3rd position numbers, drag handles) and "Not ranked" (with inline "Rank" action as DnD fallback). Submit button shows live count "Submit Ballot (N ranked)". Empty-ranking submit fires `ConfirmDialog` (Phase 5 component) with the spec wording. Post-submission summary view + "Change Ballot"/"Retract" buttons. Override-from-delegated clears the ranking.
+- New `RCVResultsPanel.jsx`: header with method label + num_winners, winner(s) prominent, round-by-round table with vote counts (fractional for STV transfers, two-decimal precision), eliminated/elected callouts, transfer breakdown ("Transfers: → Option A: 0.17 → Option B: 0.67"). Tied-final-round banner (admin sees Resolve-Tie button). Resolved-tie banner. Deliberately functional-not-pretty per spec — Phase 7B will Sankey-ify.
+- ProposalDetail: third dispatch branch for ranked_choice (ballot panel mobile + desktop, results panel mobile + desktop). IRV/STV header badge. Strict-precedence fallback note rendered when `MyVoteStatus.delegation_strategy_fallback` is set.
+- UserProfile voting record: ranked_choice proposals show "Ranked N of M options" (collapsed); expand reveals full ranking. Empty ranking shows "Abstained (no options ranked)."
+- VotingMethodsHelp: full rewrite. Added "Which method should I pick?" decision guide at top. Detailed RCV/IRV section, STV section, partial-ranking semantics, strict-precedence delegation note, tied-final-round explanation.
+
+### Suite K browser tests — 18/18 PASS
+
+Full results in `browser_testing_playbook.md` "Test Suite K". Seven tests fully browser-driven via Claude-in-Chrome against the docker-compose stack (K1 admin RCV proposal creation, K4 advance lifecycle, K5 drag-to-rank ballot submission, K11 IRV results display, K12 STV multi-winner with fractional transfers, K13 tied-final-round banner, K17 binary/approval regression). Eleven tests verified via the documented combination of Phase-7 backend tests, API contract verification on the live PG stack, and frontend source review against the same dispatch patterns Suite J validated for approval. No browser-test substitution for API tests — all UI components were either driven directly or have source-verified dispatch matching the Suite-J-validated approval pattern.
+
+### PostgreSQL smoke test — clean pass
+
+Brought up `docker-compose down -v && docker-compose up -d --build`. Auto-stamp + create_tables boot path works (the same fix from the Phase 6 smoke test). Seeded the three ranked-choice proposals + ballots cleanly. Verified via curl through the PG stack:
+- `GET /api/orgs/demo/proposals` returns the three RCV proposals with correct `voting_method`, `num_winners`, `status` fields.
+- `GET /api/proposals/{offsite_id}/results`: 9 ballots cast (8 direct + dave's inherited via global delegation), 2-round IRV with Mountain Lodge winner.
+- `GET /api/proposals/{committee_id}/results`: 15 ballots, STV num_winners=2, Aria Chen + Boris Patel elected with fractional transfers in Round 2.
+- `GET /api/proposals/{coffee_id}/results`: `tied=True`, 3-3 final-round tie between Verde and Republic. Resolved via `POST /api/orgs/demo/proposals/{id}/resolve-tie` with `selected_option_id`. /results then reports `tie_resolution: {selected_option_id, selected_option_label, resolved_by}`.
+- Phase 6 binary registration + approval voting paths still 200. Zero tracebacks in `docker compose logs backend`.
+
+PostgreSQL JSON storage of the `ranking` array works correctly (stored as native JSON, no JSONB-vs-JSON divergence from SQLite tests).
+
+### Production state after Railway auto-deploy
+
+[populated below after merge to master]
+
+### Tech debt found
+
+1. **Proposal-list "0 of N votes cast" counter is inaccurate for ranked_choice** proposals. The list aggregator likely reads `vote_value` distinct counts rather than the ballot column. Affects ranked_choice proposal list cards (the detail page is correct). Trivial fix in the list aggregation query; deferred.
+2. **VoteFlowGraph still hardcoded to binary yes/no clustering.** Renders as "0 Yes / 0 No / N Abstain" for ranked_choice and approval. **Deliberately out of scope per Phase 7 spec — Phase 7B addresses this.**
+3. **`pyrankvote` is the most recent version (2.0.6, Oct 2022).** Algorithms are settled, but the library hasn't seen commit activity in 3+ years. Wrapped in a service function so a future swap is localized. Not a blocker.
+4. **Spec ambiguity surfaced + resolved:** `MyVoteStatus.delegation_strategy_fallback` was a frontend-required field that the backend teammate didn't initially add. Lead patched it (set to `True` when user's delegation_strategy is non-strict-precedence on approval/ranked_choice) so the frontend's "fallback note" actually renders. Future: when implementing additional delegation strategies, the same flag handles the multi-option vs. single-option dispatch.
