@@ -704,24 +704,7 @@ export default function ProposalDetail() {
                     <span><span className="inline-block w-2.5 h-2.5 rounded-full border-2 border-[#F39C12] mr-1 align-middle" />You</span>
                   </div>
 
-                  {/* Cluster summary */}
-                  <div className="flex gap-3 text-xs text-gray-500">
-                    <span className="text-[#2D8A56] font-medium">
-                      {voteGraph.clusters.yes?.count || 0} Yes
-                      <span className="text-gray-400 font-normal"> ({voteGraph.clusters.yes?.direct || 0}d + {voteGraph.clusters.yes?.delegated || 0}del)</span>
-                    </span>
-                    <span className="text-[#C0392B] font-medium">
-                      {voteGraph.clusters.no?.count || 0} No
-                      <span className="text-gray-400 font-normal"> ({voteGraph.clusters.no?.direct || 0}d + {voteGraph.clusters.no?.delegated || 0}del)</span>
-                    </span>
-                    <span className="text-gray-500 font-medium">
-                      {voteGraph.clusters.abstain?.count || 0} Abstain
-                    </span>
-                    <span className="text-gray-400">
-                      {voteGraph.clusters.not_cast?.count || 0} Not cast
-                    </span>
-                  </div>
-
+                  {/* Method-aware tally summary + graph (Phase 7B dispatcher) */}
                   <VoteFlowGraph data={voteGraph} />
                 </div>
               )}

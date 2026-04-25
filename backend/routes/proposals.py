@@ -405,6 +405,7 @@ def get_results(proposal_id: str, db: Session = Depends(get_db)):
             voting_method="approval",
             not_cast=tally.not_cast,
             total_eligible=tally.total_eligible,
+            votes_cast=tally.total_ballots_cast,
             quorum_met=tally.quorum_met(proposal.quorum_threshold),
             option_approvals=tally.option_approvals,
             option_labels=option_labels,
@@ -434,6 +435,7 @@ def get_results(proposal_id: str, db: Session = Depends(get_db)):
             voting_method="ranked_choice",
             not_cast=tally.not_cast,
             total_eligible=tally.total_eligible,
+            votes_cast=tally.total_ballots_cast,
             quorum_met=tally.quorum_met(proposal.quorum_threshold),
             option_labels=option_labels,
             total_ballots_cast=tally.total_ballots_cast,
@@ -455,6 +457,7 @@ def get_results(proposal_id: str, db: Session = Depends(get_db)):
         abstain=tally.abstain,
         not_cast=tally.not_cast,
         total_eligible=tally.total_eligible,
+        votes_cast=tally.votes_cast,
         yes_pct=round(tally.yes_pct, 4),
         no_pct=round(tally.no_pct, 4),
         abstain_pct=round(tally.abstain_pct, 4),
@@ -556,10 +559,16 @@ def get_vote_graph(
     """
     Returns the delegation network for a specific proposal showing how every
     vote was cast or delegated, with privacy-aware node labelling.
+
+    Phase 7B: extends the response with method-aware data (options list,
+    per-voter ballot, method-specific cluster aggregates) so the frontend can
+    render the option-attractor visualization for approval and RCV.
     """
     proposal = _proposal_or_404(proposal_id, db)
     if proposal.status not in ("voting", "passed", "failed"):
         raise HTTPException(status_code=400, detail="Vote graph only available for voting/passed/failed proposals")
+
+    voting_method = proposal.voting_method or "binary"
 
     # Build context for vote resolution
     ctx = delegation_engine._build_context(proposal, db)
@@ -672,7 +681,48 @@ def get_vote_graph(
                             is_active=True,
                         ))
 
-    # Build nodes
+    # ------------------------------------------------------------------
+    # Build options list (approval / ranked_choice) and option-level
+    # aggregates that feed both per-node ballots and the clusters block.
+    # ------------------------------------------------------------------
+    proposal_options = list(proposal.options) if voting_method in ("approval", "ranked_choice") else []
+    proposal_options.sort(key=lambda o: o.display_order)
+    option_id_set = {opt.id for opt in proposal_options}
+
+    approval_counts: dict[str, int] = {opt.id: 0 for opt in proposal_options}
+    first_pref_counts: dict[str, int] = {opt.id: 0 for opt in proposal_options}
+
+    if voting_method == "approval":
+        for uid, result in vote_results.items():
+            if result is None or result.ballot is None:
+                continue
+            for oid in (result.ballot.approvals or []):
+                if oid in approval_counts:
+                    approval_counts[oid] += 1
+    elif voting_method == "ranked_choice":
+        for uid, result in vote_results.items():
+            if result is None or result.ballot is None:
+                continue
+            ranking = result.ballot.ranking or []
+            if ranking and ranking[0] in first_pref_counts:
+                first_pref_counts[ranking[0]] += 1
+
+    options_out: list[schemas.VoteFlowOption] = [
+        schemas.VoteFlowOption(
+            id=opt.id,
+            label=opt.label,
+            display_order=opt.display_order,
+            approval_count=approval_counts.get(opt.id, 0) if voting_method == "approval" else 0,
+            first_pref_count=first_pref_counts.get(opt.id, 0) if voting_method == "ranked_choice" else 0,
+        )
+        for opt in proposal_options
+    ]
+
+    # ------------------------------------------------------------------
+    # Build nodes — including method-aware ballot field gated by privacy.
+    # Anonymous voters get ballot=None so the frontend doesn't render any
+    # attractor pulls for them.
+    # ------------------------------------------------------------------
     nodes: list[schemas.VoteFlowNode] = []
 
     for uid, result in vote_results.items():
@@ -705,6 +755,21 @@ def get_vote_graph(
             vote_source = "delegation"
             weight = 1
 
+        # Method-aware ballot (privacy-gated). For anonymous voters or
+        # non_voters, ballot stays None.
+        ballot_obj: Optional[schemas.VoteFlowBallot] = None
+        if can_see_identity and result is not None and result.ballot is not None:
+            if voting_method == "binary":
+                ballot_obj = schemas.VoteFlowBallot(vote_value=result.ballot.vote_value)
+            elif voting_method == "approval":
+                ballot_obj = schemas.VoteFlowBallot(
+                    approvals=list(result.ballot.approvals or [])
+                )
+            elif voting_method == "ranked_choice":
+                ballot_obj = schemas.VoteFlowBallot(
+                    ranking=list(result.ballot.ranking or [])
+                )
+
         nodes.append(schemas.VoteFlowNode(
             id=uid,
             label=label,
@@ -715,30 +780,95 @@ def get_vote_graph(
             is_current_user=is_self,
             delegator_count=delegator_counts.get(uid, 0),
             total_vote_weight=weight,
+            ballot=ballot_obj,
         ))
 
-    # Build clusters
-    clusters = {"yes": {"count": 0, "direct": 0, "delegated": 0},
-                "no": {"count": 0, "direct": 0, "delegated": 0},
-                "abstain": {"count": 0, "direct": 0, "delegated": 0},
-                "not_cast": {"count": 0}}
+    # ------------------------------------------------------------------
+    # Build clusters — back-compat top-level binary fields plus method-
+    # specific nested blocks. Aggregates are derived from vote_results.
+    # ------------------------------------------------------------------
+    legacy = {
+        "yes": {"count": 0, "direct": 0, "delegated": 0},
+        "no": {"count": 0, "direct": 0, "delegated": 0},
+        "abstain": {"count": 0, "direct": 0, "delegated": 0},
+        "not_cast": {"count": 0},
+    }
+    total_cast = 0
+    total_abstain = 0
+    binary_block: Optional[schemas.BinaryClusters] = None
+    approval_block: Optional[schemas.ApprovalClusters] = None
+    rcv_block: Optional[schemas.RCVClusters] = None
 
-    for uid, result in vote_results.items():
-        if result is None:
-            clusters["not_cast"]["count"] += 1
-        else:
-            bucket = clusters.get(result.vote_value, clusters["abstain"])
-            bucket["count"] += 1
-            if result.is_direct:
-                bucket["direct"] += 1
+    if voting_method == "binary":
+        for uid, result in vote_results.items():
+            if result is None:
+                legacy["not_cast"]["count"] += 1
             else:
-                bucket["delegated"] += 1
+                bucket = legacy.get(result.vote_value or "abstain", legacy["abstain"])
+                bucket["count"] += 1
+                if result.is_direct:
+                    bucket["direct"] += 1
+                else:
+                    bucket["delegated"] += 1
+                total_cast += 1
+        total_abstain = legacy["abstain"]["count"]
+        binary_block = schemas.BinaryClusters(**legacy)
+    else:
+        # Approval / RCV: count cast vs not_cast and empty-ballot abstains.
+        for uid, result in vote_results.items():
+            if result is None:
+                continue
+            total_cast += 1
+            if voting_method == "approval":
+                if not (result.ballot and result.ballot.approvals):
+                    total_abstain += 1
+            else:  # ranked_choice
+                if not (result.ballot and result.ballot.ranking):
+                    total_abstain += 1
+        if voting_method == "approval":
+            # Winners = options with the max approval count (ties allowed).
+            non_zero = {oid: c for oid, c in approval_counts.items() if c > 0}
+            winners: list[str] = []
+            if non_zero:
+                top = max(non_zero.values())
+                winners = [oid for oid, c in non_zero.items() if c == top]
+            approval_block = schemas.ApprovalClusters(
+                option_counts=dict(approval_counts),
+                winners=winners,
+            )
+        elif voting_method == "ranked_choice":
+            # Reuse the existing tally service for IRV/STV winners + rounds.
+            tally = delegation_engine.compute_tally(proposal, db)
+            from delegation_engine import RCVTally as _RCVTally
+            if isinstance(tally, _RCVTally):
+                rcv_block = schemas.RCVClusters(
+                    winners=list(tally.winners),
+                    total_rounds=len(tally.rounds),
+                )
+            else:
+                rcv_block = schemas.RCVClusters(winners=[], total_rounds=0)
+
+    clusters = schemas.VoteFlowClusters(
+        yes=legacy["yes"],
+        no=legacy["no"],
+        abstain=legacy["abstain"],
+        not_cast=legacy["not_cast"],
+        voting_method=voting_method,
+        total_eligible=len(all_users),
+        total_cast=total_cast,
+        total_abstain=total_abstain,
+        binary=binary_block,
+        approval=approval_block,
+        rcv=rcv_block,
+    )
 
     return schemas.VoteFlowGraph(
         proposal_id=proposal.id,
         proposal_title=proposal.title,
+        voting_method=voting_method,
         total_eligible=len(all_users),
         nodes=nodes,
         edges=edges,
-        clusters=schemas.VoteFlowClusters(**clusters),
+        options=options_out,
+        clusters=clusters,
     )

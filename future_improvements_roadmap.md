@@ -6,7 +6,7 @@ This document is the canonical sequencing plan for all post-Phase-4 development.
 
 **Sequencing principle:** de-risk infrastructure changes before building features that depend on them, do cheap cleanup before stacking new complexity on top, and prefer passes that can be thoroughly internally tested with seed data over passes whose main value is only measurable with real users.
 
-This roadmap reflects the sequence agreed on 2026-04-21, with the Phase 7B insertion added 2026-04-22 and the Phase 6.5 EA Demo Landing pass inserted 2026-04-24. Earlier versions of this document are preserved in `Archive/`.
+This roadmap reflects the sequence agreed on 2026-04-21, with subsequent insertions: Phase 7B (network graph) on 2026-04-22, Phase 6.5 (EA Demo Landing) on 2026-04-24, and Phase 7C (Sankey, split from 7B) on 2026-04-25. Earlier versions of this document are preserved in `Archive/`.
 
 ---
 
@@ -18,12 +18,13 @@ The passes are listed in the order they should be built. Each has a short ration
 2. **Phase 6 — Multi-Option Voting Pass A: Approval Voting.** ✅ Complete. Full scaffolding for multi-option proposals (ballot storage, delegation engine branching, proposal-type-aware frontend, org config) shipped with approval voting. 136 backend tests passing (35 new). Suite J browser tests defined (15 tests). Toast success audit done. PostgreSQL smoke test pass — 2 deployment bugs fixed (Dockerfile CRLF normalization, start.sh bootstrap ordering).
 3. **Phase 6.5 — EA Demo Landing and Public Deployment.** ✅ Complete. New public landing surface (`/`, `/about`, `/demo`), persona quick-login, demo-org auto-join on email-verify, Resend HTTP API for transactional email (Gmail SMTP blocked from Railway). Live at `https://www.liquiddemocracy.us` with HTTPS via Let's Encrypt.
 4. **Phase 7 — Multi-Option Voting Pass B: RCV and STV.** ✅ Complete (2026-04-25). Ranked ballots on the Phase 6 scaffolding. Drag-to-rank UI (`@hello-pangea/dnd`), `pyrankvote==2.0.6` integration, multi-winner STV with fractional transfer display, round-by-round elimination breakdown, tied-final-round admin resolution. 191 backend tests passing (+46). Suite K 18/18. PostgreSQL smoke test pass. Live on prod with verified delegation inheritance. Network visualization redesign deferred to Phase 7B as planned.
-5. **Phase 7B — Vote Network Visualization for Multi-Option.** The current `VoteFlowGraph` is hardcoded to binary yes/no clustering and renders nonsensically for approval and ranked-choice proposals. Phase 7B redesigns it as an option-attractor force layout that handles all three voting methods, plus builds the round-by-round elimination Sankey for RCV/STV.
-6. **Phase 8 — Sustained-Majority Voting Windows.** The "stable result" semantics for multi-option need multi-option to exist, and it's governance-critical to have in place before any org runs binding decisions. Also validates our snapshot/tally infrastructure.
-7. **Phase 9 — Polis Integration (Embedded).** Biggest single feature gap. Does meaningful work only with real deliberation content, so it benefits from the platform being otherwise feature-complete before we start.
-8. **Phase 10 — Engagement Layer.** Proposal comments, profile pictures, PWA configuration. Small, loosely-related, low-risk. Good multi-agent dispatch material.
-9. **Phase 11 — URL Routing Refactor.** Path-based org URLs (`/{org-slug}/proposals` etc.) as originally spec'd. Done after feature passes so we route a mature feature set once instead of reshuffling URLs repeatedly.
-10. **Phase 12 — Configurable Role Permissions (Stage 1).** Replaces the hardcoded moderator-permissions scaffolding from Phase 4 Cleanup with a proper data-model-driven permission system. Save for near the end because the hardcoded version is functional and this is really about extensibility.
+5. **Phase 7B — Vote Network Visualization for Multi-Option.** Next up. Replaces the binary-only `VoteFlowGraph` with a method-aware visualization. Binary preserved as-is; approval and ranked-choice get a new option-attractor force layout where each option pins as a node and voters settle at force equilibrium based on their ballots. Includes the small fix for the proposal-list "0 of N votes cast" counter that's inaccurate for ranked_choice. Phase 7C (Sankey) is split off so this pass stays focused on the network graph design problem.
+6. **Phase 7C — Round-by-Round Elimination Sankey for RCV/STV.** Standard Sankey-style visualization showing how votes transfer between options across elimination rounds. Standalone visualization that lives alongside the network graph on RCV/STV proposal detail pages. Split from 7B because it's a different visualization with its own design considerations and shares no code with the network graph.
+7. **Phase 8 — Sustained-Majority Voting Windows.** The "stable result" semantics for multi-option need multi-option to exist, and it's governance-critical to have in place before any org runs binding decisions. Also validates our snapshot/tally infrastructure.
+8. **Phase 9 — Polis Integration (Embedded).** Biggest single feature gap. Does meaningful work only with real deliberation content, so it benefits from the platform being otherwise feature-complete before we start.
+9. **Phase 10 — Engagement Layer.** Proposal comments, profile pictures, PWA configuration. Small, loosely-related, low-risk. Good multi-agent dispatch material.
+10. **Phase 11 — URL Routing Refactor.** Path-based org URLs (`/{org-slug}/proposals` etc.) as originally spec'd. Done after feature passes so we route a mature feature set once instead of reshuffling URLs repeatedly.
+11. **Phase 12 — Configurable Role Permissions (Stage 1).** Replaces the hardcoded moderator-permissions scaffolding from Phase 4 Cleanup with a proper data-model-driven permission system. Save for near the end because the hardcoded version is functional and this is really about extensibility.
 
 **Items deferred past this sequence:** alternative delegation strategies (2.1), AI delegation agents (2.3), delegate report cards (2.4), accessibility audit (2.5), i18n (2.6), advanced analytics (2.7), notification system (2.8), and all Tier 3 items. These remain valuable and are documented below, but they are not in the path to pilot-ideal.
 
@@ -106,7 +107,7 @@ Ship the full multi-option voting scaffolding — ballot storage, delegation eng
 
 ---
 
-## Phase 6.5 — EA Demo Landing and Public Deployment
+## Phase 6.5 — EA Demo Landing and Public Deployment ✅ Complete
 
 ### Rationale
 
@@ -130,25 +131,26 @@ The longer roadmap is unchanged. Phase 7 (RCV/STV) resumes after this pass.
 - Auto-add new registrants to the demo org when `is_public_demo=true`
 - `GET /api/auth/demo-users` exposed when `is_public_demo=true` (currently debug-only)
 
-**SMTP wiring:**
-- Verify existing `email_service.py` works against Gmail SMTP via App Password
-- Document the Gmail App Password setup in `DEPLOYMENT.md`
+**Email transport (replaced Gmail SMTP after Railway block discovered):**
+- Resend HTTP API integration via abstracted email service interface
+- `email_service.py` refactored to support multiple transports (Resend for prod, console for dev)
+- Documented Gmail App Password setup as fallback in DEPLOYMENT.md
 
 **Railway deployment:**
 - First-time setup: Railway account, GitHub integration, managed PostgreSQL, env var configuration
-- DNS: point `liquiddemocracy.us` at Railway, HTTPS via Let's Encrypt
+- DNS: `liquiddemocracy.us` pointed at Railway, HTTPS via Let's Encrypt
 - Initial seed via `docker exec`
 - End-to-end smoke test on the deployed instance (register, real email verification, vote, delegate)
 
 **Documentation:**
-- `DEPLOYMENT.md` updated with full Railway + SMTP guide and demo data management procedures
+- `DEPLOYMENT.md` updated with Railway + Resend guide, demo data management, deploy gotchas catalog (CRLF, apex domain, free-tier constraints)
 - `PROGRESS.md` Phase 6.5 section with live URL
 
 Full spec in `phase6_5_spec.md`.
 
 ### Non-goals
 
-- Phase 7 (RCV/STV) — resumes after this pass
+- Phase 7 (RCV/STV) — resumed after this pass
 - Phase 11 URL routing refactor — demo uses current flat URLs
 - Periodic demo data auto-reset (manual reset only for now, documented)
 - Content moderation (Z monitors manually for the EA timeframe)
@@ -157,7 +159,7 @@ Full spec in `phase6_5_spec.md`.
 
 ---
 
-## Phase 7 — Multi-Option Voting Pass B: RCV and STV
+## Phase 7 — Multi-Option Voting Pass B: RCV and STV ✅ Complete
 
 ### Rationale
 
@@ -170,7 +172,7 @@ Ranked ballots on top of validated scaffolding. Edge cases (tie-breaking during 
 - No new tables — the `ProposalOption` table from Phase 6 is reused
 
 **Backend:**
-- `pyrankvote` (or equivalent) integration for IRV and STV tabulation
+- `pyrankvote==2.0.6` integration for IRV and STV tabulation (library was flagged stale per the spec's 18-month threshold; team made deliberate choice given that algorithms are settled math, wrapped in service function for future swappability)
 - Tabulation produces per-round breakdown for visualization (who was eliminated each round, vote transfers)
 - Results endpoint extended to return round-by-round data
 
@@ -180,9 +182,9 @@ Ranked ballots on top of validated scaffolding. Edge cases (tie-breaking during 
 - Same strict-precedence-only restriction as approval
 
 **Frontend:**
-- Drag-to-rank ballot UI for RCV/STV (reuse the DnD pattern from topic precedence)
-- Round-by-round elimination text/table display (each round shows who was eliminated and where votes transferred). The richer Sankey-style visual ships in Phase 7B.
-- STV multi-winner display (proportional results with winners per seat)
+- Drag-to-rank ballot UI for RCV/STV (`@hello-pangea/dnd`, reused DnD pattern from topic precedence)
+- Round-by-round elimination text/table display via `RCVResultsPanel.jsx`. The richer Sankey-style visual ships in Phase 7C.
+- STV multi-winner display (proportional results with winners per seat, fractional transfer display)
 - Proposal creation form: `num_winners` field when RCV/STV is selected
 - Org admin settings: enable RCV, STV independently
 
@@ -192,7 +194,7 @@ Ranked ballots on top of validated scaffolding. Edge cases (tie-breaking during 
 ### Non-goals
 
 - Network visualization redesign for multi-option proposals (Phase 7B)
-- Round-by-round elimination Sankey visualization (Phase 7B)
+- Round-by-round elimination Sankey visualization (Phase 7C)
 - Alternative delegation strategies with multi-option (Kemeny-Young rank aggregation, proportional approval) — deferred research areas
 - Condorcet methods
 
@@ -202,47 +204,68 @@ Ranked ballots on top of validated scaffolding. Edge cases (tie-breaking during 
 
 ### Rationale
 
-The current `VoteFlowGraph` (delegation network on each proposal detail page) is hardcoded for binary voting: green/red half-plane zones, "yes/no" labels, abstain bottom zone, vote tally bar showing yes/no/abstain counts. None of that maps to approval voting (no spatial yes-vs-no axis) or ranked-choice voting (preference orderings, not single positions). For approval and RCV proposals, the graph currently renders nonsense — it shows zero yes, zero no, X abstained, with the colored zones still drawn.
+The current `VoteFlowGraph` is hardcoded for binary voting: green/red half-plane zones, "yes/no" labels, abstain bottom zone. For approval and ranked-choice proposals it renders nonsensically. This isn't a Phase 6 or Phase 7 regression — the underlying voting and tabulation work correctly. It's a visualization gap that needs dedicated design attention rather than being bundled with feature work.
 
-This isn't a Phase 6 or Phase 7 regression — the underlying voting and tabulation work correctly. It's a visualization gap. Splitting it into its own pass keeps Phase 7's scope focused on RCV/STV mechanics and gives this work the design attention it needs. RCV elimination flow is also genuinely different work from the network graph — Sankey-style visualization is the standard, and it doesn't extend the existing graph cleanly.
+### Direction (locked in 2026-04-22, refined 2026-04-25)
 
-### Direction (locked in 2026-04-22)
+**Network graph: option-attractor force layout.** Each proposal option becomes a fixed/pinned node. Voters are subject to multiple simultaneous forces — attraction toward the options they approved (or ranked, for RCV), plus the standard voter-voter repulsion that keeps nodes from stacking. The simulation runs and each voter settles at force equilibrium, which is one position per voter. Voters with similar approval/ranking patterns naturally cluster together; voters with unusual or conflicting patterns end up centrally located.
 
-**Network graph: option-attractor force layout.** Each proposal option is a fixed/pinned node; voters drift toward the options they approved (approval) or weight toward their top-ranked options (RCV). A voter who approved 3 of 4 options sits roughly in the centroid of those three. A voter who ranked option C first sits near C, with weaker pulls from their lower-ranked options. Delegation arrows render the same way they do for binary.
+This is a force-directed graph with extra attractor nodes — D3's existing force simulation handles the physics natively. Implementation is mostly force tuning, not algorithmic novelty.
 
-The known concern with this approach is density at high option counts. Mitigations to build in from the start:
-- Toggle individual option attractors on/off (filter to view "who approved Option B")
-- Hover-to-isolate a single option's attractor (highlight voters drawn to it, dim others)
-- Hide voters who approved zero options to declutter
-- Adapt node spacing / repulsion parameters based on option count
+**Linear ranking decay for RCV.** First preference pulls hardest (1.0), with weighted decay through lower preferences (0.66, 0.33, then a floor of 0.1 for rank 4+). Linear chosen over exponential because it keeps lower preferences visually meaningful.
 
-**Round-by-round elimination Sankey for RCV/STV.** Separate visualization, lives alongside the network graph rather than replacing it. Standard Sankey: each elimination round is a column, voter blocks flow from option to option as eliminations transfer votes. This is the standard RCV display; we shouldn't reinvent it.
+**Mitigation controls for high option counts:**
+- Toggle individual option attractors on/off
+- Hover-to-isolate (voters strongly pulled toward hovered option highlighted, others dim)
+- Hide voters who approved/ranked zero options
+- Force parameters tuned empirically based on option count
 
-**Binary voting stays as-is.** The current green/red clustering remains the binary visualization. It works well for binary and there's no reason to change it.
+**Binary voting stays as-is.** The current green/red clustering remains the binary visualization. New component dispatches on `proposal.voting_method` and routes to existing rendering for binary, new option-attractor rendering for approval and RCV.
 
 ### Scope
 
 **Network graph:**
-- New visualization component (or extension of `VoteFlowGraph`) that dispatches on `proposal.voting_method`
-- Binary path: existing rendering preserved
-- Approval path: option-attractor force layout with mitigation controls
-- RCV path: option-attractor force layout weighted by ranking position (top-ranked option pulls strongest)
-- Updated tally summary: replace "yes/no/abstain" counts with method-appropriate summaries
+- Component refactor: `VoteFlowGraph` becomes a method-aware dispatcher; `BinaryVoteFlowGraph` extracts existing code unchanged; `OptionAttractorVoteFlowGraph` is new for approval and RCV
+- Backend extension to `GET /api/proposals/{id}/vote-graph`: adds `options` array, `voting_method` field, and per-voter `ballot` field
+- Method-appropriate `clusters` summary (yes/no/abstain for binary; option approval counts for approval; winner + round count for RCV)
+- Method-appropriate detail panel when clicking voter nodes
 
-**Round-by-round Sankey (RCV/STV only):**
-- New component for elimination flow visualization
-- Renders below the network graph on the proposal detail page when `voting_method` is `ranked_choice`
-- Round labels with eliminated option, transfer counts visible per round
-- Integrates with the per-round tabulation data from Phase 7's results endpoint
+**Bundled cleanup:**
+- Fix proposal-list "0 of N votes cast" counter that's inaccurate for ranked_choice (vote count aggregator must count Vote rows regardless of which column is populated)
 
-**Help page update:**
-- Add explanation of how to read each visualization
+Full spec in `phase7B_spec.md`.
 
 ### Non-goals
 
-- Option 1 (per-option overlap regions) and Option 2 (one graph per option, tabbed) explored during planning but not selected
-- Per-voter ballot tooltips beyond what already exists (current hover shows the voter's resolved vote; that's sufficient)
-- Animation of vote transfers in the Sankey (could be polish; not required for v1)
+- Round-by-round elimination Sankey (Phase 7C)
+- Per-option overlap regions, tabbed-per-option, or other layout alternatives explored during planning but rejected
+- Animation of vote transfers
+- Migrating binary to the new architecture (binary visualization stays unchanged)
+
+---
+
+## Phase 7C — Round-by-Round Elimination Sankey for RCV/STV
+
+### Rationale
+
+Sankey-style flow visualization is the standard for showing how votes transfer between options across elimination rounds. It's a different visualization with different design considerations than the network graph — splitting it from 7B keeps each pass focused. The Sankey shares no code with the network graph; both can live alongside each other on the proposal detail page.
+
+### Scope
+
+**Sankey component:**
+- New component for elimination flow visualization, rendered below the network graph on RCV/STV proposal detail pages
+- Each elimination round is a column; voter blocks flow from option to option as eliminations transfer votes
+- Round labels with eliminated option, transfer counts visible per round
+- Reuses per-round tabulation data already returned by Phase 7's results endpoint — no backend changes expected
+
+**Help page update:**
+- Add explanation of how to read the Sankey
+
+### Non-goals
+
+- Animation of vote transfers between rounds (could be polish; not required for v1)
+- Per-round network graph snapshots ("what did the graph look like at round 2")
+- Sankey for binary or approval voting (these don't have rounds)
 
 ---
 
@@ -378,6 +401,10 @@ These remain valuable but are not in the path to pilot-ideal. They'll be revisit
 ### Periodic Demo Data Auto-Reset
 
 Phase 6.5 ships with manual demo data reset only. Once the demo gets real visitor traffic, an automated nightly or weekly reset will likely be wanted to keep the demo experience consistent. Implementation: scheduled job that wipes and re-seeds the demo org's data while leaving the schema and demo personas intact. Don't build until there's evidence it's needed.
+
+### Additive Idempotent Seed Mechanism
+
+Phase 7's RCV proposals didn't auto-apply on prod because `seed_if_empty.py` only runs on empty databases (correct behavior — we don't want to wipe visitor data). Future passes that add demo content currently require a manual re-seed to make the new content visible. Long-term fix: each phase's seed function checks whether its specific proposals exist (by stable identifier) and adds them if not. Adds the new content additively without wiping existing visitor data. Worth doing before Phase 9 (Polis demos benefit) but not blocking.
 
 ### Alternative Delegation Strategies (formerly 2.1)
 

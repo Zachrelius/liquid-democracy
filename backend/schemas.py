@@ -548,6 +548,11 @@ class ProposalResults(BaseModel):
     abstain: int = 0
     not_cast: int = 0
     total_eligible: int = 0
+    # Total ballots cast on the proposal regardless of voting method —
+    # populated for binary/approval/ranked_choice so the proposal-list counter
+    # works uniformly. (Phase 7B fix: previously the list page showed
+    # "0 of N" for ranked_choice because it summed yes+no+abstain.)
+    votes_cast: int = 0
     yes_pct: float = 0.0
     no_pct: float = 0.0
     abstain_pct: float = 0.0
@@ -605,6 +610,30 @@ class DelegationGraph(BaseModel):
 # Vote Flow Graph (Proposal)
 # ---------------------------------------------------------------------------
 
+class VoteFlowBallot(BaseModel):
+    """Method-aware ballot summary for a single voter.
+
+    Exactly one field is populated based on the proposal's voting_method.
+    Visible only for voters whose identity is revealed by privacy rules;
+    anonymous voters get ballot=None on their VoteFlowNode.
+    """
+    vote_value: Optional[str] = None       # binary: "yes" / "no" / "abstain"
+    approvals: Optional[list[str]] = None  # approval: option_ids
+    ranking: Optional[list[str]] = None    # ranked_choice: option_ids in rank order
+
+
+class VoteFlowOption(BaseModel):
+    """A proposal option, surfaced for the option-attractor visualization.
+
+    Populated for approval and ranked_choice; empty list for binary.
+    """
+    id: str
+    label: str
+    display_order: int
+    approval_count: int = 0   # approval-only; 0 for RCV
+    first_pref_count: int = 0  # RCV-only; 0 for approval
+
+
 class VoteFlowNode(BaseModel):
     id: str
     label: str
@@ -615,6 +644,7 @@ class VoteFlowNode(BaseModel):
     is_current_user: bool = False
     delegator_count: int = 0
     total_vote_weight: int = 1
+    ballot: Optional[VoteFlowBallot] = None  # null for anonymous voters
 
 
 class VoteFlowEdge(BaseModel):
@@ -625,19 +655,52 @@ class VoteFlowEdge(BaseModel):
     is_active: bool = True
 
 
-class VoteFlowClusters(BaseModel):
+class BinaryClusters(BaseModel):
     yes: dict = {}
     no: dict = {}
     abstain: dict = {}
     not_cast: dict = {}
 
 
+class ApprovalClusters(BaseModel):
+    option_counts: dict[str, int] = {}   # option_id -> approval count
+    winners: list[str] = []              # top-vote-getters; len > 1 for ties
+
+
+class RCVClusters(BaseModel):
+    winners: list[str] = []              # option_ids; len > 1 for unresolved final-round tie
+    total_rounds: int = 0
+
+
+class VoteFlowClusters(BaseModel):
+    # Legacy top-level binary fields — preserved for back-compat with existing
+    # frontend code that reads clusters.yes / clusters.no / clusters.not_cast.
+    # Populated only when voting_method == "binary"; empty/zero otherwise.
+    # NOTE: not_cast is a {count: N} dict here (legacy shape). Phase 7B's spec
+    # asks for an additional top-level not_cast int — resolved by exposing the
+    # not_cast count via total_eligible - total_cast and keeping the dict shape.
+    yes: dict = {}
+    no: dict = {}
+    abstain: dict = {}
+    not_cast: dict = {}
+    # Phase 7B additions — method-aware aggregates.
+    voting_method: str = "binary"
+    total_eligible: int = 0
+    total_cast: int = 0
+    total_abstain: int = 0
+    binary: Optional[BinaryClusters] = None
+    approval: Optional[ApprovalClusters] = None
+    rcv: Optional[RCVClusters] = None
+
+
 class VoteFlowGraph(BaseModel):
     proposal_id: str
     proposal_title: str
+    voting_method: str = "binary"
     total_eligible: int
     nodes: list[VoteFlowNode]
     edges: list[VoteFlowEdge]
+    options: list[VoteFlowOption] = []
     clusters: VoteFlowClusters
 
 
