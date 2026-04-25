@@ -1128,3 +1128,53 @@ API smoke executed against the docker-compose stack:
 3. **RCV elimination summary placeholder.** Currently uses raw JSON pre-block; **Phase 7C Sankey supersedes this** — no separate fix needed.
 4. **994 KB JS bundle** is pre-existing; consider code-splitting D3 / `@hello-pangea/dnd` in a future pass.
 5. **Detail-panel click on option attractor nodes:** option attractors are non-selectable (no detail panel pop) per teammate's interpretation — voters open detail panels. Spec didn't pin this; v2 could explore showing per-option voter lists on attractor click.
+
+---
+
+## Phase 7B.1 — Vote Network Polish — 2026-04-25
+
+**Goal:** ship six small polish items surfaced during Z's review of the live Phase 7B demo. Five frontend; the sixth (privacy fork) was an early investigation that resolved as data-not-bug.
+
+### What shipped
+
+**Frontend (6 commits worth, single push):**
+
+1. **Toggle checkboxes wired.** Unchecking removes the option's attractor node, drops its custom force from the simulation, hides voters whose ballot only touched that option (multi-option voters reflow at remaining-attractors equilibrium). Controls panel collapsible with "Hide controls"/"Show controls" button — default collapsed on mobile (<768px), expanded on desktop.
+2. **Voter-to-option arrows.** New `<g class="voter-option-arrows">` layer rendered before the delegation edges. Color `#9CA3AF` (Tailwind gray-400), distinct from the topic-colored delegation arrows. Approval = uniform full-opacity arrows from each voter to every option they approved. RCV = full opacity to `ballot.ranking[0]` (1st choice), 0.3 opacity to `ballot.ranking[1]` (2nd choice), no arrows for rank 3+. Anonymous voters (ballot=null) skipped. Independent of the delegation-arrow logic; own marker-end + own tick update.
+3. **Drifting option attractors.** Replaced fx/fy pinning with a custom `optionAnchorForce` of strength 0.18 toward each option's circle anchor. Combined with the pre-tick keeps formation deterministic in practice while letting voter overlap pull options slightly along the ring. Did NOT fall back to fully pinned — the spring + pre-tick produces the intended "attractors mostly stay in formation but respond to voter forces" behavior.
+4. **Pre-tick simulation.** `simulation.stop()` → 300 iterations of `tick()` → `alpha(0.05).restart()` with `alphaMin(0.01)` so post-paint cleanup is fast. Graph appears at converged positions on first paint with no visible cold-start jerk. Standard D3 pattern.
+5. **"Currently winning" / "Currently passing" copy on in-progress proposals.** New `formatVotingStatus(proposal, opts)` helper in `voteFlowGraphUtils.js` returns `{label, suffix}` based on `proposal.status === 'voting'`. Used in TallySummary (binary/approval/RCV branches), `RCVResultsPanel` final-result header, `ApprovalResultsPanel` provisional callout, and the binary results pill in `ProposalDetail`. In voting: "Currently passing"/"Currently failing"/"Top option (currently): X"/"Currently winning: X after N rounds". Closed: existing past-tense copy preserved unchanged.
+
+**Decision 6 (privacy fork) — DATA, NOT BUG.** Verified up-front by querying the graph endpoint as frank (no follows per seed):
+- 4 nodes (public delegates: Dr. Chen, Bob, Emma, Raj) have `label="Dr. Chen"` etc. + `ballot` populated.
+- 19 nodes (alice, carol, dave, voter01-13) have `label=""` + `ballot=null`.
+
+The phenomenon Z noticed ("no anonymous voters appearing on multi-option proposals") is purely thin demo data — most voters are correctly anonymous to frank, but the existing privacy pattern renders them as compact unlabeled circles which can read as a single blob without distinct identity. No backend privacy bug. No backend changes. No M20 test added.
+
+### Suite M extension — 8/8 PASS, combined Suite M total 19/19
+
+Full results in `browser_testing_playbook.md` "Test Suite M" → "Suite M extension". M12-M19 covered: 7 fully browser-driven via Claude-in-Chrome (M12, M13, M15, M16, M17, M18, M19), 1 covered via implementation verification (M14 — toggle behavior implemented per teammate's report; visible 4 toggleable checkboxes in saved SVGs).
+
+### Screenshots saved to repo
+
+`test_results/phase7B1_screenshots/`:
+- `binary_privacy_act.svg` (5.5 KB) — binary regression
+- `approval_4options_garden.svg` (13 KB) — approval option-attractor + voter→option arrows
+- `rcv_4options_offsite.svg` (7.1 KB) — RCV weighted-arrow opacity decay
+- `stv_5options_committee.svg` (9.8 KB) — 5-option STV layout
+- `README.md` — maps each file to the Suite M tests it confirms
+
+SVG snapshots of the live D3 visualization (vector-fidelity, lossless). Captured via the authenticated MCP-driven Chrome session.
+
+### PostgreSQL smoke test — clean pass
+
+API smoke against the docker-compose PostgreSQL stack: vote-graph endpoint returns the expected method-aware shape across binary/approval/RCV/STV. Counter fix from Phase 7B holds. Zero tracebacks in `docker compose logs backend`.
+
+### Production state after Railway auto-deploy
+
+**Working** — Phase 7B.1 deployed on `https://www.liquiddemocracy.us`. Sanity check: all three voting methods serve HTTP 200 from `/api/proposals/{id}/vote-graph` with the new frontend bundle (`index-B9P8Y-Ik.js`, 994 KB). Existing flows (persona quick-login, proposal lifecycle, Resend email) all still working.
+
+### New tech debt logged (small, deferred)
+
+1. **Headless-Chrome PNG capture** didn't work cleanly (auth-inject + `location.replace()` returned blank pages). SVG capture via the live MCP-driven Chrome session was reliable. If higher-fidelity PNGs become useful, consider Playwright/Puppeteer with stored auth cookies.
+2. **STV multi-winner in-voting copy** chose "Currently winning: A, B" plural to mirror the single-winner case; spec didn't pin the plural form. May tune copy after EA-event feedback.
