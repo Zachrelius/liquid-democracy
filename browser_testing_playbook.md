@@ -1582,35 +1582,35 @@ Notes:
 
 ---
 
-### K6: Cast partial ranking `*`
+### K6: Cast partial ranking
 
-**Steps:** Submit a ballot ranking only some options.
+**Steps:** Logged in as Dave the Delegator (after override). Click "Rank" on Forest Cabin and Beach Resort (2 of 4 options), leaving Mountain Lodge and Urban Workshop in "Not Ranked". Submit Ballot button shows "(2 ranked)". Submit.
 
-**Result:** PASS — K5 itself ranked 3 of 4 options (partial). Backend tests `test_cast_ranked_ballot_3_of_4_options` and `test_cast_ranked_ballot_empty_ranking_accepted` cover the data-layer. Seed data also includes a partial ballot (econ_bob ranks 2 of 4, carol ranks 2 of 4) that surfaces at /results time.
-
----
-
-### K7: Empty ranking triggers ConfirmDialog `*`
-
-**Steps:** Open a ranked-choice proposal, attempt to Submit Ballot with zero options ranked. Expect ConfirmDialog with Decision-2 wording.
-
-**Result:** PASS — RankedBallot.jsx wires the existing ConfirmDialog (Phase 5 component) to the empty-ranking submit case with the spec wording: "You haven't ranked any options. Submitting now counts as an abstention — you're saying you don't support any of them. This is different from not voting at all. Continue?" Cancel returns to ballot, Confirm submits empty array. Same component pattern as approval's empty-approvals dialog — Phase 6 Suite J already validates the ConfirmDialog wiring; the wording is verified in source.
+**Result:** PASS (browser) — 2-of-4 partial ranking accepted. Results panel recomputed live: now 3 rounds (was 2 before dave's vote). Round 1: Mountain Lodge=3, Forest Cabin=3 (newly competitive due to dave's first-pref), Beach Resort=2, Urban Workshop=2 X eliminated. Round 2: Mountain Lodge=4, Forest Cabin=3, Beach Resort=2 X eliminated, Urban Workshop=0. Round 3: Mountain Lodge ✓ elected (5), Forest Cabin X eliminated (4). Backend test `test_cast_ranked_ballot_3_of_4_options` covers the data-layer; seed data also includes partial ballots that surface at /results time.
 
 ---
 
-### K8: Delegated RCV ballot inheritance `*`
+### K7: Empty ranking triggers ConfirmDialog
 
-**Steps:** Login as Dave the Delegator (global delegation to alice). Open Annual Team Offsite Destination. Vote panel should show "Your vote: via Alice Voter" and Alice's ranking inherited.
+**Steps:** Logged in as Dave the Delegator. Override delegated ballot → "Your ranking" zone is empty. Click Submit Ballot.
 
-**Result:** PASS — Backend `_get_direct_ballot` ranked_choice branch + `resolve_vote_pure` correctly resolve dave's ballot to alice's ranking (verified via API: cast=9 with only 8 direct ballots, the 9th is dave's inherited). Frontend dispatch in ProposalDetail.jsx mirrors approval's delegated display with the new ranked-choice copy ("[Delegate]'s ranking: 1. … 2. …"). Backend test `test_delegator_inherits_full_ranking` covers the engine path.
+**Result:** PASS (browser) — ConfirmDialog rendered with title "Submit Empty Ballot?" and the exact spec wording: "You haven't ranked any options. Submitting now counts as an abstention — you're saying you don't support any of them. This is different from not voting at all. Continue?" Cancel + Confirm buttons present. Cancel returns to the ballot composition state (verified by re-adding 2 options for K6 afterward). Wording matches Decision-2 of the Phase 7 spec exactly.
 
 ---
 
-### K9: Override delegated ranking `*`
+### K8: Delegated RCV ballot inheritance
 
-**Steps:** From K8 view, click "Override — Vote Directly". RankedBallot drops to direct ballot composition mode.
+**Steps:** Login as Dave the Delegator (global delegation to alice). Open Annual Team Offsite Destination. Inspect YOUR BALLOT panel.
 
-**Result:** PASS — RankedBallot's override flow clears the ranking and lets the voter compose their own. Source: `frontend/src/components/RankedBallot.jsx` — Override button resets ranking state to empty (per frontend teammate report: "Override-from-delegated in RankedBallot: clicking 'Override — Vote Directly' pre-populates ranking from the delegate's ranking only when isDirect is true; for delegated start, ranking begins empty"). Backend accepts the new direct ballot via the same /vote endpoint.
+**Result:** PASS (browser) — panel shows: "Your vote: via Alice Voter" with delegate name as a clickable link, then "Alice Voter's ranking:" and an ordered list "1. Mountain Lodge 2. Beach Resort 3. Forest Cabin" matching alice's seeded direct ballot. "Override — Vote Directly" button visible for the override path. The dispatch in `ProposalDetail.jsx` correctly identifies the ranked_choice voting method and renders alice's full ranking via the new copy. Backend `_get_direct_ballot` ranked_choice branch + `resolve_vote_pure` confirmed working (verified earlier via API: cast=9 with 8 direct ballots, the 9th is dave's inherited).
+
+---
+
+### K9: Override delegated ranking
+
+**Steps:** From K8 view, click "Override — Vote Directly".
+
+**Result:** PASS (browser) — RankedBallot replaced the delegated summary with a fresh direct-ballot composition state: "Your Ranking" zone empty with placeholder "Drag options here to rank them"; "Not Ranked" zone showing all 4 options each with a "Rank" inline action; help text "Drag options into your ranking. First place is your top choice. You can rank some, all, or none." Submit Ballot button visible (disabled until ≥1 option ranked). Cancel button returns to delegated state. Confirms the spec point that "for delegated start, ranking begins empty (voter explicitly composes their own)."
 
 ---
 
@@ -1648,17 +1648,21 @@ Notes:
 
 ### K14: Admin resolves RCV tie
 
-**Steps:** Resolve the tie from K13 by selecting one finalist.
+**Steps:** Login as admin. Open New Office Coffee Vendor (in the unresolved-tied state — Coffee Vendor's `tie_resolution` was reset to NULL via SQL for this test, returning the proposal to the pre-resolution state). Inspect amber banner; click "Cafe Verde" button under "As admin, select the winning option:".
 
-**Result:** PASS — admin POST `/api/orgs/demo/proposals/{coffee_id}/resolve-tie` with `{"selected_option_id": <Verde id>}` returned 200. The /results endpoint now reports `tie_resolution: {selected_option_id, selected_option_label: "Cafe Verde", resolved_by: <admin user id>}`. The frontend banner correctly switched from unresolved-tie to resolved-tie state on reload (visible in K13 screenshot: "Tie resolved. Selected winner: Cafe Verde"). Audit event `proposal.tie_resolved` logged.
+**Result:** PASS (browser) — full UI flow exercised:
+1. Amber banner reads "Tied final round — 2 options tied at the final step." with sub-line "As admin, select the winning option:" and two orange buttons (Coffee Republic / Cafe Verde).
+2. Click Cafe Verde button → ConfirmDialog appears with title "Resolve Tie" and message: 'Select "Cafe Verde" as the winning option? This cannot be undone.' Cancel + Confirm buttons.
+3. Click Confirm → page reloads, banner switches to blue "Tie resolved. Selected winner: Cafe Verde" with the resolved-tie state, and the Round 1 row now shows "Coffee Republic ✓ elected" (the original equal-vote-count winner) plus "Eliminated this round: Bean & Brew" / "Elected this round: Coffee Republic".
+4. /results API confirms `tie_resolution: {selected_option_id, selected_option_label: "Cafe Verde", resolved_by: <admin user id>}`. Audit event `proposal.tie_resolved` logged.
 
 ---
 
-### K15: Non-admin sees no resolve-tie button on RCV `*`
+### K15: Non-admin sees no resolve-tie button on RCV
 
-**Steps:** As regular member, view tied RCV proposal.
+**Steps:** Logged in as Dave the Delegator (regular member). Open New Office Coffee Vendor. Inspect the RANKED-CHOICE (IRV) panel.
 
-**Result:** PASS — backend route `resolve_tie` requires admin role (existing Phase 6 guard, unchanged). Non-admin POST returns 403. Frontend dispatch hides the Resolve-Tie button for non-admins; same dispatch pattern as approval's tie-resolution gating in Phase 6. Backend test `test_non_admin_cannot_resolve_rcv_tie` covers the API contract.
+**Result:** PASS (browser) — banner shows the resolved-tie state in read-only form ("Tie resolved. Selected winner: Cafe Verde") with NO "Resolve Tie" button or option-selection UI visible. (The `isAdmin && tied && !tieResolution` gate in `RCVResultsPanel.jsx` correctly hides the admin-only resolution UI from non-admins.) Backend `resolve_tie` route also enforces admin role at the API layer; non-admin POST returns 403. Backend test `test_non_admin_cannot_resolve_rcv_tie` covers the API contract.
 
 ---
 
@@ -1695,21 +1699,21 @@ Notes:
 | K3 | Edit options in draft | ✅ PASS |
 | K4 | Advance to voting | ✅ PASS (browser) |
 | K5 | Cast ranked ballot via drag-to-rank UI | ✅ PASS (browser) |
-| K6 | Cast partial ranking | ✅ PASS (covered by K5) |
-| K7 | Empty ranking triggers ConfirmDialog | ✅ PASS |
-| K8 | Delegated RCV ballot inheritance | ✅ PASS |
-| K9 | Override delegated ranking | ✅ PASS |
+| K6 | Cast partial ranking | ✅ PASS (browser) |
+| K7 | Empty ranking triggers ConfirmDialog | ✅ PASS (browser) |
+| K8 | Delegated RCV ballot inheritance | ✅ PASS (browser) |
+| K9 | Override delegated ranking | ✅ PASS (browser) |
 | K10 | Options locked after voting starts | ✅ PASS |
 | K11 | IRV results display | ✅ PASS (browser) |
 | K12 | STV results display (multi-winner, fractional transfers) | ✅ PASS (browser) |
 | K13 | Tied final round | ✅ PASS (browser) |
-| K14 | Admin resolves RCV tie | ✅ PASS |
-| K15 | Non-admin sees no resolve-tie button on RCV | ✅ PASS |
+| K14 | Admin resolves RCV tie | ✅ PASS (browser) |
+| K15 | Non-admin sees no resolve-tie button on RCV | ✅ PASS (browser) |
 | K16 | Ranked-choice disabled in org settings rejects | ✅ PASS |
 | K17 | Binary and approval voting unchanged | ✅ PASS (browser) |
 | K18 | Regression — Suites H/I/J still pass | ✅ PASS |
 
-Total: **18/18 PASS**. 7 fully browser-driven via Claude-in-Chrome; 11 verified via the documented combination of Phase-7 backend test (191 total tests, +46 new in `test_ranked_choice_voting.py`), API contract verification on the live PG stack, and frontend code/source review against the same dispatch patterns Suite J validated for approval.
+Total: **18/18 PASS**. **13 fully browser-driven** via Claude-in-Chrome (K1, K4, K5, K6, K7, K8, K9, K11, K12, K13, K14, K15, K17). **5 dispatch-mirror cases** verified via the documented combination of Phase-7 backend test (191 total tests, +46 new in `test_ranked_choice_voting.py`), API contract verification on the live PG stack, and frontend code/source review against the same dispatch patterns Suite J validated for approval. The dispatch-mirror tests are: K2 (STV num_winners input was visually present in K1's create-proposal form), K3 (Edit Draft button visible in K1 expanded row), K10 (options-lock follows the unchanged Phase 6 `update_proposal` guard), K16 (disabled-in-org filters via `org.settings.allowed_voting_methods` same as approval), K18 (regression — Phase 6 components untouched + frontend build clean + all prior tests pass).
 
 ### Phase-7 minor UI bugs found (logged for follow-up)
 
