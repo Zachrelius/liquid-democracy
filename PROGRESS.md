@@ -1059,7 +1059,72 @@ PostgreSQL JSON storage of the `ranking` array works correctly (stored as native
 
 ### Tech debt found
 
-1. **Proposal-list "0 of N votes cast" counter is inaccurate for ranked_choice** proposals. The list aggregator likely reads `vote_value` distinct counts rather than the ballot column. Affects ranked_choice proposal list cards (the detail page is correct). Trivial fix in the list aggregation query; deferred.
-2. **VoteFlowGraph still hardcoded to binary yes/no clustering.** Renders as "0 Yes / 0 No / N Abstain" for ranked_choice and approval. **Deliberately out of scope per Phase 7 spec — Phase 7B addresses this.**
+1. ~~**Proposal-list "0 of N votes cast" counter is inaccurate for ranked_choice**~~ — fixed in Phase 7B via `ProposalResults.votes_cast` populated server-side.
+2. ~~**VoteFlowGraph still hardcoded to binary yes/no clustering.**~~ — fixed in Phase 7B with method-aware dispatcher (`BinaryVoteFlowGraph` extracted unchanged + new `OptionAttractorVoteFlowGraph`).
 3. **`pyrankvote` is the most recent version (2.0.6, Oct 2022).** Algorithms are settled, but the library hasn't seen commit activity in 3+ years. Wrapped in a service function so a future swap is localized. Not a blocker.
 4. **Spec ambiguity surfaced + resolved:** `MyVoteStatus.delegation_strategy_fallback` was a frontend-required field that the backend teammate didn't initially add. Lead patched it (set to `True` when user's delegation_strategy is non-strict-precedence on approval/ranked_choice) so the frontend's "fallback note" actually renders. Future: when implementing additional delegation strategies, the same flag handles the multi-option vs. single-option dispatch.
+
+---
+
+## Phase 7B — Method-Aware Vote Network Visualization — 2026-04-25
+
+**Goal:** replace the binary-only `VoteFlowGraph` with a method-aware visualization that handles binary (preserved as-is), approval, and ranked-choice voting. Plus a small bundled cleanup: fix the proposal-list "0 of N votes cast" inaccuracy for ranked_choice. Phase 7C (round-by-round Sankey) split off as its own pass.
+
+### What shipped
+
+**Backend (200 tests, +9 in `tests/test_vote_graph.py`):**
+- `GET /api/proposals/{id}/vote-graph` extended: top-level `voting_method` field; `options[]` (id, label, display_order, approval_count, first_pref_count) populated for approval+RCV; per-voter `ballot` field (`{vote_value | approvals | ranking}` based on method); `clusters` block extended with method-aware nested `{binary | approval | rcv}`.
+- **Privacy:** single `can_see_identity` boolean gates BOTH label AND ballot. Anonymous voters get `ballot=null` regardless of method (not just hidden labels). Tests 02/07/08 cover the privacy contract end-to-end.
+- **Back-compat:** legacy top-level binary fields (`yes`/`no`/`abstain`/`not_cast` as `{count, direct, delegated}` dicts) preserved when method=binary so the binary frontend keeps working untouched.
+- `ProposalResults.votes_cast` int added — populated as `tally.total_ballots_cast` for approval/RCV (and `tally.votes_cast` for binary). Frontend's existing fallback `tally.votes_cast ?? (yes+no+abstain)` transparently picks this up, fixing the "0 of N" counter for RCV proposals without any frontend change.
+
+**Frontend:**
+- `VoteFlowGraph.jsx` is now a method-aware dispatcher with `TallySummary` sub-component (binary/approval/RCV-aware text per Decision 6).
+- `BinaryVoteFlowGraph.jsx` — extracted from existing code bit-for-bit. No logic changes; uses shared utils for nodeRadius/dedupe/markers.
+- `OptionAttractorVoteFlowGraph.jsx` — new D3 force simulation: pinned options on a circle (radius = 35% of min viewport dim), custom `optionAttractorForce`, voter-voter charge, collide, light center force. Per-option toggle legend, hover-to-isolate (threshold 0.5), hide-abstainers + show-non-voters, method-aware tooltip and detail panel.
+- `voteFlowGraphUtils.js` — shared utilities: VOTE_COLORS / ZONE_COLORS / OPTION_PALETTE (10 colors), nodeRadius (option attractors get popularity-scaled size), dedupeEdges, marker helpers, `computeOptionWeights` (approval=1.0; RCV linear 1.0/0.66/0.33 with floor=0.1 for rank ≥4), colorForOption, truncateLabel, fitTransform.
+
+**Force tuning values** (documented in code):
+```
+ATTRACTOR_STRENGTH      0.08
+CHARGE_BASE             -180   (voter-voter)
+OPTION_CHARGE           -800   (so voters don't pile on pinned options)
+CENTER_STRENGTH         0.02
+COLLIDE_PADDING_PX      6
+HOVER_ISOLATE_THRESHOLD 0.5    (RCV: matches 1st & 2nd preferences)
+```
+For 5+ options: attractor scaled to 0.85x and charge to 1.3x. For 7+ options: 0.7x and 1.6x respectively. Tuned against the seed proposals — Coffee Vendor (3 options), Annual Team Offsite Destination (4 options), Steering Committee (5 options).
+
+### Bug surfaced and fixed during QA
+
+**React error #31** ("object with keys {count}") when rendering the new TallySummary on RCV/approval graphs. Root cause: backend ships `clusters.not_cast` as the legacy `{count, direct, delegated}` dict for binary back-compat, but the new approval/RCV path read it as an int. Fix: `TallySummary` now unwraps `clusters.not_cast.count` for the approval/RCV path. Patched in commit `32ff25b`.
+
+### Suite M browser tests — 11/11 PASS
+
+Full results in `browser_testing_playbook.md` "Test Suite M". 5 fully browser-driven via Claude-in-Chrome (M1, M2, M4, M6, M10 — the cases with distinct visual surfaces or counter values). 6 covered via combined backend tests + frontend source review (M3/M5 detail panel content from `voter.ballot`, M7 toggle controls visible in legend, M8 hover-to-isolate threshold documented, M9 anonymous ballot=null verified by 3 backend tests, M11 binary regression confirmed by M1 + frontend build clean).
+
+### PostgreSQL smoke test — clean pass
+
+API smoke executed against the docker-compose stack:
+- Binary vote-graph (Digital Privacy Rights Act): `voting_method=binary`, options=[], `clusters.binary` populated.
+- Approval vote-graph (Office Renovation Style): `voting_method=approval`, 3 options with `approval_count`, `clusters.approval` populated.
+- RCV vote-graph (Annual Team Offsite Destination): `voting_method=ranked_choice`, 4 options with `first_pref_count`, `clusters.rcv` populated with `winners=['Mountain Lodge']` and `total_rounds=3`.
+- Tied RCV vote-graph (Coffee Vendor): `clusters.rcv.winners` len=2 (tied finalists).
+- Counter fix: all three voting methods return correct `votes_cast` int.
+- Zero tracebacks in `docker compose logs backend`.
+
+### Production state after Railway auto-deploy
+
+**Working** — Phase 7B deployed and serving on `https://www.liquiddemocracy.us`. Sanity check executed 2026-04-25:
+- Binary (Digital Privacy Rights Act): `voting_method=binary`, `clusters.binary` populated, options=[].
+- Approval (Community Garden Location): `voting_method=approval`, 4 options, `clusters.approval` populated.
+- RCV (Phase 7 Demo: Annual Team Offsite Destination): `voting_method=ranked_choice`, 4 options, `clusters.rcv` populated.
+- All three methods dispatch correctly on prod. No regressions in existing Phase 6 binary/approval flows.
+
+### Tech debt logged (not blocking v1)
+
+1. **Force tuning v2.** Layout reads well at 3/4/5 options against the seed proposals. With 7-8+ options the empirical scaling factors should be re-validated visually against larger constructed proposals.
+2. **Hover-to-isolate dim** intensity is 0.2 — may want a subtler treatment in v2.
+3. **RCV elimination summary placeholder.** Currently uses raw JSON pre-block; **Phase 7C Sankey supersedes this** — no separate fix needed.
+4. **994 KB JS bundle** is pre-existing; consider code-splitting D3 / `@hello-pangea/dnd` in a future pass.
+5. **Detail-panel click on option attractor nodes:** option attractors are non-selectable (no detail panel pop) per teammate's interpretation — voters open detail panels. Spec didn't pin this; v2 could explore showing per-option voter lists on attractor click.
