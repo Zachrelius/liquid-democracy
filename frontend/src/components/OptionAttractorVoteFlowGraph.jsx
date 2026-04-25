@@ -14,21 +14,29 @@ import {
 
 /**
  * OptionAttractorVoteFlowGraph — option-attractor force layout for approval
- * and ranked-choice proposals (Phase 7B).
+ * and ranked-choice proposals (Phase 7B, polish pass 7B.1).
  *
- * Each option is pinned in a circle around the centre and pulls voters
- * toward itself with a per-option weight. Voters settle at force
- * equilibrium. Voter-voter repulsion + collide prevent overlap.
+ * Each option sits in a circle around the centre. In Phase 7B options were
+ * fully pinned via fx/fy. As of 7B.1 they're held to their starting positions
+ * by a strong spring (OPTION_PIN_STRENGTH) so they can drift along the ring
+ * in response to voter forces — options with high voter overlap migrate to
+ * become neighbors. Voters settle at equilibrium via voter-voter repulsion
+ * plus the per-option attractor force. The simulation is pre-ticked
+ * (PRE_TICK_ITERATIONS) before first paint to avoid the cold-start jitter.
  *
  * Tunable force parameters (settled empirically against the seeded
  * proposals — Coffee Vendor 3 opt, Offsite 4 opt, Steering Committee 5 opt):
  *
- *   ATTRACTOR_STRENGTH      0.08  (per-option pull, scaled by voter weight & alpha)
+ *   ATTRACTOR_STRENGTH      0.08  (per-option pull on voters, scaled by voter weight & alpha)
  *   CHARGE_BASE             -180  (voter-voter repulsion)
  *   OPTION_CHARGE           -800  (extra repulsion at option attractors so
  *                                  voters don't pile on top of pinned options)
+ *   OPTION_PIN_STRENGTH     0.18  (option-anchor spring — strong enough to
+ *                                  keep options in formation but loose enough
+ *                                  to let them drift toward shared voters)
  *   CENTER_STRENGTH         0.02  (light recentring force)
  *   COLLIDE_PADDING_PX      6
+ *   PRE_TICK_ITERATIONS     300   (run simulation headless before paint)
  *
  * For 5+ options we boost repulsion and dampen attractors slightly so the
  * ring doesn't compress into the centre — see scaleByOptionCount() below.
@@ -36,9 +44,13 @@ import {
 const ATTRACTOR_STRENGTH = 0.08;
 const CHARGE_BASE = -180;
 const OPTION_CHARGE = -800;
+const OPTION_PIN_STRENGTH = 0.18;
 const CENTER_STRENGTH = 0.02;
 const COLLIDE_PADDING_PX = 6;
 const HOVER_ISOLATE_THRESHOLD = 0.5;
+const PRE_TICK_ITERATIONS = 300;
+const VOTER_OPTION_ARROW_COLOR = '#9CA3AF'; // Tailwind gray-400
+const VOTER_OPTION_ARROW_RCV2_OPACITY = 0.3;
 
 function scaleByOptionCount(n) {
   // Returns { attractor, charge } scaled for option count.
@@ -73,6 +85,29 @@ function optionAttractorForce(strength, getNodeMap, isOptionEnabled) {
   return force;
 }
 
+// Custom force: each option node is pulled toward its anchor (the original
+// circle position computed at mount time). This replaces the fx/fy pinning
+// from Phase 7B and lets options drift along the ring based on the voter
+// forces acting on them — options with high voter overlap migrate to become
+// neighbors. Strength tuned to OPTION_PIN_STRENGTH (0.18) — strong enough to
+// keep formation, loose enough that drift is visible.
+function optionAnchorForce(strength) {
+  let nodes;
+  function force(alpha) {
+    if (!nodes) return;
+    for (const n of nodes) {
+      if (n.type !== 'option') continue;
+      if (n.anchorX == null || n.anchorY == null) continue;
+      n.vx += (n.anchorX - n.x) * strength * alpha;
+      n.vy += (n.anchorY - n.y) * strength * alpha;
+    }
+  }
+  force.initialize = (n) => {
+    nodes = n;
+  };
+  return force;
+}
+
 export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
   const svgRef = useRef(null);
   const containerRef = useRef(null);
@@ -83,6 +118,10 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
   const [dimensions, setDimensions] = useState({ width: 800, height: 500 });
   // Toggle state per option — { [optionId]: bool }
   const [optionEnabled, setOptionEnabled] = useState({});
+  // Controls panel collapsed state — default collapsed on mobile, expanded on desktop.
+  const [controlsExpanded, setControlsExpanded] = useState(
+    typeof window !== 'undefined' ? window.innerWidth >= 768 : true
+  );
   const simulationRef = useRef(null);
   const enabledRef = useRef(optionEnabled); // d3 force closure reads via ref
 
@@ -104,8 +143,9 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
 
   useEffect(() => {
     enabledRef.current = optionEnabled;
-    // Wake the simulation when toggles change so voters re-equilibrate.
-    if (simulationRef.current) simulationRef.current.alpha(0.6).restart();
+    // Note: the main simulation effect rebuilds on optionEnabled changes
+    // (Item 1: hides disabled-only voters + drops the option's attractor
+    // node), so we no longer wake the existing simulation here.
   }, [optionEnabled]);
 
   // Resize observer.
@@ -142,13 +182,22 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
     const cy = height / 2;
     const R = Math.min(width, height) * 0.35;
 
-    // Build option nodes (pinned).
+    // Build option nodes. As of 7B.1 options are no longer hard-pinned via
+    // fx/fy — instead each carries an anchorX/anchorY pair and is pulled
+    // toward that anchor by optionAnchorForce. They can drift along the ring.
+    // Disabled options (toggled off) are skipped entirely so the simulation
+    // doesn't spend cycles holding them in place.
     const sortedOptions = [...options].sort(
       (a, b) => (a.display_order ?? 0) - (b.display_order ?? 0)
     );
-    const N = sortedOptions.length || 1;
-    const optionNodes = sortedOptions.map((o, i) => {
+    const enabledOptions = sortedOptions.filter(
+      (o) => optionEnabled[o.id] !== false
+    );
+    const N = enabledOptions.length || 1;
+    const optionNodes = enabledOptions.map((o, i) => {
       const angle = (i / N) * 2 * Math.PI - Math.PI / 2; // start at top
+      const ax = cx + R * Math.cos(angle);
+      const ay = cy + R * Math.sin(angle);
       return {
         id: o.id,
         type: 'option',
@@ -156,12 +205,13 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
         display_order: o.display_order,
         approval_count: o.approval_count || 0,
         first_pref_count: o.first_pref_count || 0,
-        x: cx + R * Math.cos(angle),
-        y: cy + R * Math.sin(angle),
-        fx: cx + R * Math.cos(angle),
-        fy: cy + R * Math.sin(angle),
+        x: ax,
+        y: ay,
+        anchorX: ax,
+        anchorY: ay,
       };
     });
+    const enabledOptionIdSet = new Set(enabledOptions.map((o) => o.id));
 
     // Voter nodes — copy + attach optionWeights.
     const voterNodesAll = data.nodes.map((n) => {
@@ -176,6 +226,17 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
     if (hideAbstainers) {
       voterNodes = voterNodes.filter((n) => !(n.isAbstainer && n.type !== 'non_voter'));
     }
+    // Item 1: hide voters whose ballot ONLY touched disabled options. Voters
+    // who touched a disabled option PLUS others stay visible; their attractor
+    // pulls just exclude the disabled option(s).
+    voterNodes = voterNodes.filter((n) => {
+      // Non-voters and abstainers (no weights) are unaffected by option toggles.
+      if (n.type === 'non_voter' || n.isAbstainer || n.optionWeights.length === 0) {
+        return true;
+      }
+      // Keep iff at least one of the voter's options is still enabled.
+      return n.optionWeights.some((w) => enabledOptionIdSet.has(w.optionId));
+    });
 
     const allSimNodes = [...voterNodes, ...optionNodes];
     const simNodeMap = new Map(allSimNodes.map((n) => [n.id, n]));
@@ -217,6 +278,57 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
         .attr('opacity', 0.7);
     });
 
+    // Item 2: voter-to-option arrow marker (neutral gray, distinct from
+    // topic-colored delegation arrows).
+    defs
+      .append('marker')
+      .attr('id', markerId(VOTER_OPTION_ARROW_COLOR))
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 10)
+      .attr('refY', 0)
+      .attr('markerWidth', 6)
+      .attr('markerHeight', 6)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', VOTER_OPTION_ARROW_COLOR)
+      .attr('opacity', 0.7);
+
+    // Item 2: build voter-to-option arrow data. Approval = full opacity to
+    // every approved option. RCV = full opacity to rank 1, 30% to rank 2,
+    // nothing for rank 3+. Anonymous voters (ballot=null) get nothing since
+    // they have no ballot data exposed.
+    const voterOptionArrows = [];
+    for (const v of voterNodes) {
+      if (!v.ballot || v.type === 'non_voter') continue;
+      if (votingMethod === 'approval') {
+        const approvals = Array.isArray(v.ballot.approvals) ? v.ballot.approvals : [];
+        for (const oid of approvals) {
+          if (!enabledOptionIdSet.has(oid)) continue;
+          if (!simNodeMap.has(oid)) continue;
+          voterOptionArrows.push({ voterId: v.id, optionId: oid, opacity: 1 });
+        }
+      } else if (votingMethod === 'ranked_choice') {
+        const ranking = Array.isArray(v.ballot.ranking) ? v.ballot.ranking : [];
+        if (ranking.length >= 1) {
+          const oid = ranking[0];
+          if (enabledOptionIdSet.has(oid) && simNodeMap.has(oid)) {
+            voterOptionArrows.push({ voterId: v.id, optionId: oid, opacity: 1 });
+          }
+        }
+        if (ranking.length >= 2) {
+          const oid = ranking[1];
+          if (enabledOptionIdSet.has(oid) && simNodeMap.has(oid)) {
+            voterOptionArrows.push({
+              voterId: v.id,
+              optionId: oid,
+              opacity: VOTER_OPTION_ARROW_RCV2_OPACITY,
+            });
+          }
+        }
+      }
+    }
+
     const { attractor, charge } = scaleByOptionCount(N);
 
     const simulation = d3
@@ -238,16 +350,43 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
           (optionId) => enabledRef.current[optionId] !== false
         )
       )
+      // Spring options toward their starting circle position (Item 3).
+      .force('option-anchor', optionAnchorForce(OPTION_PIN_STRENGTH))
       .force(
         'link',
         d3.forceLink(validEdges).id((d) => d.id).distance(50).strength(0.15)
       )
       .alpha(0.9)
-      .alphaDecay(0.025);
+      .alphaDecay(0.025)
+      .alphaMin(0.01);
 
     simulationRef.current = simulation;
 
-    // Edges layer.
+    // Item 4: pre-tick the simulation to convergence before paint so the
+    // first frame is already settled. Standard D3 pattern via simulation.tick(n).
+    // We stop the auto-ticker first, run the iterations, then restart at low
+    // alpha so subsequent updates animate smoothly from the converged state.
+    simulation.stop();
+    for (let i = 0; i < PRE_TICK_ITERATIONS; i++) {
+      simulation.tick();
+    }
+    simulation.alpha(0.05).restart();
+
+    // Item 2: voter-to-option arrows layer — rendered BEFORE delegation edges
+    // so delegation arrows draw on top. Independent update logic: we read
+    // current node positions from simNodeMap on each tick, but we don't put
+    // these into d3.forceLink (they're not physics edges, just visuals).
+    const voterArrowG = g.append('g').attr('class', 'voter-option-arrows');
+    const voterArrow = voterArrowG
+      .selectAll('line')
+      .data(voterOptionArrows)
+      .join('line')
+      .attr('stroke', VOTER_OPTION_ARROW_COLOR)
+      .attr('stroke-width', 1)
+      .attr('stroke-opacity', (d) => d.opacity)
+      .attr('marker-end', `url(#${markerId(VOTER_OPTION_ARROW_COLOR)})`);
+
+    // Edges layer (delegation arrows).
     const edgeG = g.append('g').attr('class', 'edges');
     const link = edgeG
       .selectAll('line')
@@ -268,7 +407,8 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
       .call(
         d3
           .drag()
-          .filter((event, d) => d.type !== 'option') // options are pinned, not draggable
+          // Options are now drift-anchored (Item 3) rather than fully pinned,
+          // so they're draggable; but we leave non-voter ghost nodes alone.
           .on('start', (event, d) => {
             if (!event.active) simulation.alphaTarget(0.3).restart();
             d.fx = d.x;
@@ -411,7 +551,7 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
       })
       .on('click', handleNodeClick);
 
-    simulation.on('tick', () => {
+    function tickHandler() {
       link.each(function (d) {
         const dx = d.target.x - d.source.x;
         const dy = d.target.y - d.source.y;
@@ -424,14 +564,47 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
           .attr('x2', d.source.x + dx * ratio)
           .attr('y2', d.source.y + dy * ratio);
       });
+      // Voter-option arrows: voter -> option, ending at option's circle edge.
+      voterArrow.each(function (d) {
+        const src = simNodeMap.get(d.voterId);
+        const tgt = simNodeMap.get(d.optionId);
+        if (!src || !tgt) return;
+        const dx = tgt.x - src.x;
+        const dy = tgt.y - src.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const targetR = nodeRadius(tgt) + 3;
+        const ratio = (dist - targetR) / dist;
+        d3.select(this)
+          .attr('x1', src.x)
+          .attr('y1', src.y)
+          .attr('x2', src.x + dx * ratio)
+          .attr('y2', src.y + dy * ratio);
+      });
       node.attr('transform', (d) => `translate(${d.x},${d.y})`);
-    });
+    }
+    simulation.on('tick', tickHandler);
+    // Paint converged pre-tick positions immediately (otherwise SVG elements
+    // are inserted at origin and pop into place on the first auto-tick).
+    tickHandler();
 
     return () => {
       simulation.stop();
     };
-    // optionEnabled handled via enabledRef so toggles don't rebuild the simulation.
-  }, [data, dimensions, handleNodeClick, showNonVoters, hideAbstainers, options, votingMethod]);
+    // optionEnabled is now part of the dep array so the simulation rebuilds
+    // when toggles change (Item 1: also drops the disabled option's
+    // attractor node entirely + hides voters who only touched it). This is
+    // a heavier rebuild than the Phase 7B enabledRef approach but the
+    // visible-effect requirements demand it.
+  }, [
+    data,
+    dimensions,
+    handleNodeClick,
+    showNonVoters,
+    hideAbstainers,
+    options,
+    votingMethod,
+    optionEnabled,
+  ]);
 
   function resetZoom() {
     if (!data || !svgRef.current) return;
@@ -528,30 +701,16 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
         style={{ maxWidth: '100%' }}
       />
 
-      {/* Top-right controls */}
+      {/* Top-right controls — collapsible (Item 1). Default collapsed on
+          mobile (<768px), expanded on desktop. The Hide/Show toggle lives
+          on the same row as Reset view so the always-on row is small. */}
       <div className="absolute top-2 right-2 flex flex-col gap-1.5 items-end">
         <div className="flex gap-1.5">
-          {nonVoterCount > 0 && (
-            <button
-              onClick={() => setShowNonVoters((v) => !v)}
-              className={`text-xs px-2 py-1 border rounded shadow-sm transition-colors ${
-                showNonVoters
-                  ? 'bg-gray-100 border-gray-300 text-gray-700'
-                  : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
-              }`}
-            >
-              {showNonVoters ? 'Hide' : 'Show'} non-voters ({nonVoterCount})
-            </button>
-          )}
           <button
-            onClick={() => setHideAbstainers((v) => !v)}
-            className={`text-xs px-2 py-1 border rounded shadow-sm transition-colors ${
-              hideAbstainers
-                ? 'bg-gray-100 border-gray-300 text-gray-700'
-                : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
-            }`}
+            onClick={() => setControlsExpanded((v) => !v)}
+            className="text-xs px-2 py-1 bg-white border border-gray-200 rounded text-gray-500 hover:bg-gray-50 shadow-sm"
           >
-            {hideAbstainers ? 'Show' : 'Hide'} abstainers
+            {controlsExpanded ? 'Hide' : 'Show'} controls
           </button>
           <button
             onClick={resetZoom}
@@ -561,34 +720,63 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
           </button>
         </div>
 
-        {/* Option toggles */}
-        {options.length > 0 && (
-          <div className="bg-white border border-gray-200 rounded shadow-sm p-2 max-w-[200px]">
-            <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">
-              Options
-            </p>
-            <div className="space-y-0.5">
-              {options.map((o) => (
-                <label key={o.id} className="flex items-center gap-1.5 text-[11px] cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={optionEnabled[o.id] !== false}
-                    onChange={(e) =>
-                      setOptionEnabled((prev) => ({ ...prev, [o.id]: e.target.checked }))
-                    }
-                    className="w-3 h-3"
-                  />
-                  <span
-                    className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
-                    style={{ backgroundColor: colorForOption(o) }}
-                  />
-                  <span className="truncate text-gray-700" title={o.label}>
-                    {o.label}
-                  </span>
-                </label>
-              ))}
+        {controlsExpanded && (
+          <>
+            <div className="flex gap-1.5 flex-wrap justify-end max-w-[260px]">
+              {nonVoterCount > 0 && (
+                <button
+                  onClick={() => setShowNonVoters((v) => !v)}
+                  className={`text-xs px-2 py-1 border rounded shadow-sm transition-colors ${
+                    showNonVoters
+                      ? 'bg-gray-100 border-gray-300 text-gray-700'
+                      : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  {showNonVoters ? 'Hide' : 'Show'} non-voters ({nonVoterCount})
+                </button>
+              )}
+              <button
+                onClick={() => setHideAbstainers((v) => !v)}
+                className={`text-xs px-2 py-1 border rounded shadow-sm transition-colors ${
+                  hideAbstainers
+                    ? 'bg-gray-100 border-gray-300 text-gray-700'
+                    : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                }`}
+              >
+                {hideAbstainers ? 'Show' : 'Hide'} abstainers
+              </button>
             </div>
-          </div>
+
+            {/* Option toggles */}
+            {options.length > 0 && (
+              <div className="bg-white border border-gray-200 rounded shadow-sm p-2 max-w-[200px]">
+                <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                  Options
+                </p>
+                <div className="space-y-0.5">
+                  {options.map((o) => (
+                    <label key={o.id} className="flex items-center gap-1.5 text-[11px] cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={optionEnabled[o.id] !== false}
+                        onChange={(e) =>
+                          setOptionEnabled((prev) => ({ ...prev, [o.id]: e.target.checked }))
+                        }
+                        className="w-3 h-3"
+                      />
+                      <span
+                        className="inline-block w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: colorForOption(o) }}
+                      />
+                      <span className="truncate text-gray-700" title={o.label}>
+                        {o.label}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 

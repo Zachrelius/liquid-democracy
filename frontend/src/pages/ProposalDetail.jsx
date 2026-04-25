@@ -282,9 +282,31 @@ function ApprovalResultsPanel({ tally, proposal }) {
     }
   }
 
+  // Item 5: when proposal is in voting, the winner(s) shown are provisional.
+  // Surface a tense-aware callout. Closed proposals keep the existing
+  // strong-winner UI via the per-option checkmark + tieResolution banner.
+  const inProgress = proposal?.status === 'voting';
+  const topApproval = winners[0];
+  const topLabel = topApproval ? (optionLabels[topApproval] || topApproval) : null;
+  const topCount = topApproval ? (optionApprovals[topApproval] || 0) : 0;
+
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Approval Results</h3>
+      <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+        {inProgress ? 'Approval Results (in progress)' : 'Approval Results'}
+      </h3>
+
+      {/* Provisional leader callout while voting is open */}
+      {inProgress && !tied && winners.length === 1 && topLabel && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <p className="text-xs font-medium text-blue-700 uppercase tracking-wide mb-1">
+            Top option (currently)
+          </p>
+          <p className="text-base font-bold text-blue-800">
+            {topLabel} <span className="text-sm font-normal text-blue-600">({topCount} approval{topCount === 1 ? '' : 's'})</span>
+          </p>
+        </div>
+      )}
 
       {/* Tie banners */}
       {tied && !tieResolution && (
@@ -488,10 +510,24 @@ function ResultsPanel({ tally, proposal }) {
   const cast = tally.yes + tally.no + tally.abstain;
   const quorumMet = tally.quorum_met;
   const thresholdMet = tally.threshold_met;
+  // Item 5: tense-aware in-progress callout. "Currently passing" if both
+  // quorum and threshold are met, else "Currently failing". Closed proposals
+  // get their pass/fail summary from the existing isClosed banner above.
+  const inProgress = proposal?.status === 'voting';
+  const currentlyPassing = quorumMet && thresholdMet;
 
   return (
     <div className="space-y-4">
       <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Current Results</h3>
+      {inProgress && (
+        <div className={`rounded-lg p-2 text-sm font-medium border ${
+          currentlyPassing
+            ? 'bg-blue-50 border-blue-200 text-blue-800'
+            : 'bg-gray-50 border-gray-200 text-gray-700'
+        }`}>
+          {currentlyPassing ? 'Currently passing' : 'Currently failing'}
+        </div>
+      )}
       <VoteBar yes={tally.yes} no={tally.no} abstain={tally.abstain} showLabels={false} />
 
       <div className="grid grid-cols-3 gap-2 text-center">
@@ -705,7 +741,7 @@ export default function ProposalDetail() {
                   </div>
 
                   {/* Method-aware tally summary + graph (Phase 7B dispatcher) */}
-                  <VoteFlowGraph data={voteGraph} />
+                  <VoteFlowGraph data={voteGraph} proposal={proposal} tally={tally} />
                 </div>
               )}
             </section>

@@ -134,26 +134,36 @@ export default function RCVResultsPanel({ tally, proposal }) {
         </div>
       )}
 
-      {/* Final result */}
-      {!tied && winners.length > 0 && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-          <p className="text-xs font-medium text-green-700 uppercase tracking-wide mb-1">
-            {numWinners > 1 ? 'Winners' : 'Winner'}
-          </p>
-          {numWinners > 1 ? (
-            <ol className="text-sm text-green-800 space-y-0.5">
-              {winners.map((wid, idx) => (
-                <li key={wid}>
-                  <span className="text-green-600 mr-1">{idx + 1}.</span>
-                  <strong>{labelOf(wid)}</strong>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="text-base font-bold text-green-800">{labelOf(winners[0])}</p>
-          )}
-        </div>
-      )}
+      {/* Final result — Item 5: tense-aware label for in-progress vs closed */}
+      {!tied && winners.length > 0 && (() => {
+        const inProgress = proposal?.status === 'voting';
+        const totalRounds = Array.isArray(tally.rounds) ? tally.rounds.length : null;
+        const headerWord = inProgress
+          ? (numWinners > 1 ? 'Currently winning' : 'Currently winning')
+          : (numWinners > 1 ? 'Winners' : 'Winner');
+        return (
+          <div className={`${inProgress ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'} border rounded-lg p-3`}>
+            <p className={`text-xs font-medium uppercase tracking-wide mb-1 ${inProgress ? 'text-blue-700' : 'text-green-700'}`}>
+              {headerWord}
+              {inProgress && totalRounds ? ` after ${totalRounds} round${totalRounds === 1 ? '' : 's'}` : ''}
+            </p>
+            {numWinners > 1 ? (
+              <ol className={`text-sm space-y-0.5 ${inProgress ? 'text-blue-800' : 'text-green-800'}`}>
+                {winners.map((wid, idx) => (
+                  <li key={wid}>
+                    <span className={`mr-1 ${inProgress ? 'text-blue-600' : 'text-green-600'}`}>{idx + 1}.</span>
+                    <strong>{labelOf(wid)}</strong>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className={`text-base font-bold ${inProgress ? 'text-blue-800' : 'text-green-800'}`}>
+                {labelOf(winners[0])}
+              </p>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Round-by-round breakdown */}
       <div className="space-y-3">

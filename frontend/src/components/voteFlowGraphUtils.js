@@ -128,3 +128,73 @@ export function truncateLabel(label, max = 18) {
   if (!label) return '';
   return label.length > max ? label.slice(0, max - 1) + '…' : label;
 }
+
+// Format a result-headline string that's tense-aware: "Currently winning"
+// for proposals still in voting, "Winner" for closed proposals (Phase 7B.1
+// Item 5). Returned shape: { label, suffix } so callers can style each part
+// independently. `label` is the primary phrase ("Winner", "Currently
+// winning", "Top option (currently)", etc.); `suffix` is the option label or
+// extra qualifier and may be null.
+//
+// Inputs:
+//   proposal — must have .status and .voting_method
+//   opts.winnerLabel — string, the option label being announced (optional)
+//   opts.runnerUpDelta — for binary: bool whether yes beats threshold (optional)
+//   opts.totalRounds — for RCV: number of rounds run (optional)
+//   opts.tied — bool, whether there's an unresolved tie (optional)
+export function formatVotingStatus(proposal, opts = {}) {
+  const status = proposal?.status || 'voting';
+  const method = proposal?.voting_method || 'binary';
+  const inProgress = status === 'voting';
+  const { winnerLabel, runnerUpDelta, totalRounds, tied } = opts;
+
+  if (tied) {
+    // Tied state has its own copy in callers — return null so callers fall back.
+    return null;
+  }
+
+  if (method === 'binary') {
+    if (inProgress) {
+      return {
+        label: runnerUpDelta ? 'Currently passing' : 'Currently failing',
+        suffix: null,
+      };
+    }
+    return {
+      label: status === 'passed' ? 'Passed' : 'Failed',
+      suffix: null,
+    };
+  }
+
+  if (method === 'approval') {
+    if (inProgress) {
+      return {
+        label: 'Top option (currently)',
+        suffix: winnerLabel || null,
+      };
+    }
+    return {
+      label: 'Winner',
+      suffix: winnerLabel || null,
+    };
+  }
+
+  if (method === 'ranked_choice') {
+    const roundsSuffix =
+      totalRounds != null
+        ? ` after ${totalRounds} round${totalRounds === 1 ? '' : 's'}`
+        : '';
+    if (inProgress) {
+      return {
+        label: 'Currently winning',
+        suffix: (winnerLabel || '') + roundsSuffix,
+      };
+    }
+    return {
+      label: 'Winner',
+      suffix: (winnerLabel || '') + roundsSuffix,
+    };
+  }
+
+  return null;
+}

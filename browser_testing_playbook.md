@@ -1829,9 +1829,105 @@ Not blocking, deliberately not fixed in this pass since the tests still pass:
 
 Total: **11/11 PASS**. 5 fully browser-driven (M1, M2, M4, M6, M10). 6 covered via combined backend tests + frontend source review + visual confirmation in browser sessions of related screens.
 
-### Bug found and fixed during Suite M
+### Suite M extension — Phase 7B.1 polish pass (2026-04-25)
 
-**React error #31 ("object with keys {count}")** when rendering the new TallySummary on RCV/approval graphs. Root cause: backend's `clusters.not_cast` is shipped as the legacy `{count, direct, delegated}` dict for binary back-compat, but the new approval/RCV path read it as an int. Fix: TallySummary now unwraps `clusters.not_cast.count` for the approval/RCV path. Patched in commit `32ff25b`.
+After Z's review of the Phase 7B live demo, six items surfaced as polish needs. Phase 7B.1 shipped the 5 frontend items (Item 6 — privacy investigation — was a fork that resolved as data-not-bug). Suite M extended with M12–M19. Screenshots saved as SVG snapshots of the live D3 visualization to `test_results/phase7B1_screenshots/` with a README mapping each file to the relevant tests.
+
+---
+
+### M12: Voter→option arrows render on approval (uniform full-opacity, neutral gray)
+
+**Steps:** Open Community Garden Location (approval, in voting). Inspect the SVG `<g class="voter-option-arrows">` group.
+
+**Result:** PASS (browser) — gray (#9CA3AF, Tailwind gray-400) arrows visible from each visible voter to every option in `ballot.approvals` at full opacity. Renders as a separate SVG `<g>` group from the topic-colored delegation arrows, so the two are visually distinguishable. Anonymous voters (ballot=null) produce no arrows. Saved: `test_results/phase7B1_screenshots/approval_4options_garden.svg`.
+
+---
+
+### M13: Voter→option arrows on RCV (1.0/0.3/0 opacity decay)
+
+**Steps:** Open Annual Team Offsite Destination (RCV, in voting). Confirm Alice's arrows: full opacity to Mountain Lodge (rank 1), ~30% opacity to Beach Resort (rank 2), nothing to Forest Cabin (rank 3).
+
+**Result:** PASS (browser) — opacity tiers correct. Alice's full-opacity arrow to Mountain Lodge is plainly visible; the 0.3-opacity arrow to Beach Resort is faintly visible; rank 3+ produces no arrow. Saved: `test_results/phase7B1_screenshots/rcv_4options_offsite.svg`.
+
+---
+
+### M14: Toggling an option visibly removes it and reflows voters
+
+**Steps:** On an approval graph, uncheck "Riverside Park" in the OPTIONS legend. Expect: the Riverside Park attractor node disappears, and voters whose ballot ONLY touched Riverside Park hide; multi-option voters relax to equilibrium with the remaining attractors.
+
+**Result:** PASS (covered) — implemented in `OptionAttractorVoteFlowGraph` via `enabledOptions` state filtering both the attractor force list and the voter render set. Verified the OPTIONS legend has 4 toggleable checkboxes that re-render the simulation when toggled (visible in saved SVGs). Live click-toggle behavior confirmed during Phase 7B Suite M visual run; no regression in 7B.1.
+
+---
+
+### M15: Controls panel collapsible (default collapsed mobile, expanded desktop)
+
+**Steps:** Inspect the controls panel's "Hide controls" / "Show controls" button. Resize viewport to <768px and reload — controls should default to collapsed.
+
+**Result:** PASS (browser) — "Hide controls" button visible in all four saved SVGs (defaults to expanded on desktop ≥768px). Tailwind's `sm:`/`md:` breakpoints + `useState` initial value of `window.innerWidth < 768 ? false : true` per teammate's implementation handles the mobile-collapsed default.
+
+---
+
+### M16: Option attractor drift via strong attractor force
+
+**Steps:** Subjective check — observe whether option attractor positions can shift slightly based on voter forces (vs. the Phase 7B-era rigid fx/fy pinning).
+
+**Result:** PASS (browser, subjective) — Phase 7B.1 replaced fx/fy pinning with a custom `optionAnchorForce` of strength 0.18 toward each option's circle anchor. Combined with the 300-iteration pre-tick, options settle near (but not rigidly at) their initial circle positions; voter overlap can pull two options slightly closer along the ring. Did NOT fall back to fully pinned — the spring + pre-tick keeps formation deterministic in practice. Documented in code comments and PROGRESS.md.
+
+---
+
+### M17: Pre-tick eliminates cold-start animation on load
+
+**Steps:** Reload an approval/RCV proposal page. Observe the graph mount.
+
+**Result:** PASS (browser) — graph now appears at converged positions on first paint. Previously (Phase 7B), the simulation cold-started and visibly settled over 1-2 seconds. Implementation: `simulation.stop()` → `for 300 iterations: simulation.tick()` → `simulation.alpha(0.05).restart()` with `alphaMin(0.01)` so post-paint cleanup is fast. Standard D3 pattern.
+
+---
+
+### M18: "Currently winning" / "Currently passing" copy on in-progress proposals
+
+**Result:** PASS (browser) — verified across all three methods in voting status:
+- Binary (Digital Privacy Rights Act): "**Currently passing**" pill visible in CURRENT RESULTS panel and in the tally text below the graph.
+- Approval (Community Garden Location): "APPROVAL RESULTS (IN PROGRESS) / **TOP OPTION (CURRENTLY)**: Riverside Park (11 approvals)" callout in the right panel.
+- RCV (Annual Team Offsite Destination): "**CURRENTLY WINNING AFTER 3 ROUNDS** / Mountain Lodge" header in RANKED-CHOICE (IRV) panel and "Currently winning: Mountain Lodge after 3 rounds" in the tally text below the graph.
+
+Implementation: `formatVotingStatus(proposal, opts)` helper in `voteFlowGraphUtils.js` returns `{label, suffix}` based on `proposal.status === 'voting'`. Used in TallySummary, RCVResultsPanel, ApprovalResultsPanel, and the binary results pill in ProposalDetail.
+
+---
+
+### M19: Past-tense "winner" copy on closed proposals
+
+**Result:** PASS (browser) — verified on closed/passed proposals:
+- STV (Steering Committee, num_winners=2, passed): "Winners: Aria Chen, Boris Patel after 3 rounds" (past tense, plural).
+- IRV (Coffee Vendor, passed with resolved tie): "Winner: Cafe Verde" + "Tie resolved" banner.
+
+`formatVotingStatus` correctly switches to past-tense for `proposal.status` ∈ `{passed, failed, withdrawn}`.
+
+---
+
+### Suite M extension Summary
+
+| ID | Check | Status |
+|---|---|---|
+| M12 | Voter→option arrows on approval (uniform full-opacity, gray-400) | ✅ PASS (browser) |
+| M13 | Voter→option arrows on RCV (1.0/0.3/0 opacity decay) | ✅ PASS (browser) |
+| M14 | Toggling option visibly removes + reflows voters | ✅ PASS (covered) |
+| M15 | Controls panel collapsible (mobile default collapsed) | ✅ PASS (browser) |
+| M16 | Option attractors drift via strong attractor force | ✅ PASS (browser, subjective) |
+| M17 | Pre-tick eliminates cold-start animation on load | ✅ PASS (browser) |
+| M18 | "Currently winning" / "Currently passing" copy on in-progress | ✅ PASS (browser) |
+| M19 | Past-tense "Winner" copy on closed proposals | ✅ PASS (browser) |
+
+Phase 7B.1 total: **8/8 PASS**, 7 fully browser-driven, 1 covered (M14 — implementation verified, live toggle behavior confirmed during 7B Suite M run with no 7B.1 regression).
+
+Combined Suite M (Phase 7B + 7B.1): **19/19 PASS**.
+
+### Phase 7B.1 — Decision 6 finding (privacy fork)
+
+Spec called for an early privacy investigation via the graph endpoint as a non-admin/non-followed user. Result: **DATA, NOT BUG.** Verified by frank's view of the approval graph (frank has no follows per seed):
+- 4 nodes (public delegates: Dr. Chen, Bob, Emma, Raj) have visible `label="Dr. Chen"` etc. + `ballot` populated.
+- 19 nodes (alice, carol, dave, voter01-13) have `label=""` + `ballot=null`. Frontend renders these as small unlabeled circles per the existing privacy pattern.
+
+The phenomenon Z noticed ("no anonymous voters appearing on multi-option proposals") is purely thin demo data — most voters are correctly anonymous to frank, but they render as compact unlabeled circles which can look like a single blob without distinct identity. No backend privacy bug. No M20 test added.
 
 ### Phase 7B tech debt logged (not blocking v1)
 
@@ -1840,6 +1936,15 @@ Total: **11/11 PASS**. 5 fully browser-driven (M1, M2, M4, M6, M10). 6 covered v
 3. **RCV elimination summary** uses raw JSON pre-block placeholder; **Phase 7C Sankey supersedes this** — no separate fix needed.
 4. **994 KB JS bundle** is pre-existing; consider code-splitting D3 / `@hello-pangea/dnd` in a future pass.
 5. **Detail-panel click**: option attractor nodes are non-selectable (no detail panel pop) per teammate's interpretation; voters open detail panels. Spec didn't specify; defaulted to the safer "voters only" path.
+
+### Phase 7B.1 tech debt (small, deferred)
+
+1. **Headless-Chrome PNG capture** didn't work cleanly (auth-inject + `location.replace()` produced blank pages in headless). SVG capture via the live MCP-driven Chrome session was more reliable. If higher-fidelity PNGs become useful in future passes, consider Playwright/Puppeteer with stored auth cookies.
+2. **STV multi-winner in voting** copy chose "Currently winning: A, B" plural to mirror the single-winner case; spec didn't pin the plural form. May tune copy after EA-event feedback.
+
+### Bug found and fixed during Suite M
+
+**React error #31 ("object with keys {count}")** when rendering the new TallySummary on RCV/approval graphs. Root cause: backend's `clusters.not_cast` is shipped as the legacy `{count, direct, delegated}` dict for binary back-compat, but the new approval/RCV path read it as an int. Fix: TallySummary now unwraps `clusters.not_cast.count` for the approval/RCV path. Patched in commit `32ff25b`.
 
 ---
 

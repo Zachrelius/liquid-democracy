@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import BinaryVoteFlowGraph from './BinaryVoteFlowGraph';
 import OptionAttractorVoteFlowGraph from './OptionAttractorVoteFlowGraph';
+import { formatVotingStatus } from './voteFlowGraphUtils';
 
 /**
  * VoteFlowGraph — top-level dispatcher that renders the appropriate
@@ -21,14 +22,14 @@ import OptionAttractorVoteFlowGraph from './OptionAttractorVoteFlowGraph';
  *                                  binary?: {...}, approval?: {...}, rcv?: {...} }
  *   data.clusters.yes/no/...  -> back-compat top-level binary fields when method=binary
  */
-export default function VoteFlowGraph({ data, onNodeClick }) {
+export default function VoteFlowGraph({ data, onNodeClick, proposal, tally }) {
   if (!data) return null;
 
   const method = data.voting_method || 'binary';
 
   return (
     <div className="space-y-3">
-      <TallySummary data={data} />
+      <TallySummary data={data} proposal={proposal} tally={tally} />
       {method === 'binary' ? (
         <BinaryVoteFlowGraph data={data} onNodeClick={onNodeClick} />
       ) : (
@@ -42,9 +43,10 @@ export default function VoteFlowGraph({ data, onNodeClick }) {
  * TallySummary — small line of method-aware aggregate counts shown above the graph.
  * Reads `data.clusters` (Phase 7B-extended) with back-compat for legacy binary shape.
  */
-function TallySummary({ data }) {
+function TallySummary({ data, proposal, tally }) {
   const method = data.voting_method || data.clusters?.voting_method || 'binary';
   const clusters = data.clusters || {};
+  const inProgress = proposal?.status === 'voting';
 
   const [expanded, setExpanded] = useState(false);
 
@@ -55,9 +57,13 @@ function TallySummary({ data }) {
   }, [data.options]);
 
   if (method === 'binary') {
-    // Preserved binary tally exactly as ProposalDetail used to render it.
+    // Item 5: when in voting status, show a "Currently passing/failing"
+    // headline derived from tally.threshold_met (when available).
+    const status = inProgress && proposal && tally
+      ? formatVotingStatus(proposal, { runnerUpDelta: !!tally.threshold_met })
+      : null;
     return (
-      <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+      <div className="flex flex-wrap gap-3 text-xs text-gray-500 items-center">
         <span className="text-[#2D8A56] font-medium">
           {clusters.yes?.count || 0} Yes
           <span className="text-gray-400 font-normal">
@@ -78,6 +84,9 @@ function TallySummary({ data }) {
         <span className="text-gray-400">
           {clusters.not_cast?.count || 0} Not cast
         </span>
+        {status && (
+          <span className="text-[#2E75B6] font-medium">{status.label}</span>
+        )}
       </div>
     );
   }
@@ -113,6 +122,12 @@ function TallySummary({ data }) {
       .map((o) => ({ ...o, count: counts[o.id] || 0 }))
       .sort((a, b) => b.count - a.count);
 
+    // Item 5: tense-aware headline. In voting -> "Top option (currently)",
+    // closed -> "Winner".
+    const headline = topLabel && proposal
+      ? formatVotingStatus(proposal, { winnerLabel: topLabel })
+      : null;
+
     return (
       <div className="text-xs text-gray-500 space-y-1">
         <div className="flex flex-wrap gap-3 items-center">
@@ -122,11 +137,15 @@ function TallySummary({ data }) {
           <span className="text-gray-500">
             ({totalAbstain} abstain{totalAbstain === 1 ? '' : 's'}, {notCast} not cast)
           </span>
-          {topLabel && (
+          {headline ? (
+            <span className="text-[#2E75B6] font-medium">
+              {headline.label}: {headline.suffix} ({topCount})
+            </span>
+          ) : topLabel ? (
             <span className="text-[#2E75B6] font-medium">
               Top: {topLabel} ({topCount})
             </span>
-          )}
+          ) : null}
           {winnerLabels && (
             <span className="text-amber-600">Tied winners: {winnerLabels}</span>
           )}
@@ -161,6 +180,14 @@ function TallySummary({ data }) {
 
     const elimination = rcv.elimination || rcv.rounds || null; // backend may surface either
 
+    // Item 5: in-progress -> "Currently winning", closed -> "Winner".
+    // formatVotingStatus handles the singular case; multi-winner STV keeps
+    // the explicit "Winners: " label below.
+    const singleWinnerStatus =
+      winners.length === 1 && proposal
+        ? formatVotingStatus(proposal, { winnerLabel: winnerLabels, totalRounds })
+        : null;
+
     return (
       <div className="text-xs text-gray-500 space-y-1">
         <div className="flex flex-wrap gap-3 items-center">
@@ -170,9 +197,13 @@ function TallySummary({ data }) {
           <span className="text-gray-500">
             ({totalAbstain} abstain{totalAbstain === 1 ? '' : 's'}, {notCast} not cast)
           </span>
-          {winners.length > 0 && (
+          {singleWinnerStatus ? (
             <span className="text-[#2E75B6] font-medium">
-              {winners.length > 1 ? 'Winners: ' : 'Winner: '}
+              {singleWinnerStatus.label}: {singleWinnerStatus.suffix}
+            </span>
+          ) : winners.length > 0 ? (
+            <span className="text-[#2E75B6] font-medium">
+              {winners.length > 1 ? (inProgress ? 'Currently winning: ' : 'Winners: ') : 'Winner: '}
               {winnerLabels}
               {totalRounds != null && (
                 <span className="text-gray-500 font-normal">
@@ -181,7 +212,7 @@ function TallySummary({ data }) {
                 </span>
               )}
             </span>
-          )}
+          ) : null}
           {elimination && (
             <button
               onClick={() => setExpanded((v) => !v)}
