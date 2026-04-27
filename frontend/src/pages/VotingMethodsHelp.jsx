@@ -157,6 +157,17 @@ export default function VotingMethodsHelp() {
           </p>
         </div>
 
+        <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+          <p className="text-sm font-medium text-gray-700">Reading the Elimination Flow chart:</p>
+          <p className="text-sm text-gray-600 leading-relaxed">
+            The Sankey chart on RCV/STV proposals visualizes round-by-round elimination as flowing
+            slabs. Each column is one round; each option's slab is sized by its current vote count.
+            Solid links between columns show votes carried forward to the same option; dashed links
+            show transfers from an eliminated option to others. Hover any slab or flow to see exact
+            counts. STV winners are highlighted in the final column.
+          </p>
+        </div>
+
         <p className="text-sm text-gray-500">
           <strong>Best for IRV:</strong> Single-winner choices where preference matters &mdash;
           picking a venue, choosing a chair, settling between competing proposals.{' '}

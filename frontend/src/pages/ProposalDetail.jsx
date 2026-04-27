@@ -14,6 +14,8 @@ import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
 import RankedBallot from '../components/RankedBallot';
 import RCVResultsPanel from '../components/RCVResultsPanel';
+import RCVSankeyChart from '../components/RCVSankeyChart';
+import { colorForOption } from '../components/voteFlowGraphUtils';
 
 // Simple markdown renderer (no external dep needed for basics)
 function renderMarkdown(text) {
@@ -570,6 +572,80 @@ function ResultsPanel({ tally, proposal }) {
   );
 }
 
+// Phase 7B.2 Polish Item B: method-aware legend for the vote network graph.
+// Binary keeps the original Yes/No/Abstain content; approval and RCV swap
+// in per-option swatches (using colorForOption so colors match the network
+// graph and Sankey). Layout/styling is unchanged from the original inline
+// block so the legend continues to flex-wrap on overflow.
+function VoteGraphLegend({ proposal, voteGraph }) {
+  const method = proposal?.voting_method;
+  const options = proposal?.options || [];
+
+  // Detect anonymous voters that render distinctly: ballot is null AND not a
+  // non_voter AND not a delegation-recipient (those have ballot via inheritance).
+  const hasAnonymous = !!voteGraph?.nodes?.some(
+    (n) => n.ballot === null && n.type !== 'non_voter' && n.vote_source !== 'delegation'
+  );
+
+  if (method === 'approval' || method === 'ranked_choice') {
+    return (
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-gray-500">
+        {options.map((opt) => {
+          const lbl = opt.label || opt.id;
+          const truncated = lbl.length > 14 ? lbl.slice(0, 13) + '…' : lbl;
+          return (
+            <span key={opt.id} title={lbl}>
+              <span
+                className="inline-block w-2.5 h-2.5 rounded-full mr-1 align-middle"
+                style={{ backgroundColor: colorForOption(opt) }}
+              />
+              {truncated}
+            </span>
+          );
+        })}
+        <span>
+          <span
+            className="inline-block w-2.5 h-2.5 rounded-full border border-gray-300 mr-1 align-middle"
+            style={{ borderStyle: 'dashed' }}
+          />
+          Abstain (empty ballot)
+        </span>
+        <span className="text-gray-400">→ Delegation</span>
+        <span>
+          <svg className="inline-block mr-1 align-middle" width="14" height="14" viewBox="0 0 14 14">
+            <circle cx="7" cy="7" r="4" fill="none" stroke="#2D8A56" strokeWidth="1.5" />
+            <circle cx="7" cy="7" r="6.5" fill="none" stroke="#2D8A56" strokeWidth="0.8" strokeDasharray="2,1.5" opacity="0.6" />
+          </svg>
+          Public delegate
+        </span>
+        <span>
+          <span className="inline-block w-2.5 h-2.5 rounded-full border-2 border-[#F39C12] mr-1 align-middle" />
+          You
+        </span>
+        {hasAnonymous && (
+          <span>
+            <span className="inline-block w-2.5 h-2.5 rounded-full bg-gray-300 mr-1 align-middle" />
+            Anonymous voter
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  // Binary — preserved exactly as-is.
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-gray-500">
+      <span><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#2D8A56] mr-1 align-middle" />Yes</span>
+      <span><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#C0392B] mr-1 align-middle" />No</span>
+      <span><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#7F8C8D] mr-1 align-middle" />Abstain</span>
+      <span><span className="inline-block w-2.5 h-2.5 rounded-full border border-gray-300 mr-1 align-middle" style={{ borderStyle: 'dashed' }} />Not voted</span>
+      <span className="text-gray-400">→ Delegation</span>
+      <span><svg className="inline-block mr-1 align-middle" width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="4" fill="none" stroke="#2D8A56" strokeWidth="1.5" /><circle cx="7" cy="7" r="6.5" fill="none" stroke="#2D8A56" strokeWidth="0.8" strokeDasharray="2,1.5" opacity="0.6" /></svg>Public delegate</span>
+      <span><span className="inline-block w-2.5 h-2.5 rounded-full border-2 border-[#F39C12] mr-1 align-middle" />You</span>
+    </div>
+  );
+}
+
 export default function ProposalDetail() {
   const { id } = useParams();
   const { user } = useAuth();
@@ -578,6 +654,7 @@ export default function ProposalDetail() {
   const [myVote, setMyVote] = useState(null);
   const [voteGraph, setVoteGraph] = useState(null);
   const [graphOpen, setGraphOpen] = useState(window.innerWidth >= 768);
+  const [sankeyOpen, setSankeyOpen] = useState(window.innerWidth >= 768);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -729,19 +806,34 @@ export default function ProposalDetail() {
               </button>
               {graphOpen && (
                 <div className="px-4 pb-4 space-y-3">
-                  {/* Legend */}
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-gray-500">
-                    <span><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#2D8A56] mr-1 align-middle" />Yes</span>
-                    <span><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#C0392B] mr-1 align-middle" />No</span>
-                    <span><span className="inline-block w-2.5 h-2.5 rounded-full bg-[#7F8C8D] mr-1 align-middle" />Abstain</span>
-                    <span><span className="inline-block w-2.5 h-2.5 rounded-full border border-gray-300 mr-1 align-middle" style={{ borderStyle: 'dashed' }} />Not voted</span>
-                    <span className="text-gray-400">→ Delegation</span>
-                    <span><svg className="inline-block mr-1 align-middle" width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="4" fill="none" stroke="#2D8A56" strokeWidth="1.5" /><circle cx="7" cy="7" r="6.5" fill="none" stroke="#2D8A56" strokeWidth="0.8" strokeDasharray="2,1.5" opacity="0.6" /></svg>Public delegate</span>
-                    <span><span className="inline-block w-2.5 h-2.5 rounded-full border-2 border-[#F39C12] mr-1 align-middle" />You</span>
-                  </div>
+                  {/* Legend — Phase 7B.2 method-aware (Polish Item B) */}
+                  <VoteGraphLegend proposal={proposal} voteGraph={voteGraph} />
 
                   {/* Method-aware tally summary + graph (Phase 7B dispatcher) */}
                   <VoteFlowGraph data={voteGraph} proposal={proposal} tally={tally} />
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Elimination Flow Sankey — Phase 7C, RCV/STV only.
+              The component itself short-circuits for non-RCV proposals,
+              but we also gate the wrapping section to avoid rendering an
+              empty collapsible chrome on binary/approval. */}
+          {(isVoting || isClosed) && tally && proposal.voting_method === 'ranked_choice' && (
+            <section className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              <button
+                onClick={() => setSankeyOpen(v => !v)}
+                className="w-full flex items-center justify-between px-5 py-3 text-sm font-semibold text-gray-700 uppercase tracking-wide hover:bg-gray-50 transition-colors"
+              >
+                <span>Elimination Flow</span>
+                <span className="text-gray-400 text-xs font-normal">
+                  {sankeyOpen ? 'Hide' : 'Show'}
+                </span>
+              </button>
+              {sankeyOpen && (
+                <div className="px-2 pb-2">
+                  <RCVSankeyChart tally={tally} proposal={proposal} />
                 </div>
               )}
             </section>

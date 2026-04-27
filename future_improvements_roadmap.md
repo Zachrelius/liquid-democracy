@@ -6,7 +6,7 @@ This document is the canonical sequencing plan for all post-Phase-4 development.
 
 **Sequencing principle:** de-risk infrastructure changes before building features that depend on them, do cheap cleanup before stacking new complexity on top, and prefer passes that can be thoroughly internally tested with seed data over passes whose main value is only measurable with real users.
 
-This roadmap reflects the sequence agreed on 2026-04-21, with subsequent insertions: Phase 7B (network graph) on 2026-04-22, Phase 6.5 (EA Demo Landing) on 2026-04-24, and Phase 7C (Sankey, split from 7B) on 2026-04-25. Earlier versions of this document are preserved in `Archive/`.
+This roadmap reflects the sequence agreed on 2026-04-21, with subsequent insertions: Phase 7B (network graph) on 2026-04-22, Phase 6.5 (EA Demo Landing) on 2026-04-24, Phase 7C (Sankey, split from 7B) on 2026-04-25, and Phase 7.5 (Privacy and Access Hardening) on 2026-04-26 in response to a Security & Trust page audit. Earlier versions of this document are preserved in `Archive/`.
 
 ---
 
@@ -20,11 +20,12 @@ The passes are listed in the order they should be built. Each has a short ration
 4. **Phase 7 — Multi-Option Voting Pass B: RCV and STV.** ✅ Complete (2026-04-25). Ranked ballots on the Phase 6 scaffolding. Drag-to-rank UI (`@hello-pangea/dnd`), `pyrankvote==2.0.6` integration, multi-winner STV with fractional transfer display, round-by-round elimination breakdown, tied-final-round admin resolution. 191 backend tests passing (+46). Suite K 18/18. PostgreSQL smoke test pass. Live on prod with verified delegation inheritance. Network visualization redesign deferred to Phase 7B as planned.
 5. **Phase 7B — Vote Network Visualization for Multi-Option.** ✅ Complete (2026-04-25). Method-aware vote network with binary preserved as-is and approval/RCV using a new option-attractor D3 force layout. Suite M 11/11 pass. 200 backend tests. **Phase 7B.1** polish landed same day: voter→option arrows (gray-400; full opacity for approval, 1.0/0.3/0 opacity decay for RCV), wired option toggles + collapsible controls, drifting option attractors via `optionAnchorForce`, pre-tick simulation, "Currently winning" copy on in-progress proposals. Suite M extension 8/8 (combined 19/19). Screenshots committed at `test_results/phase7B1_screenshots/`.
 6. **Phase 7C — Round-by-Round Elimination Sankey for RCV/STV.** Standard Sankey-style visualization showing how votes transfer between options across elimination rounds. Standalone visualization that lives alongside the network graph on RCV/STV proposal detail pages. Split from 7B because it's a different visualization with its own design considerations and shares no code with the network graph.
-7. **Phase 8 — Sustained-Majority Voting Windows.** The "stable result" semantics for multi-option need multi-option to exist, and it's governance-critical to have in place before any org runs binding decisions. Also validates our snapshot/tally infrastructure.
-8. **Phase 9 — Polis Integration (Embedded).** Biggest single feature gap. Does meaningful work only with real deliberation content, so it benefits from the platform being otherwise feature-complete before we start.
-9. **Phase 10 — Engagement Layer.** Proposal comments, profile pictures, PWA configuration. Small, loosely-related, low-risk. Good multi-agent dispatch material.
-10. **Phase 11 — URL Routing Refactor.** Path-based org URLs (`/{org-slug}/proposals` etc.) as originally spec'd. Done after feature passes so we route a mature feature set once instead of reshuffling URLs repeatedly.
-11. **Phase 12 — Configurable Role Permissions (Stage 1).** Replaces the hardcoded moderator-permissions scaffolding from Phase 4 Cleanup with a proper data-model-driven permission system. Save for near the end because the hardcoded version is functional and this is really about extensibility.
+7. **Phase 7.5 — Privacy and Access Hardening.** Inserted 2026-04-26 after a Security & Trust page audit found that platform admin access is broader than the page's "private by default, access requires consent" framing implies. The `/api/admin/audit` endpoint returns full vote-by-vote attribution; `/api/admin/delegation-graph` returns the system-wide delegation graph; both are gated only by the global `is_admin` flag. This pass narrows that access, adds operator audit visibility, and gives users a way to see who has accessed their data. Real institutional-privacy work that should land before any pilot org signs up — until it does, the page can't honestly claim consent-gated access.
+8. **Phase 8 — Sustained-Majority Voting Windows.** The "stable result" semantics for multi-option need multi-option to exist, and it's governance-critical to have in place before any org runs binding decisions. Also validates our snapshot/tally infrastructure.
+9. **Phase 9 — Polis Integration (Embedded).** Biggest single feature gap. Does meaningful work only with real deliberation content, so it benefits from the platform being otherwise feature-complete before we start.
+10. **Phase 10 — Engagement Layer.** Proposal comments, profile pictures, PWA configuration. Small, loosely-related, low-risk. Good multi-agent dispatch material.
+11. **Phase 11 — URL Routing Refactor.** Path-based org URLs (`/{org-slug}/proposals` etc.) as originally spec'd. Done after feature passes so we route a mature feature set once instead of reshuffling URLs repeatedly.
+12. **Phase 12 — Configurable Role Permissions (Stage 1).** Replaces the hardcoded moderator-permissions scaffolding from Phase 4 Cleanup with a proper data-model-driven permission system. Save for near the end because the hardcoded version is functional and this is really about extensibility.
 
 **Items deferred past this sequence:** alternative delegation strategies (2.1), AI delegation agents (2.3), delegate report cards (2.4), accessibility audit (2.5), i18n (2.6), advanced analytics (2.7), notification system (2.8), and all Tier 3 items. These remain valuable and are documented below, but they are not in the path to pilot-ideal.
 
@@ -244,7 +245,9 @@ Full spec in `phase7B_spec.md`.
 
 ---
 
-## Phase 7C — Round-by-Round Elimination Sankey for RCV/STV
+## Phase 7C — Round-by-Round Elimination Sankey for RCV/STV ✅ Complete
+
+Shipped 2026-04-26. D3-Sankey component (`RCVSankeyChart.jsx`) rendering below the network graph on RCV/STV proposal detail pages. Bundled in two Phase 7B.2 polish items: delegator ballot-arrow suppression (`vote_source !== 'direct'` gate in `OptionAttractorVoteFlowGraph.jsx`) and method-aware `VoteGraphLegend` dispatching on `proposal.voting_method`. d3-sankey ^0.12.3 accepted under the same algorithms-don't-change rationale as `pyrankvote==2.0.6`. No backend changes; 200 backend tests still passing. Suite N 8/9 PASS + 1 SKIP-with-reason; Suite M extension 4/4 PASS. Bundle 994 KB → 1,018 KB raw / 285 KB gzipped. Full details in PROGRESS.md.
 
 ### Rationale
 
@@ -266,6 +269,69 @@ Sankey-style flow visualization is the standard for showing how votes transfer b
 - Animation of vote transfers between rounds (could be polish; not required for v1)
 - Per-round network graph snapshots ("what did the graph look like at round 2")
 - Sankey for binary or approval voting (these don't have rounds)
+
+---
+
+## Phase 7.5 — Privacy and Access Hardening
+
+### Rationale
+
+A 2026-04-26 audit of the draft Security & Trust page against the actual codebase found a real gap between the page's claims and the platform's behavior. The page describes the platform as "private by default — no one can see how you voted unless you've explicitly granted them access" and frames the system's structural visibility into user data as an institutional risk handled by audit logs and legal accountability.
+
+In practice, **platform-level admins (`is_admin=True` users) currently have direct readable access to every vote ever cast**, with full identity attribution, through the `/api/admin/audit` endpoint. The audit log records each `vote.cast` event with `actor_id`, `proposal_id`, and the literal `vote_value` or `ballot`. The page's framing is closer to "the system can in principle reconstruct votes" — the actual situation is "an admin endpoint returns every ballot, structured for consumption." Similarly, `/api/admin/delegation-graph` returns the full system-wide delegation graph, and access to this endpoint isn't itself audited.
+
+This isn't a bug per se — it's reasonable that platform admins debugging issues need to see what's happening — but it's broader than what the page claims and broader than what we'd want before a real pilot org signs up. Until this is hardened, the page can't honestly say access is consent-gated.
+
+This pass is also the right place to add user-facing access visibility (a "who has accessed my data" view) as a real institutional-privacy feature rather than an abstract claim.
+
+### Scope
+
+**Restrict ballot-content visibility in the audit endpoint.**
+
+The `/api/admin/audit` endpoint should not return raw `vote_value` or `ballot` data in its default response. Options for the redacted view:
+
+- Replace ballot content with a redacted indicator (e.g., `vote_value: "<redacted>"`) so admins can see *that* a vote was cast without seeing what it was.
+- Provide a separate, more narrowly-gated endpoint (e.g., `/api/admin/audit/ballots`) that requires an additional permission flag beyond `is_admin`, and that itself logs every access to it. Use this only for debugging cases where the ballot content is genuinely needed.
+- The default audit log view continues to show high-level event metadata (action, actor_id, target_id, timestamp, IP) without the ballot itself.
+
+**Audit access to the system-wide delegation graph.**
+
+`/api/admin/delegation-graph` access should itself be logged as an audit event (`admin.delegation_graph_viewed`) including the requesting admin's user ID, IP, and timestamp. This makes the access visible in the same audit log it shouldn't be exempt from.
+
+**Tighten the `is_admin` privilege model documentation.**
+
+Explicitly document — in code comments and in `SECURITY_REVIEW.md` — what platform admins can and cannot see. Currently this is implicit. Make it explicit so future audits can be done against documented expectations.
+
+**User-facing access log.**
+
+Add a "Who has accessed my data" section in the user's settings page. Shows a chronological list of times the user's voting record, delegation pattern, or follow relationships were accessed by anyone other than themselves, including:
+- Other users via the standard visibility rules (followers, public delegate viewers)
+- Platform admins via the audit log
+- Org admins viewing analytics or member lists (where applicable)
+
+The data already exists in the audit log; this is a frontend feature plus a small backend endpoint to query the user's access history. Worth doing because it converts the abstract "we audit everything" claim into something users can actually verify.
+
+**Frame the demo deployment's specific status in DEPLOYMENT.md.**
+
+Document that the current `liquiddemocracy.us` deployment is run informally by Z as platform admin, with no operator agreement or independent oversight. This is a deployment-doc note, not a code change — it ensures anyone reading the deploy docs (including a future planning agent or contributor) understands the current institutional state.
+
+### Non-goals
+
+- Operator-agreement legal frameworks (aspirational, requires real legal work, deferred)
+- Independent oversight body formation (governance work, deferred)
+- E2E-verifiable voting integration (Tier 3 feature for very-high-stakes deployments)
+- Removing platform admin access entirely (the role is still needed for legitimate operations)
+- Encrypting ballot data at rest with admin-inaccessible keys (real cryptographic work, doesn't fit pilot-stage)
+- Org-admin scope tightening (org admins already only see their own org's data; this pass is specifically about platform-level admin access)
+
+### Connection to the Security & Trust page
+
+Once this pass ships, the Security & Trust page can honestly say:
+- Platform admin access is restricted to non-ballot-content metadata by default; access to ballot content requires explicit elevation that is itself audited
+- All access to user data is logged and visible to the user
+- The current demo deployment's specific institutional status is documented
+
+Without this pass, the page has to be more hedged about what "private by default" actually means.
 
 ---
 
@@ -405,6 +471,14 @@ Phase 6.5 ships with manual demo data reset only. Once the demo gets real visito
 ### Additive Idempotent Seed Mechanism
 
 Phase 7's RCV proposals didn't auto-apply on prod because `seed_if_empty.py` only runs on empty databases (correct behavior — we don't want to wipe visitor data). Future passes that add demo content currently require a manual re-seed to make the new content visible. Long-term fix: each phase's seed function checks whether its specific proposals exist (by stable identifier) and adds them if not. Adds the new content additively without wiping existing visitor data. Worth doing before Phase 9 (Polis demos benefit) but not blocking.
+
+### Formal Operator Agreements and Independent Oversight
+
+The Security & Trust page's promise of "legal accountability for anyone operating the platform" is currently aspirational — the platform is run informally by its founder. Real institutional follow-through means: published operator terms describing what platform operators are bound to, independent oversight body with ideologically diverse staffing and consensus governance, formal mechanisms for accountability when operator behavior is questioned. This is governance work as much as it is technical, and it's gated on the platform reaching a scale where it actually matters. Phase 7.5 covers the technical access-restriction side; this is the institutional follow-through.
+
+### Encrypted Ballot Storage
+
+For future deployments where the trust model needs to be stronger than "operators are bound by audit logs and legal accountability," ballot content could be encrypted at rest with keys that are inaccessible to platform operators. Real cryptographic work — likely involves user-side key management or a trusted third-party key escrow. Deferred because the institutional-privacy approach is sufficient for the platform's current scale and use cases, and getting cryptographic ballot privacy right requires more design work than fits a single roadmap item.
 
 ### Alternative Delegation Strategies (formerly 2.1)
 

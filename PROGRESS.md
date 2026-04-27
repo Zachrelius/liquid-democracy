@@ -1178,3 +1178,70 @@ API smoke against the docker-compose PostgreSQL stack: vote-graph endpoint retur
 
 1. **Headless-Chrome PNG capture** didn't work cleanly (auth-inject + `location.replace()` returned blank pages). SVG capture via the live MCP-driven Chrome session was reliable. If higher-fidelity PNGs become useful, consider Playwright/Puppeteer with stored auth cookies.
 2. **STV multi-winner in-voting copy** chose "Currently winning: A, B" plural to mirror the single-winner case; spec didn't pin the plural form. May tune copy after EA-event feedback.
+
+
+---
+
+## Phase 7C — Round-by-Round Elimination Sankey + Phase 7B.2 Polish — 2026-04-26
+
+Frontend-only pass. Adds the standard Sankey visualization for RCV/STV proposals alongside the existing network graph and `RCVResultsPanel.jsx` text breakdown. Bundles two small Phase 7B.2 polish items folded in: delegator ballot-arrow suppression, and method-aware legend on approval/RCV graphs.
+
+### What shipped
+
+**RCVSankeyChart component** (`frontend/src/components/RCVSankeyChart.jsx`):
+- D3-Sankey layout reading directly from `tally.rounds` returned by `/api/proposals/{id}/results`. No backend changes — `RCVRoundOut` already serialized everything (`option_counts`, `eliminated`, `elected`, `transferred_from`, `transfer_breakdown`).
+- Pure helper `buildSankeyData(tally)` exported separately. Per `(round, option)` node where count > 0; zero-count entries skipped. Per round transition: emits a `carry` link for the bulk of an option's count and a `transfer` link from the round's `transferred_from` slab sized to each gain in `transfer_breakdown`. Same construction handles STV surplus transfers identically — pyrankvote populates the same fields whether elimination or election drives the transfer.
+- Colors via `colorForOption` from `voteFlowGraphUtils.js` so each option gets the same color across the network graph above and the Sankey below. Final-round winner(s) get a thicker dark-navy stroke.
+- Hover behavior: hovering a node dims unrelated link opacities to ~0.08 and surfaces a tooltip with option label + round + count; hovering a link surfaces source→target labels + exact transfer count + carry/transfer kind.
+- Provisional framing on in-voting RCV/STV: section header reads "Elimination Flow (Provisional)", mirroring the "Currently winning" pattern from Phase 7B.1.
+- Empty/missing rounds → placeholder text "Sankey will appear once ballots are cast" inside the labeled section. Reconciliation drift (STV fractional rounding, exhausted ballots) tolerated silently — never throws.
+
+**Integration in `ProposalDetail.jsx`:**
+- New collapsible "Elimination Flow" `<section>` rendered below the existing "Vote Network" section. Conditional gate: `(isVoting || isClosed) && tally && proposal.voting_method === 'ranked_choice'`. Independent `sankeyOpen` state — collapses separately from the network graph. Default-open on desktop, collapsed on mobile.
+- Help-page link visible inside the section header copy.
+
+**`VotingMethodsHelp.jsx`**: short "How to read the Elimination Flow Sankey" subsection added under the RCV/STV section.
+
+### Phase 7B.2 polish bundled in
+
+**Item A — delegator ballot arrows suppressed.** In `OptionAttractorVoteFlowGraph.jsx`'s arrow-build loop, added `if (v.vote_source !== 'direct') continue;`. (Initial implementation used `if (!v.is_direct) continue;` based on a spec note that misremembered the field name — backend ships `vote_source: "direct" | "delegation"`, not `is_direct`. Caught during Suite M21 run; one-line fix; verified post-fix on Offsite IRV and Office Renovation approval.) Delegators keep their delegation arrow to the delegate but no longer render redundant ballot arrows; the clustering force still pulls them toward the right region because optionWeights drives the force from inherited ballot data.
+
+**Item B — method-aware legend.** Inline `VoteGraphLegend` component in `ProposalDetail.jsx` dispatches on `proposal.voting_method`. Binary keeps the original Yes/No/Abstain legend exactly as-is (regression-protected via M24). Approval/RCV swap in per-option swatches (using `colorForOption` for visual consistency with the network graph and Sankey), plus "Abstain (empty ballot)", "→ Delegation", "Public delegate", "You", and conditionally "Anonymous voter" when any direct voter has a null ballot.
+
+### Library decision
+
+**d3-sankey ^0.12.3** (last release Sep 2019) — accepted on the same `pyrankvote==2.0.6` rationale: official D3-team-maintained repo, 169 npm dependents, 922 stars, "sustainable" Snyk rating, not archived. Sankey layout is a settled mathematical construction; library staleness is acceptable for layout primitives. Logged as tech debt for re-vetting in 12-18 months. Bundle impact: +24 KB raw / +6 KB gzipped (production JS now 1,018 KB raw / 285 KB gzipped — known tech debt, 994 KB → 1,018 KB).
+
+### Test counts
+
+- Backend: **200 passing** — unchanged from Phase 7B.1 (frontend-only pass).
+- Suite N (new): **8/9 PASS, 1 SKIP** — N1, N2, N3, N4, N5, N7, N8, N9 PASS (browser-driven via Claude-in-Chrome). N6 (zero-ballot RCV placeholder) skipped — no zero-ballot RCV proposal in seed data; placeholder branch verified by code inspection (`buildSankeyData` returns `null` and the component renders the placeholder text).
+- Suite M extension: **4/4 PASS** — M21 (delegator suppression), M22 (approval legend), M23 (RCV legend), M24 (binary regression). All four browser-driven.
+
+### Bug found and fixed during QA run
+
+Polish A's `is_direct` assumption — backend ships `vote_source` not `is_direct`. Caught when M21's expected-vs-actual count showed 0 arrows on Offsite while expected was 6. Fix: `vote_source !== 'direct'` instead. Verified against both RCV (6 arrows = 3 direct × 2 ranks) and approval (4 arrows = sum of approvals across direct voters).
+
+### PostgreSQL smoke test — skipped with reason
+
+Spec gives explicit allowance: "If docker-compose isn't trivially available or fails to come up, skip with documented reason — the local sqlite testing covers most of the same logic." This is a frontend-only pass with zero backend-data-shape changes; PG vs SQLite cannot diverge for this work. Skipped.
+
+### Screenshots saved to repo
+
+`test_results/phase7C_screenshots/`:
+- `stv_sankey_steering.svg` — multi-round STV Sankey (N1+N2)
+- `irv_sankey_offsite.svg` — in-voting IRV Sankey with "(Provisional)" header (N3)
+- `irv_provisional.svg` — earlier capture from initial QA run (kept as before/after evidence)
+- `irv_single_round_coffee.svg` — single-round-tied Sankey (N9)
+- `rcv_network_offsite_polished.svg` — network graph showing M21 delegator suppression on RCV
+- `approval_network_office_renovation.svg` — same on approval
+- `rcv_legend.html`, `approval_legend.html`, `binary_legend.html` — legend captures (M22, M23, M24)
+- `README.md` — index mapping each file to the Suite N / Suite M test it confirms
+
+### New tech debt logged
+
+1. **d3-sankey library staleness.** Last release Sep 2019. Accepted under the same algorithms-don't-change rationale as `pyrankvote==2.0.6`. Re-vet in 12-18 months.
+2. **STV fractional reconciliation.** When surplus transfers produce sums that don't exactly equal previous-round eliminated/elected counts due to floating-point rounding, the Sankey shows the imbalance visually but doesn't surface a small "exhausted ballots" callout. Defer.
+3. **`colorForOption` palette only has 10 colors.** Proposals with 11+ options would have two options sharing a color. Out of scope for v1.
+4. **Sankey labels only shown on first/last column** to avoid clutter on wide proposals. Mid-column slabs rely on hover. Acceptable trade-off; revisit if user feedback surfaces it.
+5. **Bundle size** crossed 1 MB raw (1,018 KB / 285 KB gzipped). Phase 7B's optimization tech debt remains; this pass added ~24 KB. Defer.

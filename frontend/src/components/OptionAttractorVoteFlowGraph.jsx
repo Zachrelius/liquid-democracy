@@ -298,9 +298,19 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
     // every approved option. RCV = full opacity to rank 1, 30% to rank 2,
     // nothing for rank 3+. Anonymous voters (ballot=null) get nothing since
     // they have no ballot data exposed.
+    //
+    // Phase 7B.2 (Polish Item A): suppress these arrows for delegators
+    // (whose ballot was inherited via delegation). Backend ships
+    // `vote_source: "direct" | "delegation"` on each VoteFlowNode — only
+    // "direct" voters get rendered ballot arrows. Delegators keep their
+    // delegation arrow to their delegate; the option arrows would be
+    // redundant and visually cluttering. The clustering force still
+    // pulls them toward the right region because optionWeights drives
+    // it from the inherited ballot data.
     const voterOptionArrows = [];
     for (const v of voterNodes) {
       if (!v.ballot || v.type === 'non_voter') continue;
+      if (v.vote_source !== 'direct') continue;
       if (votingMethod === 'approval') {
         const approvals = Array.isArray(v.ballot.approvals) ? v.ballot.approvals : [];
         for (const oid of approvals) {

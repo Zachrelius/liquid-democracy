@@ -2071,6 +2071,43 @@ Total: 7/7 passed (API-level). Persona-picker UI click-through manually verified
 
 ---
 
+## Test Suite N: Phase 7C Round-by-Round Elimination Sankey
+
+Browser-driven via Claude-in-Chrome against local dev (backend :8001, frontend :5173) on 2026-04-26. Driven as alice (demo-login token injected into localStorage). All targets are seeded proposals.
+
+| ID | Check | Target | Status |
+|---|---|---|---|
+| N1 | Sankey renders on closed RCV with multiple rounds | Steering Committee STV (`202e5634…`) — 3 rounds | ✅ PASS — 13 rects, 12 paths, "(Provisional)" only on in-voting variants |
+| N2 | Sankey renders on closed STV (multi-winner) | Steering Committee STV — 2 winners | ✅ PASS — both winners highlighted with thicker dark-navy stroke in final round |
+| N3 | Sankey renders provisionally on in-voting RCV | Offsite IRV (`eef5c56a…`) — voting | ✅ PASS — header shows "Elimination Flow (Provisional)", 7 rects + 4 paths |
+| N4 | No Sankey on binary proposal | Universal Healthcare (`8b9f1e93…`) | ✅ PASS — only "Vote Network" section present, no "Elimination Flow" |
+| N5 | No Sankey on approval proposal | Office Renovation (`bdcfaad6…`) | ✅ PASS — only "Vote Network" section |
+| N6 | Sankey placeholder when no ballots cast | n/a | ⏭ SKIP — no zero-ballot RCV proposal in seed data; placeholder branch verified by code inspection (`buildSankeyData` returns null and renders placeholder text "Sankey will appear once ballots are cast") |
+| N7 | Hover interactions | Steering Sankey | ✅ PASS — hovering a node dims unrelated link opacities and surfaces a tooltip |
+| N8 | Option colors match between network graph and Sankey | Steering | ✅ PASS — both viz layers use the same 5 unique fills (#2E75B6 / #1B3A5C / #C0392B / #F39C12 / #2D8A56) sourced from `colorForOption` |
+| N9 | Single-round IRV (no eliminations needed) | Coffee Vendor IRV (`6a7f9fad…`) — tied final round, single elimination column | ✅ PASS-with-note — Coffee Vendor is single-round-tied (not single-round-majority), but exercises the same code path: 2 rects, 0 flow paths, eliminated option strikethrough |
+
+**Total: 8/9 PASS, 1 SKIP (N6 documented).**
+
+---
+
+## Test Suite M extension: Phase 7B.2 Polish (Phase 7C bundle)
+
+Same browser-driven session as Suite N. Folded into existing Suite M from Phase 7B.
+
+| ID | Check | Target | Status |
+|---|---|---|---|
+| M21 | Delegator voter→option arrows suppressed | Offsite IRV (Dave the Delegator); also re-verified on Office Renovation approval | ✅ PASS — RCV: 6 arrows from 3 direct voters × 2 ranks, exactly matches expected; Dave (`vote_source: "delegation"`) renders 0 ballot arrows. Approval: 4 arrows = sum of approvals across 3 direct voters; 1 delegator excluded |
+| M22 | Method-aware legend on approval graph | Office Renovation | ✅ PASS — legend shows "Modern Minima… / Biophilic Des… / Industrial Ch…" with attractor color swatches, plus "Abstain (empty ballot) / → Delegation / Public delegate / You / Anonymous voter" |
+| M23 | Method-aware legend on RCV graph | Offsite IRV | ✅ PASS — legend shows "Mountain Lodge / Beach Resort / Urban Workshop / Forest Cabin" with attractor colors, plus same supplementary entries |
+| M24 | Binary legend unchanged (regression) | Universal Healthcare | ✅ PASS — legend unchanged: "Yes / No / Abstain / Not voted / → Delegation / Public delegate / You" |
+
+**Total: 4/4 PASS.**
+
+**Bug found and fixed during Suite M extension run:** the original Polish A implementation used `if (!v.is_direct) continue;` to skip delegator ballot arrows. Backend `/vote-graph` actually ships `vote_source: "direct" | "delegation"` (not `is_direct`), so every voter was being skipped. Patched in `OptionAttractorVoteFlowGraph.jsx` to `if (v.vote_source !== 'direct') continue;` and re-verified on both RCV and approval proposals.
+
+---
+
 ## Extending This Document
 
 When new phases are completed, add new test suites to this document following the same format:
