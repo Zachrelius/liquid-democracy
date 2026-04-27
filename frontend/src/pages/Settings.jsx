@@ -5,6 +5,7 @@ import api from '../api';
 import TopicBadge from '../components/TopicBadge';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
+import AccessHistory from '../components/AccessHistory';
 
 const POLICY_OPTIONS = [
   {
@@ -430,6 +431,12 @@ export default function Settings() {
             </div>
           </div>
         </div>
+      </section>
+
+      {/* Section: Data Access History */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Data Access History</h2>
+        <AccessHistory />
       </section>
     </div>
   );

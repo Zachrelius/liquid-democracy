@@ -278,7 +278,9 @@ Shipped 2026-04-27. Backend privacy boundary fix decoupled ballot content from i
 
 ---
 
-## Phase 7.5 — Privacy and Access Hardening
+## Phase 7.5 — Privacy and Access Hardening ✅ Complete
+
+Shipped 2026-04-27. Audit log redaction (`REDACTED_DETAIL_FIELDS` allowlist) gates ballot content out of the default `GET /api/admin/audit` response; new elevated endpoint `GET /api/admin/audit/ballots/{id}` requires a non-empty `reason` query parameter and self-logs the elevation as `admin.audit_ballot_viewed`. System-wide endpoints (`/api/admin/delegation-graph`, `/api/admin/users`) now log access events (`admin.delegation_graph_viewed`, `admin.user_list_viewed`). New `GET /api/users/me/access-log` and a "Data Access History" section on the settings page render the user's accountability trail. Documentation updates in `backend/auth.py` (privilege docstring), `backend/routes/admin.py` (top-of-file comment), `SECURITY_REVIEW.md` (Privileged Access Tiers section), `DEPLOYMENT.md` (Current Deployment Status section). 221 backend tests passing (+12 from Phase 7C.1's 209). PostgreSQL smoke PASS — Python-side JSON filter approach structurally avoids SQLite/PostgreSQL JSON-path divergence. Suite O 9/11 PASS + 1 PASS-with-note + 1 SKIP-with-reason. Full details in PROGRESS.md.
 
 ### Rationale
 

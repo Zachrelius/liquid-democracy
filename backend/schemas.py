@@ -786,6 +786,21 @@ class AuditLogOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AccessLogEntry(BaseModel):
+    """
+    User-facing "data access history" entry — surfaces times a privileged
+    operator (or another user) accessed something that includes this user's
+    data. Built by `routes.users.get_user_access_log` from the audit log.
+    """
+    timestamp: datetime
+    accessor_id: Optional[str]
+    accessor_display_name: str
+    accessor_role: str       # "Platform admin" | "Org admin of {Name}" | "User"
+    action_type: str         # human-readable, e.g. "Viewed your ballot"
+    reason: Optional[str]
+    ip_address: Optional[str]
+
+
 # ---------------------------------------------------------------------------
 # Delegate Profiles
 # ---------------------------------------------------------------------------

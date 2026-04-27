@@ -264,3 +264,109 @@ The platform's privacy claim, after Phase 7C.1: **we hide who voted what, not wh
 
 - **Admin endpoints** (`/api/admin/audit`, `/api/admin/delegation-graph`, etc.) are covered by Phase 7.5 (Privacy and Access Hardening), not this update. Phase 7C.1's clarification is strictly about the public vote-graph endpoint.
 - **Encrypted ballot storage at rest** remains deferred. The current model relies on institutional privacy (operator audit logs, legal accountability), not cryptographic privacy.
+
+
+---
+
+## Privileged Access Tiers (Phase 7.5, 2026-04-26)
+
+Three roles can view data they don't own. This section pins what each tier
+is permitted to do, what it explicitly is not, and where the boundary is
+enforced in code.
+
+### Tier 1 — Authenticated user
+
+Standard `Depends(get_current_user)`. A logged-in user may:
+
+- Read and write their own profile, votes, delegations, and follow
+  relationships.
+- Read public proposals, public delegate profiles, and public vote-graph
+  visualizations.
+- Read other users' votes only when the visibility rules in
+  `backend/permissions.py:can_see_votes` permit it (self / follower /
+  public delegate topic).
+
+The authenticated user may **not** read the audit log, the system-wide
+delegation graph, or the system user list. They may not view another user's
+ballot via any elevation path; the elevation endpoint is gated to platform
+admins only.
+
+### Tier 2 — Org admin (per-organization)
+
+Scoped role enforced through `org_middleware.require_org_admin`. An org
+admin may:
+
+- View analytics and the member list **of their own organization**.
+- Manage org-scoped proposals, topics, and moderator actions for their org.
+- View an org-scoped audit log restricted to events in their org's scope.
+
+An org admin may **not**:
+
+- Cross organization boundaries — they cannot read or modify another org's
+  data even if they hold the role in a different org.
+- View ballot content via the elevated endpoint
+  (`GET /api/admin/audit/ballots/{id}`); that endpoint is platform-admin-
+  only.
+- Grant the `is_admin=True` platform-admin flag to anyone (only platform
+  admins can call `PATCH /api/admin/users/{id}/make-admin`).
+
+### Tier 3 — Platform admin (`is_admin=True`)
+
+The system-scope role enforced by `backend/auth.py:get_current_admin`. The
+endpoints listed at the top of `backend/routes/admin.py` form the complete
+inventory of what this role gates today. A platform admin may:
+
+- Run the filterable audit log viewer at `GET /api/admin/audit`. Ballot
+  content is **redacted at response time** per the `REDACTED_DETAIL_FIELDS`
+  allowlist in `backend/routes/admin.py`. The standard view shows
+  `vote_value`, `ballot`, and `previous_value` as the literal string
+  `"<redacted>"`, with a `_redacted_fields` array making the redaction
+  explicit to consumers.
+- Elevate to view the unredacted entry for a single audit row via
+  `GET /api/admin/audit/ballots/{audit_log_id}` with a non-empty `reason`
+  query parameter (max 500 chars). The elevation **self-logs** as an
+  `admin.audit_ballot_viewed` audit event recording: the requesting admin's
+  user id (`actor_id`), the IP, the target audit entry's id, the original
+  action (`viewed_action`), the original actor (`viewed_actor_id`), and the
+  reason. The elevation creates an audit trail; it **does not** require
+  multi-admin approval (deferred to Phase 12+).
+- View the system-wide delegation graph via
+  `GET /api/admin/delegation-graph`. Each access self-logs as
+  `admin.delegation_graph_viewed`.
+- View the system user list via `GET /api/admin/users`. Each access
+  self-logs as `admin.user_list_viewed`.
+- Grant the platform-admin role to another user via
+  `PATCH /api/admin/users/{id}/make-admin`.
+- Run debug-only seed/time-simulation endpoints **iff** `DEBUG=true` is set
+  in the environment. Production deploys never expose these.
+
+A platform admin **cannot**:
+
+- Bypass the elevation/audit requirement when viewing ballot content. The
+  default `/api/admin/audit` endpoint is the only way to read the audit log
+  in bulk; bulk-reading there returns redacted ballots, full stop. The only
+  unredaction path is the per-entry elevation endpoint, which records who,
+  when, why, and on whose behalf.
+- Change another user's password or impersonate them. There is no
+  admin-side password-set endpoint and no impersonation flow in the
+  codebase.
+- Read or write data outside the endpoints listed in
+  `backend/routes/admin.py` and the role-gate in `backend/auth.py`. The
+  role does not implicitly grant access to org-scoped or user-scoped
+  endpoints; it gates only the explicit `/api/admin/*` routes.
+
+### User-facing accountability
+
+The `GET /api/users/me/access-log` endpoint surfaces the elevated and
+system-view audit events to the user whose data was accessed, so the
+accountability is visible to the affected party rather than only to
+operators. See `backend/routes/users.py:get_user_access_log` for the
+mapping between audit actions and user-facing entries.
+
+### Deferred (out of scope for Phase 7.5)
+
+- Multi-admin approval workflows for elevated audit access (Phase 12+).
+- Operator agreements and independent oversight body — institutional, not
+  technical (see `DEPLOYMENT.md` "Current Deployment Status").
+- Encrypted-at-rest ballot storage (Tier 3 cryptographic work, deferred).
+- Splitting `is_admin=True` into finer-grained sub-roles.

@@ -2142,6 +2142,34 @@ Same browser-driven session as the Suite N extension above.
 
 ---
 
+## Test Suite O: Phase 7.5 — Privacy and Access Hardening
+
+Browser-driven via Claude-in-Chrome on 2026-04-27 against fresh local backend (port 8002 to bypass a phantom socket on 8001 — same recurring issue from 7C.1) + Vite (port 5173, proxy temporarily redirected for the run, reverted after). Driven as alice (regular user) and admin (platform admin).
+
+| ID | Check | Method | Status |
+|---|---|---|---|
+| O1 | Admin audit log redacts vote.cast ballot content | API: `GET /api/admin/audit?action=vote.cast` as admin | ✅ PASS — `vote_value`, `ballot`, `previous_value` all `"<redacted>"`; `_redacted_fields: ['vote_value', 'ballot', 'previous_value']` populated |
+| O2 | Elevated endpoint requires reason | `GET /api/admin/audit/ballots/{id}` no reason / whitespace reason | ✅ PASS — missing reason returns 422 (FastAPI required-field validator), whitespace-only after strip returns 400. Both gates work; spec says "400 in either case" but FastAPI semantics use 422 for missing required query param. Functionally correct |
+| O3 | Elevated endpoint returns ballot when reason valid | `GET /api/admin/audit/ballots/{id}?reason=...` as admin | ✅ PASS — response includes original `vote_value: "yes"`, no `_redacted_fields` key |
+| O4 | Elevated access self-logs with reason captured | `GET /api/admin/audit?action=admin.audit_ballot_viewed` after O3 | ✅ PASS — entry exists with `reason: "Suite O3 smoke test"`, `viewed_action: "vote.cast"`, `viewed_actor_id: <alice's UUID>` |
+| O5 | Delegation graph access self-logs | `GET /api/admin/delegation-graph` then filter audit | ✅ PASS — `admin.delegation_graph_viewed` entry with `node_count: 29`, `edge_count: 58` |
+| O6 | User access log shows other-user profile views | n/a | ⏭ SKIP-with-reason — `profile.viewed` audit instrumentation isn't in the codebase. Backend dev's `_DIRECT_ACCESS_ACTIONS` set is intentionally empty as a future-extension point. Per spec: "The exact set of 'data access' actions is something the dev team needs to enumerate during implementation." This pass enumerated only the admin.* elevations; profile-view audit events deferred to a follow-up pass |
+| O7 | User access log shows admin elevations targeting them | Alice's `GET /api/users/me/access-log` after O3 | ✅ PASS — alice's log includes "Viewed your ballot" entry with `accessor_role: "Platform admin"`, `reason: "Suite O3 smoke test"` |
+| O8 | Empty-state UX renders cleanly | source review of `AccessHistory.jsx` empty-branch | ✅ PASS-with-note — empty-state code path correct (renders spec-mandated copy when `entries.length === 0`). In this local seed every fresh user sees 3 system-wide events (delegation-graph + user-list views from admin's prior queries touched all users), so the literal empty UI doesn't trigger here. To exercise it visually requires a DB with zero admin queries |
+| O9 | Cross-user isolation in access log | Frank's `GET /api/users/me/access-log` | ✅ PASS — Frank's log has 3 entries (system-wide delegation-graph + user-list views — those touch every user by design), zero ballot-view entries (alice's elevation isn't visible to frank) |
+| O10 | Settings page integration renders | Browser nav to `/settings` as alice | ✅ PASS — "Data Access History" section visible at the bottom of the settings page (after Profile / Follow Preferences / Public Delegate / Account / Change Password / Sessions). 4 rows render: 1× "Viewed your ballot" with reason, 2× "Viewed system delegation graph", 1× "Viewed full user list" — all attributed to "Admin User (Platform admin)" with timestamps |
+| O11 | Existing admin endpoints unbroken (regression) | API hits as admin | ✅ PASS — `/api/admin/audit` 200, `/api/admin/delegation-graph` 200, `/api/admin/users` 200. Each call also generates the corresponding self-log entry |
+
+**Total: 9/11 PASS, 1 PASS-with-note, 1 SKIP-with-reason.**
+
+**PostgreSQL smoke test result:** PASSED. Backend dev brought up `postgres:16-alpine` via `docker compose`, seeded, ran an elevation, fetched `/api/users/me/access-log` against the PG-backed instance — worked cleanly. The implementation uses a Python-side dict lookup on `details["viewed_actor_id"]` after a coarser SQL query keyed on action + actor, **structurally avoiding** the SQLite-vs-PostgreSQL JSON-path divergence we'd been bitten by before. No DB-level JSON path queries are issued. 3-run idempotency regression from Phase 7C.1 also still passes.
+
+**Tech debt logged:**
+- Profile view audit instrumentation (would close O6) — defer to a future polish pass.
+- The pagination over-query trade-off in `get_user_access_log` (querying `min(1000, limit*5 + offset*5)` rows, Python-filtering, then slicing) is documented inline. Acceptable for the current event volume; revisit if event volume grows.
+
+---
+
 ## Extending This Document
 
 When new phases are completed, add new test suites to this document following the same format:

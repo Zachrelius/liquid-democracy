@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,6 +12,175 @@ from delegation_engine import graph_store
 from permissions import can_see_votes, public_delegate_topic_ids
 
 router = APIRouter(prefix="/api/users", tags=["users"])
+
+
+# ---------------------------------------------------------------------------
+# Access-log helpers (Phase 7.5)
+# ---------------------------------------------------------------------------
+
+# Indirect access-log actions: actions that, when performed by a user OTHER
+# than the affected user, are surfaced in the affected user's access history.
+# Each is mapped through `_filter_indirect_event` to decide whether a given
+# row touches a specific user.
+_INDIRECT_ACCESS_ACTIONS = (
+    "admin.audit_ballot_viewed",
+    "admin.delegation_graph_viewed",
+    "admin.user_list_viewed",
+)
+
+# Direct access-log actions: target_type='user' AND target_id == user_id.
+# Currently empty — `profile.viewed` etc. don't exist as audit events yet,
+# but this set is the extension point for adding them later.
+_DIRECT_ACCESS_ACTIONS: tuple[str, ...] = ()
+
+# Human-readable action labels for the user-facing view.
+_ACTION_TYPE_LABELS = {
+    "admin.audit_ballot_viewed": "Viewed your ballot",
+    "admin.delegation_graph_viewed": "Viewed system delegation graph",
+    "admin.user_list_viewed": "Viewed full user list",
+}
+
+
+def _accessor_role(action: str) -> str:
+    """Map an audit action to a human-readable role for the access-log."""
+    if action.startswith("admin."):
+        return "Platform admin"
+    # Placeholder for future org-admin actions; none exist yet.
+    if action.startswith("org_admin."):
+        return "Org admin"
+    return "User"
+
+
+def _filter_indirect_event(entry: models.AuditLog, user_id: str) -> bool:
+    """
+    Return True if `entry` (an indirect-action audit row not authored by
+    user_id) actually represents access to user_id's data.
+
+    This is the Python-side JSON filter: querying the SQLAlchemy `JSON`
+    column with cross-backend portability (SQLite vs PostgreSQL) is fragile,
+    so we coarse-query by action+actor at the SQL layer and refine here.
+    """
+    if entry.action == "admin.audit_ballot_viewed":
+        details = entry.details or {}
+        return details.get("viewed_actor_id") == user_id
+    if entry.action == "admin.delegation_graph_viewed":
+        # The system graph touches every user's delegation data; surface to
+        # all users in their access log.
+        return True
+    if entry.action == "admin.user_list_viewed":
+        # The user list includes every user; surface to all users.
+        return True
+    return False
+
+
+def get_user_access_log(
+    user_id: str,
+    db: Session,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+    since: Optional[datetime] = None,
+    until: Optional[datetime] = None,
+) -> list[schemas.AccessLogEntry]:
+    """
+    Build the access-log view for a single user.
+
+    Trade-off: we apply the JSON-payload filter Python-side rather than at
+    the SQL layer because SQLAlchemy JSON-path support diverges between
+    SQLite and PostgreSQL. To keep the result correct under
+    offset/limit pagination, we over-query the DB (a coarser bound) and then
+    apply the filter + slice in Python. This is fine at audit-log scale; if
+    the table grows past ~10^5 rows per user it should be revisited.
+    """
+    # Coarse over-query bound — we filter in Python afterward, so this must
+    # be loose enough that the post-filter slice gets a full page when
+    # possible without scanning the entire table.
+    coarse_limit = min(1000, max(limit * 5 + offset * 5, 200))
+
+    # ----- Direct events: target_type='user' AND target_id == user_id -----
+    direct_rows: list[models.AuditLog] = []
+    if _DIRECT_ACCESS_ACTIONS:
+        dq = db.query(models.AuditLog).filter(
+            models.AuditLog.target_type == "user",
+            models.AuditLog.target_id == user_id,
+            models.AuditLog.action.in_(_DIRECT_ACCESS_ACTIONS),
+            models.AuditLog.actor_id != user_id,
+        )
+        if since:
+            dq = dq.filter(models.AuditLog.timestamp >= since)
+        if until:
+            dq = dq.filter(models.AuditLog.timestamp <= until)
+        direct_rows = (
+            dq.order_by(models.AuditLog.timestamp.desc()).limit(coarse_limit).all()
+        )
+
+    # ----- Indirect events: action in indirect set AND actor != user -----
+    iq = db.query(models.AuditLog).filter(
+        models.AuditLog.action.in_(_INDIRECT_ACCESS_ACTIONS),
+        models.AuditLog.actor_id != user_id,
+    )
+    if since:
+        iq = iq.filter(models.AuditLog.timestamp >= since)
+    if until:
+        iq = iq.filter(models.AuditLog.timestamp <= until)
+    indirect_rows = (
+        iq.order_by(models.AuditLog.timestamp.desc()).limit(coarse_limit).all()
+    )
+
+    # Python-side filter on JSON details for indirect rows.
+    filtered_indirect = [
+        r for r in indirect_rows if _filter_indirect_event(r, user_id)
+    ]
+
+    combined = direct_rows + filtered_indirect
+    combined.sort(key=lambda r: r.timestamp, reverse=True)
+    page = combined[offset : offset + limit]
+
+    # Resolve accessor display names with a single-batch lookup.
+    accessor_ids = {r.actor_id for r in page if r.actor_id}
+    name_map: dict[str, str] = {}
+    if accessor_ids:
+        for u in db.query(models.User).filter(models.User.id.in_(accessor_ids)).all():
+            name_map[u.id] = u.display_name or u.username
+
+    out: list[schemas.AccessLogEntry] = []
+    for r in page:
+        details = r.details or {}
+        accessor_name = (
+            name_map.get(r.actor_id) if r.actor_id else None
+        ) or "Unknown"
+        out.append(
+            schemas.AccessLogEntry(
+                timestamp=r.timestamp,
+                accessor_id=r.actor_id,
+                accessor_display_name=accessor_name,
+                accessor_role=_accessor_role(r.action),
+                action_type=_ACTION_TYPE_LABELS.get(r.action, r.action),
+                reason=details.get("reason"),
+                ip_address=r.ip_address,
+            )
+        )
+    return out
+
+
+@router.get("/me/access-log", response_model=list[schemas.AccessLogEntry])
+def my_access_log(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    since: Optional[datetime] = Query(None, description="Filter entries at or after this datetime (ISO 8601)"),
+    until: Optional[datetime] = Query(None, description="Filter entries at or before this datetime (ISO 8601)"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """
+    Return audit events that represent access to the current user's data
+    (Phase 7.5). Includes elevated ballot views (`admin.audit_ballot_viewed`
+    targeting your ballot specifically), and system-wide views that touch
+    every user (`admin.delegation_graph_viewed`, `admin.user_list_viewed`).
+    """
+    return get_user_access_log(
+        current_user.id, db, limit=limit, offset=offset, since=since, until=until
+    )
 
 
 @router.get("/search", response_model=list[schemas.UserSearchResultWithContext])

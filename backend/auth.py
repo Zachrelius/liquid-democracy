@@ -63,6 +63,30 @@ def get_current_user(
 def get_current_admin(
     current_user: models.User = Depends(get_current_user),
 ) -> models.User:
+    """
+    Platform-admin gate. Requires `is_admin=True` on the calling user.
+
+    What `is_admin=True` permits today:
+      - Run `/api/admin/audit` (filterable audit log; ballot content redacted)
+      - Run `/api/admin/audit/ballots/{id}` to elevate and view individual
+        ballot contents (self-logs the elevation with required reason)
+      - Run `/api/admin/delegation-graph` (system-wide delegation graph;
+        access is itself audited)
+      - Run `/api/admin/users` (system user list; access is itself audited)
+      - PATCH `/api/admin/users/{id}/make-admin` to grant the role to others
+      - Debug-only: `/api/admin/seed`, `/api/admin/time-simulation` (require
+        `DEBUG=true`; never reachable in production)
+
+    What `is_admin=True` does NOT permit:
+      - Bypass the elevation/audit requirement when viewing ballot content
+      - Change another user's password (no admin password-set endpoint)
+      - Impersonate users (no impersonation flow exists)
+      - Read or write outside the audit/elevation/admin endpoints listed
+        above
+
+    See `SECURITY_REVIEW.md` (Privileged Access Tiers) for the full role
+    boundary and the org-admin role for contrast.
+    """
     if not current_user.is_admin:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user

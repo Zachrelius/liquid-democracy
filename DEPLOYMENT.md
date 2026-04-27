@@ -331,6 +331,49 @@ For the demo, verification and password-reset emails are sent through a Gmail ac
 
 **Security.** The App Password is a bearer credential for your Gmail account. Treat it like a production secret — only store in Railway's variable store (encrypted at rest), never commit to the repo.
 
+## Current Deployment Status
+
+The `liquiddemocracy.us` deployment is a **public demo run informally by the
+project's founder** (Zachary). It is operated as a personal project, not by a
+formal organization, and the current institutional posture is intentional for
+the demo stage. Specifically:
+
+- **No operator agreement.** There is no signed agreement governing how the
+  platform is run, who has access, or what the data-handling commitments
+  are. The platform behaves as the code says it behaves; the audit log
+  records who did what; that is the entirety of the accountability layer
+  today.
+- **No independent oversight body.** No external reviewer, board, or
+  ombudsperson exists to review platform-admin actions or arbitrate
+  disputes. The user-facing access log
+  (`GET /api/users/me/access-log`, Phase 7.5) lets users see when their
+  data was accessed, but a user who disagrees with an access has no
+  third-party body to escalate to.
+- **No separation between platform operations and the founder's individual
+  access.** The founder holds the only `is_admin=True` account and
+  therefore is the sole party with platform-admin privileges as defined in
+  `SECURITY_REVIEW.md` (Privileged Access Tiers). Operationally, "the
+  platform" and "the founder" are the same actor.
+
+**This is appropriate for the demo stage** — `liquiddemocracy.us` exists
+to let people try out liquid-democracy concepts and inspect the codebase,
+not to make binding decisions for organizations. The accountability layer
+(audit log + redaction + elevation requirement + user access log) is real
+and works as documented; the *institutional* layer is deliberately thin.
+
+**Before binding decisions are made** by real organizations on the platform,
+this posture would need to change. Specifically: an operator agreement
+defining roles and commitments, an independent oversight body that can
+review elevated audit access and arbitrate disputes, and (likely) a
+separate deployment per organization with its own admin account so that no
+single party holds cross-org platform-admin access.
+
+The path forward is documented in the deferred-features roadmap. See
+`future_improvements_roadmap.md`:
+- "Formal Operator Agreements and Independent Oversight"
+- "Encrypted Ballot Storage" (cryptographic complement to the institutional
+  changes)
+
 ## Demo Data Management
 
 The demo org (`slug=demo`) is seeded once after the first deploy. Visitor-created content persists across sessions — this is intentional for the EA-demo stage, so visitors can see each others' proposals and delegations accumulate. Auto-reset is deferred to a later phase.

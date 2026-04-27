@@ -1313,3 +1313,61 @@ Phase 7C.1 will deploy via Railway auto-deploy on push to master. After deploy, 
 3. **`_set_precedence` skip-if-any policy:** a real visitor with even one TopicPrecedence row will block all seeded precedences from being added for them. Acceptable trade-off per spec; documented inline.
 4. **Coffee Vendor seed evolved from single-round-tied to 2-round.** No regression; the new pattern still demonstrates IRV correctly. Consider adding a clean single-round-majority IRV proposal to the seed if it becomes useful for demo purposes (would also restore N13 coverage).
 5. **Detail panel inherited-abstain copy** still says "Abstained (no options selected) via delegation" while the hover tooltip uses the new "Abstained (via delegation from Name)" form. Hover is the user-facing case M28 covers; the detail panel is a separate render path. Polish-pass candidate.
+
+---
+
+## Phase 7.5 — Privacy and Access Hardening — 2026-04-27
+
+Brings platform-level admin access in line with the privacy claim on the Security & Trust page. Three gaps closed: ballot content in audit-log responses, unaudited system-endpoint access, undocumented `is_admin` privilege. Plus a user-facing "Data Access History" view on the settings page.
+
+### What shipped
+
+**Audit log redaction** (`backend/routes/admin.py`). New `REDACTED_DETAIL_FIELDS = {"vote.cast": ["vote_value", "ballot", "previous_value"], "vote.retracted": ["previous_value", "ballot", "previous_ballot"]}` map drives a per-action redaction allowlist. `GET /api/admin/audit` now copies each entry, replaces redacted fields with `"<redacted>"`, and adds a `_redacted_fields` array so frontends know what's hidden vs missing. Non-`vote.*` actions (delegation, follow, delegate_profile, etc.) pass through unredacted. Underlying audit log rows are unchanged — redaction is at response-serialization time only.
+
+**Elevated endpoint** `GET /api/admin/audit/ballots/{audit_log_id}`. Required `reason` query param (1-500 chars, non-empty after `.strip()`). Gated by `is_admin=True`. Fetches the entry unredacted AND self-logs the elevation as `admin.audit_ballot_viewed` with `details: {reason, viewed_action, viewed_actor_id}`. Reason is intentionally simple — the audit trail enables retrospective accountability without governance machinery (multi-admin approval is Phase 12+).
+
+**System endpoint audit logging.** `GET /api/admin/delegation-graph` and `GET /api/admin/users` now log access events (`admin.delegation_graph_viewed`, `admin.user_list_viewed`) with `target_type: "system"` and details capturing `node_count/edge_count` or `user_count`.
+
+**User access log.** `GET /api/users/me/access-log` (with `limit/offset/since/until` filters). Returns events that touched the requesting user's data: direct (target_id == user_id) for actions in `_DIRECT_ACCESS_ACTIONS` (currently empty — extension point for future profile-view instrumentation), plus indirect via Python-side filter on the `details` JSON for matching `viewed_actor_id` (admin elevations). The Python-side filter approach **structurally avoids** SQLite-vs-PostgreSQL JSON-path divergence — no DB-level JSON path queries. Coarser SQL query keyed on action + actor, then python `dict.get(...)` for the indirect match. Documented over-query trade-off (queries up to `min(1000, limit*5 + offset*5)` rows for the Python filter then slices) is fine at current event volumes.
+
+**Frontend `AccessHistory.jsx`** rendered on the Settings page below "Account → Sessions". Fetches the access log, paginates with "Load more", handles loading/empty/error states. Empty-state copy: "No access events recorded. When other users, organization admins, or platform admins view your data, those events will appear here." IP address explicitly NOT shown by default per spec.
+
+**Documentation updates:**
+- `backend/auth.py`: docstring on `get_current_admin` enumerating exactly what `is_admin=True` permits (audit log, elevation endpoint, delegation-graph view, user list, make-admin, debug-only seed/time-simulation) and explicitly does NOT permit (bypass elevation, password set, impersonation, anything outside the listed endpoints).
+- `backend/routes/admin.py`: top-of-file module docstring listing all admin endpoints + their gating.
+- `SECURITY_REVIEW.md`: new "Privileged Access Tiers" section. Tier 1 (authenticated user — own data + visibility-rule reads). Tier 2 (org admin — own org analytics/members/audit, no cross-org, no ballot elevation). Tier 3 (platform admin — system-scope endpoints, ballot content requires elevation with logged reason, cannot impersonate / password-set / bypass elevation). Concrete `REDACTED_DETAIL_FIELDS` reference and the elevation audit-event structure.
+- `DEPLOYMENT.md`: new "Current Deployment Status" section. The `liquiddemocracy.us` deployment is run informally by the founder, no operator agreement, no oversight body, no separation between platform ops and founder access. Appropriate for demo, must change before binding decisions; pointer to deferred-features roadmap items.
+
+### Test counts
+
+- Backend: **221 passing** (+12 from Phase 7C.1's 209). New file `backend/tests/test_privacy_hardening.py` covers redaction, elevation, system-endpoint audit logging, user access log surfacing, and cross-user isolation.
+- Suite O: **9/11 PASS + 1 PASS-with-note + 1 SKIP-with-reason**. O1-O5 + O7 + O9-O11 pass directly; O8 (empty UX) verified by source review (no zero-event seed available); O6 skipped — `profile.viewed` action not yet instrumented (logged as tech debt for a follow-up pass).
+
+### PostgreSQL smoke test — PASS, JSON-path divergence avoided
+
+Brought up `postgres:16-alpine` via `docker compose`. Seeded demo data, logged in, cast a vote as alice, ran an admin elevation on it, fetched `/api/users/me/access-log` — works correctly. Crucially the access log uses a **Python-side dict filter** rather than a SQL JSON-path query (`func.json_extract` or PostgreSQL's `->>`), which structurally avoids the SQLite-vs-PostgreSQL JSON divergence. The implementation queries audit entries by action + actor (plain SQL columns), then iterates in Python to match `details["viewed_actor_id"]`. This works identically on both backends. 3-run idempotency regression from Phase 7C.1 still passes.
+
+### Production state after merge
+
+Phase 7.5 will deploy via Railway auto-deploy on push to master. Post-deploy verification:
+- `GET /api/admin/audit?action=vote.cast` on prod returns redacted entries (verify after deploy).
+- `GET /api/admin/audit/ballots/{id}?reason=...` on prod returns the unredacted entry and logs the elevation.
+- Settings page on prod renders the Data Access History section for at least one logged-in user.
+
+### Bug found and worked around during QA run
+
+- The phantom-socket-on-port-8001 pattern from Phase 7C.1 recurred. Worked around by spinning up the fresh backend on port 8002 and pointing Vite's proxy there for the QA run (reverted after). Production isn't affected — Railway containers don't have this issue.
+- O2 spec said "400 if reason missing or empty." FastAPI's standard required-field validator returns 422 when the query param is missing entirely (different code path from our `.strip()` empty check, which returns 400). Both gates work; just the status code on the missing-param case differs from the spec by FastAPI semantics. Functionally correct — the elevated endpoint cannot be called without a non-empty reason. Logged as a minor consistency note, not a bug.
+
+### Screenshots committed
+
+`test_results/phase7_5_screenshots/`:
+- `settings_access_history_alice.html` — Settings page section as alice with 4 entries (1 elevated ballot view with reason, 2 delegation-graph views, 1 user-list view) — proves O7 + O10
+- `README.md` — index mapping artifact → tests, documents which Suite O tests are API-verified vs source-reviewed vs UI-captured
+
+### New tech debt logged
+
+1. **Profile view audit instrumentation.** O6 was skipped because `profile.viewed` (and similar direct-access actions like `votes.viewed`) are not yet logged. The user access log endpoint has an empty `_DIRECT_ACCESS_ACTIONS` extension point waiting for these. Polish-pass candidate.
+2. **Settings page empty state for access history.** The empty-state UX renders the spec-mandated copy correctly (verified by source review), but in the current seed every user sees system-wide events (delegation-graph + user-list views by admin touch every user). Add a fresh-DB visual test fixture if you want to exercise the literal empty UI in QA.
+3. **`vote.retracted` audit details currently omit `ballot`/`previous_ballot`.** Only `previous_value` is recorded today. The redaction allowlist already covers the future case (no-op when fields are absent), but if richer retraction logging is added later, the existing allowlist will redact correctly. Minor consistency item, not a security gap.
+4. **Elevation rate limiting.** Spec marks this as out-of-scope for Phase 7.5; the elevated endpoint inherits whatever rate limiting is on `/api/*`. Worth adding eventually but not blocking.
