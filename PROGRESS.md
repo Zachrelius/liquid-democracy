@@ -1245,3 +1245,71 @@ Spec gives explicit allowance: "If docker-compose isn't trivially available or f
 3. **`colorForOption` palette only has 10 colors.** Proposals with 11+ options would have two options sharing a color. Out of scope for v1.
 4. **Sankey labels only shown on first/last column** to avoid clutter on wide proposals. Mid-column slabs rely on hover. Acceptable trade-off; revisit if user feedback surfaces it.
 5. **Bundle size** crossed 1 MB raw (1,018 KB / 285 KB gzipped). Phase 7B's optimization tech debt remains; this pass added ~24 KB. Defer.
+
+---
+
+## Phase 7C.1 — Visualization Polish + Privacy Boundary Clarification + Demo Data Refresh — 2026-04-27
+
+Three workstreams in one pass: a small but important backend privacy boundary fix, four frontend visualization improvements, and a substantial seed-data refresh that resolves the deferred "additive idempotent seed" tech debt. Bundled because the seed expansion makes the visualization fixes meaningfully demo-able.
+
+### Privacy boundary clarification
+
+The vote-graph endpoint had been conflating two distinct privacy boundaries: voter *identity* and *ballot content*. The pre-7C.1 code redacted both for anonymous voters; the new framing — and code — separates them: identity (label) stays hidden for anyone the viewer does not follow, but ballot content (approvals/ranking/vote_value) ships to every viewer. The framing visitors and the security page now use: "we hide who voted what, not what was voted."
+
+Code change: `backend/routes/proposals.py:763-774` in `get_vote_graph` — dropped the `can_see_identity` gate from `ballot_obj` construction. The `label` gating at line 742 stays. Schema doc at `VoteFlowNode.ballot` updated to reflect the new semantics.
+
+The demo-side payoff is significant: the option-attractor visualization now shows the actual voting pattern of the *whole* population, not just the small subset of named voters. With ~50% of voters anonymous to alice (the default demo login) on each proposal, the cluster shape now reflects roughly twice as many ballot-arrow contributions as before.
+
+### Four visualization improvements
+
+**Sankey Initial + Final columns** (`RCVSankeyChart.jsx`): `buildSankeyData` now emits synthetic `INITIAL_COL = -1` and `FINAL_COL = rounds.length` nodes plus `'initial'` and `'final'` link kinds. Column labels: `Initial / Round 1 / ... / Round N / Final`. Final highlights all `tally.winners` with `#1B3A5C` 3-px stroke; non-winners get `fill-opacity 0.45`. Single-round IRV renders Initial → round-0 → Final naturally with no middle elimination logic.
+
+**Anonymous voters render with arrows + distinct treatment** (`OptionAttractorVoteFlowGraph.jsx`, `BinaryVoteFlowGraph.jsx`): now that the backend ships ballot data for anonymous voters, the existing arrow-render loop picks them up automatically (no `label`-based gate to remove — Phase 7C's `vote_source !== 'direct'` gate is the right one). Anonymous nodes use `stroke #7A93AE`, `stroke-dasharray '3,2'`, `fill #F4F6F9`, full size, no label text. Hover tooltip explains the privacy state: "An anonymous voter — only public delegates and users you follow show their names. Their ballot is included in the visualization."
+
+**Hover tooltip qualifies inherited abstain** (`OptionAttractorVoteFlowGraph.jsx`, `BinaryVoteFlowGraph.jsx`): for delegators with empty/abstain inherited ballots, the tooltip now reads "Abstained (via delegation from {DelegateName})" or — when the delegate is also anonymous — "Abstained (via delegation)". Implementation is one helper (`renderAbstainTooltipText`) that reads `data.edges` to find the delegate.
+
+### Seed data refresh — additive idempotent mechanism
+
+`backend/seed_data.py`: every helper that previously overwrote existing rows now skips-if-exists. Specifically `_cast_vote`, `_cast_approval_vote`, `_cast_ranked_vote`, `_set_delegation`, `_set_precedence`, `_register_delegate`, `_create_follow_relationship` all return early when a matching row exists rather than mutating it. The seed function is now safe to re-run on any database state without disturbing real visitor data.
+
+Voter list expanded from 13 placeholder "Voter NN" users to 27 realistically-named voters (Aiyana Adebayo, Bo Beauchamp, Carmen Cardoso, ..., Diego Donovan — diverse first/last name combinations across multiple cultural origins). Per-proposal coverage expanded to 12-20 voters each. Alice now follows 13 of the 27 new voters (~50%), so on any proposal she sees roughly half the voter population as anonymous — making Decision 1 privacy boundary visible in the live demo.
+
+`backend/seed_if_empty.py`: relaxed the "only on empty DB" guard. Now always runs additively at boot. First-time vs additive runs are distinguished in the log header.
+
+### Test counts
+
+- Backend: **209 passing** (was 200; +4 privacy-boundary tests in `test_vote_graph_privacy.py`, +5 idempotency tests in `test_seed_idempotency.py`).
+- Suite N extension: **3/4 PASS, 1 SKIP-with-reason** (N10 Initial column, N11 Final column, N12 STV multi-winner highlighting all PASS; N13 single-round IRV skipped — no `rounds.length === 1` proposal in the expanded seed; code path verified by inspection).
+- Suite M extension: **6/6 PASS** (M25 anon arrows, M26 anon visual treatment, M27 anon hover tooltip, M28 inherited-abstain qualifier, M29 idempotent regression, M30 privacy preserved).
+
+### PostgreSQL smoke test — 3-run idempotency PASS
+
+Brought up `postgres:16-alpine` via `docker compose`. Ran `python -m seed_if_empty` three times against the same DB. Identical row counts after each invocation: 36 users / 129 votes / 57 delegations / 30 follow_relationships / 5 delegate_profiles / 44 topic_precedences / 10 proposals / 19 proposal_options / 6 topics. No duplicate-key constraint errors. Zero tracebacks. The "additive seed (existing users: 36)" header rendered correctly on runs 2 and 3.
+
+This is exactly the SQLite-vs-PostgreSQL divergence territory we had been bitten by before — verified clean.
+
+### Bug found and fixed during QA run
+
+The QA run revealed that uvicorn's `--reload` watcher held a stale module after the privacy-fix source edit; the API was still returning `ballot=null` for anonymous voters even after the edit was on disk. Switched to a clean process restart on a different port (8002) to bypass a phantom socket on 8001. New behavior verified: 12 anonymous voters with `ballot` populated correctly. Frontend rendering verified with the live data.
+
+The actual code change is correct as-shipped — the issue was strictly a local-dev process hygiene quirk.
+
+### Production state after merge
+
+Phase 7C.1 will deploy via Railway auto-deploy on push to master. After deploy, an additive seed run via `docker exec` will populate prod with the realistically-named voters and the Steering Committee STV proposal. This is documented in DEPLOYMENT.md.
+
+### Screenshots committed
+
+`test_results/phase7C1_screenshots/`:
+- `sankey_steering_init_final.svg` — STV with Initial/Final columns + winner highlighting (N10/N11/N12)
+- `sankey_coffee_single_round.svg` — Coffee Vendor IRV column structure
+- `approval_network_with_anonymous_voters.svg` — alice's view of Community Garden showing anonymous voter dashed-border treatment + arrows
+- `README.md` — index mapping each file to the Suite N/M test it confirms; documents M27/M28/M29/M30 (verified by DOM inspection / API inspection / PG smoke / hover capture rather than separate SVG files)
+
+### New tech debt logged
+
+1. **Sankey column compression on 5+ option STV with 5+ rounds.** Adding Initial + Final columns crowds the layout further. If user feedback surfaces it, consider variable column widths or a horizontal scroll. Defer.
+2. **Carbon Tax over-saturation:** the seed has nearly all extra voters delegating environment to env_emma; with 27 voters now in the pool, env_emma's resolved delegator count scales up significantly. Consider trimming if visualization gets cluttered.
+3. **`_set_precedence` skip-if-any policy:** a real visitor with even one TopicPrecedence row will block all seeded precedences from being added for them. Acceptable trade-off per spec; documented inline.
+4. **Coffee Vendor seed evolved from single-round-tied to 2-round.** No regression; the new pattern still demonstrates IRV correctly. Consider adding a clean single-round-majority IRV proposal to the seed if it becomes useful for demo purposes (would also restore N13 coverage).
+5. **Detail panel inherited-abstain copy** still says "Abstained (no options selected) via delegation" while the hover tooltip uses the new "Abstained (via delegation from Name)" form. Hover is the user-facing case M28 covers; the detail panel is a separate render path. Polish-pass candidate.

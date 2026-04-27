@@ -2108,6 +2108,40 @@ Same browser-driven session as Suite N. Folded into existing Suite M from Phase 
 
 ---
 
+## Test Suite N extension: Phase 7C.1 Sankey Initial / Final columns
+
+Browser-driven via Claude-in-Chrome on 2026-04-27 against fresh local backend (port 8002 to bypass a phantom socket on 8001) + Vite (port 5173, proxy temporarily redirected for the run, reverted after). Driven as alice.
+
+| ID | Check | Target | Status |
+|---|---|---|---|
+| N10 | Sankey Initial column renders | Steering Committee STV (`202e5634…`) — 3 rounds | ✅ PASS — leftmost column labeled "Initial"; 5 column labels total: `Initial / Round 1 / Round 2 / Round 3 / Final`; 21 slabs / 22 flow paths |
+| N11 | Sankey Final column renders | Same | ✅ PASS — rightmost column labeled "Final"; winner slabs use `#1B3A5C` 3-px stroke, non-winners use `fill-opacity 0.45` dim treatment |
+| N12 | STV Final column shows ALL winners | Steering STV (`num_winners: 2`) | ✅ PASS — both `tally.winners` rendered with the dark-navy 3-px stroke in the Final column; 2 winners highlighted out of 4 Final slabs |
+| N13 | Single-round IRV renders Initial + Final only | none in current seed | ⏭ SKIP-with-reason — Phase 7C.1's expanded seed grew Coffee Vendor IRV from 1 round to 2 rounds. No proposal in the new seed has `rounds.length === 1`. Code path verified by reading `RCVSankeyChart.jsx`'s `buildSankeyData`: single-round case renders Initial → round 0 → Final naturally |
+
+**Total: 3/4 PASS, 1 SKIP-with-reason.**
+
+---
+
+## Test Suite M extension: Phase 7C.1 Anonymous voter rendering + privacy + idempotency
+
+Same browser-driven session as the Suite N extension above.
+
+| ID | Check | Target | Status |
+|---|---|---|---|
+| M25 | Anonymous voters render with arrows | Community Garden approval as alice — 12 anonymous voters, 8 of them direct with ballots | ✅ PASS — 31 total voter→option arrows visible; 12 of those originate from anonymous direct voters' approvals (matches API expectation: 8 direct × ~1.5 approvals each) |
+| M26 | Anonymous voters render with distinct visual treatment | Same | ✅ PASS — 12 anonymous voter circles use stroke `#7A93AE`, dashed `stroke-dasharray='3,2'`, fill `#F4F6F9`, stroke-width 2 (regular voter width); distinct from abstainers' near-white `#ECF0F1` and from named voters' solid blue stroke |
+| M27 | Anonymous voter hover tooltip | Same | ✅ PASS — tooltip text: "Anonymous voter — only public delegates and users you follow show their names. Their ballot is included in the visualization. {n} of {m} options approved" |
+| M28 | Inherited abstain tooltip qualifier | Dave the Delegator on a J1: Community Project Selection approval where his delegate (Alice Voter) abstained | ✅ PASS — tooltip text: "Abstained (via delegation from Alice Voter)" — Decision-4 copy verbatim. Anonymous-delegate fallback path covered in code |
+| M29 | Idempotent seed regression | PostgreSQL smoke + local additive seed | ✅ PASS — Backend dev's PG smoke ran `python -m seed_if_empty` 3× against a fresh `postgres:16-alpine` stack; identical row counts after each (36 users / 129 votes / 57 delegations / 30 follow_relationships / 5 delegate_profiles / 44 topic_precedences / 10 proposals / 19 proposal_options / 6 topics). Local additive run took an existing 26-user DB to 36 users without any duplicate-key errors |
+| M30 | Privacy boundary preserved (identity hidden, ballot visible) | alice's view of various proposals | ✅ PASS — anonymous voter nodes contain no `username` / `email` / `full_name` / `display_name` keys in the API response; hover tooltip contains no UUID-like patterns. `ballot` field IS populated — that's the Phase 7C.1 privacy clarification: identity hidden, ballot content visible |
+
+**Total: 6/6 PASS.**
+
+**Bug found and fixed during the QA run:** the privacy fix's effect was initially invisible because uvicorn's `--reload` watcher kept a stale module loaded after the source edit. Verified the actual code change works after a clean process restart on a different port — anonymous voters' ballots populate correctly. Frontend rendering of the populated ballots was correspondingly verified.
+
+---
+
 ## Extending This Document
 
 When new phases are completed, add new test suites to this document following the same format:

@@ -644,7 +644,12 @@ class VoteFlowNode(BaseModel):
     is_current_user: bool = False
     delegator_count: int = 0
     total_vote_weight: int = 1
-    ballot: Optional[VoteFlowBallot] = None  # null for anonymous voters
+    # Ballot content is populated for every voter who has a ballot, regardless of
+    # identity visibility. Privacy boundary: identity (label) is gated by follow/
+    # public-delegate status; ballot content is part of the aggregate population
+    # view that all viewers can see. ballot stays None only when the voter has no
+    # cast ballot (non_voter).
+    ballot: Optional[VoteFlowBallot] = None
 
 
 class VoteFlowEdge(BaseModel):

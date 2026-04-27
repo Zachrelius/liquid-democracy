@@ -335,29 +335,63 @@ For the demo, verification and password-reset emails are sent through a Gmail ac
 
 The demo org (`slug=demo`) is seeded once after the first deploy. Visitor-created content persists across sessions — this is intentional for the EA-demo stage, so visitors can see each others' proposals and delegations accumulate. Auto-reset is deferred to a later phase.
 
-### Initial seed (automatic)
+### Initial seed (automatic, additive as of Phase 7C.1)
 
 Auto-seed on boot: when `IS_PUBLIC_DEMO=true`, `backend/start.sh` runs
-`seed_if_empty.py` before uvicorn starts. The helper checks the users
-table and only runs `run_seed(db)` if it's empty. This means:
+`seed_if_empty.py` before uvicorn starts. As of Phase 7C.1 (2026-04-27) the
+seed is **additive idempotent** — it always runs, whether the users table
+is empty or not, and every insert checks for existing rows by unique key
+and skips if found. Re-running the seed never disturbs visitor data.
 
-- Fresh Railway deploy → seed runs automatically on first boot.
-- Subsequent redeploys → seed is skipped (users already present).
-- Visitor content is never wiped by a redeploy.
+What this means in practice:
 
-Verify: `https://liquiddemocracy.us/demo` renders with 6 personas, and clicking "Sign in as alice" lands on `/proposals` with seeded proposals visible. Backend deploy logs should show one of:
+- **Fresh Railway deploy** → seed runs, populates everything from scratch.
+- **Subsequent redeploys** → seed runs, finds existing rows for users /
+  votes / delegations / follows / precedences, and skips each one.
+  Visitor-created votes and delegations are preserved.
+- **A new phase adds new demo content** (e.g., Phase 7C.1 added the
+  Steering Committee STV proposal and the realistically-named voter
+  cohort) → on next deploy, the additive seed picks up only the new rows
+  and adds them. Older rows untouched. **No manual `docker exec` step
+  needed for this** in the auto-seed path — Railway's redeploy alone
+  picks it up.
+
+Boot-log pattern after Phase 7C.1:
 
 ```
-Public demo mode — ensuring demo seed data…
-Public demo — users table empty, running run_seed(db)…
+Public demo — first-time seed (empty users table)…       # only on truly empty DB
+Public demo — additive seed (existing users: N)…         # on every other boot
 Public demo — seed complete: {...}
 ```
 
-or on subsequent boots:
+PostgreSQL idempotency was verified end-to-end against `postgres:16-alpine`
+during Phase 7C.1: 3 successive seed runs produced identical row counts
+(36 users / 129 votes / 57 delegations / 30 follow_relationships / 5
+delegate_profiles / 44 topic_precedences / 10 proposals / 19
+proposal_options / 6 topics) with zero duplicate-key errors.
 
+### Manually triggering an additive seed run (rarely needed)
+
+If a phase has already deployed and you want the new seed content to land
+*without* waiting for the next redeploy, run the seed in the live container:
+
+**Option A — Railway CLI:**
+
+```bash
+railway link                # pick the project
+railway run --service backend python -m seed_if_empty
 ```
-Public demo — seed skipped (N users already present).
+
+**Option B — Railway dashboard shell** (Hobby tier doesn't have a shell;
+use Option A):
+
+```bash
+# Inside the backend container:
+python -m seed_if_empty
 ```
+
+Expected output: `Public demo — additive seed (existing users: N)…` followed
+by `Public demo — seed complete: {...}`. Existing visitor data is preserved.
 
 ### Manual reset (when you want a clean demo)
 

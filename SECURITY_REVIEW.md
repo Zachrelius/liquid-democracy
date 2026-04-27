@@ -228,3 +228,39 @@ Unable to run `pip audit` or `npm audit` in this context. The following dependen
 | A10 SSRF | PASS | No user-supplied URL fetching |
 
 **Overall assessment:** The application demonstrates strong security practices across all OWASP Top 10 categories. The architecture makes good use of FastAPI's dependency injection for access control, SQLAlchemy for injection prevention, and established cryptographic libraries for authentication. The main recommendation is to set up automated dependency vulnerability scanning for ongoing protection.
+
+
+---
+
+## Phase 7C.1 update: Identity vs ballot-content boundary on the public vote-graph endpoint (2026-04-27)
+
+`GET /api/proposals/{id}/vote-graph` previously gated both voter *identity* and *ballot content* behind the same `can_see_identity` flag (true for self / public delegates / followed users / private-delegators-to-viewer; false otherwise). Phase 7C.1 separated them.
+
+### What's hidden (identity)
+
+For any voter the viewer cannot see by name, the node's `label` field is empty. The graph response also doesn't return `username`, `email`, `display_name`, or other identity-revealing fields on any node — only `id` (which is opaque) and the privacy-relevant flags (`is_public_delegate`, `is_current_user`, `vote_source`, etc.) that the viewer can already derive from publicly visible state. The viewer cannot reconstruct an anonymous voter's identity through any node field.
+
+### What's visible (ballot content)
+
+The voter's `ballot.approvals` / `ballot.ranking` / `ballot.vote_value` is populated for every voter who has cast a ballot, regardless of identity gating. The ballot content is part of the aggregate population view that all viewers already see (via the per-option counts shown on the proposal page). Surfacing the per-voter ballot lets the visualization render attractor pulls and ballot arrows, showing how the *whole* population voted.
+
+### Framing
+
+The platform's privacy claim, after Phase 7C.1: **we hide who voted what, not what was voted.** This matches the Security & Trust page's existing language about identity privacy and avoids the over-strict interpretation that would hide aggregate voting patterns from view.
+
+### Code change
+
+`backend/routes/proposals.py:763-774` — drop the `can_see_identity` gate from `ballot_obj` construction inside `get_vote_graph`. The `label` gating at line 742 stays.
+
+### Tests
+
+- `backend/tests/test_vote_graph_privacy.py` (new, 4 tests):
+  - Anonymous voters have `label == ""` AND populated `ballot`.
+  - Followed voters have both `label` and `ballot` populated.
+  - Anonymous nodes don't leak any identifying field.
+  - The privacy boundary holds across all three voting methods (binary / approval / ranked_choice).
+
+### Out-of-scope here
+
+- **Admin endpoints** (`/api/admin/audit`, `/api/admin/delegation-graph`, etc.) are covered by Phase 7.5 (Privacy and Access Hardening), not this update. Phase 7C.1's clarification is strictly about the public vote-graph endpoint.
+- **Encrypted ballot storage at rest** remains deferred. The current model relies on institutional privacy (operator audit logs, legal accountability), not cryptographic privacy.

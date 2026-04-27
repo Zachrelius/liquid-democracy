@@ -52,6 +52,41 @@ const PRE_TICK_ITERATIONS = 300;
 const VOTER_OPTION_ARROW_COLOR = '#9CA3AF'; // Tailwind gray-400
 const VOTER_OPTION_ARROW_RCV2_OPACITY = 0.3;
 
+// Phase 7C.1: anonymous voter visual treatment. These colors are deliberately
+// a muted gray-blue palette so anonymous nodes don't visually compete with
+// option attractor colors (which come from colorForOption).
+const ANON_STROKE = '#7A93AE';
+const ANON_FILL = '#F4F6F9';
+const ANON_DASH = '3,2';
+
+// Phase 7C.1: tooltip text for an abstainer node — qualifies inherited
+// abstains ("via delegation") so delegators don't read as having personally
+// chosen abstain. If the delegate's identity is visible, name them; otherwise
+// fall back to the unnamed form. Direct abstainers get the existing text.
+function renderAbstainTooltipText(node, data, votingMethod) {
+  const baseDirect =
+    votingMethod === 'approval'
+      ? 'Abstained (no options selected)'
+      : 'Abstained (no options ranked)';
+  if (node.vote_source !== 'delegation') return baseDirect;
+
+  // Look up the delegate this voter delegates to. data.edges is the
+  // unmutated source array (source/target are IDs at this point or, after
+  // d3-force, possibly node refs — handle both).
+  const edges = Array.isArray(data?.edges) ? data.edges : [];
+  const myEdge = edges.find((e) => {
+    const sid = (e.source && typeof e.source === 'object') ? e.source.id : e.source;
+    return sid === node.id;
+  });
+  if (!myEdge) return 'Abstained (via delegation)';
+  const tid = (myEdge.target && typeof myEdge.target === 'object') ? myEdge.target.id : myEdge.target;
+  const delegate = (data?.nodes || []).find((n) => n.id === tid);
+  const delegateName = delegate && delegate.label ? delegate.label : null;
+  return delegateName
+    ? `Abstained (via delegation from ${delegateName})`
+    : 'Abstained (via delegation)';
+}
+
 function scaleByOptionCount(n) {
   // Returns { attractor, charge } scaled for option count.
   // 3-4 options: defaults read well.
@@ -214,10 +249,19 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
     const enabledOptionIdSet = new Set(enabledOptions.map((o) => o.id));
 
     // Voter nodes — copy + attach optionWeights.
+    //
+    // Phase 7C.1: detect anonymous voters — those whose identity is hidden
+    // (`label === ''`) but who are not non-voters. Backend post-7C.1 ships
+    // `ballot` populated for these voters even though `label` stays empty
+    // (privacy boundary: identity hidden, ballot content visible). Pre-7C.1
+    // backend data ships `ballot=null` for anonymous voters, in which case
+    // they read as abstainers — that's accepted: arrows will simply not
+    // render until the backend fix lands.
     const voterNodesAll = data.nodes.map((n) => {
       const weights = computeOptionWeights(n.ballot, votingMethod);
       const isAbstainer = !n.ballot || weights.length === 0;
-      return { ...n, optionWeights: weights, isAbstainer };
+      const isAnonymous = n.type !== 'non_voter' && (!n.label || n.label === '');
+      return { ...n, optionWeights: weights, isAbstainer, isAnonymous };
     });
 
     let voterNodes = showNonVoters
@@ -455,14 +499,25 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
       .attr('fill', '#1B3A5C')
       .attr('pointer-events', 'none');
 
-    // Voter visuals.
+    // Voter visuals. Phase 7C.1: anonymous voters (label empty, not a
+    // non_voter ghost) get a dashed muted-blue stroke + slightly more
+    // saturated near-white fill so they read as "voter, identity hidden"
+    // — distinct from abstainers (gray fill, gray solid stroke) and from
+    // visible voters (white fill, accent-blue solid stroke). Anonymous
+    // voters keep the standard nodeRadius — sizing here doesn't depend on
+    // having a label.
     const voterSel = node.filter((d) => d.type !== 'option');
     voterSel
       .append('circle')
       .attr('r', (d) => nodeRadius(d))
-      .attr('fill', (d) => (d.type === 'non_voter' || d.isAbstainer ? '#ECF0F1' : 'white'))
+      .attr('fill', (d) => {
+        if (d.isAnonymous && !d.isAbstainer) return ANON_FILL;
+        if (d.type === 'non_voter' || d.isAbstainer) return '#ECF0F1';
+        return 'white';
+      })
       .attr('stroke', (d) => {
         if (d.is_current_user) return '#F39C12';
+        if (d.isAnonymous) return ANON_STROKE;
         if (d.isAbstainer || d.type === 'non_voter') return VOTE_COLORS.null;
         return '#2E75B6';
       })
@@ -471,8 +526,20 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
         if (d.type === 'non_voter') return 1;
         return 2;
       })
-      .attr('stroke-dasharray', (d) => (d.type === 'non_voter' ? '2,2' : null))
-      .attr('opacity', (d) => (d.type === 'non_voter' || d.isAbstainer ? 0.5 : 1));
+      .attr('stroke-dasharray', (d) => {
+        if (d.type === 'non_voter') return '2,2';
+        if (d.isAnonymous) return ANON_DASH;
+        return null;
+      })
+      .attr('opacity', (d) => {
+        if (d.type === 'non_voter') return 0.5;
+        // Anonymous voters who DID vote (ballot present) render at full
+        // opacity — they're full participants, just unnamed. Anonymous +
+        // abstainer can stay dimmer since they ARE abstaining.
+        if (d.isAnonymous && !d.isAbstainer) return 1;
+        if (d.isAbstainer) return 0.5;
+        return 1;
+      });
 
     voterSel
       .filter((d) => d.is_public_delegate)
@@ -553,9 +620,12 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
       })
       .on('mouseleave', () => {
         link.attr('stroke-opacity', 0.45).attr('stroke-width', 1.2);
-        voterSel.selectAll('circle').attr('opacity', (d) =>
-          d.type === 'non_voter' || d.isAbstainer ? 0.5 : 1
-        );
+        voterSel.selectAll('circle').attr('opacity', (d) => {
+          if (d.type === 'non_voter') return 0.5;
+          if (d.isAnonymous && !d.isAbstainer) return 1;
+          if (d.isAbstainer) return 0.5;
+          return 1;
+        });
         optionSel.selectAll('circle').attr('opacity', 0.85);
         setTooltip(null);
       })
@@ -811,15 +881,22 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
             </>
           ) : (
             <>
-              <div className="font-semibold text-[#1B3A5C]">{tooltip.node.label}</div>
-              {tooltip.node.is_public_delegate && (
+              <div className="font-semibold text-[#1B3A5C]">
+                {tooltip.node.isAnonymous ? 'Anonymous voter' : tooltip.node.label}
+              </div>
+              {tooltip.node.is_public_delegate && !tooltip.node.isAnonymous && (
                 <div className="text-green-600 text-[10px]">Public Delegate</div>
+              )}
+              {tooltip.node.isAnonymous && (
+                <div className="text-gray-500 text-[11px] mt-1 leading-snug">
+                  An anonymous voter — only public delegates and users you
+                  follow show their names. Their ballot is included in the
+                  visualization.
+                </div>
               )}
               <div className="mt-1 text-gray-600">
                 {tooltip.node.isAbstainer
-                  ? votingMethod === 'approval'
-                    ? 'Abstained (no options selected)'
-                    : 'Abstained (no options ranked)'
+                  ? renderAbstainTooltipText(tooltip.node, data, votingMethod)
                   : votingMethod === 'approval'
                   ? `${tooltip.node.ballot?.approvals?.length || 0} of ${
                       options.length
@@ -845,8 +922,10 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
         <div className="absolute bottom-2 left-2 right-2 bg-white border border-gray-200 rounded-xl shadow-lg p-4 text-sm z-10 md:left-auto md:right-2 md:w-80 md:bottom-2">
           <div className="flex justify-between items-start mb-2">
             <div>
-              <div className="font-semibold text-[#1B3A5C]">{selectedNode.label}</div>
-              {selectedNode.is_public_delegate && (
+              <div className="font-semibold text-[#1B3A5C]">
+                {selectedNode.isAnonymous ? 'Anonymous voter' : selectedNode.label}
+              </div>
+              {selectedNode.is_public_delegate && !selectedNode.isAnonymous && (
                 <span className="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded">
                   Public Delegate
                 </span>
@@ -880,7 +959,7 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
             {selectedNode.is_current_user && (
               <p className="text-[#2E75B6] font-medium text-xs mt-2">This is you.</p>
             )}
-            {selectedNode.label && (
+            {selectedNode.label && !selectedNode.isAnonymous && (
               <Link
                 to={`/users/${selectedNode.id}`}
                 className="inline-block mt-2 text-xs text-[#2E75B6] hover:underline"

@@ -5,14 +5,16 @@ Covers method-aware extensions to GET /api/proposals/{id}/vote-graph and the
 proposal-list "votes_cast" counter fix for ranked_choice. Suite map:
 
   01: Approval graph returns options list with correct approval_count.
-  02: Approval graph populates ballot.approvals for visible voters and
-      sets ballot=None for anonymous voters.
+  02: Approval graph populates ballot.approvals for both visible AND
+      anonymous voters (ballot is part of the aggregate population view —
+      Phase 7C.1 privacy boundary). Only label is gated on identity.
   03: RCV graph returns options list with correct first_pref_count.
   04: RCV graph populates ballot.ranking for visible voters in rank order.
   05: Tied RCV graph: clusters.rcv.winners has length > 1.
   06: Binary graph regression: legacy top-level yes/no/abstain populated and
       clusters.binary mirrors them.
-  07: Privacy: anonymous voters' ballots are null.
+  07: Privacy (Phase 7C.1): anonymous voters keep ballots populated but
+      label is empty — identity hidden, ballot content visible.
   08: Privacy: voters who privately delegate to current user have visible ballots.
   09: Proposal-list votes_cast counter accurate for binary/approval/ranked_choice.
 """
@@ -239,8 +241,13 @@ def test_01_approval_graph_options_have_correct_approval_count(client, test_db):
     assert data["clusters"]["rcv"] is None
 
 
-def test_02_approval_graph_visible_voter_ballot_anonymous_null(client, test_db):
-    """Visible voter's ballot.approvals populated; anonymous voter ballot=None."""
+def test_02_approval_graph_visible_and_anonymous_voter_ballots(client, test_db):
+    """Phase 7C.1: ballots populated for ALL voters; only label is identity-gated.
+
+    Privacy boundary: identity (label) hidden for anonymous voters; ballot
+    content remains visible because it's already part of the aggregate
+    per-option counts that everyone sees.
+    """
     topic = _topic(test_db)
     viewer = _user(test_db, "viewer")
     public_dlg = _user(test_db, "public_dlg")
@@ -260,12 +267,14 @@ def test_02_approval_graph_visible_voter_ballot_anonymous_null(client, test_db):
     graph = resp.json()
     pub_node = _node(graph, public_dlg.id)
     anon_node = _node(graph, anon.id)
-    # Public delegate is visible: ballot present with approvals list
+    # Public delegate is visible: ballot present with approvals list, label populated.
+    assert pub_node["label"] != ""
     assert pub_node["ballot"] is not None
     assert sorted(pub_node["ballot"]["approvals"]) == sorted([oids[0], oids[1]])
-    # Anonymous voter: ballot is null (not just label hidden)
+    # Anonymous voter: identity hidden but ballot visible (Phase 7C.1).
     assert anon_node["label"] == ""
-    assert anon_node["ballot"] is None
+    assert anon_node["ballot"] is not None
+    assert anon_node["ballot"]["approvals"] == [oids[0]]
 
 
 def test_03_rcv_graph_options_have_correct_first_pref_count(client, test_db):
@@ -377,12 +386,19 @@ def test_06_binary_graph_preserves_legacy_structure(client, test_db):
     # Author is the current_user → visible
     author_node = _node(data, author.id)
     assert author_node["ballot"] is None  # author has no vote
-    # v_yes is anonymous to author; ballot=None for privacy
-    assert yes_node["ballot"] is None
+    # v_yes is anonymous to author. Phase 7C.1: identity hidden, ballot visible.
+    assert yes_node["label"] == ""
+    assert yes_node["ballot"] is not None
+    assert yes_node["ballot"]["vote_value"] == "yes"
 
 
-def test_07_privacy_anonymous_voters_have_null_ballot(client, test_db):
-    """Anonymous voters in the graph have ballot=None across all methods."""
+def test_07_privacy_anonymous_voters_keep_ballots_label_redacted(client, test_db):
+    """Phase 7C.1: anonymous voters keep ballot populated; only label is hidden.
+
+    Identity (label) and ballot content are now two separate privacy boundaries.
+    Ballot content stays visible because it's already part of the aggregate
+    per-option counts that all viewers see; only the *who* is redacted.
+    """
     topic = _topic(test_db)
     viewer = _user(test_db, "viewer")
     stranger = _user(test_db, "stranger")  # no follow / public-delegate / delegation
@@ -395,8 +411,9 @@ def test_07_privacy_anonymous_voters_have_null_ballot(client, test_db):
     assert resp.status_code == 200
     data = resp.json()
     stranger_node = _node(data, stranger.id)
-    assert stranger_node["label"] == ""           # name hidden
-    assert stranger_node["ballot"] is None        # ballot fully suppressed
+    assert stranger_node["label"] == ""                 # identity hidden
+    assert stranger_node["ballot"] is not None           # ballot remains visible
+    assert stranger_node["ballot"]["approvals"] == [oids[0]]
 
 
 def test_08_privacy_private_delegator_to_me_has_visible_ballot(client, test_db):

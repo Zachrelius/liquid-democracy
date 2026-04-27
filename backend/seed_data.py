@@ -34,26 +34,26 @@ DEMO_PASSWORD = "demo1234"
 def _get_or_create_user(
     db: Session, username: str, display_name: str, is_admin: bool = False
 ) -> models.User:
-    email = f"{username}@demo.example"
+    """Idempotent: leave existing users alone (Phase 7C.1 additive seed).
+
+    Previously this helper overwrote password/display_name/email/is_admin on
+    every re-run, which would clobber real visitor edits. The new behavior is
+    pure skip-if-exists.
+    """
     user = db.query(models.User).filter(models.User.username == username).first()
-    if not user:
-        user = models.User(
-            username=username,
-            display_name=display_name,
-            password_hash=hash_password(DEMO_PASSWORD),
-            is_admin=is_admin,
-            email=email,
-            email_verified=True,
-        )
-        db.add(user)
-        db.flush()
-    else:
-        user.password_hash = hash_password(DEMO_PASSWORD)
-        user.display_name = display_name
-        user.is_admin = is_admin
-        user.email = email
-        user.email_verified = True
-        db.flush()
+    if user:
+        return user
+    email = f"{username}@demo.example"
+    user = models.User(
+        username=username,
+        display_name=display_name,
+        password_hash=hash_password(DEMO_PASSWORD),
+        is_admin=is_admin,
+        email=email,
+        email_verified=True,
+    )
+    db.add(user)
+    db.flush()
     return user
 
 
@@ -132,21 +132,26 @@ def _set_delegation(
     topic: Optional[models.Topic],
     chain_behavior: str = "accept_sub",
 ) -> None:
+    """Idempotent: skip if a delegation row already exists for (delegator, topic).
+
+    Phase 7C.1: never overwrite existing delegations — the seed must not stomp
+    on real visitor data when re-run additively.
+    """
     topic_id = topic.id if topic else None
     existing = db.query(models.Delegation).filter(
         models.Delegation.delegator_id == delegator.id,
         models.Delegation.topic_id == topic_id,
     ).first()
     if existing:
-        existing.delegate_id = delegate.id
-        existing.chain_behavior = chain_behavior
-    else:
-        db.add(models.Delegation(
-            delegator_id=delegator.id,
-            delegate_id=delegate.id,
-            topic_id=topic_id,
-            chain_behavior=chain_behavior,
-        ))
+        # Skip in-memory graph add too — the row already exists in DB and the
+        # graph_store will be repopulated from DB on next process boot.
+        return
+    db.add(models.Delegation(
+        delegator_id=delegator.id,
+        delegate_id=delegate.id,
+        topic_id=topic_id,
+        chain_behavior=chain_behavior,
+    ))
     db.flush()
     graph_store.add_delegation(delegator.id, delegate.id, topic_id)
 
@@ -154,10 +159,21 @@ def _set_delegation(
 def _set_precedence(
     db: Session, user: models.User, ordered_topics: list[models.Topic]
 ) -> None:
-    db.query(models.TopicPrecedence).filter(
+    """Idempotent: if any TopicPrecedence row exists for this user, skip entirely.
+
+    Trade-off (Phase 7C.1): the previous implementation deleted-and-replaced,
+    which is destructive to real visitor data. The new "skip if any precedence
+    exists" rule loses some flexibility (a real visitor with one topic-priority
+    can't have a second seeded for them), but matches the never-overwrite-
+    visitor-data principle. Acceptable because precedences are user-driven
+    configuration, not seed-driven content; the seed sets initial precedences
+    once and leaves them alone afterwards.
+    """
+    has_existing = db.query(models.TopicPrecedence).filter(
         models.TopicPrecedence.user_id == user.id
-    ).delete()
-    db.flush()
+    ).first()
+    if has_existing:
+        return
     for priority, topic in enumerate(ordered_topics):
         db.add(models.TopicPrecedence(
             user_id=user.id, topic_id=topic.id, priority=priority
@@ -169,16 +185,12 @@ def _register_delegate(
     db: Session, user: models.User, topic: models.Topic, bio: str,
     org_id: Optional[str] = None,
 ) -> models.DelegateProfile:
+    """Idempotent: skip if a DelegateProfile already exists for (user, topic)."""
     existing = db.query(models.DelegateProfile).filter(
         models.DelegateProfile.user_id == user.id,
         models.DelegateProfile.topic_id == topic.id,
     ).first()
     if existing:
-        existing.is_active = True
-        existing.bio = bio
-        if org_id:
-            existing.org_id = org_id
-        db.flush()
         return existing
     profile = models.DelegateProfile(
         user_id=user.id, topic_id=topic.id, bio=bio, is_active=True,
@@ -195,13 +207,12 @@ def _create_follow_relationship(
     followed: models.User,
     permission_level: str = "view_only",
 ) -> models.FollowRelationship:
+    """Idempotent: skip if a FollowRelationship row already exists."""
     existing = db.query(models.FollowRelationship).filter(
         models.FollowRelationship.follower_id == follower.id,
         models.FollowRelationship.followed_id == followed.id,
     ).first()
     if existing:
-        existing.permission_level = permission_level
-        db.flush()
         return existing
     rel = models.FollowRelationship(
         follower_id=follower.id,
@@ -239,68 +250,65 @@ def _create_follow_request(
 def _cast_vote(
     db: Session, user: models.User, proposal: models.Proposal, value: str
 ) -> None:
+    """Idempotent: leave existing votes alone (Phase 7C.1).
+
+    The seed must NEVER overwrite real visitor ballots when re-run additively.
+    """
     existing = db.query(models.Vote).filter(
         models.Vote.proposal_id == proposal.id,
         models.Vote.user_id == user.id,
     ).first()
     if existing:
-        existing.vote_value = value
-    else:
-        db.add(models.Vote(
-            proposal_id=proposal.id,
-            user_id=user.id,
-            vote_value=value,
-            is_direct=True,
-            cast_by_id=user.id,
-        ))
+        return
+    db.add(models.Vote(
+        proposal_id=proposal.id,
+        user_id=user.id,
+        vote_value=value,
+        is_direct=True,
+        cast_by_id=user.id,
+    ))
     db.flush()
 
 
 def _cast_approval_vote(
     db: Session, user: models.User, proposal: models.Proposal, option_ids: list[str]
 ) -> None:
-    """Cast an approval ballot (list of approved option IDs)."""
+    """Cast an approval ballot. Idempotent: skip if a vote row already exists."""
     existing = db.query(models.Vote).filter(
         models.Vote.proposal_id == proposal.id,
         models.Vote.user_id == user.id,
     ).first()
-    ballot = {"approvals": option_ids}
     if existing:
-        existing.ballot = ballot
-        existing.vote_value = None
-    else:
-        db.add(models.Vote(
-            proposal_id=proposal.id,
-            user_id=user.id,
-            vote_value=None,
-            ballot=ballot,
-            is_direct=True,
-            cast_by_id=user.id,
-        ))
+        return
+    db.add(models.Vote(
+        proposal_id=proposal.id,
+        user_id=user.id,
+        vote_value=None,
+        ballot={"approvals": option_ids},
+        is_direct=True,
+        cast_by_id=user.id,
+    ))
     db.flush()
 
 
 def _cast_ranked_vote(
     db: Session, user: models.User, proposal: models.Proposal, ranking: list[str]
 ) -> None:
-    """Cast a ranked ballot (ordered list of option IDs — first = highest preference)."""
+    """Cast a ranked ballot (first = highest preference). Idempotent: skip if exists."""
     existing = db.query(models.Vote).filter(
         models.Vote.proposal_id == proposal.id,
         models.Vote.user_id == user.id,
     ).first()
-    ballot = {"ranking": ranking}
     if existing:
-        existing.ballot = ballot
-        existing.vote_value = None
-    else:
-        db.add(models.Vote(
-            proposal_id=proposal.id,
-            user_id=user.id,
-            vote_value=None,
-            ballot=ballot,
-            is_direct=True,
-            cast_by_id=user.id,
-        ))
+        return
+    db.add(models.Vote(
+        proposal_id=proposal.id,
+        user_id=user.id,
+        vote_value=None,
+        ballot={"ranking": ranking},
+        is_direct=True,
+        cast_by_id=user.id,
+    ))
     db.flush()
 
 
@@ -338,14 +346,12 @@ def _get_or_create_org(
 def _add_org_membership(
     db: Session, user: models.User, org: models.Organization, role: str = "member"
 ) -> models.OrgMembership:
+    """Idempotent: skip if membership exists. Never overwrite role/status."""
     existing = db.query(models.OrgMembership).filter(
         models.OrgMembership.user_id == user.id,
         models.OrgMembership.org_id == org.id,
     ).first()
     if existing:
-        existing.role = role
-        existing.status = "active"
-        db.flush()
         return existing
     m = models.OrgMembership(
         user_id=user.id,
@@ -380,8 +386,47 @@ def _seed_demo(db: Session) -> dict:
     env_emma= _get_or_create_user(db, "env_emma", "Emma (Environment)")
     rights_raj = _get_or_create_user(db, "rights_raj", "Raj (Civil Rights)")
 
+    # Phase 7C.1: replace the placeholder "Voter NN" users with realistically-
+    # named diverse seed users. The list aims for the variety a real civic
+    # organization might actually have — mixed first/last name combinations
+    # spanning multiple naming traditions, no single-locale skew.
+    #
+    # NOTE: usernames are kept stable as voter01..voter27 so any historical
+    # references in tests / persona-picker continue to work; only display_name
+    # changes from "Voter NN" to a real name. (For empty-DB seeds, the user
+    # gets the real name from the start.)
+    seed_voter_names = [
+        ("voter01", "Aiyana Adebayo"),
+        ("voter02", "Bo Beauchamp"),
+        ("voter03", "Carmen Cardoso"),
+        ("voter04", "Devika Delacroix"),
+        ("voter05", "Esi Eriksen"),
+        ("voter06", "Felix Farahani"),
+        ("voter07", "Gianna Gallego"),
+        ("voter08", "Hiroshi Hwang"),
+        ("voter09", "Imani Iverson"),
+        ("voter10", "Joaquin Jeong"),
+        ("voter11", "Kiana Kowalski"),
+        ("voter12", "Lior Lindqvist"),
+        ("voter13", "Malik Marchetti"),
+        ("voter14", "Naomi Nakamura"),
+        ("voter15", "Owen Okonkwo"),
+        ("voter16", "Priya Pereira"),
+        ("voter17", "Qadira Quinones"),
+        ("voter18", "Rashid Reyes"),
+        ("voter19", "Sasha Saito"),
+        ("voter20", "Tobias Talwar"),
+        ("voter21", "Uma Ueno"),
+        ("voter22", "Vinod Velasquez"),
+        ("voter23", "Wren Whitfield"),
+        ("voter24", "Yara Yamamoto"),
+        ("voter25", "Zane Zheng"),
+        ("voter26", "Camille Bauer"),
+        ("voter27", "Diego Donovan"),
+    ]
     extra_users = [
-        _get_or_create_user(db, f"voter{i:02d}", f"Voter {i:02d}") for i in range(1, 14)
+        _get_or_create_user(db, username, display_name)
+        for (username, display_name) in seed_voter_names
     ]
     all_non_expert_users = [alice, carol, dave] + extra_users
 
@@ -725,36 +770,107 @@ def _seed_demo(db: Session) -> dict:
     for u in extra_users[4:8]:
         _cast_vote(db, u, privacy_prop, "no")
 
+    # ── Phase 7C.1 voter expansion ────────────────────────────────────────
+    # Extra voters 12-26 (the newly-named cohort) participate across the live
+    # voting proposals so each one lands at 12-20 voters with mixed direct /
+    # delegated patterns. Existing voters 0-11 keep their original behavior.
+
+    # Healthcare (currently dr_chen yes, econ_bob no, carol yes-direct, plus
+    # 6 voters via dr_chen, 3 via econ_bob → 11 ballots). Add 7 more for ~18.
+    # Voters 12-15: precedence Healthcare > Economy → resolve via Dr. Chen → YES
+    for u in extra_users[12:16]:
+        _set_delegation(db, u, dr_chen, healthcare)
+        _set_delegation(db, u, econ_bob, economy)
+        _set_precedence(db, u, [healthcare, economy])
+    # Voters 16-18: precedence Economy > Healthcare → resolve via econ_bob → NO
+    for u in extra_users[16:19]:
+        _set_delegation(db, u, dr_chen, healthcare)
+        _set_delegation(db, u, econ_bob, economy)
+        _set_precedence(db, u, [economy, healthcare])
+
+    # Carbon Tax (currently env_emma + econ_bob direct, 5 via env_emma → 7).
+    # Add 10 more for ~17.
+    # Voters 12-17 already delegate environment to env_emma above? No — only via
+    # _set_precedence calls. Add explicit env delegations for 12-21.
+    for u in extra_users[12:22]:
+        _set_delegation(db, u, env_emma, environment)
+    # Voters 19-21 also have environment > economy precedence so the carbon
+    # delegation actually fires (others already have precedence from healthcare
+    # block). Voters 19-21 had no precedence yet, set environment-first.
+    for u in extra_users[19:22]:
+        _set_precedence(db, u, [environment, economy])
+    # Direct YES votes on carbon from a few who care strongly (no delegation).
+    for u in extra_users[22:25]:
+        _cast_vote(db, u, carbon_prop, "yes")
+    _cast_vote(db, extra_users[25], carbon_prop, "no")  # one direct dissent
+    # voter26 abstains directly on carbon
+    _cast_vote(db, extra_users[26], carbon_prop, "abstain")
+
+    # Privacy Rights (currently rights_raj yes, carol no, plus 4 yes / 4 no
+    # → 10 ballots). Add 8 more for ~18.
+    for u in extra_users[8:12]:
+        _cast_vote(db, u, privacy_prop, "yes")  # yes-leaning continuation
+    for u in extra_users[12:14]:
+        _cast_vote(db, u, privacy_prop, "no")
+    for u in extra_users[14:18]:
+        _cast_vote(db, u, privacy_prop, "yes")
+    _cast_vote(db, extra_users[18], privacy_prop, "abstain")
+
+    # Universal Healthcare prop is `healthcare_prop` (the title is "Universal
+    # Healthcare Coverage Act"); already counted above.
+
     # ── Approval votes — Garden Location ──────────────────────────────────
     garden_opts = db.query(models.ProposalOption).filter(
         models.ProposalOption.proposal_id == garden_prop.id,
     ).order_by(models.ProposalOption.display_order).all()
     if len(garden_opts) >= 4:
-        # Mixed voting: some approve multiple, some approve one
-        _cast_approval_vote(db, alice, garden_prop, [garden_opts[0].id, garden_opts[1].id])
-        _cast_approval_vote(db, dr_chen, garden_prop, [garden_opts[0].id])
-        _cast_approval_vote(db, econ_bob, garden_prop, [garden_opts[2].id, garden_opts[3].id])
-        _cast_approval_vote(db, carol, garden_prop, [garden_opts[0].id, garden_opts[2].id])
-        _cast_approval_vote(db, env_emma, garden_prop, [garden_opts[0].id, garden_opts[1].id, garden_opts[3].id])
-        _cast_approval_vote(db, rights_raj, garden_prop, [garden_opts[1].id])
+        # Mixed voting: some approve multiple, some approve one.
+        # Phase 7C.1: expand to ~13 voters with overlapping approval clustering
+        # so the option-attractor graph shows visible aggregate shape.
+        gid = [o.id for o in garden_opts[:4]]   # [Riverside, School, Downtown, Rooftop]
+        _cast_approval_vote(db, alice, garden_prop, [gid[0], gid[1]])
+        _cast_approval_vote(db, dr_chen, garden_prop, [gid[0]])
+        _cast_approval_vote(db, econ_bob, garden_prop, [gid[2], gid[3]])
+        _cast_approval_vote(db, carol, garden_prop, [gid[0], gid[2]])
+        _cast_approval_vote(db, env_emma, garden_prop, [gid[0], gid[1], gid[3]])
+        _cast_approval_vote(db, rights_raj, garden_prop, [gid[1]])
+        # Original cohort 0-5 (kept stable for back-compat)
         for u in extra_users[:3]:
-            _cast_approval_vote(db, u, garden_prop, [garden_opts[0].id, garden_opts[1].id])
+            _cast_approval_vote(db, u, garden_prop, [gid[0], gid[1]])
         for u in extra_users[3:5]:
-            _cast_approval_vote(db, u, garden_prop, [garden_opts[2].id])
-        # abstain ballot
-        _cast_approval_vote(db, extra_users[5], garden_prop, [])
+            _cast_approval_vote(db, u, garden_prop, [gid[2]])
+        _cast_approval_vote(db, extra_users[5], garden_prop, [])  # abstain
+        # Phase 7C.1 expansion: 7 more for ~13 total
+        _cast_approval_vote(db, extra_users[12], garden_prop, [gid[0], gid[1], gid[2]])
+        _cast_approval_vote(db, extra_users[13], garden_prop, [gid[1], gid[3]])
+        _cast_approval_vote(db, extra_users[14], garden_prop, [gid[0]])
+        _cast_approval_vote(db, extra_users[15], garden_prop, [gid[2], gid[3]])
+        _cast_approval_vote(db, extra_users[16], garden_prop, [gid[0], gid[1]])
+        _cast_approval_vote(db, extra_users[17], garden_prop, [gid[1]])
+        _cast_approval_vote(db, extra_users[18], garden_prop, [gid[3]])
 
     # ── Approval votes — Renovation Style (tied result) ───────────────────
     reno_opts = db.query(models.ProposalOption).filter(
         models.ProposalOption.proposal_id == reno_prop.id,
     ).order_by(models.ProposalOption.display_order).all()
     if len(reno_opts) >= 3:
-        # Intentional tie between first two options (3 approvals each)
-        _cast_approval_vote(db, alice, reno_prop, [reno_opts[0].id, reno_opts[1].id])
-        _cast_approval_vote(db, dr_chen, reno_prop, [reno_opts[0].id])
-        _cast_approval_vote(db, econ_bob, reno_prop, [reno_opts[1].id])
-        _cast_approval_vote(db, carol, reno_prop, [reno_opts[0].id, reno_opts[2].id])
-        _cast_approval_vote(db, env_emma, reno_prop, [reno_opts[1].id, reno_opts[2].id])
+        # Intentional tie between first two options.
+        # Phase 7C.1: expand to ~12 voters; keep tie shape but add cluster volume.
+        rid = [o.id for o in reno_opts[:3]]  # [Modern, Biophilic, Industrial]
+        _cast_approval_vote(db, alice, reno_prop, [rid[0], rid[1]])
+        _cast_approval_vote(db, dr_chen, reno_prop, [rid[0]])
+        _cast_approval_vote(db, econ_bob, reno_prop, [rid[1]])
+        _cast_approval_vote(db, carol, reno_prop, [rid[0], rid[2]])
+        _cast_approval_vote(db, env_emma, reno_prop, [rid[1], rid[2]])
+        # Phase 7C.1 expansion: 7 more for ~12 total. Maintain Modern/Biophilic
+        # near-parity (3+3 from above; add 3 more to each plus a few floats).
+        _cast_approval_vote(db, extra_users[19], reno_prop, [rid[0], rid[1]])  # both
+        _cast_approval_vote(db, extra_users[20], reno_prop, [rid[1]])
+        _cast_approval_vote(db, extra_users[21], reno_prop, [rid[0]])
+        _cast_approval_vote(db, extra_users[22], reno_prop, [rid[1], rid[2]])
+        _cast_approval_vote(db, extra_users[23], reno_prop, [rid[0], rid[2]])
+        _cast_approval_vote(db, extra_users[24], reno_prop, [rid[2]])
+        _cast_approval_vote(db, extra_users[25], reno_prop, [rid[0], rid[1], rid[2]])
 
     # ── Ranked-choice votes — Offsite (IRV, in voting, mixed full/partial; dave inherits via global del) ──
     offsite_opts = db.query(models.ProposalOption).filter(
@@ -772,6 +888,18 @@ def _seed_demo(db: Session) -> dict:
         _cast_ranked_vote(db, extra_users[2], offsite_prop, [urban])               # bullet vote
         # dave does NOT cast directly — global delegation to alice means his ballot
         # resolves to alice's ranking [mtn, beach, forest] at tally time.
+
+        # Phase 7C.1 expansion: 8 more voters with mixed full / partial / bullet
+        # rankings so the Sankey has meaningful Initial column distribution.
+        _cast_ranked_vote(db, extra_users[12], offsite_prop, [beach, mtn, forest, urban])  # full
+        _cast_ranked_vote(db, extra_users[13], offsite_prop, [mtn, beach])         # partial
+        _cast_ranked_vote(db, extra_users[14], offsite_prop, [forest, beach, mtn]) # 3 of 4
+        _cast_ranked_vote(db, extra_users[15], offsite_prop, [urban, beach])       # partial
+        _cast_ranked_vote(db, extra_users[16], offsite_prop, [beach, forest, mtn]) # 3 of 4
+        _cast_ranked_vote(db, extra_users[17], offsite_prop, [mtn])                # bullet
+        _cast_ranked_vote(db, extra_users[18], offsite_prop, [forest])             # bullet
+        _cast_ranked_vote(db, extra_users[19], offsite_prop, [beach, mtn])         # partial
+        # extra_users[20] abstains (no vote cast)
 
     # ── Ranked-choice votes — Steering Committee (STV, num_winners=2, passed) ──
     committee_opts = db.query(models.ProposalOption).filter(
@@ -797,6 +925,15 @@ def _seed_demo(db: Session) -> dict:
         _cast_ranked_vote(db, extra_users[6], committee_prop, [cara, eli])
         _cast_ranked_vote(db, extra_users[7], committee_prop, [eli, cara])
 
+        # Phase 7C.1 expansion: 6 more voters with varied STV ranking patterns
+        # so the multi-round Sankey shows visible transfers and elimination flow.
+        _cast_ranked_vote(db, extra_users[12], committee_prop, [aria, cara, devon])
+        _cast_ranked_vote(db, extra_users[13], committee_prop, [boris, cara])
+        _cast_ranked_vote(db, extra_users[14], committee_prop, [devon, aria, eli])
+        _cast_ranked_vote(db, extra_users[15], committee_prop, [eli, boris, aria])
+        _cast_ranked_vote(db, extra_users[16], committee_prop, [aria, eli])
+        _cast_ranked_vote(db, extra_users[17], committee_prop, [cara, devon, boris])
+
     # ── Ranked-choice votes — Coffee Vendor (IRV, passed, deliberately tied final round) ──
     coffee_opts = db.query(models.ProposalOption).filter(
         models.ProposalOption.proposal_id == coffee_prop.id,
@@ -813,6 +950,20 @@ def _seed_demo(db: Session) -> dict:
         _cast_ranked_vote(db, econ_bob,   coffee_prop, [republic, brew, verde])
         _cast_ranked_vote(db, carol,      coffee_prop, [republic, brew, verde])
         _cast_ranked_vote(db, rights_raj, coffee_prop, [republic, brew, verde])
+        # Phase 7C.1 expansion: 11 more voters across varied rankings. Some
+        # have brew as first choice so Round 1 isn't 0-Brew anymore (giving
+        # the IRV Sankey real elimination dynamics rather than a 3-3-0 punt).
+        _cast_ranked_vote(db, env_emma,   coffee_prop, [verde, republic, brew])
+        _cast_ranked_vote(db, extra_users[12], coffee_prop, [brew, verde, republic])
+        _cast_ranked_vote(db, extra_users[13], coffee_prop, [brew, republic, verde])
+        _cast_ranked_vote(db, extra_users[14], coffee_prop, [verde, brew])
+        _cast_ranked_vote(db, extra_users[15], coffee_prop, [republic, verde, brew])
+        _cast_ranked_vote(db, extra_users[16], coffee_prop, [verde])              # bullet
+        _cast_ranked_vote(db, extra_users[17], coffee_prop, [republic, brew])
+        _cast_ranked_vote(db, extra_users[18], coffee_prop, [brew, verde])
+        _cast_ranked_vote(db, extra_users[19], coffee_prop, [verde, brew, republic])
+        _cast_ranked_vote(db, extra_users[20], coffee_prop, [republic])           # bullet
+        _cast_ranked_vote(db, extra_users[21], coffee_prop, [brew, verde, republic])
 
     # ── Phase 3a: Permission system ───────────────────────────────────────
 
@@ -861,6 +1012,16 @@ def _seed_demo(db: Session) -> dict:
     for u in extra_users[4:8]:
         _create_follow_relationship(db, u, env_emma, "delegation_allowed")
 
+    # Phase 7C.1: alice follows roughly half of the new cohort. The other
+    # half remain anonymous to alice's view, so when she opens any vote
+    # graph she sees ~50% named voters and ~50% anonymous voters with
+    # ballot arrows (Phase 7C.1 privacy boundary). 13 of 27 chosen for
+    # ratio 13:14 — close to half, intentionally not exactly half so that
+    # not all proposals show identical follow / anon ratios.
+    alice_follows_indices = [0, 2, 4, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25]
+    for idx in alice_follows_indices:
+        _create_follow_relationship(db, alice, extra_users[idx], "view_only")
+
     # Create a pending follow request for alice (from voter08 — follow only, no intent)
     _create_follow_request(
         db, extra_users[7], alice,
@@ -908,7 +1069,7 @@ def _seed_demo(db: Session) -> dict:
     log.info("Phase 3b seed scenarios added.")
 
     all_usernames = ["alice", "dr_chen", "econ_bob", "carol", "dave", "env_emma",
-                     "rights_raj", "frank", "admin"] + [f"voter{i:02d}" for i in range(1, 14)]
+                     "rights_raj", "frank", "admin"] + [u for (u, _) in seed_voter_names]
 
     return {
         "message": "Demo loaded. Log in as any user with password 'demo1234'",

@@ -719,9 +719,11 @@ def get_vote_graph(
     ]
 
     # ------------------------------------------------------------------
-    # Build nodes — including method-aware ballot field gated by privacy.
-    # Anonymous voters get ballot=None so the frontend doesn't render any
-    # attractor pulls for them.
+    # Build nodes — method-aware ballot is returned for every voter who
+    # has a ballot (regardless of identity visibility). Only identity
+    # (label) is gated by `can_see_identity`. This separates the two
+    # privacy boundaries: ballot content is aggregate-visible, identity
+    # is per-relationship.
     # ------------------------------------------------------------------
     nodes: list[schemas.VoteFlowNode] = []
 
@@ -755,10 +757,11 @@ def get_vote_graph(
             vote_source = "delegation"
             weight = 1
 
-        # Method-aware ballot (privacy-gated). For anonymous voters or
-        # non_voters, ballot stays None.
+        # Method-aware ballot — populated for every voter who has a ballot.
+        # Identity gating (label) is independent: ballot content is part of
+        # the aggregate population view; only identity stays redacted.
         ballot_obj: Optional[schemas.VoteFlowBallot] = None
-        if can_see_identity and result is not None and result.ballot is not None:
+        if result is not None and result.ballot is not None:
             if voting_method == "binary":
                 ballot_obj = schemas.VoteFlowBallot(vote_value=result.ballot.vote_value)
             elif voting_method == "approval":

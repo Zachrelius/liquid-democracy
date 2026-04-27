@@ -272,6 +272,12 @@ Sankey-style flow visualization is the standard for showing how votes transfer b
 
 ---
 
+## Phase 7C.1 — Visualization Polish + Privacy Boundary + Demo Data Refresh ✅ Complete
+
+Shipped 2026-04-27. Backend privacy boundary fix decoupled ballot content from identity visibility (`get_vote_graph` no longer gates `ballot_obj` on `can_see_identity`); the framing is now "we hide who voted what, not what was voted." Frontend gained Sankey Initial + Final columns, anonymous voter arrows + dashed-border treatment + privacy-explanation tooltip, and an inherited-abstain hover qualifier. Seed refresh resolved the deferred "Additive Idempotent Seed Mechanism" item — every seed helper is now skip-if-exists, the placeholder voters were replaced with 27 realistically-named ones, alice follows ~half (13/27) so the privacy boundary is visible in the demo, and `seed_if_empty.py` was relaxed to always run additively. 209 backend tests passing (+9). PG smoke 3-run idempotency PASS. Suite N extension 3/4 PASS + 1 SKIP-with-reason; Suite M extension 6/6 PASS. Full details in PROGRESS.md.
+
+---
+
 ## Phase 7.5 — Privacy and Access Hardening
 
 ### Rationale
@@ -468,9 +474,9 @@ These remain valuable but are not in the path to pilot-ideal. They'll be revisit
 
 Phase 6.5 ships with manual demo data reset only. Once the demo gets real visitor traffic, an automated nightly or weekly reset will likely be wanted to keep the demo experience consistent. Implementation: scheduled job that wipes and re-seeds the demo org's data while leaving the schema and demo personas intact. Don't build until there's evidence it's needed.
 
-### Additive Idempotent Seed Mechanism
+### Additive Idempotent Seed Mechanism ✅ Resolved in Phase 7C.1 (2026-04-27)
 
-Phase 7's RCV proposals didn't auto-apply on prod because `seed_if_empty.py` only runs on empty databases (correct behavior — we don't want to wipe visitor data). Future passes that add demo content currently require a manual re-seed to make the new content visible. Long-term fix: each phase's seed function checks whether its specific proposals exist (by stable identifier) and adds them if not. Adds the new content additively without wiping existing visitor data. Worth doing before Phase 9 (Polis demos benefit) but not blocking.
+Phase 7C.1 made every seed helper skip-if-exists (`_cast_*`, `_set_delegation`, `_set_precedence`, `_register_delegate`, `_create_follow_relationship`) and relaxed `seed_if_empty.py` so it always runs additively on container start. PostgreSQL smoke verified 3 successive seed runs against the same DB produce identical row counts with zero duplicate-key errors. New content added in future passes lands additively; existing visitor data is preserved bit-for-bit. See PROGRESS.md "Phase 7C.1" for full detail.
 
 ### Formal Operator Agreements and Independent Oversight
 

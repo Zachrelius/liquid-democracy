@@ -16,7 +16,28 @@ import {
  * bottom zone, soft tick boundary enforcement.
  *
  * Phase 7B preserves binary visualization bit-for-bit per Decision 4.
+ *
+ * Phase 7C.1: anonymous voter visual treatment + inherited-abstain tooltip
+ * qualifier are applied here too — same pattern as OptionAttractorVoteFlowGraph.
+ * Yes/No/Abstain stroke color stays as the primary signal; anonymous adds a
+ * dashed border on top (priority: current_user > anonymous-dash > non_voter-dash).
  */
+
+// Phase 7C.1: anonymous voter treatment.
+const ANON_DASH = '3,2';
+const ANON_FILL = '#F4F6F9';
+
+function lookupDelegateName(node, data) {
+  const edges = Array.isArray(data?.edges) ? data.edges : [];
+  const myEdge = edges.find((e) => {
+    const sid = e.source && typeof e.source === 'object' ? e.source.id : e.source;
+    return sid === node.id;
+  });
+  if (!myEdge) return null;
+  const tid = myEdge.target && typeof myEdge.target === 'object' ? myEdge.target.id : myEdge.target;
+  const delegate = (data?.nodes || []).find((n) => n.id === tid);
+  return delegate && delegate.label ? delegate.label : null;
+}
 export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
   const svgRef = useRef(null);
   const containerRef = useRef(null);
@@ -53,7 +74,13 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
     const svg = d3.select(svgRef.current);
     svg.selectAll('*').remove();
 
-    const allNodes = data.nodes.map((n) => ({ ...n }));
+    const allNodes = data.nodes.map((n) => ({
+      ...n,
+      // Phase 7C.1: anonymous voter detection — empty label and not a
+      // non_voter ghost. Backend ships `label === ''` whenever identity is
+      // hidden from the viewer.
+      isAnonymous: n.type !== 'non_voter' && (!n.label || n.label === ''),
+    }));
     const nodes = showNonVoters ? allNodes : allNodes.filter((n) => n.type !== 'non_voter');
     const edges = data.edges.map((e) => ({ ...e }));
 
@@ -201,9 +228,15 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
     node
       .append('circle')
       .attr('r', (d) => nodeRadius(d))
-      .attr('fill', (d) => (d.type === 'non_voter' ? '#ECF0F1' : 'white'))
+      .attr('fill', (d) => {
+        if (d.type === 'non_voter') return '#ECF0F1';
+        if (d.isAnonymous) return ANON_FILL;
+        return 'white';
+      })
       .attr('stroke', (d) => {
         if (d.is_current_user) return '#F39C12';
+        // Anonymous voters keep the yes/no/abstain stroke color as the
+        // primary signal — the dashed pattern below conveys anonymity.
         return VOTE_COLORS[d.vote] || VOTE_COLORS.null;
       })
       .attr('stroke-width', (d) => {
@@ -211,7 +244,11 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
         if (d.type === 'non_voter') return 1;
         return 2;
       })
-      .attr('stroke-dasharray', (d) => (d.type === 'non_voter' ? '2,2' : null))
+      .attr('stroke-dasharray', (d) => {
+        if (d.type === 'non_voter') return '2,2';
+        if (d.isAnonymous) return ANON_DASH;
+        return null;
+      })
       .attr('opacity', (d) => (d.type === 'non_voter' ? 0.5 : 1));
 
     node
@@ -390,12 +427,20 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
           style={{
             left: tooltip.x + 12,
             top: tooltip.y - 8,
-            maxWidth: 220,
+            maxWidth: 240,
           }}
         >
-          <div className="font-semibold text-[#1B3A5C]">{tooltip.node.label}</div>
-          {tooltip.node.is_public_delegate && (
+          <div className="font-semibold text-[#1B3A5C]">
+            {tooltip.node.isAnonymous ? 'Anonymous voter' : tooltip.node.label}
+          </div>
+          {tooltip.node.is_public_delegate && !tooltip.node.isAnonymous && (
             <div className="text-green-600 text-[10px]">Public Delegate</div>
+          )}
+          {tooltip.node.isAnonymous && (
+            <div className="text-gray-500 text-[11px] mt-1 leading-snug">
+              An anonymous voter — only public delegates and users you follow
+              show their names. Their ballot is included in the visualization.
+            </div>
           )}
           <div className="mt-1">
             {tooltip.node.vote ? (
@@ -409,7 +454,16 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
                 }`}
               >
                 {tooltip.node.vote.toUpperCase()}
-                {tooltip.node.vote_source === 'delegation' ? ' (via delegation)' : ' (direct)'}
+                {tooltip.node.vote_source === 'delegation'
+                  ? tooltip.node.vote === 'abstain'
+                    ? (() => {
+                        const name = lookupDelegateName(tooltip.node, data);
+                        return name
+                          ? ` (via delegation from ${name})`
+                          : ' (via delegation)';
+                      })()
+                    : ' (via delegation)'
+                  : ' (direct)'}
               </span>
             ) : (
               <span className="text-gray-400">Not voted</span>
@@ -428,8 +482,10 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
         <div className="absolute bottom-2 left-2 right-2 bg-white border border-gray-200 rounded-xl shadow-lg p-4 text-sm z-10 md:left-auto md:right-2 md:w-72 md:bottom-2">
           <div className="flex justify-between items-start mb-2">
             <div>
-              <div className="font-semibold text-[#1B3A5C]">{selectedNode.label}</div>
-              {selectedNode.is_public_delegate && (
+              <div className="font-semibold text-[#1B3A5C]">
+                {selectedNode.isAnonymous ? 'Anonymous voter' : selectedNode.label}
+              </div>
+              {selectedNode.is_public_delegate && !selectedNode.isAnonymous && (
                 <span className="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded">
                   Public Delegate
                 </span>
@@ -471,7 +527,7 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
             {selectedNode.is_current_user && (
               <p className="text-[#2E75B6] font-medium text-xs mt-2">This is you.</p>
             )}
-            {selectedNode.label && (
+            {selectedNode.label && !selectedNode.isAnonymous && (
               <Link
                 to={`/users/${selectedNode.id}`}
                 className="inline-block mt-2 text-xs text-[#2E75B6] hover:underline"

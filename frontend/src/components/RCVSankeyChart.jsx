@@ -37,7 +37,15 @@ const NODE_PADDING = 10;
 const RECONCILE_TOLERANCE = 0.01; // STV fractional rounding tolerance
 const HEIGHT = 360;
 
+// Phase 7C.1: synthetic column indices used by Initial / Final nodes. They
+// live OUTSIDE the rounds[] index space so we can render them as their own
+// columns at the leftmost and rightmost ends of the Sankey.
+const INITIAL_COL = -1;
+// FINAL_COL is rounds.length (computed at use-site).
+
 function nodeKey(roundIdx, optionId) {
+  // roundIdx may be -1 (Initial) or rounds.length (Final). String-keying
+  // handles those uniformly.
   return `r${roundIdx}::${optionId}`;
 }
 
@@ -46,12 +54,26 @@ function nodeKey(roundIdx, optionId) {
  *
  * Returns { nodes, links } or null if not enough data to build a chart.
  *
- * Each node: { id, roundIdx, optionId, count }
- * Each link: { source: nodeId, target: nodeId, value, kind: 'carry'|'transfer' }
+ * Each node: { id, roundIdx, optionId, count, kind?: 'initial'|'final' }
+ * Each link: { source: nodeId, target: nodeId, value,
+ *              kind: 'carry'|'transfer'|'initial'|'final' }
+ *
+ * Phase 7C.1: synthesizes an "Initial" column (roundIdx = -1) before round 0
+ * and a "Final" column (roundIdx = rounds.length) after the last round.
+ *   - Initial nodes mirror rounds[0].option_counts; one Initial→round-0 link
+ *     per option, sized by that count.
+ *   - Final nodes mirror rounds[last].option_counts (zero-count options
+ *     skipped — already eliminated, no Final node). One last-round→Final
+ *     link per surviving option.
+ *   - For single-round IRV (rounds.length === 1), the Initial→round-0 carry
+ *     and round-0→Final carry both render, giving two slim columns flanking
+ *     a single round-0 column. (Round-0 column itself is still emitted; the
+ *     visual middle "story" is empty but Initial + Final flank it.)
  */
 export function buildSankeyData(tally) {
   if (!tally || !Array.isArray(tally.rounds) || tally.rounds.length === 0) return null;
   const rounds = tally.rounds;
+  const FINAL_COL = rounds.length;
 
   // Build a node per (round, option) where the option has a non-zero count
   // in that round. Eliminated options drop out naturally because subsequent
@@ -76,8 +98,69 @@ export function buildSankeyData(tally) {
 
   if (nodes.length === 0) return null;
 
+  // ---- Phase 7C.1: Initial column ----
+  // One node per option that had a non-zero count in round 0. Initial→round-0
+  // link sized by that round-0 count.
+  const round0Counts = rounds[0].option_counts || {};
+  const initialLinks = [];
+  for (const [oid, rawCount] of Object.entries(round0Counts)) {
+    const count = Number(rawCount) || 0;
+    if (count <= 0) continue;
+    const initKey = nodeKey(INITIAL_COL, oid);
+    if (!nodeIdx.has(initKey)) {
+      nodeIdx.set(initKey, nodes.length);
+      nodes.push({
+        id: initKey,
+        roundIdx: INITIAL_COL,
+        optionId: oid,
+        count,
+        kind: 'initial',
+      });
+    }
+    const targetKey = nodeKey(0, oid);
+    if (nodeIdx.has(targetKey)) {
+      initialLinks.push({
+        source: initKey,
+        target: targetKey,
+        value: count,
+        kind: 'initial',
+      });
+    }
+  }
+
+  // ---- Phase 7C.1: Final column ----
+  // One node per option still alive (count > 0) in the last round. Skip
+  // options that were already eliminated — visually they just stop earlier.
+  const lastIdx = rounds.length - 1;
+  const lastCounts = rounds[lastIdx].option_counts || {};
+  const finalLinks = [];
+  for (const [oid, rawCount] of Object.entries(lastCounts)) {
+    const count = Number(rawCount) || 0;
+    if (count <= 0) continue;
+    const finKey = nodeKey(FINAL_COL, oid);
+    if (!nodeIdx.has(finKey)) {
+      nodeIdx.set(finKey, nodes.length);
+      nodes.push({
+        id: finKey,
+        roundIdx: FINAL_COL,
+        optionId: oid,
+        count,
+        kind: 'final',
+      });
+    }
+    const sourceKey = nodeKey(lastIdx, oid);
+    if (nodeIdx.has(sourceKey)) {
+      finalLinks.push({
+        source: sourceKey,
+        target: finKey,
+        value: count,
+        kind: 'final',
+      });
+    }
+  }
+
   // Build links between rounds r and r+1.
-  const links = [];
+  const links = [...initialLinks];
   for (let r = 0; r < rounds.length - 1; r++) {
     const cur = rounds[r];
     const nxt = rounds[r + 1];
@@ -140,6 +223,9 @@ export function buildSankeyData(tally) {
       }
     }
   }
+
+  // Append Final links last so they sit at the right edge of the link list.
+  for (const fl of finalLinks) links.push(fl);
 
   return { nodes, links };
 }
@@ -253,10 +339,14 @@ export default function RCVSankeyChart({ tally, proposal }) {
 
     const g = svg.append('g');
 
-    // Round labels at the top of each column.
+    // Column labels at the top of each column. Phase 7C.1 adds Initial
+    // (roundIdx -1) and Final (roundIdx rounds.length) columns flanking the
+    // round-by-round columns.
     const roundsCount = (tally?.rounds || []).length;
+    const FINAL_COL_IDX = roundsCount;
+    const allColIdxs = [-1, ...Array.from({ length: roundsCount }, (_, i) => i), FINAL_COL_IDX];
     const colXs = [];
-    for (let r = 0; r < roundsCount; r++) {
+    for (const r of allColIdxs) {
       const colNodes = graph.nodes.filter((n) => n.roundIdx === r);
       if (colNodes.length === 0) continue;
       const x = colNodes[0].x0;
@@ -265,20 +355,29 @@ export default function RCVSankeyChart({ tally, proposal }) {
 
     const roundLabelG = g.append('g').attr('class', 'round-labels');
     colXs.forEach(({ r, x }) => {
-      const round = tally.rounds[r];
-      const elimId = round?.eliminated;
-      const electedIds = round?.elected || [];
       const cx = x + NODE_WIDTH / 2;
+      let title;
+      if (r === -1) title = 'Initial';
+      else if (r === FINAL_COL_IDX) title = 'Final';
+      else title = `Round ${r + 1}`;
 
       roundLabelG
         .append('text')
-        .text(`Round ${r + 1}`)
+        .text(title)
         .attr('x', cx)
         .attr('y', PADDING.top - ELIM_LABEL_PX - 8)
         .attr('text-anchor', 'middle')
         .attr('font-size', 11)
         .attr('font-weight', 600)
         .attr('fill', '#1B3A5C');
+
+      // Initial / Final columns don't carry round-level elimination/elected
+      // annotations.
+      if (r === -1 || r === FINAL_COL_IDX) return;
+
+      const round = tally.rounds[r];
+      const elimId = round?.eliminated;
+      const electedIds = round?.elected || [];
 
       if (elimId) {
         roundLabelG
@@ -359,29 +458,33 @@ export default function RCVSankeyChart({ tally, proposal }) {
       .attr('width', (d) => Math.max(1, d.x1 - d.x0))
       .attr('height', (d) => Math.max(1, d.y1 - d.y0))
       .attr('fill', (d) => colorOf(d.optionId))
+      .attr('fill-opacity', (d) => {
+        // In the Final column, dim non-winners so the winner(s) read clearly.
+        // For STV multi-winner, every option in tally.winners gets the bright
+        // treatment.
+        if (d.roundIdx === FINAL_COL_IDX && !winners.has(d.optionId)) return 0.45;
+        return 1;
+      })
       .attr('stroke', (d) => {
-        const isFinalRound = d.roundIdx === roundsCount - 1;
-        if (isFinalRound && winners.has(d.optionId)) return '#1B3A5C';
+        // Final-column winner(s) get the dark-navy emphasis stroke. STV with
+        // multiple winners highlights every winner equivalently.
+        if (d.roundIdx === FINAL_COL_IDX && winners.has(d.optionId)) return '#1B3A5C';
         return '#FFFFFF';
       })
       .attr('stroke-width', (d) => {
-        const isFinalRound = d.roundIdx === roundsCount - 1;
-        if (isFinalRound && winners.has(d.optionId)) return 3;
+        if (d.roundIdx === FINAL_COL_IDX && winners.has(d.optionId)) return 3;
         return 1;
       });
 
-    // Node labels — only on first and last column to avoid clutter.
+    // Node labels — only on Initial (leftmost) and Final (rightmost) columns
+    // to avoid clutter in middle elimination rounds.
     nodeSel
-      .filter((d) => {
-        const isFirst = d.roundIdx === 0;
-        const isLast = d.roundIdx === roundsCount - 1;
-        return isFirst || isLast;
-      })
+      .filter((d) => d.roundIdx === -1 || d.roundIdx === FINAL_COL_IDX)
       .append('text')
-      .attr('x', (d) => (d.roundIdx === 0 ? d.x1 + 4 : d.x0 - 4))
+      .attr('x', (d) => (d.roundIdx === -1 ? d.x1 + 4 : d.x0 - 4))
       .attr('y', (d) => (d.y0 + d.y1) / 2)
       .attr('dy', '0.35em')
-      .attr('text-anchor', (d) => (d.roundIdx === 0 ? 'start' : 'end'))
+      .attr('text-anchor', (d) => (d.roundIdx === -1 ? 'start' : 'end'))
       .attr('font-size', 10)
       .attr('fill', '#2C3E50')
       .text((d) => {
@@ -397,12 +500,16 @@ export default function RCVSankeyChart({ tally, proposal }) {
           l.source === d || l.target === d ? 0.85 : 0.08
         );
         const rect = svgRef.current.getBoundingClientRect();
+        let roundLabel;
+        if (d.roundIdx === -1) roundLabel = 'Initial';
+        else if (d.roundIdx === FINAL_COL_IDX) roundLabel = 'Final';
+        else roundLabel = `Round ${d.roundIdx + 1}`;
         setTooltip({
           x: event.clientX - rect.left,
           y: event.clientY - rect.top - 10,
           kind: 'node',
           label: labelOf(d.optionId),
-          roundLabel: `Round ${d.roundIdx + 1}`,
+          roundLabel,
           value: d.count,
         });
       })
