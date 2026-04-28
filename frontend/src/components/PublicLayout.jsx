@@ -25,6 +25,12 @@ export default function PublicLayout({ children }) {
             >
               GitHub
             </a>
+            <Link to="/why" className="hover:text-[#2E75B6] hover:underline">
+              Why
+            </Link>
+            <Link to="/security" className="hover:text-[#2E75B6] hover:underline">
+              Security & Trust
+            </Link>
             <Link to="/privacy" className="hover:text-[#2E75B6] hover:underline">
               Privacy
             </Link>

@@ -31,6 +31,8 @@ import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Landing from './pages/Landing';
 import About from './pages/About';
+import Why from './pages/Why';
+import Security from './pages/Security';
 import Demo from './pages/Demo';
 
 function Layout({ children }) {
@@ -226,6 +228,8 @@ export default function App() {
         {/* Public marketing routes — no auth required, no Nav/EmailVerificationBanner */}
         <Route path="/" element={<Landing />} />
         <Route path="/about" element={<About />} />
+        <Route path="/why" element={<Why />} />
+        <Route path="/security" element={<Security />} />
         <Route path="/demo" element={<Demo />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
