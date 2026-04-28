@@ -214,6 +214,12 @@ export default function About() {
             >
               Security & Trust
             </Link>
+            <Link
+              to="/why"
+              className="inline-flex items-center px-5 py-2.5 bg-white text-[#1B3A5C] text-sm font-medium rounded-lg border border-gray-300 hover:border-[#2E75B6] hover:text-[#2E75B6] transition-colors"
+            >
+              The longer answer
+            </Link>
           </p>
         </Section>
       </article>
