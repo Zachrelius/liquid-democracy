@@ -482,6 +482,27 @@ Do this before EA events if visitor content from previous demos has accumulated 
 | `WORKERS` | No | `4` | Number of uvicorn worker processes |
 | `DEBUG` | No | `false` | Enable debug mode (never use in production) |
 | `LOG_LEVEL` | No | `INFO` | Logging level: DEBUG, INFO, WARNING, ERROR |
+| `POLIS_AUTH_TOKEN` | No | — | Bearer JWT for the hosted pol.is admin API (Phase 9). When unset, the platform uses the manual-creation fallback flow — admins create a Polis on pol.is manually and paste the conversation_id into the platform. See "pol.is API integration" below. |
+| `POLIS_API_BASE_URL` | No | `https://pol.is` | Base URL for the pol.is API. Override only for self-hosted Polis instances. |
+
+## pol.is API integration (Phase 9)
+
+The platform integrates with [pol.is](https://pol.is) for standalone deliberation artifacts. Per `phase9_polis_api_findings.md`, the hosted pol.is API uses **JWT-based authentication, not API keys**. Two prod-deploy paths:
+
+**Path A — Manual creation flow (v1 default; works without configuration).**
+- An org admin creates a conversation on `https://pol.is` themselves (using the pol.is admin UI), then pastes the `conversation_id` into the platform's create-Polis form.
+- Add seed statements through pol.is's admin UI as well.
+- The platform handles everything else: scope filtering, embed-iframe rendering, `data-xid` identity bridging, archival (platform-side state only — the conversation stays open on pol.is until the admin closes it there).
+- `POLIS_AUTH_TOKEN` can be left unset.
+
+**Path B — Programmatic creation (requires CompDemocracy admin token).**
+- Set `POLIS_AUTH_TOKEN` to a valid pol.is admin Bearer JWT.
+- The platform calls `POST /api/v3/conversations` to create the conversation, then loops over seed statements via `POST /api/v3/comments` with `is_seed=true`.
+- Archival calls `POST /api/v3/conversation/close`.
+- Data export proxies `GET /api/v3/dataExport`.
+- Auth tokens are obtained from a pol.is admin user session (OIDC/JWT-based — there is no public API-key endpoint). Reach out to `hello@compdemocracy.org` to ask about programmatic admin access for third-party platforms.
+
+**Failure handling.** If the pol.is API is unavailable during a programmatic Polis creation, `polis_service.py` raises `PolisAPIError` and the route is responsible for rolling back any partial platform-side rows — there will be no orphaned `polises` records on the platform side. Live participation-stats reads (`GET /api/v3/conversationStats`) fail soft to a "stats currently unavailable" badge so transient pol.is outages don't take down the Polis-detail page.
 
 ## Troubleshooting
 
