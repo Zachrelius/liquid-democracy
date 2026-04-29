@@ -1822,3 +1822,80 @@ For the next session — frontend admin pages: org switcher tree, sub-org admin 
 
 Branch still NOT merged to master.
 
+---
+
+## Phase 8.5 — Sub-Organizations — Session 3: Frontend Admin — 2026-04-29
+
+**Branch:** `phase-8.5/data-layer` (continuing — still NOT merged to master). Session 3 stacks 5 commits on top of Sessions 1+2's 15.
+
+### What shipped (Session 3)
+
+**Backend — sub-org proposal-creation permission helper.** `permissions.can_create_proposal_in_sub_org(db, user_id, sub_org)` is True if EITHER active SubOrgMembership with role moderator/admin/owner OR `is_sub_org_admin` (parent-org admin via Decision 6 implicit power). `routes/organizations.py` POST `/api/orgs/{slug}/proposals` now uses `Depends(require_org_membership)` + in-body dispatch on `sub_org_id`: sub-org-scoped path calls the new helper; parent-org-scoped path keeps the legacy `moderator+` check. **Resolves Session 2 tech debt #1.** Sub-org `member` (no elevated role) still cannot create proposals — they vote on existing ones, mirroring how parent-org proposal creation works. **Backend tests: 363 → 373 passing (+10).**
+
+403 detail wording for sub-org-scoped path: `"Sub-org moderator, admin, or owner role required to create proposals scoped to this sub-org (parent-org admin/owner also permitted via implicit power)."` Parent-org-scoped 403 still reads `"Moderator access required"` (unchanged).
+
+**Frontend — sub-org admin page family.** Six new pages under `/admin/sub-orgs/...` route family (separate from existing `/admin/*` parent-org pages):
+- `SubOrgList.jsx` — list + create form (parent-org admin)
+- `SubOrgSettings.jsx` — Identity / Visibility (`settings.private`) / Cross-scope (`settings.reject_non_member_delegations`) / Voting-methods override (with parent-inheritance placeholder, `get_org_config` walk semantic) / Sustained-majority override (5 keys, "inherit from parent" toggle per key) / Danger zone (delete with topic+proposal count guard, handles 409 toast)
+- `SubOrgMembers.jsx` — pending/active/suspended lists, invite-by-search of parent-org members, role-change dropdown, approve/deny/remove actions
+- `SubOrgProposals.jsx` — list + scope-locked create form (topic dropdown filtered to parent-org-wide + this sub-org's per Decision 3)
+- `SubOrgTopics.jsx` — list + scope-locked create + Promote-to-org-wide button (confirmation dialog → POST `{confirm:true}`)
+- `SubOrgList.jsx` ("create new sub-org" form for parent-org admin)
+
+Supporting:
+- `useSubOrg.js` hook — resolves `parentSlug`/`subSlug` from URL, fetches sub-org detail
+- `SubOrgErrorState.jsx` — friendly inline 403/404 panel; permission gating leans on the server (Decision 6 `is_sub_org_admin` is source of truth)
+
+**Frontend — org switcher tree + breadcrumb.** `Nav.jsx` flat switcher rewritten as a tree dropdown: parent + indented sub-orgs. When `currentOrg` is a sub-org, breadcrumb display + the legacy admin dropdown hides itself so users can't accidentally hit `/admin/settings` with a sub-org slug. Parent-org admins see "Sub-Organizations" entry under Admin → manage. `OrgContext.jsx` gains `subOrgsByParent` cache + `fetchSubOrgsFor(parentSlug, force?)` lazy-loader + `invalidateSubOrgs(parentSlug)`. Pure additions; no breaking changes to `useOrg` shape.
+
+**Frontend — scope selectors on existing forms.**
+- `Topics.jsx` (parent-org admin Topics page) — scope dropdown on create form (parent-org-wide default + sub-orgs the user is admin in); sub-org badge on rows; Promote-to-org-wide button on sub-org-scoped rows.
+- `ProposalManagement.jsx` — same scope dropdown; topic dropdown filters to in-scope topics; eligibility hint when sub-org scope selected ("Only [Sub-Org Name] members will be able to vote on this proposal.").
+
+**App.jsx** — six new routes for the sub-org admin route family. Each gated through `ProtectedRoute > OrgProvider > AdminOnlyRoute > Layout`. Permission gating is server-side (Decision 6 `is_sub_org_admin`); pages surface 403/404 inline rather than wrapper-redirect.
+
+**Suite R Preview** in `browser_testing_playbook.md` — R1-R15 verbatim from spec. Built but not run this session — Suite R requires Session 4's voter UX surface (delegation modal scope coverage, "your vote" cross-scope status, vote-flow graph orphan rendering, scope filter on voter lists).
+
+### Multi-persona local-dev verification
+
+Persona-flow verification was **NOT executed live this session** — browser permission for localhost was denied during the QA pass, and the parent dispatch defers Suite R to Session 4 anyway. Build verifies clean (1,150.80 kB JS / 314.46 kB gzipped — modest +51 kB raw vs Phase 8.1 for six new pages plus admin work). Server-side gating is the source of truth (Decision 6 `is_sub_org_admin` enforces 403 on unauthorized access; pages render `SubOrgErrorState` inline).
+
+**Expected behavior per persona** (to be confirmed in Session 4 prod sanity):
+
+| Persona | Org switcher | Admin controls | Notes |
+|---|---|---|---|
+| **alice** (parent admin, NOT in Engineering) | Sees `demo` + `Engineering Team` (Decision 6) | Full admin on demo + on Engineering Team via `/admin/sub-orgs/demo-engineering/*` | "manage" link appears next to Engineering in switcher |
+| **dave** (Engineering admin, parent-org member) | Sees `demo` + `Engineering Team` | Engineering admin pages reachable; parent-org admin pages 403 from server | Hides parent-org admin dropdown when scope is sub-org |
+| **carol** (Engineering member, non-admin) | Sees `demo` + `Engineering Team` | No admin dropdown; URL-jump to sub-org admin pages → server 403 → friendly inline error | |
+| **voter02** (parent-org member, not in Engineering) | Sees `demo`. Engineering Team **may** appear depending on Decision-7 default visibility (`settings.private=false` by default). | No admin controls | **Surface for Session 4:** when default-visible, voter UX needs read-only treatment (Session 4's territory). |
+
+### UX surprises / questions for Session 4
+
+1. **Decision 7 default visibility for non-members** (voter02 case). When voter02 sees Engineering Team in the switcher, picking it sets `currentOrg` to a sub-org she has no `user_role` in. Session 4 voter-side proposals/delegations pages need to render: (a) read-only badges on Engineering proposals in the voter list, (b) suppress Vote buttons, (c) show a "you're not a member of this sub-org" hint somewhere visible.
+2. **Switcher non-admin treatment.** Currently the same dropdown row is used for all sub-org viewers. The "manage" link appears only when admin, but for non-admin members on a private sub-org the `private` text-pill could feel redundant. Worth user-testing in Session 4.
+3. **Sustained-majority override row layout.** Stacks the inheritance hint inline with each toggle; works but gets dense with five keys. If user testing shows confusion, consider collapsing per-key controls under one "Customize" disclosure.
+
+### Session 4 prerequisites (frontend voter UX team)
+
+For the next (and final) session — frontend voter UX (Decision 10), Suite R browser tests, prod deploy + sanity.
+
+**Decision 10 touchpoints with API contract notes:**
+- **Delegation modal scope coverage indicator.** API: `GET /api/orgs/{slug}/sub-orgs` returns the parent's sub-org list; `GET /api/orgs/{slug}/sub-orgs/{sub_slug}/members` returns active members. To compute coverage for a candidate delegate, intersect their active sub-org memberships with the user's. No new endpoint needed; UI composition only.
+- **Cross-scope disclosure copy** in delegation creation flow. Implementation under-the-hood is per-topic delegation; the modal's "Apply to: ☑ All my scopes (default) / ☐ Only parent-org topics / ☐ Only [Sub-Org] topics" radio just chooses which topics get the delegation row created.
+- **Proposal-detail "your vote" status for scope mismatch.** When the proposal's `sub_org_id` is set and the user's delegate isn't a sub-org member, the existing `/results` payload already returns "not cast" for that voter; UI just needs new copy: "Your vote: not yet cast — your delegate Beth isn't in [Sub-Org Name]" with a link to set a specific delegate.
+- **Vote-flow graph orphan rendering.** Existing logic should handle this naturally (orphaned voter node with no incoming delegation edge); visual confirmation needed during QA.
+- **Scope filter on voter proposal/topic lists.** `GET /api/orgs/{slug}/proposals` and `/topics` already filter server-side per Decision 7; voter-side UI needs the toggle "everything I'm eligible for" (default) vs "current sub-org only" + the read-only badge for sub-org content visible to non-members.
+
+**Suite R (15 tests).** Listed in `browser_testing_playbook.md` Suite R Preview block. Cover R1-R15 against the demo seed (`Engineering Team` sub-org, dave admin, carol/voter01/voter02 members, alice as implicit-power parent-org admin).
+
+**Multi-persona prod sanity.** Verify the four personas exercise correctly on prod after Railway deploy. The Session 3 admin paths are rehearsed in spec but not live-tested locally; Session 4 prod sanity is where they get confirmed.
+
+**Known tech debt to surface in Session 4 closeout** (not yet logged elsewhere):
+- The `currentOrg` shape changes when scope is sub-org (carries `parent_org_id`). Pages that consume `currentOrg.user_role` may receive non-undefined values for sub-org-membership-roles vs parent-org-roles; check ProposalDetail / Delegations / Settings for any place that mixes scopes implicitly.
+
+### Session 3 commits on `phase-8.5/data-layer`
+
+`781b0f8` (sub-org proposal permission helper +10 tests), `02dfc8a` (sub-org admin page family — 6 new pages + hook + error component), `ca93017` (org switcher tree + sub-org admin routing), `97b1473` (scope selectors on Topics + ProposalManagement), `9475926` (Suite R Preview block), and the closeout commit for this PROGRESS entry.
+
+Branch still NOT merged to master.
+
