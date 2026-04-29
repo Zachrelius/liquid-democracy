@@ -78,7 +78,7 @@ This section is a start-to-finish walkthrough for deploying the public EA demo t
 
 4. Click **Deploy**. The first build will take 3-5 minutes (pip install on a fresh image is the slow step).
 5. Once deployed, open the service → **Settings** → **Networking** → **Generate Domain** so Railway assigns a public `*.up.railway.app` URL. This is your temporary backend URL for testing before DNS is live. Note it down.
-6. Check **Logs** for a successful startup: you should see `Ensuring base schema exists…`, `Fresh database detected — stamping alembic head.`, and `Starting application…`. If you see a traceback, paste it into `docker compose logs backend` locally to compare — most startup errors are env-var-related.
+6. Check **Logs** for a successful startup. On a brand-new database you should see `Fresh database detected — bootstrapping via create_all + stamp head.` then `Starting application…`. On a redeploy of an existing DB you should see `Alembic-stamped DB detected — applying pending migrations…` instead. If you see a traceback, paste it into `docker compose logs backend` locally to compare — most startup errors are env-var-related.
 
 #### Step 4 — Deploy the frontend
 
@@ -578,3 +578,43 @@ docker-compose logs backend | grep "request-id-here"
 **Symptoms:** persona picker cards fail with 404; `/api/auth/demo-users` also 404s.
 
 `IS_PUBLIC_DEMO` env var is missing or set to `false` on the backend service. Set it to `true` in Railway variables and redeploy. The gate lives in both endpoints; no code change is needed.
+
+---
+
+## PostgreSQL Smoke Harness
+
+**What:** `backend/scripts/pg_smoke.py` (Phase 8.6 Item 4). The standard pre-deploy check for any pass that touches the schema. Run it locally **before** merging a PR that adds an alembic revision.
+
+**Why:** the previous smoke pattern (`create_all` + `alembic stamp head`) tells alembic "you're already at HEAD" without ever running the new migration's DDL. That's why the Phase 8.5 deploy hit a 15-minute 502: the smoke harness verified the new code worked against the resulting schema, but it never exercised the alembic upgrade path that prod would actually run on top of an existing DB. The new harness fixes that gap.
+
+**What it does:**
+
+1. **Fresh-DB path** — spins up a postgres:16-alpine container, runs `Base.metadata.create_all` then `alembic stamp head`. Mirrors what `start.sh` does on a brand-new container. Verifies the fresh-deploy bootstrap doesn't break.
+2. **Upgrade-from-prior path** — spins up another container, stamps alembic at the **prior** revision (the migration immediately before the one being tested), then runs `alembic upgrade head` to apply the pass-under-test's migrations. This is the path that bit Phase 8.5; running it pre-deploy will surface collision-class bugs (and any other migration-ordering bug) loudly, with a real Postgres error rather than a green-stamp-head false pass.
+
+After each path, a spot-check verifies the resulting schema (key tables exist, `alembic_version` matches head). Tear-down is automatic.
+
+**Usage** (from `backend/`):
+
+```bash
+# Both modes (recommended for any pass that adds an alembic revision)
+.venv/Scripts/python.exe scripts/pg_smoke.py
+
+# Pin a specific prior revision (default is c5f3a2b81e07 = Phase 8 sustained-majority)
+.venv/Scripts/python.exe scripts/pg_smoke.py --prior-revision <hex>
+
+# Single mode only
+.venv/Scripts/python.exe scripts/pg_smoke.py --mode fresh
+.venv/Scripts/python.exe scripts/pg_smoke.py --mode upgrade
+
+# Reuse an externally-managed PG instance instead of Docker (caller provides empty DB)
+.venv/Scripts/python.exe scripts/pg_smoke.py --reuse-pg-url postgresql://user:pw@host:5432/db
+```
+
+**Requires:** Docker on PATH (or `--reuse-pg-url`). Exit code 0 == PASS for all requested modes. Non-zero == FAIL with traceback.
+
+**Adopt-this-pattern checklist for the next pass that adds a migration:**
+
+1. Bump `--prior-revision`'s default in `pg_smoke.py` to the current head (i.e., the revision that is now the "prior" for your new migration).
+2. Add a column / table check in `_smoke_spot_check` that asserts your pass's schema additions actually landed.
+3. Run `pg_smoke.py` with both modes locally before opening the PR. Both must PASS. If `upgrade` fails, the migration has an ordering bug — fix it before deploy, do not ship-and-pray.
