@@ -2338,6 +2338,40 @@ Not implemented as of 2026-04-29. Phase 7C.3 + 8.1 verifications used the base64
 
 ---
 
+## Suite R Preview — Phase 8.5 Sub-Organizations (Session 4)
+
+Suite R will be 15 browser-driven tests covering the full sub-org flow end-to-end.
+Built but not run this session (frontend voter UX is Session 4 territory; Session 3
+shipped admin-side UI only). Test list per the spec:
+
+- **R1** — Parent-org admin creates a sub-org via the UI; new sub-org appears in nav.
+- **R2** — Sub-org admin invites a parent-org member; member sees invite, accepts, becomes sub-org member.
+- **R3** — Member-requested join flow.
+- **R4** — Topic creation with sub-org scope; topic appears only for sub-org members.
+- **R5** — "Promote to org-wide" action; topic now visible to all parent-org members.
+- **R6** — Proposal creation with sub-org scope; vote-eligibility limited to sub-org members.
+- **R7** — Delegate selection modal shows scope coverage indicator; cross-scope disclosure appears when delegate doesn't share all scopes.
+- **R8** — Within-sub-org "global" delegation default creates correct delegation set (all eligible topics, one delegate); narrowing options correctly subset.
+- **R9** — Cross-scope inheritance — sub-org member with non-member delegate sees correct "your vote" status on sub-org proposal (chain behavior, not silent failure).
+- **R10** — Visibility default — parent-org member can see sub-org proposal in read-only mode; cannot vote.
+- **R11** — Visibility opt-out — sub-org admin flips privacy flag, parent-org-only members no longer see sub-org proposals.
+- **R12** — Cross-scope delegation opt-out — sub-org admin flips strict-in-group flag, non-member delegations stop applying.
+- **R13** — Sustained-majority sub-org override — sub-org enables it independently of parent.
+- **R14** — Voting method sub-org override — sub-org enables RCV when parent doesn't.
+- **R15** — Vote-flow graph renders correctly when scope mismatch produces an orphaned-voter node.
+
+Demo seed (already in place, see Session 1 PROGRESS notes): parent org `demo` with
+sub-org `Engineering Team` (slug `demo-engineering`). Members: `dave` (sub-org admin),
+`carol`, `voter01`, `voter02`. `alice` is parent-org admin but NOT a member of
+Engineering Team — she relies on Decision 6 implicit power.
+
+Session 3 admin-side flows are exercisable now via local dev (alice + dave personas);
+Suite R itself runs in Session 4 once voter UX (delegation modal scope coverage,
+"your vote" cross-scope status, vote-flow graph orphan rendering, scope filter on
+voter lists) lands.
+
+---
+
 ## Extending This Document
 
 When new phases are completed, add new test suites to this document following the same format:
