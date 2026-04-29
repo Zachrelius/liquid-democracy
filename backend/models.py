@@ -40,16 +40,47 @@ class Organization(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     join_policy: Mapped[str] = mapped_column(String, default="approval_required")  # invite_only, approval_required, open
     settings: Mapped[Optional[dict]] = mapped_column(JSON, default=dict)  # org-specific defaults
+    # Phase 8.5: nullable self-referential FK. NULL = parent org (top-level);
+    # non-NULL = sub-org whose parent has parent_org_id IS NULL. Two-level
+    # enforcement is at the API layer, not the schema (Decision 1).
+    parent_org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
     # Relationships
     memberships: Mapped[list["OrgMembership"]] = relationship("OrgMembership", back_populates="organization", cascade="all, delete-orphan")
     invitations: Mapped[list["Invitation"]] = relationship("Invitation", back_populates="organization", cascade="all, delete-orphan")
-    proposals: Mapped[list["Proposal"]] = relationship("Proposal", back_populates="organization")
-    topics: Mapped[list["Topic"]] = relationship("Topic", back_populates="organization")
-    delegate_profiles: Mapped[list["DelegateProfile"]] = relationship("DelegateProfile", back_populates="organization")
+    proposals: Mapped[list["Proposal"]] = relationship(
+        "Proposal", back_populates="organization", foreign_keys="Proposal.org_id"
+    )
+    topics: Mapped[list["Topic"]] = relationship(
+        "Topic", back_populates="organization", foreign_keys="Topic.org_id"
+    )
+    delegate_profiles: Mapped[list["DelegateProfile"]] = relationship(
+        "DelegateProfile", back_populates="organization", foreign_keys="DelegateProfile.org_id"
+    )
     delegate_applications: Mapped[list["DelegateApplication"]] = relationship("DelegateApplication", back_populates="organization")
+    # Phase 8.5: parent ↔ sub-orgs.
+    parent_org: Mapped[Optional["Organization"]] = relationship(
+        "Organization",
+        remote_side="Organization.id",
+        back_populates="sub_orgs",
+        foreign_keys=[parent_org_id],
+    )
+    sub_orgs: Mapped[list["Organization"]] = relationship(
+        "Organization",
+        back_populates="parent_org",
+        foreign_keys=[parent_org_id],
+        cascade="all, delete-orphan",
+    )
+    sub_org_memberships: Mapped[list["SubOrgMembership"]] = relationship(
+        "SubOrgMembership",
+        back_populates="sub_organization",
+        cascade="all, delete-orphan",
+        foreign_keys="SubOrgMembership.sub_org_id",
+    )
 
 
 class OrgMembership(Base):
@@ -65,6 +96,30 @@ class OrgMembership(Base):
 
     user: Mapped["User"] = relationship("User", back_populates="org_memberships")
     organization: Mapped["Organization"] = relationship("Organization", back_populates="memberships")
+
+
+class SubOrgMembership(Base):
+    """Phase 8.5: a user's membership in a specific sub-org.
+
+    Parallel to OrgMembership for the parent-org membership. A user can belong
+    to multiple sub-orgs of the same parent (Decision 2). Sub-org membership is
+    OPT-IN — being a parent-org member does not auto-create rows here.
+    """
+    __tablename__ = "sub_org_memberships"
+    __table_args__ = (UniqueConstraint("user_id", "sub_org_id", name="uq_sub_org_membership_user_sub_org"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
+    sub_org_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String, default="member")  # member, moderator, admin, owner
+    status: Mapped[str] = mapped_column(String, default="active")  # active, suspended, pending_approval
+    joined_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+    user: Mapped["User"] = relationship("User", back_populates="sub_org_memberships")
+    sub_organization: Mapped["Organization"] = relationship(
+        "Organization", back_populates="sub_org_memberships",
+        foreign_keys=[sub_org_id],
+    )
 
 
 class Invitation(Base):
@@ -160,6 +215,9 @@ class User(Base):
     org_memberships: Mapped[list["OrgMembership"]] = relationship(
         "OrgMembership", back_populates="user"
     )
+    sub_org_memberships: Mapped[list["SubOrgMembership"]] = relationship(
+        "SubOrgMembership", back_populates="user"
+    )
 
 
 class Topic(Base):
@@ -170,8 +228,17 @@ class Topic(Base):
     description: Mapped[str] = mapped_column(String, nullable=False, default="")
     color: Mapped[str] = mapped_column(String, nullable=False, default="#6366f1")
     org_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("organizations.id"), nullable=True, index=True)
+    # Phase 8.5: NULL = parent-org-wide (default); non-NULL = scoped to that sub-org.
+    sub_org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=True, index=True
+    )
 
-    organization: Mapped[Optional["Organization"]] = relationship("Organization", back_populates="topics")
+    organization: Mapped[Optional["Organization"]] = relationship(
+        "Organization", back_populates="topics", foreign_keys=[org_id]
+    )
+    sub_organization: Mapped[Optional["Organization"]] = relationship(
+        "Organization", foreign_keys=[sub_org_id]
+    )
     proposal_topics: Mapped[list["ProposalTopic"]] = relationship(
         "ProposalTopic", back_populates="topic"
     )
@@ -192,6 +259,10 @@ class Proposal(Base):
     body: Mapped[str] = mapped_column(Text, nullable=False, default="")
     author_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     org_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("organizations.id"), nullable=True, index=True)
+    # Phase 8.5: NULL = parent-org-wide (default); non-NULL = scoped to that sub-org.
+    sub_org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=True, index=True
+    )
     status: Mapped[str] = mapped_column(
         Enum(
             "draft", "deliberation", "voting", "passed", "failed",
@@ -220,7 +291,12 @@ class Proposal(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now, nullable=False)
 
     author: Mapped["User"] = relationship("User", back_populates="proposals")
-    organization: Mapped[Optional["Organization"]] = relationship("Organization", back_populates="proposals")
+    organization: Mapped[Optional["Organization"]] = relationship(
+        "Organization", back_populates="proposals", foreign_keys=[org_id]
+    )
+    sub_organization: Mapped[Optional["Organization"]] = relationship(
+        "Organization", foreign_keys=[sub_org_id]
+    )
     proposal_topics: Mapped[list["ProposalTopic"]] = relationship(
         "ProposalTopic", back_populates="proposal", cascade="all, delete-orphan"
     )
@@ -383,13 +459,23 @@ class DelegateProfile(Base):
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     topic_id: Mapped[str] = mapped_column(String, ForeignKey("topics.id"), nullable=False, index=True)
     org_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("organizations.id"), nullable=True, index=True)
+    # Phase 8.5: NULL = parent-org-wide (default); non-NULL = profile scoped to that sub-org.
+    # Stored explicitly (rather than derived from topic) for query efficiency per spec.
+    sub_org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=True, index=True
+    )
     bio: Mapped[str] = mapped_column(Text, nullable=False, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
     user: Mapped["User"] = relationship("User", back_populates="delegate_profiles")
     topic: Mapped["Topic"] = relationship("Topic", back_populates="delegate_profiles")
-    organization: Mapped[Optional["Organization"]] = relationship("Organization", back_populates="delegate_profiles")
+    organization: Mapped[Optional["Organization"]] = relationship(
+        "Organization", back_populates="delegate_profiles", foreign_keys=[org_id]
+    )
+    sub_organization: Mapped[Optional["Organization"]] = relationship(
+        "Organization", foreign_keys=[sub_org_id]
+    )
 
 
 class FollowRequest(Base):
