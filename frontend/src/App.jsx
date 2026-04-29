@@ -26,6 +26,12 @@ import ProposalManagement from './pages/admin/ProposalManagement';
 import Topics from './pages/admin/Topics';
 import DelegateApplications from './pages/admin/DelegateApplications';
 import Analytics from './pages/admin/Analytics';
+// Phase 8.5 — sub-org admin route family
+import SubOrgList from './pages/admin/SubOrgList';
+import SubOrgSettings from './pages/admin/SubOrgSettings';
+import SubOrgMembers from './pages/admin/SubOrgMembers';
+import SubOrgProposals from './pages/admin/SubOrgProposals';
+import SubOrgTopics from './pages/admin/SubOrgTopics';
 import VotingMethodsHelp from './pages/VotingMethodsHelp';
 import SustainedMajorityHelp from './pages/SustainedMajorityHelp';
 import Privacy from './pages/Privacy';
@@ -210,6 +216,67 @@ export default function App() {
               </OrgProvider>
             </ProtectedRoute>
           }
+        />
+
+        {/* Phase 8.5 — Sub-Organization admin routes.
+            Permission gating: server-side `is_sub_org_admin` (Decision 6
+            implicit power) is the source of truth. Each page surfaces 403/404
+            inline via SubOrgErrorState rather than redirecting from a wrapper. */}
+        <Route
+          path="/admin/sub-orgs"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <AdminOnlyRoute>
+                  <Layout><SubOrgList /></Layout>
+                </AdminOnlyRoute>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/sub-orgs/:sub_slug/settings"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><SubOrgSettings /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/sub-orgs/:sub_slug/members"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><SubOrgMembers /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/sub-orgs/:sub_slug/proposals"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><SubOrgProposals /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/sub-orgs/:sub_slug/topics"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><SubOrgTopics /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/sub-orgs/:sub_slug"
+          element={<Navigate to="settings" replace />}
         />
 
         {/* Public — help pages are purely informational and may be linked from
