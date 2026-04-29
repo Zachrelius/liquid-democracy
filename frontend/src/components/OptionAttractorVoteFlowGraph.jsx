@@ -737,7 +737,9 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
         }
         return <p>Abstained (no options selected)</p>;
       }
-      const labels = approvals.map((id) => optionMap.get(id)?.label || id);
+      const labels = approvals
+        .map((id) => optionMap.get(id)?.label || id)
+        .sort((a, b) => a.localeCompare(b));
       return (
         <div>
           <p className="font-medium">

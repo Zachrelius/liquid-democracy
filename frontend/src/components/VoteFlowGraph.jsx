@@ -115,7 +115,12 @@ function TallySummary({ data, proposal, tally }) {
     }
     const topLabel = topId ? optionLabel.get(topId) || topId : null;
     const winnerLabels =
-      winners.length > 1 ? winners.map((id) => optionLabel.get(id) || id).join(', ') : null;
+      winners.length > 1
+        ? winners
+            .map((id) => optionLabel.get(id) || id)
+            .sort((a, b) => a.localeCompare(b))
+            .join(', ')
+        : null;
 
     // Sort options by approval count for breakdown.
     const breakdown = (data.options || [])

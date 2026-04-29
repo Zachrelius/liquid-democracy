@@ -233,7 +233,7 @@ export default function RCVResultsPanel({ tally, proposal }) {
               {(round.elected || []).length > 0 && (
                 <p className="text-xs text-[#2D8A56]">
                   Elected this round:{' '}
-                  <strong>{round.elected.map(labelOf).join(', ')}</strong>
+                  <strong>{round.elected.map(labelOf).sort((a, b) => a.localeCompare(b)).join(', ')}</strong>
                 </p>
               )}
 
