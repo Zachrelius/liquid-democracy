@@ -58,10 +58,14 @@ function nodeKey(roundIdx, optionId) {
 
 /**
  * Derives the visible column list from observed option_counts transitions.
- * Returns an array of { rawRoundIdx, electedNames, eliminatedNames } for
- * rounds that have at least one observable event (election by quota crossing or
- * elimination by count drop to zero). Rounds with no event are omitted —
- * collapse no-event rounds, pyrankvote bundles events unevenly.
+ * Returns { columns, crossedQuota } where:
+ *   - columns: array of { rawRoundIdx, elected, eliminated } for rounds that
+ *     have at least one observable event (election by quota crossing or
+ *     elimination by count drop to zero). Rounds with no event are omitted —
+ *     collapse no-event rounds, pyrankvote bundles events unevenly.
+ *   - crossedQuota: Set<optionId> of options that crossed quota in any round.
+ *     Used by the Final-column header to flag halt-winners (winners who never
+ *     crossed quota — STV terminated with N seats and N candidates remaining).
  *
  * rawRoundIdx maps back to tally.rounds[r].option_counts for slab math.
  *
@@ -69,7 +73,9 @@ function nodeKey(roundIdx, optionId) {
  * For IRV, numWinners = 1, so quota = totalBallots / 2.
  */
 export function deriveDisplayColumns(tally) {
-  if (!tally || !Array.isArray(tally.rounds) || tally.rounds.length === 0) return [];
+  if (!tally || !Array.isArray(tally.rounds) || tally.rounds.length === 0) {
+    return { columns: [], crossedQuota: new Set() };
+  }
   const rounds = tally.rounds;
   const totalBallots = tally.total_ballots_cast || 0;
   const numWinners = tally.num_winners || 1;
@@ -77,7 +83,7 @@ export function deriveDisplayColumns(tally) {
 
   const crossedQuota = new Set(); // option IDs that have crossed quota in prior columns
 
-  const result = [];
+  const columns = [];
 
   for (let toIdx = 0; toIdx < rounds.length; toIdx++) {
     // For toIdx=0 (Round 0), prev = Round 0 itself (Initial mirrors it identically).
@@ -103,11 +109,11 @@ export function deriveDisplayColumns(tally) {
     }
 
     if (elected.length > 0 || eliminated.length > 0) {
-      result.push({ rawRoundIdx: toIdx, elected, eliminated });
+      columns.push({ rawRoundIdx: toIdx, elected, eliminated });
     }
   }
 
-  return result;
+  return { columns, crossedQuota };
 }
 
 /**
@@ -532,12 +538,18 @@ export default function RCVSankeyChart({ tally, proposal }) {
 
     // Build a map from rawRoundIdx -> event label, derived from observed
     // option_counts transitions (not pyrankvote metadata).
-    const displayCols = deriveDisplayColumns(tally);
+    const { columns: displayCols, crossedQuota } = deriveDisplayColumns(tally);
     const eventByRound = new Map(
       displayCols.map(({ rawRoundIdx, elected, eliminated }) => {
         const parts = [];
-        if (elected.length > 0) parts.push(`✓ ${elected.map(labelOf).join(', ')}`);
-        if (eliminated.length > 0) parts.push(`✗ ${eliminated.map(labelOf).join(', ')}`);
+        if (elected.length > 0) {
+          const electedLabels = elected.map(labelOf).sort((a, b) => a.localeCompare(b));
+          parts.push(`✓ ${electedLabels.join(', ')}`);
+        }
+        if (eliminated.length > 0) {
+          const eliminatedLabels = eliminated.map(labelOf).sort((a, b) => a.localeCompare(b));
+          parts.push(`✗ ${eliminatedLabels.join(', ')}`);
+        }
         return [rawRoundIdx, { label: parts.join(' · '), hasElected: elected.length > 0, hasEliminated: eliminated.length > 0 }];
       })
     );
@@ -570,6 +582,29 @@ export default function RCVSankeyChart({ tally, proposal }) {
           .attr('font-size', 11)
           .attr('font-weight', 600)
           .attr('fill', '#1B3A5C');
+
+        // Phase 8.1 Item 5: STV halt-winner annotation. Winners that never
+        // crossed quota (the algorithm terminated with N seats and N
+        // candidates remaining, none having reached the quota) get the
+        // dark-border highlight on their Final-column slab but no event
+        // column explaining when/why. Add a small italic annotation below
+        // the "Final" header naming those winners.
+        const winnersList = Array.isArray(tally?.winners) ? tally.winners : [];
+        const haltWinners = winnersList.filter((w) => !crossedQuota.has(w));
+        if (haltWinners.length > 0) {
+          const haltLabels = haltWinners
+            .map(labelOf)
+            .sort((a, b) => a.localeCompare(b));
+          roundLabelG
+            .append('text')
+            .text(`${haltLabels.join(', ')} (seat filled by remaining-candidate)`)
+            .attr('x', cx)
+            .attr('y', PADDING.top - ELIM_LABEL_PX + 4)
+            .attr('text-anchor', 'middle')
+            .attr('font-size', 9)
+            .attr('font-style', 'italic')
+            .attr('fill', '#6B7280');
+        }
         return;
       }
 
