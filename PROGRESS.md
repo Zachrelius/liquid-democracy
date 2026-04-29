@@ -2005,3 +2005,105 @@ On master:
 
 The 25-commit feature branch (Sessions 1-4) is preserved at `origin/phase-8.5/data-layer`.
 
+---
+
+## Phase 8.6 + Phase 7D — Combined Cleanup Pass — 2026-04-29
+
+**Combined dispatch closing six items across two specs.** Phase 8.6 carries forward four items from the Phase 8.5 closeout (topic visibility filter, demo seed, deployment ordering, PG smoke pattern). Phase 7D fixes the proposals list page rendering for approval/RCV/STV — a pre-existing gap since multi-option voting shipped in Phase 7. Single deploy, six commits on master.
+
+### What shipped
+
+**Phase 8.6 Item 1 — `/api/topics` Decision-3 visibility filter.** Phase 8.5 Session 4 prod sanity flagged voter02 (treated as parent-org-only at the time, though she's actually an Engineering member per the seed) seeing the Engineering Practices topic in `GET /api/topics`. Diagnosis: the Phase 8.5 Session 2 visibility filter was correctly applied to the org-scoped `/api/orgs/{slug}/topics` endpoint, but the unscoped global `GET /api/topics` in `routes/topics.py` (used by personal Settings/Delegations pages when no `currentOrg` is set) was never extended.
+
+Fix mirrors the Session 2 pattern: a topic is visible only if `topic.sub_org_id IS NULL` OR the user is an active SubOrgMembership member of `topic.sub_org_id` OR the user is parent-org admin/owner of `topic.org_id` (Decision 6). Anonymous callers (no auth) get parent-org-wide topics only.
+
+5 new tests in `TestTopicVisibilityDecision3` covering the four spec cases plus the anonymous default. Backend tests **373 → 378 passing**.
+
+Browser-driven prod verification with frank as the canonical parent-org-only persona: 6 topics visible (Engineering Practices NOT in the set). alice/dave/carol all see 7 topics (correctly).
+
+**Phase 8.6 Item 2 — voter02 Economy delegation in seed.** One-line additive `_set_delegation(db, extra_users[1], econ_bob, economy)` in `seed_data.py`'s parent-org block. The `_set_delegation` helper is skip-if-exists on `(delegator_id, topic_id)`, so the seed re-runs additively on prod via the Phase 7C.1 idempotent pattern.
+
+After deploy, voter02's `/api/proposals/{id}/my-vote` on the trunk-based-development proposal returns:
+```
+"message": "Your delegate Bob the Economist has not voted. Chain behavior: accept_sub."
+```
+This is the canonical Decision-8 cross-scope delegation case — engine resolves econ_bob via Economy (Phase 8.5 Session 4 wired Economy as a relevance topic on the proposal), detects he has no ballot (not an Engineering member, excluded by `eligible_voter_ids_for_proposal`), accept_sub fallback fires. **Suite R9 status: BLOCKED → PASS** (`browser_testing_playbook.md` updated).
+
+**Phase 8.6 Item 3 — `start.sh` migration ordering.** Phase 8.5's 15-minute 502 incident came from `create_tables()` running before `alembic upgrade head` — when a deploy adds new tables, `create_tables` builds them from the models, then alembic's `create_table` op collides. The Phase 8.5 hot-fix `b1ab5db` patched the specific migration to be idempotent; Item 3 fixes the underlying ordering so future migrations don't need that workaround.
+
+**Decision: keep `create_tables()` but gate it behind the fresh-DB ("no alembic stamp") branch.** Reasoning: the alembic chain's base revision (`58de3df8727f`) does `ALTER TABLE users ADD COLUMN user_type` and creates `audit_log` — it assumes Phase 1/2 tables already exist (the chain was added post-hoc). So `alembic upgrade head` from a truly empty DB is impossible without `create_tables()` first. Removing it entirely would break first-time deploys.
+
+The collision came from running `create_tables` UNCONDITIONALLY before alembic. The fix runs it only on the fresh-DB branch where it's the bootstrap mechanism alembic depends on. On existing-DB branches, alembic upgrade head is the sole authority. Comment in `start.sh` documents the invariant and references the b1ab5db incident.
+
+**Phase 8.6 Item 4 — durable PG smoke harness pattern.** New `backend/scripts/pg_smoke.py` parameterized by `--mode {fresh, upgrade, both}`, `--prior-revision`, `--reuse-pg-url`. The `upgrade` mode is what was missing in Sessions 1-2's PG smokes — it exercises the actual production deployment path (alembic upgrade from a partial-schema state shaped like what `create_tables` would have built), not just `create_all + stamp head` from an empty DB. Both modes PASS against the current Phase 8.5 + 8.6 codebase.
+
+Pattern documented in `DEPLOYMENT.md` with an adopt-checklist for future passes. Old `phase8_5_pg_smoke_session2.py` left in place per spec.
+
+Surfaced limitation (in `pg_smoke.py` docstring): the `upgrade` mode uses `create_all + stamp <prior>` rather than fully replaying the chain, because the chain's base assumes pre-existing tables. So this harness tests "can the new migration apply against partial-schema state mimicking what `create_tables` would have built?" — the bug class that bit us in Phase 8.5. A fully-replayed chain would require rewriting early migrations to be self-sufficient; future cleanup pass.
+
+**Phase 7D — Proposals list multi-option rendering.** Diagnostic step (required before code per spec, mirroring 7C.2/7C.3 discipline): exercised `/api/proposals/{id}/results` for one proposal of each ballot type and documented field shape in `phase7D_diagnostic.md`. **No backend changes needed** — every field the card reads is already on the existing endpoint. Findings:
+- Binary: `tally.{yes, no, abstain, votes_cast, total_eligible}`
+- Approval: `tally.option_approvals[option_id]` over `tally.votes_cast` (independent per-option)
+- RCV/STV: `tally.rounds[0].option_counts[option_id]` over `tally.votes_cast` (first-choice share)
+- Winners: `tally.winners[]` (array of option IDs) for all multi-option methods
+- Tie state: `tally.tied` (boolean) + `tally.tie_resolution`
+
+Implementation:
+- New `frontend/src/components/MultiOptionResultBar.jsx` — takes `[{label, percentage, isWinner}]` sorted count-descending by caller; renders independent horizontal bars (NOT normalized to 100% — approval voting legitimately sums to >100%); winner rows get the navy `#1B3A5C` highlight matching RCVSankeyChart Final-column styling.
+- `Proposals.jsx` ProposalCard refactored to branch on `voting_method`: binary unchanged (regression-safe); approval/RCV/STV use the new component with method-appropriate copy ("Winner: {label}" / "Winners: ..." / "Tied: ..." for closed; per-method "Your vote" line — "{n} options approved" / "ranked {n} of {m} options").
+- `StatusBadge.jsx` accepts an optional `votingMethod` prop. Closed multi-option proposals render "Decided" instead of "passed/failed". Binary unchanged. Other call sites that don't pass the prop fall through to legacy labels — no regression.
+
+Bar order: count-descending for all multi-option methods. Don't preserve `display_order` on the list-page summary — "who's leading right now" intuition wins. Detail page is where authoritative ordering lives.
+
+Tied closed proposals: all winner rows get `isWinner=true` so the bars and the "Tied: a, b" header are visually consistent.
+
+Bundle: 1,158.56 → 1,161.72 kB JS (+3.16 kB raw); 314.46 → **317.65 kB gzipped** (+3.19 kB).
+
+### Browser-driven prod verification (Phase 7D)
+
+Bundle `index-Kg8m5C0g.js` live. Verified card rendering for one proposal of each ballot type by inspecting `a[href^="/proposals/"]` innerText:
+
+| Type | Proposal | Verified |
+|---|---|---|
+| Binary (open) | Engineering Team — Adopt Trunk-Based Development | "67% Yes·33% No·0% Abstain — 3 of 4 votes cast — Your vote: Not cast" |
+| Approval (open) | Community Garden Location | "Riverside Park 59% / School Grounds 59% / Rooftop Gardens 48% / Downtown Lot 31%" — sums to 197% (NOT normalized) — "Your vote: 2 options approved" |
+| Approval (closed, tied) | Office Renovation Style | "Decided — Tied: Modern Minimalist, Biophilic Design — Modern Minimalist 62% / Biophilic Design 62% / Industrial Chic 46%" |
+| IRV (closed) | New Office Coffee Vendor | "Decided — Winner: Cafe Verde — Cafe Verde 41% / Coffee Republic 35% / Bean & Brew 24%" |
+| STV (closed) | Steering Committee — Two New Members | "Decided — Winners: Aria Chen, Boris Patel — Aria Chen 38% / Boris Patel 24% / Devon Park 19% / Cara Singh 10% / Eli Rojas 10%" |
+
+R4 (open RCV) is PASS-by-source — current demo seed has no open ranked_choice proposal. Code path is identical to closed RCV minus the winner header.
+
+Captured in `test_results/phase7D_screenshots/README.md` with rendered card text and per-acceptance-criteria status.
+
+### Phase 8.6 commit list
+
+On master, building on Phase 8.5's `9b826d7`:
+
+- `05dec32` — Item 1: `/api/topics` Decision-3 filter (5 tests)
+- `83b2bc0` — Item 2: voter02 Economy delegation in seed
+- `41b45de` — Item 3: gate `create_tables()` to fresh-DB-only path
+- `000fe70` — Item 4: durable PG smoke harness + DEPLOYMENT.md docs
+- `2a35cb3` — Phase 7D diagnostic file
+- `9204d17` — Phase 7D ProposalCard refactor + MultiOptionResultBar
+
+### Discoveries / corrections to prior assumptions
+
+- **voter02 is an Engineering Team member**, not a parent-org-only member. The Phase 8.5 Session 4 prod sanity verification report described her as parent-org-only, but the seed adds her as `extra_users[1]` to Engineering Team in Phase 8.5 Session 1. Re-running the Item 1 verification with `frank` (the actual parent-org-only DEMO_USERNAMES persona) confirms the filter works. The R10/R11 Decision-7 default-visibility tests should target frank, not voter02; updating Suite R metadata for future passes.
+- **Phase 8.5 Session 4 closeout flagged "Decision 3 sub-org topic visibility filter is incomplete on the topics list endpoint"** — diagnosis was right, but the leaking endpoint was the unscoped global `/api/topics`, not the org-scoped `/api/orgs/{slug}/topics`. Session 2's filter on the org-scoped endpoint had been correct all along. The unscoped endpoint is the one personal pages hit when no `currentOrg` is set — that's where voter02 was actually seeing the topic.
+
+### New tech debt logged
+
+1. `phase8_5_pg_smoke_session2.py` is now superseded by the durable `pg_smoke.py` but not deleted. Lead can deprecate or delete in a follow-up.
+2. `routes/topics.py POST /api/topics` is unaware of the Phase 8.5 `sub_org_id` schema (admin-only, untested in this pass). A future read-write hardening pass might want to consolidate the unscoped endpoints under their org-scoped equivalents and remove `routes/topics.py` entirely.
+3. `pg_smoke.py` upgrade-from-prior mode uses `create_all + stamp <prior>` rather than fully replaying the chain. Switching to fully replayed requires rewriting the chain's early base migrations to be self-sufficient. Documented in script docstring.
+4. Pre-existing `react-hooks/set-state-in-effect` lint warnings in 3+ pages (Proposals, Analytics, Members, others) — every data-fetch effect calling `setLoading(true)` synchronously trips the rule on the new ESLint version. Worth a small dedicated cleanup pass.
+5. `MultiOptionResultBar` displays all options uncapped — proposals with many options grow the card tall. Spec didn't request a cap; the component exposes an optional `maxBars` prop unset by default.
+6. `option_labels` is also returned on `tally`, duplicating `proposal.options[].label`. Phase 7D uses `proposal.options` per spec; consolidating would simplify on a future pass.
+7. `Demo.jsx` persona-list UI is narrower than `/api/auth/demo-users` returns — voter02 isn't surfaced as a quick-login button despite being in `DEMO_USERNAMES`. Limited the Item 2 prod verification to backend + source review for the UI cross-scope copy.
+
+### Pass-summary
+
+**Phase 8.6 + Phase 7D shipped clean.** Backend tests 373 → 378 (+5). Bundle gzip +3.19 kB. Six commits on master. Suite R9 closed (BLOCKED → PASS). Item 3's deployment ordering fix is the highest-blast-radius change — verified on PG with both fresh-DB and upgrade-from-prior paths via the new `pg_smoke.py` harness, deploy applied cleanly with no 502 incident.
+
+Live: `https://www.liquiddemocracy.us` bundle `index-Kg8m5C0g.js`.
+
