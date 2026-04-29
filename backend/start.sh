@@ -23,5 +23,16 @@ if [ "${IS_PUBLIC_DEMO}" = "true" ]; then
     python seed_if_empty.py
 fi
 
+# Phase 8 — Sustained-Majority background worker.
+# Runs as a side process; multi-instance protection lives in the worker
+# itself via SUSTAINED_MAJORITY_WORKER_INSTANCE_ID. Disable entirely with
+# SUSTAINED_MAJORITY_WORKER_DISABLE=true.
+if [ "${SUSTAINED_MAJORITY_WORKER_DISABLE}" != "true" ]; then
+    echo "Starting sustained-majority worker…"
+    python -m sustained_majority_worker &
+    SM_WORKER_PID=$!
+    echo "Sustained-majority worker PID: ${SM_WORKER_PID}"
+fi
+
 echo "Starting application…"
 exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS:-4}

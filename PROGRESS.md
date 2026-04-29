@@ -1436,3 +1436,122 @@ Railway auto-deploy on push. Post-deploy verification:
 2. **Programmatic tooltip QA on graph circle nodes.** Synthetic mouseenter doesn't reliably expose the React-rendered tooltip element on the OptionAttractor / Binary graphs (the d3-driven Sankey tooltip handles it because d3.on attaches native handlers; React's render-state tooltip doesn't update from synthetic events). For future polish-pass QA we either accept source review for these, build a programmatic hover helper that uses React Testing Library's pointer simulation, or use a real headless-browser actuator. Not blocking.
 3. **Defensive upload-server starter.** First-run flake with two listeners on the same port can return silent 500s. Future phases should either pkill stragglers before starting or use a fixed-port-bind-with-error pattern that fails loudly.
 
+---
+
+## Phase 8 — Sustained-Majority Voting Windows (opt-in) — 2026-04-28
+
+**Goal:** Ship sustained-majority voting windows as a fully configurable, default-off opt-in governance feature. Org admins choose whether their org wants the regime; proposal authors can override per-proposal where the org allows. All five configuration keys default to off / threshold-equivalent / fail-safe, so existing orgs see zero behavior change until an admin flips a switch.
+
+### What shipped
+
+**Schema migration (`c5f3a2b81e07_phase_8_sustained_majority.py`):**
+- `proposals.sustained_majority_enabled` — nullable boolean override (null = inherit org default).
+- `proposals.status` enum extended with `unresolved` (only reachable via failure_mode=`escalate`).
+- `vote_snapshots.multi_option_winners` — JSON column for stable-result tracking on approval / RCV.
+- Reversible: downgrade coerces `unresolved` proposals to `failed` before dropping the enum value, then drops the columns. Postgres path uses `ALTER TYPE ... ADD VALUE IF NOT EXISTS` for the upgrade and a rename+recreate dance for the downgrade.
+
+**Pure module (`backend/sustained_majority.py`):**
+- `SustainedMajorityConfig` typed accessor + `get_sustained_majority_config(org)` lazy-defaults helper. Five keys: `sustained_majority_enabled_default` (false), `sustained_majority_per_proposal_override` (true), `sustained_majority_threshold` (0.5), `sustained_majority_floor` (0.45), `sustained_majority_failure_mode` (fail). Corrupt failure_mode falls back to `fail` defensively.
+- `is_above_floor(snapshot, config)` — binary support level vs floor; abstain counted in denominator to stay consistent with existing `ProposalTally.yes_pct` / `pass_threshold` semantics.
+- `winner_stable(snapshot, previous_snapshot)` — order-insensitive frozenset comparison.
+- `in_stable_result_window(now, voting_start, voting_end, fraction)` — inclusive at the (1-fraction) boundary.
+- `evaluate_binary` / `evaluate_multi_option` / `should_trigger_failure` — composable evaluation chain. `extend` mode promotes to `fail` once `extension_count >= 1`.
+- `is_approaching_floor` — within FLOOR_APPROACH_DELTA (5pp default) of the floor — drives the in-app banner.
+- All pure: no DB access, no I/O. 39 unit tests in `test_sustained_majority.py`.
+
+**Service module (`backend/sustained_majority_service.py`):**
+- `validate_per_proposal_override` — 403 if non-null override on org with `per_proposal_override=False`.
+- `count_extensions(db, proposal_id)` — counts `proposal.window_extended` audit events; persistent guard rail for the "extend fires once" rule (survives worker restarts).
+- `build_status` — produces the `SustainedMajorityStatus` block surfaced on `/results` (current support, distance to floor, breached flag, approaching flag, in_stable_result_window, current_winners, extension_count).
+- `capture_snapshot` — writes a VoteSnapshot row. Binary: yes/no/abstain counts. Multi-option: zeroes the binary fields, fills `multi_option_winners={"winners": [...], "total_ballots_cast": N}`.
+- `apply_failure_mode` — three branches: `fail` -> status=failed + `proposal.failed_sustained_majority`; `extend` -> push voting_end forward by the original window length + `proposal.window_extended`; `escalate` -> status=unresolved + `proposal.escalated`. All atomic with the audit event in the same transaction.
+- `diff_sustained_majority_settings` — returns only the SM keys that actually changed (post-merge), with old + new values. Used by the org-update route to emit a focused `org.sustained_majority_config_changed` event with no noise.
+
+**Background worker (`backend/sustained_majority_worker.py`):**
+- Long-running process started from `start.sh` as a side process to uvicorn. Wakes every `SUSTAINED_MAJORITY_CHECK_INTERVAL_SECONDS` (default 300; configurable per env), iterates every proposal in `voting` status, captures a snapshot, runs `should_trigger_failure`, applies failure mode atomically.
+- **Multi-instance protection**: `SUSTAINED_MAJORITY_WORKER_INSTANCE_ID` env var; when set, only the instance whose `INSTANCE_ID` (or `RAILWAY_REPLICA_ID`) matches runs. Mismatch = sleep forever (no work, but process stays up so the supervisor doesn't restart-loop). Default empty = run unconditionally (fine for single-instance Railway).
+- **Hard kill-switch**: `SUSTAINED_MAJORITY_WORKER_DISABLE=true` exits immediately. Useful for ops emergencies.
+- Per-proposal exception is caught + logged; the loop continues on the next proposal so one bad row doesn't stop the sweep.
+- SIGINT / SIGTERM finish the current tick then exit cleanly.
+- `--once` flag for tests / local dev.
+
+**API surface:**
+- `PATCH /api/orgs/{slug}` — extends to detect SM key changes via `diff_sustained_majority_settings` and emit `org.sustained_majority_config_changed` only when at least one of the five keys changed (no audit noise from unrelated patches).
+- `POST /api/orgs/{slug}/proposals` — accepts `sustained_majority_enabled` in the create body; rejects with 403 when org disallows per-proposal override; emits `proposal.sustained_majority_enabled` / `_disabled` on non-null create.
+- `PATCH /api/proposals/{id}` — uses `body.model_fields_set` to differentiate "field omitted" from "field set to value"; only persists + audits when the value actually changes.
+- `POST /api/orgs/{slug}/proposals/{id}/resolve_escalation` — admin endpoint; four actions (`extend` / `fail` / `pass` / `back_to_deliberation`); emits `proposal.escalation_resolved` always, plus `proposal.window_extended` when action is `extend` (so the `count_extensions` guard rail picks up the manual extension too).
+- `GET /api/proposals/{id}/results` — payload extended with a `sustained_majority` block carrying the full status (active, threshold, floor, failure_mode, current_support, distance_to_floor, floor_breached, approaching_floor, in_stable_result_window, stable_result_locked, current_winners, extension_count, voting_end). Block returned for every proposal but `active=False` lets the frontend hide it on non-SM proposals.
+- New status enum value `unresolved` propagates via `StatusBadge` (yellow/amber, "Awaiting Review" label).
+
+**Frontend:**
+- `pages/admin/OrgSettings.jsx` — new "Sustained-Majority Voting" section: 2 toggles (default-on, allow-per-proposal-override), 2 sliders (threshold, floor), radio (failure mode with explanatory copy per option), help-page link.
+- `pages/admin/ProposalManagement.jsx:CreateProposalForm` — "Sustained-majority voting" toggle visible only when `orgSettings.sustained_majority_per_proposal_override !== false`. Default value matches `orgSettings.sustained_majority_enabled_default`. Only sends the field on submit when the value diverges from the org default (so null = inherit goes unchanged through the API).
+- `pages/admin/ProposalManagement.jsx:EscalationResolutionPanel` — rendered inline on `unresolved` proposals. 4-button choice + amber breach banner + "View breach history" link to filtered audit log. Override (`pass`) requires a non-empty reason; `extend` accepts an optional reason. Confirmation step before firing the API call.
+- `components/SustainedMajorityPanel.jsx` — new component. Binary: support-vs-floor bar (current support tick + red zone for sub-floor + dashed threshold marker) + Recharts LineChart of historical support over the window with floor / threshold ReferenceLines + ReferenceArea for the sub-floor band. Multi-option: stable-result lock indicator + current-winners list. Always shows the bookkeeping footer (threshold / floor / mode / extension count). Floor-approach amber banner shows only when `sm.approaching_floor && !sm.floor_breached && myVoteContributes` (per spec — only users whose ballot is contributing get the warning).
+- `pages/ProposalDetail.jsx` — wires `SustainedMajorityPanel` above the body content (so the banner is visible) and adds an `unresolved` status banner ("Awaiting Admin Review" with explanation copy).
+- `pages/Proposals.jsx:ProposalCard` — small ⏳ Sustained badge next to the title when the proposal has SM active.
+- `components/StatusBadge.jsx` — extended with `unresolved` -> "Awaiting Review" (yellow/amber).
+- `pages/SustainedMajorityHelp.jsx` — new route at `/help/sustained-majority`. Plain-language admin and voter guidance: when to use it, how each setting works, what each failure mode does, what voters/delegators see, how multi-option stable-result lock works, what gets logged. Linked from OrgSettings and the proposal-create tooltip.
+
+### Test coverage
+
+**Backend: 288 passing (+67 from Phase 7C.2's 221).**
+
+| File | Count | Coverage |
+|---|---|---|
+| `test_sustained_majority.py` | 39 | Pure-function tests: config accessor + corrupt-input fallback, per-proposal override resolution (4 states), `is_above_floor` (above / below / at-floor / zero ballots / abstain handling), `winner_stable` (same / different / order-insensitive / subset shrinking), `in_stable_result_window` (outside / inside / boundary at exactly 75% / just-before / zero-duration), `evaluate_binary`, `evaluate_multi_option` (outside-window / no-previous / winner change / winner stable / boundary at exactly 25% remaining), `should_trigger_failure` (binary fail / extend first time / extend -> fail second time / escalate / multi-option dispatch / no snapshots), floor-approach (within delta / clearly above / zero ballots), extension window helper. |
+| `test_sustained_majority_api.py` | 15 | Org-config CRUD: full PATCH persists, no-op patch doesn't log, partial patch doesn't log, JSON-mutation Phase 4 Cleanup pattern verified. Per-proposal override: accepted when org allows / rejected 403 when disallows / null inherits org default. Escalation resolution: extend / fail / pass-with-reason / back_to_deliberation / 400 when not unresolved / 403 when member. `/results.sustained_majority` block: inactive when neither org default nor override / active with full payload. |
+| `test_sustained_majority_worker.py` | 13 | Multi-instance guard (no env / mismatch / match / disable flag). `evaluate_proposal` against in-memory DB: above floor no action, below floor fail mode, extend mode first time, extend -> fail second time, escalate to unresolved, per-proposal override `False` skips entirely (no snapshot). `run_one_tick` skips non-voting proposals, doesn't block on per-proposal failures, restart-safe (no double extension across worker restarts). |
+
+Plus existing 221 tests still pass — no regressions.
+
+**PostgreSQL smoke test: PASSED.** Brought up `postgres:16-alpine` via `docker compose`, then verified:
+- Migration upgrade path Phase 6 (`3b89f18aceda`) -> Phase 8 (`c5f3a2b81e07`) ran cleanly: `proposals.sustained_majority_enabled` boolean nullable column added, `vote_snapshots.multi_option_winners` JSON nullable column added, `proposal_status` enum extended with `unresolved` via `ALTER TYPE ... ADD VALUE IF NOT EXISTS`.
+- JSON-mutation pattern (`org.settings = {**(org.settings or {}), **patch}`) persisted across `db.expire_all()` + re-fetch — no SQLAlchemy change-detection drop.
+- Worker `evaluate_proposal` end-to-end on Postgres: 1 yes / 9 no on SM-enabled proposal with floor=0.45 mode=fail -> status moved to `failed` + `proposal.failed_sustained_majority` audit event with `breach_sample.yes=1`. Snapshot row persisted.
+- `unresolved` enum value accepted on direct status assignment.
+- No SQLite-vs-Postgres divergence surfaced.
+
+**Suite P (10 tests):** 7/10 PASS + 3 PASS-by-source. P4 / P5 / P9 (UI-rendering checks for status block, floor-approach banner, stable-result lock indicator) pass at source-review level following the M31/M32 precedent — synthetic React render-state can't be reliably triggered by automated event dispatch. The structural source review is unambiguous; full backend integration is exercised by the pytest suite. P10 (audit log capture) is verified by the per-test audit assertions in the backend integration tests, plus a self-contained scenario script that emits all six new event types in sequence (committed as `test_results/phase8_screenshots/audit_log_sample.txt`).
+
+### Audit log sample
+
+Every state-changing event has its own action and a focused detail payload. From `test_results/phase8_screenshots/audit_log_sample.txt`:
+
+- `org.sustained_majority_config_changed` with a `changes` diff listing only the SM keys that actually moved (each entry has `old` + `new`).
+- `proposal.sustained_majority_enabled` / `_disabled` with `old_value` + `new_value`.
+- `proposal.window_extended` with `breach_sample` (yes / no / floor / support_fraction at the breach moment), `old_voting_end`, `new_voting_end`.
+- `proposal.failed_sustained_majority` with `breach_sample` and the human-readable reason.
+- `proposal.escalated` with the breach details.
+- `proposal.escalation_resolved` with admin's chosen action, optional reason, old_status -> new_status.
+
+No ballot content is recorded — only aggregate breach numbers — preserving the Phase 7.5 redaction principles.
+
+### Files added / modified
+
+**Backend:**
+- New: `backend/sustained_majority.py` (pure module), `backend/sustained_majority_service.py` (DB-touching service), `backend/sustained_majority_worker.py` (background process).
+- New: `backend/migrations/versions/c5f3a2b81e07_phase_8_sustained_majority.py`.
+- New: `backend/tests/test_sustained_majority.py`, `backend/tests/test_sustained_majority_api.py`, `backend/tests/test_sustained_majority_worker.py`.
+- Modified: `backend/models.py` (Proposal column + status enum + VoteSnapshot column), `backend/schemas.py` (ProposalCreate / ProposalUpdate / ProposalOut / ProposalResults / SustainedMajorityStatus / EscalationResolveRequest), `backend/settings.py` (3 new env vars), `backend/start.sh` (worker side-process spawn), `backend/routes/proposals.py` (proposal-out shape + override validation + audit + /results sustained_majority block), `backend/routes/organizations.py` (org settings audit + per-proposal override gate at create + new resolve_escalation endpoint).
+
+**Frontend:**
+- New: `frontend/src/components/SustainedMajorityPanel.jsx`, `frontend/src/pages/SustainedMajorityHelp.jsx`.
+- Modified: `frontend/src/components/StatusBadge.jsx` (unresolved styling), `frontend/src/pages/Proposals.jsx` (sustained badge), `frontend/src/pages/ProposalDetail.jsx` (panel injection + unresolved banner + import), `frontend/src/pages/admin/OrgSettings.jsx` (SM section), `frontend/src/pages/admin/ProposalManagement.jsx` (toggle in create form + escalation panel), `frontend/src/App.jsx` (help-page route).
+
+### Production deployment
+
+Railway auto-deploys on push to `master`. Post-deploy verification (Suite P browser-driven prod sanity) consists of:
+1. `https://www.liquiddemocracy.us/orgs/<slug>/admin/settings` renders the new "Sustained-Majority Voting" section with the five controls.
+2. With `sustained_majority_per_proposal_override: true`, `/orgs/<slug>/admin/proposals` "Create Proposal" form shows the "Sustained-majority voting" toggle.
+3. Help page renders at `/help/sustained-majority`.
+4. The background worker process is running on Railway — verifiable by a fresh `VoteSnapshot` row appearing within the first 5–6 minutes after a proposal advances to voting status with sustained-majority enabled (check via the existing `/api/proposals/{id}/results.time_series` or DB query).
+5. `/api/proposals/{id}/results` returns the `sustained_majority` block with the expected shape.
+
+### Tech debt logged
+
+- **Email notifications for floor approaches** — deferred to Phase 10 per spec. In-app banner is sufficient for v1.
+- **Sub-org sustained-majority** — deferred to Phase 8.5 per spec.
+- **Real-time (sub-minute) snapshot evaluation** — out of scope; 5-min cadence balances stale-detection vs DB write volume. Configurable per-deployment via env var.
+- **Per-instance lock-table mechanism** — not implemented; env-var-based instance ID matching is sufficient for single-instance Railway. If we scale to multiple replicas, a DB-level lock-table mechanism (acquire-or-skip with TTL on a dedicated `worker_locks` table) is the right next step. Logged here so future ops know the path.
+- **`sustained_majority_floor` was already in `DEFAULT_ORG_SETTINGS` from a prior phase as a stub.** That key is now wired to the actual code path; no migration needed for orgs that had it set.

@@ -264,6 +264,10 @@ class ProposalCreate(BaseModel):
     voting_method: str = "binary"
     options: list[OptionCreate] = Field(default=[])
     num_winners: int = Field(default=1, ge=1)
+    # Phase 8 — per-proposal sustained-majority override.
+    # null = inherit org default; True/False = explicit. Server rejects
+    # non-null when org has `sustained_majority_per_proposal_override: false`.
+    sustained_majority_enabled: Optional[bool] = None
 
     @field_validator("voting_method")
     @classmethod
@@ -288,6 +292,10 @@ class ProposalUpdate(BaseModel):
     body: Optional[str] = Field(default=None, max_length=50000)
     topics: Optional[list[Any]] = None
     options: Optional[list[OptionCreate]] = None
+    # Phase 8 — per-proposal sustained-majority override (see ProposalCreate).
+    # Use Field with explicit default sentinel so omitted vs. null differ:
+    # we only update the column when the field is present in the payload.
+    sustained_majority_enabled: Optional[bool] = Field(default=None)
 
     @field_validator("topics", mode="before")
     @classmethod
@@ -323,8 +331,53 @@ class ProposalOut(BaseModel):
     updated_at: datetime
     topics: list[ProposalTopicOut] = []
     options: list[OptionOut] = []
+    # Phase 8 — null = inherit org default; True/False = explicit override.
+    sustained_majority_enabled: Optional[bool] = None
 
     model_config = {"from_attributes": True}
+
+
+class SustainedMajorityStatus(BaseModel):
+    """Phase 8 — sustained-majority status block surfaced on /results.
+
+    Populated only for proposals where sustained-majority is active. `active`
+    is the fully-resolved boolean (per-proposal override applied to org default).
+    `current_support` is the latest snapshot's yes-fraction; `distance_to_floor`
+    is `current_support - floor` (negative means breached).
+    """
+    active: bool = False
+    threshold: float = 0.5
+    floor: float = 0.45
+    failure_mode: str = "fail"
+    # Latest sample stats (binary). Multi-option uses winners_history below.
+    current_support: Optional[float] = None
+    distance_to_floor: Optional[float] = None
+    floor_breached: bool = False
+    approaching_floor: bool = False  # within FLOOR_APPROACH_DELTA (5pp default)
+    # Multi-option only — set when in stable-result window
+    in_stable_result_window: bool = False
+    stable_result_locked: bool = False
+    current_winners: list[str] = []
+    # Bookkeeping
+    extension_count: int = 0
+    voting_end: Optional[datetime] = None
+
+
+class EscalationResolveRequest(BaseModel):
+    """POST /api/orgs/{slug}/proposals/{id}/resolve_escalation body."""
+    action: str  # "extend" | "fail" | "pass" | "back_to_deliberation"
+    reason: Optional[str] = Field(default=None, max_length=2000)
+    # Required only for `extend` — new voting_end timestamp.
+    new_voting_end: Optional[datetime] = None
+
+    @field_validator("action")
+    @classmethod
+    def validate_action(cls, v: str) -> str:
+        if v not in ("extend", "fail", "pass", "back_to_deliberation"):
+            raise ValueError(
+                "action must be extend, fail, pass, or back_to_deliberation"
+            )
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +624,11 @@ class ProposalResults(BaseModel):
     rounds: Optional[list[RCVRoundOut]] = None
     method: Optional[str] = None      # "irv" or "stv"
     num_winners: Optional[int] = None
+    # Phase 8 — sustained-majority status block. Populated for every proposal;
+    # `active=False` for proposals where sustained-majority is not in effect,
+    # in which case the rest of the fields are at defaults and the frontend
+    # hides the block.
+    sustained_majority: Optional["SustainedMajorityStatus"] = None
 
 
 class TieResolutionRequest(BaseModel):

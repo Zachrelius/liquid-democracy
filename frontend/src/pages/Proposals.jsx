@@ -30,6 +30,17 @@ function ProposalCard({ proposal, myVote, tally }) {
       <div className="flex items-start justify-between gap-3 mb-3">
         <span className="text-[#1B3A5C] font-semibold text-lg leading-snug">
           {proposal.title}
+          {/* Phase 8 — sustained-majority indicator. Shown when the proposal
+              has it explicitly enabled OR when results call back active=true. */}
+          {(proposal.sustained_majority_enabled === true ||
+            tally?.sustained_majority?.active) && (
+            <span
+              title="Sustained-majority voting: support must hold throughout the window"
+              className="ml-2 inline-flex items-center text-xs bg-blue-50 text-[#2E75B6] border border-blue-200 px-1.5 py-0.5 rounded"
+            >
+              ⏳ Sustained
+            </span>
+          )}
         </span>
         <StatusBadge status={proposal.status} />
       </div>

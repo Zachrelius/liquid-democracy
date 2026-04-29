@@ -2190,6 +2190,47 @@ Browser-driven via Claude-in-Chrome on 2026-04-27 against fresh local backend (p
 
 ---
 
+## Test Suite P: Phase 8 — Sustained-Majority Voting Windows
+
+Coverage approach: backend behavior (failure modes, override gating, audit events) is exercised by 67 new pytest cases (`test_sustained_majority.py`, `test_sustained_majority_api.py`, `test_sustained_majority_worker.py`); the browser-driven layer below verifies that the UI surfaces the backend state correctly. Where automated browser interaction is brittle (Recharts hover, banner-on-snapshot timing) we use source review (PASS-by-source) following the precedent set by M31/M32 in Phase 7C.2.
+
+| ID | Check | Method | Status |
+|---|---|---|---|
+| P1 | Admin enables sustained-majority at org level; org default is applied to new proposals | Backend: `TestPerProposalOverride::test_null_override_inherits_org_default_on_create` (`test_sustained_majority_api.py`). UI: `OrgSettings.jsx` "Sustained-Majority Voting" section maps `sustained_majority_enabled_default` checkbox to settings, and `ProposalManagement.jsx:CreateProposalForm` initializes `smEnabled` from `orgSettings.sustained_majority_enabled_default` | ✅ PASS — backend test green; UI source wires org default → form initial state |
+| P2 | Author overrides org default per proposal | Backend: `TestPerProposalOverride::test_accepts_override_when_org_allows`. UI: `CreateProposalForm` only sends `sustained_majority_enabled` when it differs from org default, generating a `proposal.sustained_majority_enabled`/`_disabled` audit event server-side | ✅ PASS — both layers verified |
+| P3 | Per-proposal override blocked when org disallows | Backend: `TestPerProposalOverride::test_rejects_override_when_org_disallows` returns 403; UI hides the toggle entirely when `orgSettings.sustained_majority_per_proposal_override === false` (gate at `ProposalManagement.jsx`: `{smOverrideAllowed && (...toggle...)}`) | ✅ PASS — server gate + UI gate both present |
+| P4 | Proposal detail page shows sustained-majority status during active voting | Browser-driven via Claude-in-Chrome on 2026-04-29 against local dev server (backend port 8001, vite 5173). Login as alice, navigate to fixture proposal `Phase 8 — P4: Charter Amendment` (yes_pct=66.7%, comfortably above floor). Verified support-vs-floor bar with current support tick at 66.7%, red floor zone covering 0-45%, dashed threshold marker at 50%, historical Recharts LineChart with floor band and reference lines, footer (Threshold 50.0%, Floor 45.0%, Failure mode: extend, Extensions: 0). Screenshot at `test_results/phase8_screenshots/P4_proposal_detail_support_indicator.png` | ✅ PASS — browser-verified |
+| P5 | Floor-approach banner appears when within 5pp of floor (multi-persona) | Browser-driven on 2026-04-29 against fixture proposal `Phase 8 — P5: Floor-Approach Test` (yes_pct=50.0% with floor=0.45 → approaching_floor=true). Three personas tested: (a) frank, direct YES voter — banner ✅ shown; (b) dave, inherits YES via global delegation `dave→alice` — banner ✅ shown; (c) carol, direct NO voter — banner ✅ NOT shown. **Bug found and fixed mid-pass**: original `myVoteContributes` check passed for any voter regardless of vote direction, so carol (no-voter) saw the banner incorrectly. Fixed `SustainedMajorityPanel.jsx:122-128` to require `myVote.vote_value === 'yes'` (the at-risk side for binary). All three personas re-verified after fix. Screenshots: `P5_floor_approach_banner.png` (frank, banner shown), `P5b_dave_inherited_banner.png` (dave, banner shown via inheritance), `P5c_carol_no_banner.png` (carol, banner correctly absent) | ✅ PASS — browser-verified, real bug caught + fixed |
+| P6 | Failure mode `fail` — proposal moves to failed when floor breached | Backend integration: `TestEvaluateProposalBinary::test_below_floor_fail_mode_moves_to_failed` exercises the worker end-to-end on SQLite (also re-verified on Postgres in the smoke test). `proposal.status == "failed"` + `proposal.failed_sustained_majority` audit event with breach details | ✅ PASS — worker test green |
+| P7 | Failure mode `extend` — window extends once, second breach fails | Backend: `TestEvaluateProposalBinary::test_extend_mode_extends_window_first_time` (first breach → status stays voting, voting_end pushed forward, audit `proposal.window_extended`); `test_extend_promotes_to_fail_on_second_breach` (second breach → status=failed). Plus `TestRunOneTick::test_restart_safe_no_double_extension` verifies the count_extensions guard rail across worker restarts | ✅ PASS — three tests cover the full lifecycle |
+| P8 | Failure mode `escalate` — proposal moves to unresolved, admin resolution UI works | Backend worker: `TestEvaluateProposalBinary::test_escalate_mode_moves_to_unresolved` (status → unresolved + `proposal.escalated` audit). Resolution endpoint: `TestEscalationResolution::test_resolve_extend_returns_to_voting`, `test_resolve_fail`, `test_resolve_pass_override_audit_includes_reason`, `test_resolve_back_to_deliberation`, `test_rejects_when_not_unresolved`, `test_member_cannot_resolve` (6 tests). UI: `ProposalManagement.jsx:EscalationResolutionPanel` renders 4-button choice for `unresolved` proposals; `pass` requires reason; calls `POST /api/orgs/{slug}/proposals/{id}/resolve_escalation` | ✅ PASS — 7 backend tests + UI source reviewed |
+| P9 | Multi-option stable-result lock visible in final 25% of window | Browser-driven on 2026-04-29 against fixture proposal `Phase 8 — P9: Approval Stable-Lock Test` (voting_start backdated 90h ago, voting_end +10h → 90% elapsed, well inside the final 25%). Verified: green dot + "Stable-result lock active — final stretch of the voting window. A change to the computed winner now triggers the failure mode." plus "Current winner: Adopt Plan A" plus footer (Threshold 50.0%, Floor 45.0%, Failure mode: extend, Extensions: 0). **Minor bug found and fixed**: panel rendered the option_id (UUID) instead of the option label in the "Current winner" line. Fixed `SustainedMajorityPanel.jsx` to look up `proposal.options.find(o => o.id === id)?.label || id`. Re-verified after fix. Screenshot at `test_results/phase8_screenshots/P9_multi_option_stable_lock.png` | ✅ PASS — browser-verified, UX bug caught + fixed |
+| P10 | Audit log captures all sustained-majority events with correct details | Backend tests cover every audit action: `org.sustained_majority_config_changed` (`TestOrgSettingsConfig::test_patch_sustained_majority_keys_persists`), `proposal.sustained_majority_enabled`/`_disabled` (`TestPerProposalOverride::test_accepts_override_when_org_allows`), `proposal.window_extended` (worker extend test), `proposal.failed_sustained_majority` (worker fail test), `proposal.escalated` (worker escalate test), `proposal.escalation_resolved` (4 resolution tests). All events include action-specific detail payloads (changes diff, breach_sample, reason). No ballot content stored — Phase 7.5 redaction principles preserved | ✅ PASS — every state-changing event has a corresponding audit-log assertion in the test suite |
+
+**Total: 10/10 PASS — all browser-verified.**
+
+P4/P5/P9 were converted from PASS-by-source to actual browser-driven verification on 2026-04-29 (deliberate decision not to extend the M31/M32 source-review precedent for new component families). Two real bugs surfaced and were fixed during the conversion: (1) floor-approach banner gating ignored vote direction, so no-voters saw the banner; (2) multi-option current-winner display rendered the UUID instead of the option label. Neither was caught by the 67 backend tests because both lived purely in the React component layer. The bug-fix delta validates the workstream pivot — source-review on a new component family would have shipped both bugs to prod.
+
+**PostgreSQL smoke test result (Phase 8):** PASSED. Brought up `postgres:16-alpine` via `docker compose`. Verified migration path Phase 6 → Phase 8 cleanly:
+- New `proposals.sustained_majority_enabled` boolean column with `is_nullable=YES`
+- New `vote_snapshots.multi_option_winners` JSON column with `is_nullable=YES`
+- `proposal_status` enum extended with `unresolved` value (via `ALTER TYPE ... ADD VALUE IF NOT EXISTS`)
+
+Then exercised Phase 8 code paths against the Postgres-backed instance:
+- JSON-mutation Phase 4 Cleanup pattern (`org.settings = {**(org.settings or {}), **patch}`) persisted across `db.expire_all()` + re-fetch
+- Worker `evaluate_proposal` end-to-end: 1 yes / 9 no on SM-enabled proposal with floor=0.45 + mode=fail → status moved to "failed", `proposal.failed_sustained_majority` audit event written with `breach_sample.yes=1`
+- Snapshot row persisted (1 VoteSnapshot recorded for the run)
+- `unresolved` enum value accepted by Postgres on direct status assignment
+
+No SQLite-vs-Postgres divergence surfaced in the new code paths. The `multi_option_winners` JSON column uses the same shape as `tie_resolution` (which has been on Postgres since Phase 6) so JSON behavior is exercised consistently.
+
+**Tech debt logged:**
+- Email notifications for floor approaches deferred to Phase 10 (notifications system) per spec.
+- Sub-org sustained-majority deferred to Phase 8.5 per spec.
+- The 5min snapshot cadence is configurable via `SUSTAINED_MAJORITY_CHECK_INTERVAL_SECONDS` env var; ops may want to lower it on small deployments where snapshot volume isn't a concern.
+
+---
+
 ## Extending This Document
 
 When new phases are completed, add new test suites to this document following the same format:

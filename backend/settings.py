@@ -43,6 +43,17 @@ class Settings(BaseSettings):
     # Base URL for links in emails
     base_url: str = "http://localhost:5173"
 
+    # Phase 8 — Sustained-Majority worker.
+    # Cadence between snapshot+evaluation passes during active voting windows.
+    # 5min default balances stale-detection vs DB write volume.
+    sustained_majority_check_interval_seconds: int = 300
+    # Multi-instance protection: when set, the worker only runs on the
+    # process whose `INSTANCE_ID` (or RAILWAY_REPLICA_ID) env var matches.
+    # Empty string = run unconditionally (default; fine for single-instance).
+    sustained_majority_worker_instance_id: str = ""
+    # Hard kill-switch for ops emergencies.
+    sustained_majority_worker_disable: bool = False
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

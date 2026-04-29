@@ -223,6 +223,121 @@ export default function OrgSettings() {
         </div>
       </section>
 
+      {/* Sustained-Majority Voting (Phase 8) */}
+      <section className="space-y-3">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Sustained-Majority Voting
+          </h2>
+          <a
+            href="/help/sustained-majority"
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-[#2E75B6] hover:underline"
+          >
+            Learn more →
+          </a>
+        </div>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+          <p className="text-xs text-gray-500">
+            Optional governance feature: a proposal must <em>maintain</em> support
+            throughout the voting window rather than just pass at a single moment.
+            Useful for binding decisions; overkill for routine matters.
+          </p>
+
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={settings.sustained_majority_enabled_default ?? false}
+              onChange={e => updateSetting('sustained_majority_enabled_default', e.target.checked)}
+              className="mt-0.5 accent-[#2E75B6]"
+            />
+            <div>
+              <p className="text-sm text-gray-700">Default on for new proposals</p>
+              <p className="text-xs text-gray-400">
+                When enabled, new proposals use sustained-majority unless the author opts out.
+              </p>
+            </div>
+          </label>
+
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={settings.sustained_majority_per_proposal_override ?? true}
+              onChange={e => updateSetting('sustained_majority_per_proposal_override', e.target.checked)}
+              className="mt-0.5 accent-[#2E75B6]"
+            />
+            <div>
+              <p className="text-sm text-gray-700">Allow proposal authors to override per-proposal</p>
+              <p className="text-xs text-gray-400">
+                Authors can opt a single proposal in or out, overriding the org default above.
+              </p>
+            </div>
+          </label>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Required support level: {Math.round((settings.sustained_majority_threshold ?? 0.5) * 100)}%
+            </label>
+            <p className="text-xs text-gray-400 mb-1">The headline support level the proposal must reach to pass.</p>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round((settings.sustained_majority_threshold ?? 0.5) * 100)}
+              onChange={e => updateSetting('sustained_majority_threshold', parseInt(e.target.value) / 100)}
+              className="w-full accent-[#2E75B6]"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Drop-below floor: {Math.round((settings.sustained_majority_floor ?? 0.45) * 100)}%
+            </label>
+            <p className="text-xs text-gray-400 mb-1">
+              If support drops below this level during voting, the configured failure mode triggers.
+            </p>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round((settings.sustained_majority_floor ?? 0.45) * 100)}
+              onChange={e => updateSetting('sustained_majority_floor', parseInt(e.target.value) / 100)}
+              className="w-full accent-[#2E75B6]"
+            />
+          </div>
+
+          <div>
+            <p className="text-xs text-gray-500 mb-2">When the floor is breached:</p>
+            <div className="space-y-2">
+              {[
+                { value: 'fail', label: 'Fail immediately',
+                  desc: 'The proposal moves to "failed" the moment support dips below the floor.' },
+                { value: 'extend', label: 'Extend the voting window once',
+                  desc: 'Push voting_end forward to give voters time to recover support. A second breach fails.' },
+                { value: 'escalate', label: 'Escalate to admin review',
+                  desc: 'The proposal moves to "unresolved" and an admin chooses how to resolve.' },
+              ].map(opt => (
+                <label key={opt.value} className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="sustainedMajorityFailureMode"
+                    value={opt.value}
+                    checked={(settings.sustained_majority_failure_mode ?? 'fail') === opt.value}
+                    onChange={() => updateSetting('sustained_majority_failure_mode', opt.value)}
+                    className="mt-0.5 accent-[#2E75B6]"
+                  />
+                  <div>
+                    <p className="text-sm text-gray-700">{opt.label}</p>
+                    <p className="text-xs text-gray-400">{opt.desc}</p>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Public Delegates */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Public Delegates</h2>

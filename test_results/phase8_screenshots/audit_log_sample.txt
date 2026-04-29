@@ -1,0 +1,69 @@
+Phase 8 — Sustained-Majority audit log sample
+Generated 2026-04-28 from a self-contained scenario in an in-memory SQLite DB. The same actions emit the same audit events on Postgres (verified separately in the Postgres smoke). Field names + payload shapes are stable across both backends; only timestamps and IDs differ.
+
+Scenario:
+  1. Admin patches org settings to enable sustained-majority defaults
+     → emits `org.sustained_majority_config_changed` with a focused per-key diff
+  2. Admin creates a proposal with sustained_majority_enabled=true
+     → emits `proposal.sustained_majority_enabled`
+  3. Voting starts; first floor breach → extend mode fires
+     → emits `proposal.window_extended` with old/new voting_end + breach sample
+  4. Second tick still below floor → extend promotes to fail
+     → emits `proposal.failed_sustained_majority`
+  5. Separate proposal in escalate mode breaches floor
+     → emits `proposal.escalated`
+  6. Admin resolves the escalation
+     → emits `proposal.escalation_resolved` with action + reason + status transition
+
+Sample output (truncated to relevant detail fields for readability):
+
+org.sustained_majority_config_changed :: target=organization/<uuid>
+  details = {
+    "changes": {
+      "sustained_majority_enabled_default": {"old": null, "new": true},
+      "sustained_majority_floor": {"old": 0.45, "new": 0.4},
+      "sustained_majority_failure_mode": {"old": null, "new": "extend"}
+    }
+  }
+
+proposal.sustained_majority_enabled :: target=proposal/<uuid>
+  details = {"old_value": null, "new_value": true}
+
+proposal.window_extended :: target=proposal/<uuid>
+  details = {
+    "reason": "Support 0.000 below floor 0.400 at 2026-04-29T01:25:59",
+    "breach_sample": {"yes": 0, "no": 1, "floor": 0.4, "support_fraction": 0.0},
+    "old_voting_end": "2026-04-29T05:25:58",
+    "new_voting_end": "2026-04-29T11:25:58"
+  }
+
+proposal.failed_sustained_majority :: target=proposal/<uuid>
+  details = {
+    "reason": "Support 0.000 below floor 0.400 at 2026-04-29T01:25:59 (second breach after one extension)",
+    "breach_sample": {"yes": 0, "no": 1, "floor": 0.4, "support_fraction": 0.0}
+  }
+
+proposal.escalated :: target=proposal/<uuid>
+  details = {
+    "reason": "Support 0.000 below floor 0.400 at 2026-04-29T01:25:59",
+    "breach_sample": {"yes": 0, "no": 1, "floor": 0.4, "support_fraction": 0.0}
+  }
+
+proposal.escalation_resolved :: target=proposal/<uuid>
+  details = {
+    "action": "fail",
+    "reason": "community decided to scrap",
+    "old_status": "unresolved",
+    "new_status": "failed"
+  }
+
+What's NOT in the audit log (by design):
+- Ballot content (vote_value, ballot, approvals, ranking) — Phase 7.5 redaction principles preserved.
+- Per-voter contribution to the breach — only aggregate yes/no/abstain counts at the breach moment.
+- User identities other than the actor (admin) on each event.
+
+What IS in the audit log:
+- The exact transition (old_value → new_value, or old_status → new_status).
+- The breach sample numbers (yes/no/abstain) at the moment failure fired.
+- For org.sustained_majority_config_changed: only the keys that actually changed.
+- For proposal.escalation_resolved: the action chosen + the optional reason.

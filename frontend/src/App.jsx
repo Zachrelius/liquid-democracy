@@ -27,6 +27,7 @@ import Topics from './pages/admin/Topics';
 import DelegateApplications from './pages/admin/DelegateApplications';
 import Analytics from './pages/admin/Analytics';
 import VotingMethodsHelp from './pages/VotingMethodsHelp';
+import SustainedMajorityHelp from './pages/SustainedMajorityHelp';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Landing from './pages/Landing';
@@ -217,6 +218,17 @@ export default function App() {
             <ProtectedRoute>
               <OrgProvider>
                 <Layout><VotingMethodsHelp /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/help/sustained-majority"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><SustainedMajorityHelp /></Layout>
               </OrgProvider>
             </ProtectedRoute>
           }

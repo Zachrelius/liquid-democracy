@@ -15,6 +15,7 @@ import ErrorMessage from '../components/ErrorMessage';
 import RankedBallot from '../components/RankedBallot';
 import RCVResultsPanel from '../components/RCVResultsPanel';
 import RCVSankeyChart from '../components/RCVSankeyChart';
+import SustainedMajorityPanel from '../components/SustainedMajorityPanel';
 import { colorForOption } from '../components/voteFlowGraphUtils';
 
 // Simple markdown renderer (no external dep needed for basics)
@@ -751,6 +752,16 @@ export default function ProposalDetail() {
             </p>
           </div>
 
+          {/* Phase 8 — Sustained-majority status panel (banner + bar + chart).
+              Renders only when sustained-majority is active for the proposal. */}
+          {(isVoting || isClosed) && tally?.sustained_majority?.active && (
+            <SustainedMajorityPanel
+              tally={tally}
+              proposal={proposal}
+              myVote={myVote}
+            />
+          )}
+
           {/* Body */}
           {proposal.body ? (
             <div
@@ -903,6 +914,18 @@ export default function ProposalDetail() {
                 : 'bg-red-50 border border-red-200 text-red-700'
             }`}>
               {proposal.status === 'passed' ? 'Proposal Passed' : 'Proposal Failed'}
+            </div>
+          )}
+
+          {/* Phase 8 — Unresolved (escalated) banner */}
+          {proposal.status === 'unresolved' && (
+            <div className="rounded-xl p-4 text-center bg-yellow-50 border border-yellow-300 text-yellow-900">
+              <p className="font-semibold">Awaiting Admin Review</p>
+              <p className="text-xs mt-1">
+                Sustained-majority floor was breached. An organization admin
+                will resolve this proposal: extend the window, fail it, mark it
+                passed, or return it to deliberation.
+              </p>
             </div>
           )}
         </div>

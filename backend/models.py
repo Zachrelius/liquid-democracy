@@ -193,7 +193,11 @@ class Proposal(Base):
     author_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False)
     org_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("organizations.id"), nullable=True, index=True)
     status: Mapped[str] = mapped_column(
-        Enum("draft", "deliberation", "voting", "passed", "failed", "withdrawn", name="proposal_status"),
+        Enum(
+            "draft", "deliberation", "voting", "passed", "failed",
+            "withdrawn", "unresolved",
+            name="proposal_status",
+        ),
         nullable=False,
         default="draft",
     )
@@ -207,6 +211,11 @@ class Proposal(Base):
     tie_resolution: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     pass_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.50)
     quorum_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.40)
+    # Phase 8: per-proposal sustained-majority override.
+    # null = inherit org default; True/False = explicit per-proposal opt-in/out.
+    # Authors can only set non-null when org has
+    # `sustained_majority_per_proposal_override: true`.
+    sustained_majority_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now, nullable=False)
 
@@ -315,7 +324,13 @@ class Vote(Base):
 
 
 class VoteSnapshot(Base):
-    """Periodic tally snapshots during the voting window for time-series tracking."""
+    """Periodic tally snapshots during the voting window for time-series tracking.
+
+    Phase 8: extended with `multi_option_winners` JSON to record the live
+    winner set for approval / ranked_choice proposals at snapshot time, used
+    by the sustained-majority worker to detect winner changes across restarts.
+    Null for binary proposals.
+    """
 
     __tablename__ = "vote_snapshots"
 
@@ -328,6 +343,9 @@ class VoteSnapshot(Base):
     not_cast_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_eligible: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     recorded_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    # Phase 8 — multi-option winner snapshot for stable-result evaluation.
+    # Shape: {"winners": [option_id, ...], "total_ballots_cast": int}
+    multi_option_winners: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
     proposal: Mapped["Proposal"] = relationship("Proposal", back_populates="vote_snapshots")
 

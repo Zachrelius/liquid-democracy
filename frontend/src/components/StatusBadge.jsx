@@ -5,6 +5,7 @@ const STYLES = {
   passed:       'bg-green-100 text-green-700',
   failed:       'bg-red-100 text-red-700',
   withdrawn:    'bg-gray-100 text-gray-500',
+  unresolved:   'bg-yellow-100 text-yellow-800 border border-yellow-300',
 };
 
 const LABELS = {
@@ -14,6 +15,7 @@ const LABELS = {
   passed:       'Passed',
   failed:       'Failed',
   withdrawn:    'Withdrawn',
+  unresolved:   'Awaiting Review',
 };
 
 export default function StatusBadge({ status }) {

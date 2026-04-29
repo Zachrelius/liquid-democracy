@@ -48,6 +48,7 @@ def _build_proposal_out(proposal: models.Proposal) -> schemas.ProposalOut:
         updated_at=proposal.updated_at,
         topics=proposal.proposal_topics,
         options=proposal.options,
+        sustained_majority_enabled=proposal.sustained_majority_enabled,
     )
 
 
@@ -203,6 +204,11 @@ def create_proposal(
 ):
     _validate_proposal_creation(body)
 
+    # Phase 8 — global (non-org) proposals: per-proposal override is always
+    # ignored at create time because there is no org config to honor it
+    # against. Store as null.
+    sustained_majority_enabled = None
+
     for t in body.topics:
         if not db.get(models.Topic, t.topic_id):
             raise HTTPException(status_code=400, detail=f"Topic {t.topic_id} not found")
@@ -215,6 +221,7 @@ def create_proposal(
         num_winners=body.num_winners,
         pass_threshold=body.pass_threshold,
         quorum_threshold=body.quorum_threshold,
+        sustained_majority_enabled=sustained_majority_enabled,
     )
     db.add(proposal)
     db.flush()
@@ -284,6 +291,36 @@ def update_proposal(
                 detail="Options can only be set on approval or ranked-choice proposals",
             )
         _validate_and_update_options(db, proposal, body.options)
+
+    # Phase 8 — sustained-majority per-proposal override.
+    # Validate against the org's `sustained_majority_per_proposal_override`
+    # setting; only persist when the value actually changes so we don't emit
+    # spurious audit events on no-op patches.
+    if "sustained_majority_enabled" in body.model_fields_set:
+        org = (
+            db.get(models.Organization, proposal.org_id)
+            if proposal.org_id else None
+        )
+        from sustained_majority_service import validate_per_proposal_override
+        validate_per_proposal_override(body.sustained_majority_enabled, org)
+        old_value = proposal.sustained_majority_enabled
+        if old_value != body.sustained_majority_enabled:
+            proposal.sustained_majority_enabled = body.sustained_majority_enabled
+            log_audit_event(
+                db,
+                action=(
+                    "proposal.sustained_majority_enabled"
+                    if body.sustained_majority_enabled is True
+                    else "proposal.sustained_majority_disabled"
+                ),
+                target_type="proposal",
+                target_id=proposal.id,
+                actor_id=current_user.id,
+                details={
+                    "old_value": old_value,
+                    "new_value": body.sustained_majority_enabled,
+                },
+            )
 
     db.commit()
     db.refresh(proposal)
@@ -378,6 +415,12 @@ def advance_proposal(
 def get_results(proposal_id: str, db: Session = Depends(get_db)):
     proposal = _proposal_or_404(proposal_id, db)
     tally = delegation_engine.compute_tally(proposal, db)
+    org = (
+        db.get(models.Organization, proposal.org_id)
+        if proposal.org_id else None
+    )
+    from sustained_majority_service import build_status as _sm_build_status
+    sm_status = _sm_build_status(db, proposal, org)
 
     snapshots = (
         db.query(models.VoteSnapshot)
@@ -415,6 +458,7 @@ def get_results(proposal_id: str, db: Session = Depends(get_db)):
             tied=tally.tied,
             tie_resolution=proposal.tie_resolution,
             time_series=time_series,
+            sustained_majority=sm_status,
         )
 
     if proposal.voting_method == "ranked_choice" and isinstance(tally, RCVTally):
@@ -447,6 +491,7 @@ def get_results(proposal_id: str, db: Session = Depends(get_db)):
             method=tally.method,
             num_winners=tally.num_winners,
             time_series=time_series,
+            sustained_majority=sm_status,
         )
 
     return schemas.ProposalResults(
@@ -464,6 +509,7 @@ def get_results(proposal_id: str, db: Session = Depends(get_db)):
         quorum_met=tally.quorum_met(proposal.quorum_threshold),
         threshold_met=tally.threshold_met(proposal.pass_threshold),
         time_series=time_series,
+        sustained_majority=sm_status,
     )
 
 

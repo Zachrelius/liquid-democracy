@@ -40,8 +40,16 @@ DEFAULT_ORG_SETTINGS = {
     "allow_public_delegates": True,
     "public_delegate_policy": "admin_approval",
     "require_email_verification": True,
-    "sustained_majority_floor": 0.45,
     "allowed_voting_methods": ["binary", "approval"],
+    # Phase 8 — sustained-majority voting windows. All defaults off / fail-safe
+    # so existing orgs see no behavior change until an admin flips the switch.
+    # `get_sustained_majority_config()` lazy-applies these values when an org
+    # was created before Phase 8 and lacks the keys.
+    "sustained_majority_enabled_default": False,
+    "sustained_majority_per_proposal_override": True,
+    "sustained_majority_threshold": 0.50,
+    "sustained_majority_floor": 0.45,
+    "sustained_majority_failure_mode": "fail",
 }
 
 
@@ -187,11 +195,17 @@ def get_organization(
 def update_organization(
     org_slug: str,
     body: schemas.OrgUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_admin),
 ):
-    """Update org settings (requires admin)."""
+    """Update org settings (requires admin).
+
+    When the patch touches any of the five sustained-majority keys, we emit a
+    focused `org.sustained_majority_config_changed` audit event listing only
+    the keys that actually changed, so the audit log stays signal-rich.
+    """
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
@@ -205,7 +219,20 @@ def update_organization(
     if body.join_policy is not None:
         org.join_policy = body.join_policy
     if body.settings is not None:
+        from sustained_majority_service import diff_sustained_majority_settings
+        # Diff BEFORE merging so we capture the actual transition.
+        sm_diff = diff_sustained_majority_settings(org.settings, body.settings)
         org.settings = {**(org.settings or {}), **body.settings}
+        if sm_diff:
+            log_audit_event(
+                db,
+                action="org.sustained_majority_config_changed",
+                target_type="organization",
+                target_id=org.id,
+                actor_id=current_user.id,
+                details={"changes": sm_diff},
+                ip_address=request.client.host if request.client else None,
+            )
 
     db.commit()
     db.refresh(org)
@@ -979,6 +1006,11 @@ def create_org_proposal(
         if not db.get(models.Topic, t.topic_id):
             raise HTTPException(status_code=400, detail=f"Topic {t.topic_id} not found")
 
+    # Phase 8 — sustained-majority per-proposal override. Reject non-null
+    # value when the org disallows per-proposal overrides.
+    from sustained_majority_service import validate_per_proposal_override
+    validate_per_proposal_override(body.sustained_majority_enabled, org)
+
     proposal = models.Proposal(
         title=body.title,
         body=body.body,
@@ -988,9 +1020,29 @@ def create_org_proposal(
         num_winners=body.num_winners,
         pass_threshold=body.pass_threshold,
         quorum_threshold=body.quorum_threshold,
+        sustained_majority_enabled=body.sustained_majority_enabled,
     )
     db.add(proposal)
     db.flush()
+
+    if body.sustained_majority_enabled is True:
+        log_audit_event(
+            db,
+            action="proposal.sustained_majority_enabled",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=current_user.id,
+            details={"old_value": None, "new_value": True},
+        )
+    elif body.sustained_majority_enabled is False:
+        log_audit_event(
+            db,
+            action="proposal.sustained_majority_disabled",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=current_user.id,
+            details={"old_value": None, "new_value": False},
+        )
 
     for t in body.topics:
         db.add(models.ProposalTopic(
@@ -1107,6 +1159,127 @@ def advance_org_proposal(
         target_id=proposal.id,
         actor_id=current_user.id,
         details={"proposal_id": proposal.id, "old_status": old_status, "new_status": next_status},
+        ip_address=request.client.host if request.client else None,
+    )
+
+    db.commit()
+    db.refresh(proposal)
+    from routes.proposals import _build_proposal_out
+    return _build_proposal_out(proposal)
+
+
+# ============================================================================
+# Sustained-Majority Escalation Resolution (Phase 8)
+# ============================================================================
+
+@router.post(
+    "/{org_slug}/proposals/{proposal_id}/resolve_escalation",
+    response_model=schemas.ProposalOut,
+)
+def resolve_escalation(
+    org_slug: str,
+    proposal_id: str,
+    body: schemas.EscalationResolveRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    admin_membership: models.OrgMembership = Depends(require_org_admin),
+):
+    """Resolve a proposal currently in `unresolved` status (Phase 8).
+
+    Only reachable for proposals where the sustained-majority floor was
+    breached and failure_mode was `escalate`. Admin picks one of:
+      - extend                : push voting_end forward, status back to voting
+      - fail                  : status -> failed
+      - pass                  : status -> passed (override; discouraged)
+      - back_to_deliberation  : status -> deliberation (reopens for amendment)
+
+    Always emits `proposal.escalation_resolved` with the chosen action and
+    optional reason.
+    """
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    proposal = db.query(models.Proposal).filter(
+        models.Proposal.id == proposal_id,
+        models.Proposal.org_id == org.id,
+    ).first()
+    if not proposal:
+        raise HTTPException(
+            status_code=404, detail="Proposal not found in this organization",
+        )
+    if proposal.status != "unresolved":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Proposal is in '{proposal.status}', not 'unresolved'",
+        )
+
+    old_status = proposal.status
+    new_status: str = old_status
+    audit_extra: dict = {}
+
+    if body.action == "extend":
+        # Move back to voting and extend the window. Either honor the
+        # caller-supplied new_voting_end or extend by the original window.
+        proposal.status = "voting"
+        new_status = "voting"
+        if body.new_voting_end is not None:
+            proposal.voting_end = body.new_voting_end.replace(tzinfo=None) \
+                if body.new_voting_end.tzinfo else body.new_voting_end
+        elif proposal.voting_start and proposal.voting_end:
+            from sustained_majority import extension_window_for
+            proposal.voting_end = (
+                proposal.voting_end
+                + extension_window_for(proposal.voting_start, proposal.voting_end)
+            )
+        audit_extra["new_voting_end"] = (
+            proposal.voting_end.isoformat() if proposal.voting_end else None
+        )
+        # Also emit the matching window_extended event so the
+        # `count_extensions` helper in the worker reflects this manual extend.
+        log_audit_event(
+            db,
+            action="proposal.window_extended",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=current_user.id,
+            details={
+                "proposal_id": proposal.id,
+                "voting_method": proposal.voting_method,
+                "reason": "admin_escalation_resolution",
+                "new_voting_end": audit_extra["new_voting_end"],
+            },
+            ip_address=request.client.host if request.client else None,
+        )
+    elif body.action == "fail":
+        proposal.status = "failed"
+        new_status = "failed"
+    elif body.action == "pass":
+        proposal.status = "passed"
+        new_status = "passed"
+    elif body.action == "back_to_deliberation":
+        proposal.status = "deliberation"
+        new_status = "deliberation"
+
+    db.flush()
+
+    log_audit_event(
+        db,
+        action="proposal.escalation_resolved",
+        target_type="proposal",
+        target_id=proposal.id,
+        actor_id=current_user.id,
+        details={
+            "proposal_id": proposal.id,
+            "action": body.action,
+            "reason": (body.reason or "").strip() or None,
+            "old_status": old_status,
+            "new_status": new_status,
+            **audit_extra,
+        },
         ip_address=request.client.host if request.client else None,
     )
 

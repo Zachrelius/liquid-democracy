@@ -108,6 +108,11 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
   const [selectedTopics, setSelectedTopics] = useState([]);
   const [passThreshold, setPassThreshold] = useState(orgSettings?.default_pass_threshold ?? 0.5);
   const [quorumThreshold, setQuorumThreshold] = useState(orgSettings?.default_quorum_threshold ?? 0.4);
+  // Phase 8 — per-proposal sustained-majority override.
+  // null = inherit org default; only writable when org allows the override.
+  const smOverrideAllowed = orgSettings?.sustained_majority_per_proposal_override !== false;
+  const orgSmDefault = orgSettings?.sustained_majority_enabled_default === true;
+  const [smEnabled, setSmEnabled] = useState(orgSmDefault);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -168,6 +173,11 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
       }
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
+      }
+      // Phase 8 — only send the override when org allows it AND the choice
+      // diverges from the org default; otherwise let null inherit.
+      if (smOverrideAllowed && smEnabled !== orgSmDefault) {
+        payload.sustained_majority_enabled = smEnabled;
       }
       await api.post(`/api/orgs/${slug}/proposals`, payload);
       toast.success('Proposal created');
@@ -336,6 +346,35 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
         </div>
       </div>
 
+      {/* Phase 8 — Sustained-Majority toggle (only when org allows override) */}
+      {smOverrideAllowed && (
+        <div className="bg-[#F4F6F9] border border-gray-200 rounded-lg p-4 space-y-2">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={smEnabled}
+              onChange={e => setSmEnabled(e.target.checked)}
+              className="mt-0.5 accent-[#2E75B6]"
+            />
+            <div>
+              <p className="text-sm text-gray-700 font-medium">Sustained-majority voting</p>
+              <p className="text-xs text-gray-500">
+                Requires the proposal to maintain support throughout the voting window.
+                Useful for binding decisions; overkill for routine matters.{' '}
+                <Link to="/help/sustained-majority" className="text-[#2E75B6] hover:underline">
+                  Learn more →
+                </Link>
+              </p>
+              {smEnabled !== orgSmDefault && (
+                <p className="text-xs text-amber-600 mt-1">
+                  Overriding org default ({orgSmDefault ? 'on' : 'off'}).
+                </p>
+              )}
+            </div>
+          </label>
+        </div>
+      )}
+
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       <div className="flex gap-2">
@@ -417,6 +456,22 @@ export default function ProposalManagement() {
       load();
     } catch (e) {
       toast.error(e.message);
+    }
+  }
+
+  // Phase 8 — resolve a sustained-majority escalation.
+  async function handleResolveEscalation(proposalId, action, reason = '') {
+    try {
+      const payload = { action };
+      if (reason) payload.reason = reason;
+      await api.post(
+        `/api/orgs/${slug}/proposals/${proposalId}/resolve_escalation`,
+        payload,
+      );
+      toast.success(`Escalation resolved: ${action}`);
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Failed to resolve');
     }
   }
 
@@ -523,11 +578,101 @@ export default function ProposalManagement() {
                   {(p.status === 'passed' || p.status === 'failed') && (
                     <span className="text-xs text-gray-400">This proposal is closed.</span>
                   )}
+                  {p.status === 'unresolved' && (
+                    <EscalationResolutionPanel
+                      proposalId={p.id}
+                      onResolve={handleResolveEscalation}
+                    />
+                  )}
                 </div>
               )}
             </div>
           ))
         )}
+      </div>
+    </div>
+  );
+}
+
+
+// Phase 8 — escalation resolution UI for `unresolved` proposals.
+function EscalationResolutionPanel({ proposalId, onResolve }) {
+  const [action, setAction] = useState(null);
+  const [reason, setReason] = useState('');
+
+  const requiresReason = action === 'pass';
+
+  if (!action) {
+    return (
+      <div className="flex flex-col gap-2 w-full">
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+          <strong>Awaiting admin review.</strong> Sustained-majority floor was breached during voting.
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => setAction('extend')}
+            className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-blue-50"
+          >
+            Extend Window
+          </button>
+          <button
+            onClick={() => setAction('fail')}
+            className="text-xs px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100"
+          >
+            Mark Failed
+          </button>
+          <button
+            onClick={() => setAction('pass')}
+            className="text-xs px-3 py-1.5 border border-amber-400 text-amber-700 rounded-lg hover:bg-amber-50"
+          >
+            Mark Passed (override)
+          </button>
+          <button
+            onClick={() => setAction('back_to_deliberation')}
+            className="text-xs px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100"
+          >
+            Back to Deliberation
+          </button>
+          <a
+            href={`/admin/audit?target_id=${proposalId}`}
+            className="text-xs px-3 py-1.5 text-[#2E75B6] hover:underline"
+          >
+            View breach history →
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2 w-full">
+      <p className="text-xs text-gray-700">
+        Confirm: <strong className="text-[#1B3A5C]">{action.replace(/_/g, ' ')}</strong>
+        {requiresReason && <span className="text-red-600"> — reason required for override</span>}
+      </p>
+      {(requiresReason || action === 'extend') && (
+        <textarea
+          value={reason}
+          onChange={e => setReason(e.target.value)}
+          placeholder={requiresReason ? 'Why are you overriding the failure?' : 'Reason (optional)'}
+          rows={2}
+          className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+        />
+      )}
+      <div className="flex gap-2">
+        <button
+          onClick={() => onResolve(proposalId, action, reason.trim())}
+          disabled={requiresReason && !reason.trim()}
+          className="text-xs px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
+        >
+          Confirm
+        </button>
+        <button
+          onClick={() => { setAction(null); setReason(''); }}
+          className="text-xs px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50"
+        >
+          Cancel
+        </button>
       </div>
     </div>
   );
