@@ -21,7 +21,12 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 limiter = Limiter(key_func=get_remote_address)
 
-DEMO_USERNAMES = ["alice", "admin", "dr_chen", "carol", "dave", "frank"]
+DEMO_USERNAMES = ["alice", "admin", "dr_chen", "carol", "dave", "frank",
+                  # Phase 8.5: voter02 is the canonical Decision-7 / Decision-8
+                  # cross-scope persona (parent-org member, NOT in Engineering
+                  # Team). Without quick-login, the sub-org demo flow is
+                  # awkward to exercise from the public landing.
+                  "voter02"]
 DEMO_ORG_SLUG = "demo"
 
 
