@@ -896,3 +896,112 @@ class TestParentOrgAdminImplicitPower:
             headers=_auth(admin),
         )
         assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Phase 8.6 — Decision 3 carry-forward: topic visibility filter
+# ---------------------------------------------------------------------------
+
+class TestTopicVisibilityDecision3:
+    """Phase 8.6 Item 1 — topic-list visibility filter on both
+    ``/api/orgs/{slug}/topics`` and the unscoped ``/api/topics`` endpoints.
+
+    Phase 8.5 Session 2 wired the org-scoped filter (covered by
+    ``TestTopicAndProposalScope.test_topic_list_filters_by_viewer_scope``).
+    This class fills the missing 4th case (user in two sub-orgs) and also
+    exercises the global ``/api/topics`` endpoint that the personal
+    Settings/Delegations pages hit when the user has no currentOrg context.
+    """
+
+    def _bootstrap_two_subs(self, db):
+        admin = _user(db, "p86_admin")
+        parent_only = _user(db, "p86_parentonly")
+        multi_sub = _user(db, "p86_multisub")
+        parent = _org(db, "p86parent")
+        sub_a = _org(db, "p86sub_a", parent_org_id=parent.id)
+        sub_b = _org(db, "p86sub_b", parent_org_id=parent.id)
+        _membership(db, parent, admin, role="admin")
+        _membership(db, parent, parent_only, role="member")
+        _membership(db, parent, multi_sub, role="member")
+        _sub_membership(db, sub_a, multi_sub, role="member")
+        _sub_membership(db, sub_b, multi_sub, role="member")
+
+        # Topics: one parent-wide, one in sub_a, one in sub_b
+        t_open = models.Topic(
+            name="P86Open", description="", color="#000",
+            org_id=parent.id, sub_org_id=None,
+        )
+        t_a = models.Topic(
+            name="P86SubA", description="", color="#000",
+            org_id=parent.id, sub_org_id=sub_a.id,
+        )
+        t_b = models.Topic(
+            name="P86SubB", description="", color="#000",
+            org_id=parent.id, sub_org_id=sub_b.id,
+        )
+        db.add_all([t_open, t_a, t_b])
+        db.commit()
+        return admin, parent_only, multi_sub, parent, sub_a, sub_b
+
+    # --- Org-scoped /api/orgs/{slug}/topics ---
+
+    def test_user_in_two_sub_orgs_sees_both(self, db, client):
+        """Parent-org member of two sub-orgs sees parent-wide + both sub-orgs'
+        topics on the org-scoped endpoint."""
+        _, _, multi_sub, parent, _, _ = self._bootstrap_two_subs(db)
+        resp = client.get(
+            f"/api/orgs/{parent.slug}/topics", headers=_auth(multi_sub),
+        )
+        assert resp.status_code == 200
+        names = {t["name"] for t in resp.json()}
+        assert {"P86Open", "P86SubA", "P86SubB"}.issubset(names)
+
+    # --- Unscoped /api/topics (Settings / Delegations page path) ---
+
+    def test_global_topics_parent_only_member_no_sub_org_topics(self, db, client):
+        """Decision 3: parent-org-only member sees parent-wide topics,
+        does NOT see sub-org-scoped topics on the global endpoint."""
+        _, parent_only, _, parent, _, _ = self._bootstrap_two_subs(db)
+        resp = client.get(
+            "/api/topics", headers=_auth(parent_only),
+        )
+        assert resp.status_code == 200
+        names = {t["name"] for t in resp.json()}
+        assert "P86Open" in names
+        assert "P86SubA" not in names
+        assert "P86SubB" not in names
+
+    def test_global_topics_sub_org_member_sees_their_sub(self, db, client):
+        """Sub-org member sees parent-wide + their sub-org's topics on the
+        global endpoint."""
+        admin, _, _, parent, sub_a, _ = self._bootstrap_two_subs(db)
+        # Make a fresh user who's in sub_a only.
+        single = _user(db, "p86_singlesub")
+        _membership(db, parent, single, role="member")
+        _sub_membership(db, sub_a, single, role="member")
+        db.commit()
+
+        resp = client.get("/api/topics", headers=_auth(single))
+        assert resp.status_code == 200
+        names = {t["name"] for t in resp.json()}
+        assert "P86Open" in names
+        assert "P86SubA" in names
+        assert "P86SubB" not in names
+
+    def test_global_topics_user_in_two_sub_orgs_sees_both(self, db, client):
+        """User in two sub-orgs sees both sub-orgs' topics on the global
+        endpoint (4th case from Item 1 spec)."""
+        _, _, multi_sub, _, _, _ = self._bootstrap_two_subs(db)
+        resp = client.get("/api/topics", headers=_auth(multi_sub))
+        assert resp.status_code == 200
+        names = {t["name"] for t in resp.json()}
+        assert {"P86Open", "P86SubA", "P86SubB"}.issubset(names)
+
+    def test_global_topics_parent_admin_sees_all(self, db, client):
+        """Parent-org admin sees all topics regardless of sub-org membership
+        (Decision 6 implicit power) on the global endpoint."""
+        admin, _, _, _, _, _ = self._bootstrap_two_subs(db)
+        resp = client.get("/api/topics", headers=_auth(admin))
+        assert resp.status_code == 200
+        names = {t["name"] for t in resp.json()}
+        assert {"P86Open", "P86SubA", "P86SubB"}.issubset(names)
