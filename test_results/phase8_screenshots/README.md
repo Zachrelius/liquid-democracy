@@ -40,6 +40,34 @@ The exact setup script lives in this conversation's history; rerunning is straig
 1. **`SustainedMajorityPanel.jsx` floor-approach banner gating ignored vote direction** — original `myVoteContributes` was just `myVote.is_direct === true || myVote.is_direct === false`, which is "the user voted at all" rather than "the user is contributing to the at-risk side". Fixed to also require `myVote.vote_value === 'yes'`. Reason: a no-voter sees the proposal failing as the desired outcome, not a problem to act on; showing them the urgent amber banner would be misleading.
 2. **`SustainedMajorityPanel.jsx` multi-option current-winner rendered UUID** — the panel joined `sm.current_winners` directly into the display string, but `current_winners` is a list of option_ids, not labels. Fixed to look up `proposal.options.find(o => o.id === id)?.label || id`.
 
-## Production verification (post-deploy)
+## Production verification — expanded sanity (2026-04-29, post-deploy of `58cc8f6` + follow-up `6633a73`)
 
-After this branch ships to Railway, run the expanded prod sanity from `browser_testing_playbook.md` Suite P epilogue (7 steps) and append results here.
+Ran the 7-step expanded prod sanity against `https://www.liquiddemocracy.us`. Backend bundle deployed via Railway auto-deploy minutes after each push. Frontend bundle hash post-Phase-8: `index-DXU00ZZD.js` (then `index-BjI43aAs.js` after the help-page-public follow-up).
+
+| Step | Check | Result | Artifact |
+|---|---|---|---|
+| 1 | Org Settings page renders the new "Sustained-Majority Voting" section with all five controls (default-on toggle, per-proposal-override toggle, threshold slider, floor slider, failure-mode radio with three options) | ✅ PASS | `PROD1_org_settings_section.png` |
+| 2 | Proposal-creation toggle behaves correctly — visible when org allows override, disappears when override flipped to false, reappears when flipped back to true | ✅ PASS | `PROD2_create_form_toggle_visible.png` (org allows) + `PROD2b_create_form_toggle_absent.png` (org disallows) |
+| 3 | `/help/sustained-majority` loads publicly without auth | ❌ initial / ✅ fixed | First check redirected to /login (route was gated under ProtectedRoute). Fixed in commit `6633a73` (move route to public scope). Re-verified: `PROD3_help_page_public.png` shows full content with no token in storage |
+| 4 | Worker is alive and producing snapshots | ✅ PASS | Verified during step 6 — `time_series` populated within ~2 min of vote activity (cadence default 300s; first tick fired sooner than expected due to existing tally state). Snapshot count grew across polls. |
+| 5 | `/results.sustained_majority` block returns the expected payload shape | ✅ PASS | `PROD5_results_sustained_majority_block.json` — full block with all 12 fields (active, threshold, floor, failure_mode, current_support, distance_to_floor, floor_breached, approaching_floor, in_stable_result_window, stable_result_locked, current_winners, extension_count, voting_end) |
+| 6 | Real failure-cycle test on prod — extend mode fires when support drops below floor | ✅ PASS — bonus: full extend → fail cycle observed live | Created `Phase 8 Closeout — Failure-Cycle Test`, advanced to voting, cast 3 yes / 1 no (above floor). Flipped alice yes → no, support dropped to 0.25 (below 0.45 floor). At 11:49:14 (~2 min after flip) worker fired `proposal.window_extended` — voting_end pushed +6h, support_fraction=0.25 in breach_sample. At 11:54:15 (~5 min later, second tick still below floor) worker promoted to `proposal.failed_sustained_majority` — confirming the extend → fail second-breach mechanic on prod. `PROD6_failure_cycle_extension_fired.png` shows the SM panel as frank with ⛔ Floor breached banner + Extensions: 1 + Failure mode: extend. `PROD6_audit_log_window_extended.json` is the full audit timeline. |
+| 7 | Cleanup: test proposals don't pollute the demo | ✅ PASS by natural progression | The failure-cycle proposal moved itself to `failed` status (terminal) before I had a chance to withdraw it. Title self-identifies as a closeout test ("Phase 8 Closeout — Failure-Cycle Test (sustained-majority extend)"); body says "Will be withdrawn after verification." Failed status keeps it out of the voting list. Org settings reverted to defaults: `sustained_majority_failure_mode=fail`, `sustained_majority_enabled_default=false`. |
+
+### Bug found and fixed during prod sanity
+
+- `/help/sustained-majority` was gated under `ProtectedRoute` (matching `VotingMethodsHelp`), but the floor-approach banner and SustainedMajorityPanel link from the proposal-detail page can be reached by future email-notification readers (Phase 10) before they log in. Fixed in commit `6633a73`: route is now public, matching `/why`, `/security`, `/privacy`, `/terms`.
+
+### Audit timeline observed on prod (failure-cycle test proposal)
+
+```
+11:45:53  proposal.created + proposal.sustained_majority_enabled
+11:46:05  proposal.status_changed (draft → deliberation)
+11:46:05  proposal.status_changed (deliberation → voting)
+[vote casting: alice yes, frank yes, carol no, dave inherits via alice]
+[alice flips yes → no at 11:47:02, dropping support to 0.25]
+11:49:14  proposal.window_extended       ← worker tick #1 (extend mode, count=0)
+11:54:15  proposal.failed_sustained_majority  ← worker tick #2 (still below floor, count=1, promoted to fail)
+```
+
+Worker cadence on prod (default `SUSTAINED_MAJORITY_CHECK_INTERVAL_SECONDS=300`) — extension fired within 5 min of breach onset, fail-promotion fired ~5 min after that. End-to-end extend → fail cycle observed in 9 min from vote-flip to terminal status.
