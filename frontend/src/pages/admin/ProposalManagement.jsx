@@ -98,7 +98,7 @@ function OptionsEditor({ options, onChange }) {
   );
 }
 
-function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) {
+function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onCancel }) {
   const toast = useToast();
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -106,8 +106,17 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
   const [options, setOptions] = useState([{ label: '', description: '' }, { label: '', description: '' }]);
   const [numWinners, setNumWinners] = useState(1);
   const [selectedTopics, setSelectedTopics] = useState([]);
+  // Phase 8.5 — scope selector. '' == parent-org-wide.
+  const [scope, setScope] = useState('');
   const [passThreshold, setPassThreshold] = useState(orgSettings?.default_pass_threshold ?? 0.5);
   const [quorumThreshold, setQuorumThreshold] = useState(orgSettings?.default_quorum_threshold ?? 0.4);
+
+  // Decision 3: sub-org proposals can use parent-org-wide topics + that sub-
+  // org's own topics. Parent-org-wide proposals can use ONLY parent-org-wide
+  // topics (sub_org_id null).
+  const inScopeTopics = scope
+    ? topics.filter(t => t.sub_org_id == null || t.sub_org_id === scope)
+    : topics.filter(t => t.sub_org_id == null);
   // Phase 8 — per-proposal sustained-majority override.
   // null = inherit org default; only writable when org allows the override.
   const smOverrideAllowed = orgSettings?.sustained_majority_per_proposal_override !== false;
@@ -165,6 +174,7 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
         quorum_threshold: quorumThreshold,
         voting_method: votingMethod,
       };
+      if (scope) payload.sub_org_id = scope;
       if (isMultiOption) {
         payload.options = options.map(o => ({
           label: o.label.trim(),
@@ -192,6 +202,37 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
   return (
     <form onSubmit={handleSubmit} className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
       <h3 className="text-lg font-semibold text-[#1B3A5C]">Create Proposal</h3>
+
+      {/* Phase 8.5 — Scope Selector */}
+      {subOrgs && subOrgs.length > 0 && (
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Scope</label>
+          <select
+            value={scope}
+            onChange={e => {
+              setScope(e.target.value);
+              // Trim out-of-scope topic selections when scope changes.
+              setSelectedTopics(prev => prev.filter(s => {
+                const t = topics.find(x => x.id === s.topic_id);
+                if (!t) return false;
+                if (e.target.value) return t.sub_org_id == null || t.sub_org_id === e.target.value;
+                return t.sub_org_id == null;
+              }));
+            }}
+            className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+          >
+            <option value="">Parent-org-wide (default)</option>
+            {subOrgs.map(s => (
+              <option key={s.id} value={s.id}>{s.name} only</option>
+            ))}
+          </select>
+          {scope && (
+            <p className="text-xs text-amber-600 mt-1">
+              Only {subOrgs.find(s => s.id === scope)?.name} members will be able to vote on this proposal.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Voting Method Selector */}
       <div>
@@ -275,11 +316,13 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
         </div>
       )}
 
-      {topics.length > 0 && (
+      {inScopeTopics.length > 0 && (
         <div>
-          <label className="block text-xs text-gray-500 mb-2">Topics</label>
+          <label className="block text-xs text-gray-500 mb-2">
+            Topics ({inScopeTopics.length} in scope)
+          </label>
           <div className="space-y-2">
-            {topics.map(t => {
+            {inScopeTopics.map(t => {
               const sel = selectedTopics.find(s => s.topic_id === t.id);
               return (
                 <div key={t.id} className="flex items-center gap-3">
@@ -295,6 +338,9 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
                       style={{ backgroundColor: t.color }}
                     />
                     <span className="text-sm text-gray-700">{t.name}</span>
+                    {t.sub_org_id && (
+                      <span className="text-[10px] uppercase text-blue-600">scoped</span>
+                    )}
                   </label>
                   {sel && (
                     <div className="flex items-center gap-2 ml-4">
@@ -398,11 +444,12 @@ function CreateProposalForm({ slug, orgSettings, topics, onCreated, onCancel }) 
 }
 
 export default function ProposalManagement() {
-  const { currentOrg } = useOrg();
+  const { currentOrg, fetchSubOrgsFor } = useOrg();
   const toast = useToast();
   const confirm = useConfirm();
   const [proposals, setProposals] = useState([]);
   const [topics, setTopics] = useState([]);
+  const [subOrgs, setSubOrgs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
@@ -421,7 +468,14 @@ export default function ProposalManagement() {
     } catch { /* ignore */ } finally {
       setLoading(false);
     }
-  }, [slug]);
+    // Phase 8.5 — fetch sub-orgs only when at parent-org scope.
+    if (currentOrg && !currentOrg.parent_org_id) {
+      try {
+        const subs = await fetchSubOrgsFor(slug);
+        setSubOrgs(subs || []);
+      } catch { setSubOrgs([]); }
+    }
+  }, [slug, currentOrg, fetchSubOrgsFor]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -494,6 +548,7 @@ export default function ProposalManagement() {
           slug={slug}
           orgSettings={currentOrg.settings}
           topics={topics}
+          subOrgs={subOrgs}
           onCreated={() => { setShowCreate(false); load(); }}
           onCancel={() => setShowCreate(false)}
         />
