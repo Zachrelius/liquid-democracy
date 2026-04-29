@@ -1650,3 +1650,100 @@ Screenshots: `test_results/phase8_1_screenshots/Q1_Q2_steering_sankey_prod.svg` 
 1. **`react-refresh/only-export-components` warnings on `RCVSankeyChart.jsx`** — pre-existing on the `deriveDisplayColumns` and `buildSankeyData` exports. Splitting the two helpers into a sibling util file would clear them. Stale tech debt, not a Phase 8.1 regression.
 2. **`mcp__claude-in-chrome__javascript_tool` blocks raw base64 returns** — surfaced when capturing the Annual Team Offsite SVG. The base64-via-console workaround documented in Item 6 is the right path; programmatic capture from the JS tool needs an obfuscation trick or a different transport. Worth knowing for future prod-verification passes.
 
+---
+
+## Phase 8.5 — Sub-Organizations — Session 1: Data Layer — 2026-04-29
+
+**Branch:** `phase-8.5/data-layer` (NOT yet merged to master). Session 1 of a four-session pass; the data layer is testable in isolation but isn't user-facing until Session 4 ships frontend + Suite R. No prod deploy this session.
+
+**Sessions plan (recap):**
+- **Session 1 (this entry):** schema migration, pure/service-layer scope handling, permissions + org-config helpers, demo seed, 48 backend tests, PG smoke. **DONE.**
+- **Session 2 (next):** ~12 sub-org route endpoints (CRUD, membership, promote-to-org-wide), audit events, scope-aware list filtering on existing endpoints, integration tests.
+- **Session 3:** frontend admin (org switcher tree, sub-org admin pages, scope selectors, sub-org settings).
+- **Session 4:** frontend voter UX (Decision 10 scope-coverage indicators, cross-scope disclosure, list filtering, vote-flow graph orphan-voter rendering), Suite R browser tests, prod deploy + sanity.
+
+### What shipped (Session 1)
+
+**Schema migration (`d41a8c92f3b1`):**
+- `organizations.parent_org_id` — nullable self-FK, indexed
+- New `sub_org_memberships` table parallel to `org_memberships` (UQ `(user_id, sub_org_id)`, indexes on each)
+- `topics.sub_org_id`, `proposals.sub_org_id`, `delegate_profiles.sub_org_id` — all nullable FK to organizations, indexed
+- Reversible: SQLite uses `batch_alter_table`; PostgreSQL uses `DROP COLUMN ... CASCADE` so the downgrade is name-agnostic (production PG DBs come up via `create_tables` + `alembic stamp head` and have SQLAlchemy auto-named FKs, not the migration's hand-named ones).
+- All existing rows get NULL in the new columns post-upgrade — single-org behavior is bit-for-bit unchanged.
+
+**Pure-layer + service-layer scope handling (`backend/delegation_engine.py`):**
+- New `eligible_voter_ids_for_proposal(db, proposal)` helper. Sub-org-scoped (`sub_org_id IS NOT NULL`) → active SubOrgMembership members. Parent-org-scoped → existing legacy semantic (all users — see Surprise (c) below).
+- `compute_tally` narrows to the new helper for sub-org proposals only.
+- The pure layer (`resolve_vote_pure` / `find_delegate_pure`) required no changes: Decision 8 (cross-scope delegation) works through the existing chain-behavior fallback when a non-member delegate has no ballot. Verified by `test_delegation_scope.py`. Decision 8's "uses existing mechanics" claim holds.
+
+**Permission helper (`backend/permissions.py`):**
+- New `is_sub_org_admin(db, user_id, sub_org)` implementing Decision 6's implicit-admin pattern (sub-org admin OR parent-org admin → True). ValueError if `sub_org.parent_org_id IS NULL`. Read-time only, not stored.
+
+**Org-config helper (new `backend/org_config.py`):**
+- `get_org_config(org, key, default)` walks the parent chain (Decision 9). Bounded at 5 hops with RuntimeError on overflow.
+- `sustained_majority.get_sustained_majority_config` migrated to use `get_org_config`. For top-level orgs the walk degenerates to the prior `org.settings.get(key) → DEFAULTS[key]` semantic — bit-for-bit equivalent. All existing 31 sustained-majority tests pass without modification.
+
+**Demo seed (`backend/seed_data.py`):**
+- Sub-org `Engineering Team` (slug `demo-engineering`) under `demo`.
+- 4 members: `dave` (sub-org admin), `carol`, `voter01`, `voter02`. **`alice` deliberately NOT a sub-org member** — exercises the implicit parent-org-admin power persona for Suite R.
+- Sub-org-scoped topic `Engineering Practices`.
+- Sub-org-scoped proposal `Engineering Team — Adopt Trunk-Based Development` in voting status. dave/carol vote yes, voter01 votes no, voter02 abstains via cross-scope delegation to `econ_bob` (parent-org-only user; Decision 8 in action).
+- Pure data — no audit events emitted (Session 2 will add them when route handlers ship).
+- Re-running the seed is a no-op for the new rows.
+
+**Backend tests (+48, total 339 passing):**
+- `test_sub_org_models.py` (13) — schema, cascade, UQ, two-level depth allowed at schema layer.
+- `test_eligible_voters.py` (7) — eligibility dispatch on `sub_org_id`.
+- `test_org_config.py` (10) — parent-chain walk, defaults, cycle protection.
+- `test_permissions_sub_org.py` (12) — implicit admin coverage, edge cases.
+- `test_delegation_scope.py` (6) — pure-layer scope filtering + Decision 8 chain-behavior coverage.
+
+**PostgreSQL smoke: PASS, reversibility verified.** `postgres:16-alpine` on port 55432 in Docker. `alembic upgrade head` + `alembic downgrade -1` + `alembic upgrade head` all clean. Five focused test files re-run against a PG-backed `db` fixture: 48/48 in 36.09s (~36× SQLite time, confirming PG actually exercised).
+
+### Design surprises
+
+**(a) Decision 8 confirmed without new code paths.** Cross-scope delegation works through the existing chain-behavior fallback. `revert_direct` and `abstain` resolve to "not cast" exactly as if the non-member delegate just hadn't voted; `accept_sub` walks one more hop. Coverage: `test_cross_scope_non_member_delegate_*` in `test_delegation_scope.py`.
+
+**(b) `get_org_config` migration of `get_sustained_majority_config` is bit-for-bit equivalent for top-level orgs.** Net new behavior only fires when a sub-org is involved.
+
+**(c) Parent-org "eligibility" is currently "all users."** The legacy `compute_tally` used `db.query(models.User.id).all()` for all proposals, including parent-org-scoped ones. Tightening this to active OrgMembership-only (the natural read of Decision 2) breaks 8 existing tests in `test_ranked_choice_voting.py` and `test_sustained_majority_worker.py` that create voters without OrgMembership rows. **Session 1 deliberately preserved the legacy "all users" semantic for non-sub-org proposals**, dispatching only on `proposal.sub_org_id IS NOT NULL`. The spec text *"Where existing code only ever needs parent-org eligibility… leave it alone"* is the explicit license. **Session 2 should revisit at the route layer** where eligibility is the natural concern, and either tighten consistently with proper test fixtures or document why the legacy semantic stays.
+
+**(d) PG reversibility forced a name-agnostic downgrade.** Production PG DBs come up via `create_tables` + `alembic stamp head`, so FK constraints have SQLAlchemy auto-names (`<table>_<col>_fkey`), not the migration's hand-named ones. The downgrade now uses `DROP COLUMN ... CASCADE` on PG (which auto-drops the FK and index) and `batch_alter_table` on SQLite. More robust to future migration auto-rename quirks too.
+
+### Session 2 prerequisites
+
+For the next session's team. Everything below is on the `phase-8.5/data-layer` branch, ready to build against.
+
+**Migration revision ID:** `d41a8c92f3b1` (replaces base `c5f3a2b81e07`).
+
+**New tables / columns:**
+| Table.column | Type | Nullable | Indexed | Notes |
+|---|---|---|---|---|
+| `organizations.parent_org_id` | String FK→organizations.id | yes | yes | NULL = top-level org |
+| `sub_org_memberships.id` | String PK | no | — | UUID |
+| `sub_org_memberships.user_id` | String FK→users.id | no | yes | UQ with sub_org_id |
+| `sub_org_memberships.sub_org_id` | String FK→organizations.id | no | yes | UQ with user_id |
+| `sub_org_memberships.role` | String | no | — | default `member`; member/moderator/admin/owner |
+| `sub_org_memberships.status` | String | no | — | default `active`; active/suspended/pending_approval |
+| `sub_org_memberships.joined_at` | DateTime | no | — | |
+| `topics.sub_org_id` | String FK→organizations.id | yes | yes | NULL = parent-org-wide |
+| `proposals.sub_org_id` | String FK→organizations.id | yes | yes | NULL = parent-org-wide |
+| `delegate_profiles.sub_org_id` | String FK→organizations.id | yes | yes | derived from topic, stored for query efficiency |
+
+**New helper signatures (all importable now):**
+- `delegation_engine.eligible_voter_ids_for_proposal(db: Session, proposal: models.Proposal) -> set[str]` — sub-org-scoped → active SubOrgMembership; everything else → legacy "all users."
+- `permissions.is_sub_org_admin(db: Session, user_id: str, sub_org: models.Organization) -> bool` — raises ValueError if `sub_org.parent_org_id IS NULL`.
+- `org_config.get_org_config(org: Organization | None, key: str, default: Any = None) -> Any` — walks parent chain; bounded at 5 hops with RuntimeError on overflow; None org returns default.
+
+**Demo seed structure (additive idempotent, already in `seed_data.py`):**
+- Sub-org name `Engineering Team`, slug `demo-engineering`, parent `demo`.
+- Members: `dave` (role `admin`), `carol`, `voter01` (Aiyana Adebayo), `voter02` (Bo Beauchamp).
+- alice deliberately NOT a sub-org member — exercises Decision-6 implicit parent-org-admin power for Suite R.
+- Sub-org topic name `Engineering Practices`.
+- Sub-org proposal title `Engineering Team — Adopt Trunk-Based Development`, status `voting`, voted on by sub-org members + cross-scope delegation example via `voter02 → econ_bob`.
+
+**Pending callsite to migrate to `get_org_config`:**
+- `backend/routes/proposals.py:61` — `org.settings.get("allowed_voting_methods", [...])`. Canonical Decision-9 sub-org-override candidate. Session 2 should migrate as part of the routes work since each callsite needs case-by-case review of failure modes.
+
+**Branch:** `phase-8.5/data-layer`. Commits: `80ecbbe` (schema), `98caac6` (engine), `ee538ad` (permissions), `ab13800` (org_config), `6f27720` (seed), `2550985` (tests). All tagged Phase 8.5 in subject; `Spec: phase8_5_spec.md` in body. **Do not merge to master until Session 4 closes the pass.**
+
