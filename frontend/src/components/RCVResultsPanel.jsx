@@ -21,10 +21,18 @@ import { useConfirm } from './ConfirmDialog';
  *   }
  */
 export default function RCVResultsPanel({ tally, proposal }) {
-  const { currentOrg, isAdmin } = useOrg();
+  const { currentOrg, userOrgs, isAdmin } = useOrg();
   const toast = useToast();
   const confirm = useConfirm();
   const [resolving, setResolving] = useState(false);
+
+  // Phase 8.5 — proposals are always parent-org-owned (sub_org_id is the
+  // scope discriminator, not org_id). Resolve to the parent slug so admin
+  // actions still target the right route handler when currentOrg is a
+  // sub-org.
+  const parentSlug = currentOrg?.parent_org_id
+    ? userOrgs.find(o => o.id === currentOrg.parent_org_id)?.slug
+    : currentOrg?.slug;
 
   const optionLabelMap = useMemo(() => {
     const m = {};
@@ -65,7 +73,7 @@ export default function RCVResultsPanel({ tally, proposal }) {
     if (!ok) return;
     setResolving(true);
     try {
-      await api.post(`/api/orgs/${currentOrg.slug}/proposals/${proposal.id}/resolve-tie`, {
+      await api.post(`/api/orgs/${parentSlug}/proposals/${proposal.id}/resolve-tie`, {
         selected_option_id: optionId,
       });
       toast.success('Tie resolved');
