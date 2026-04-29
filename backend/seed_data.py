@@ -58,11 +58,15 @@ def _get_or_create_user(
 
 
 def _get_or_create_topic(
-    db: Session, name: str, description: str, color: str
+    db: Session, name: str, description: str, color: str,
+    sub_org_id: Optional[str] = None,
 ) -> models.Topic:
     topic = db.query(models.Topic).filter(models.Topic.name == name).first()
     if not topic:
-        topic = models.Topic(name=name, description=description, color=color)
+        topic = models.Topic(
+            name=name, description=description, color=color,
+            sub_org_id=sub_org_id,
+        )
         db.add(topic)
         db.flush()
     return topic
@@ -82,6 +86,7 @@ def _get_or_create_proposal(
     voting_method: str = "binary",
     options: Optional[list[tuple[str, str]]] = None,  # [(label, description), ...]
     num_winners: int = 1,
+    sub_org_id: Optional[str] = None,
 ) -> models.Proposal:
     proposal = db.query(models.Proposal).filter(models.Proposal.title == title).first()
     if proposal:
@@ -96,6 +101,7 @@ def _get_or_create_proposal(
         body=body,
         author_id=author_id,
         org_id=org_id,
+        sub_org_id=sub_org_id,
         status=status,
         voting_method=voting_method,
         num_winners=num_winners,
@@ -356,6 +362,63 @@ def _add_org_membership(
     m = models.OrgMembership(
         user_id=user.id,
         org_id=org.id,
+        role=role,
+        status="active",
+    )
+    db.add(m)
+    db.flush()
+    return m
+
+
+# ---------------------------------------------------------------------------
+# Phase 8.5 — Sub-org helpers
+# ---------------------------------------------------------------------------
+
+def _get_or_create_sub_org(
+    db: Session,
+    parent: models.Organization,
+    name: str,
+    slug: str,
+    description: str = "",
+    join_policy: str = "approval_required",
+    settings: Optional[dict] = None,
+) -> models.Organization:
+    """Idempotent: create a sub-org under ``parent`` if no org with this slug
+    exists yet. Re-runs are no-ops."""
+    existing = db.query(models.Organization).filter(
+        models.Organization.slug == slug
+    ).first()
+    if existing:
+        return existing
+    sub_org = models.Organization(
+        name=name,
+        slug=slug,
+        description=description,
+        join_policy=join_policy,
+        parent_org_id=parent.id,
+        settings=settings or {},
+    )
+    db.add(sub_org)
+    db.flush()
+    return sub_org
+
+
+def _add_sub_org_membership(
+    db: Session,
+    user: models.User,
+    sub_org: models.Organization,
+    role: str = "member",
+) -> models.SubOrgMembership:
+    """Idempotent: skip if membership exists. Never overwrite role/status."""
+    existing = db.query(models.SubOrgMembership).filter(
+        models.SubOrgMembership.user_id == user.id,
+        models.SubOrgMembership.sub_org_id == sub_org.id,
+    ).first()
+    if existing:
+        return existing
+    m = models.SubOrgMembership(
+        user_id=user.id,
+        sub_org_id=sub_org.id,
         role=role,
         status="active",
     )
@@ -1065,8 +1128,100 @@ def _seed_demo(db: Session) -> dict:
         ))
         db.flush()
 
+    # ── Phase 8.5: Sub-organization ───────────────────────────────────────
+    # Decision 1 (two-level), Decision 2 (opt-in membership), Decision 3
+    # (sub-org-scoped topic), Decision 8 (cross-scope delegation).
+    #
+    # Structure:
+    #   Sub-org "Engineering Team" under demo org.
+    #   - dave (sub-org admin)
+    #   - carol, voter01 (Aiyana Adebayo), voter02 (Bo Beauchamp): members.
+    #   - One sub-org-scoped topic: "Engineering Practices".
+    #   - One sub-org-scoped voting proposal using that topic.
+    #   - alice (parent-org admin) is intentionally NOT added as a sub-org
+    #     member — parent-org-admin implicit power (Decision 6) gives her
+    #     governance access without forcing her into the membership list, and
+    #     her exclusion from the sub-org gives QA a clean "non-member with
+    #     parent-org admin" persona to exercise Suite R scenarios with.
+    #   - voter02 has a delegation set in the parent-org seed above
+    #     (econ_bob on Economy). econ_bob is NOT a sub-org member, which
+    #     makes voter02 + econ_bob the canonical Decision 8 cross-scope
+    #     delegation pair: voter02 will hit the chain-behavior path on
+    #     sub-org proposals where their delegate isn't an eligible voter.
+    eng_sub_org = _get_or_create_sub_org(
+        db,
+        parent=demo_org,
+        name="Engineering Team",
+        slug="demo-engineering",
+        description=(
+            "A sub-organization within the Demo Org for engineering-team-scoped "
+            "decisions: tooling choices, on-call rotations, technical practices."
+        ),
+        join_policy="approval_required",
+        settings={
+            # Sub-org overrides nothing by default — Decision 9 lets us inherit
+            # from the parent. Leaving settings empty here exercises the
+            # parent-fallback path of get_org_config in real seed data.
+        },
+    )
+
+    # Sub-org members. dave is the sub-org admin (Decision 6 — sub-org-only
+    # admin powers; no parent-org-wide role escalation).
+    _add_sub_org_membership(db, dave, eng_sub_org, role="admin")
+    _add_sub_org_membership(db, carol, eng_sub_org, role="member")
+    _add_sub_org_membership(db, extra_users[0], eng_sub_org, role="member")
+    _add_sub_org_membership(db, extra_users[1], eng_sub_org, role="member")
+
+    # Sub-org-scoped topic (Decision 3). NULL parent_org_id hidden, but
+    # sub_org_id points to eng_sub_org.
+    eng_practices = _get_or_create_topic(
+        db,
+        name="Engineering Practices",
+        description="Engineering team coding practices, tooling, on-call.",
+        color="#0891b2",
+        sub_org_id=eng_sub_org.id,
+    )
+    eng_practices.org_id = demo_org.id  # parent-org for ownership; sub_org_id scopes it
+    db.flush()
+
+    # Sub-org-scoped proposal (Decision 3 / Decision 8). In voting status
+    # using the sub-org-scoped topic.
+    eng_proposal = _get_or_create_proposal(
+        db,
+        title="Engineering Team — Adopt Trunk-Based Development",
+        body=(
+            "## Background\n\n"
+            "The engineering team is currently on long-lived feature branches "
+            "and is hitting frequent merge-conflict pain. This proposal would "
+            "switch the team to trunk-based development with feature flags.\n\n"
+            "## Scope\n\n"
+            "Engineering Team only — does not affect other parts of the demo org."
+        ),
+        author_id=dave.id,
+        status="voting",
+        topic_relevances=[(eng_practices, 1.0)],
+        days_ago_deliberation=8,
+        days_ago_voting=2,
+        days_ahead_close=5,
+        org_id=demo_org.id,
+        sub_org_id=eng_sub_org.id,
+    )
+
+    # Sub-org members vote on the sub-org proposal. Mix of yes/no/abstain.
+    # voter02 (extra_users[1]) does NOT vote directly — this is the cross-
+    # scope delegation case: voter02 delegates Economy → econ_bob (set in
+    # parent-org seed), but econ_bob isn't a member of eng_sub_org and has
+    # no delegate position on Engineering Practices. The chain-behavior
+    # accept_sub default falls through cleanly (Decision 8) and voter02's
+    # ballot resolves to "not cast" on the sub-org proposal.
+    _cast_vote(db, dave, eng_proposal, "yes")
+    _cast_vote(db, carol, eng_proposal, "yes")
+    _cast_vote(db, extra_users[0], eng_proposal, "no")
+    # extra_users[1] (voter02) abstains by not voting; their delegate isn't
+    # in scope and chain-behavior produces a "not cast" resolution.
+
     db.commit()
-    log.info("Phase 3b seed scenarios added.")
+    log.info("Phase 8.5 sub-org seed scenarios added.")
 
     all_usernames = ["alice", "dr_chen", "econ_bob", "carol", "dave", "env_emma",
                      "rights_raj", "frank", "admin"] + [u for (u, _) in seed_voter_names]
