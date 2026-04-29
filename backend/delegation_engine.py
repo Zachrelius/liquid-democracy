@@ -711,16 +711,17 @@ def eligible_voter_ids_for_proposal(
 ) -> set[str]:
     """Return the set of user IDs eligible to vote on this proposal.
 
-    Phase 8.5 dispatches on ``proposal.sub_org_id``:
-      - sub-org-scoped proposals (sub_org_id IS NOT NULL): active
+    Phase 8.5 (Session 2) dispatches on scope:
+      - sub-org-scoped proposals (``sub_org_id`` IS NOT NULL): active
         SubOrgMembership in that sub-org.
-      - parent-org-scoped proposals (sub_org_id IS NULL) and proposals with
-        no org context: every user in the DB. This preserves the existing
-        single-org behavior bit-for-bit — the old ``compute_tally`` used
-        ``db.query(models.User.id).all()`` for every proposal, and existing
-        tests / route flows depend on that semantic. Tightening parent-org
-        eligibility is a Session 2 concern (route-layer change) and explicitly
-        out of scope for the data-layer pass.
+      - parent-org-scoped proposals (``sub_org_id`` IS NULL with a non-null
+        ``org_id``): active OrgMembership of that parent org.
+      - proposals with no org context (``org_id`` IS NULL — pre-multi-tenancy
+        legacy rows; should not exist for newly created proposals): defensive
+        fallback to "all users in the DB". Documented because some early
+        backend tests construct proposals without an org for unit-test
+        convenience and rely on this semantic. Real production rows always
+        have an org_id since Phase 4.
     """
     sub_org_id = getattr(proposal, "sub_org_id", None)
     if sub_org_id:
@@ -730,6 +731,17 @@ def eligible_voter_ids_for_proposal(
         ).all()
         return {r.user_id for r in rows}
 
+    org_id = getattr(proposal, "org_id", None)
+    if org_id:
+        rows = db.query(models.OrgMembership.user_id).filter(
+            models.OrgMembership.org_id == org_id,
+            models.OrgMembership.status == "active",
+        ).all()
+        return {r.user_id for r in rows}
+
+    # Defensive fallback: pre-multi-tenancy rows / unit-test fixtures with
+    # no org context. Preserves the legacy "all users" semantic so tests that
+    # don't set up org membership rows continue to work.
     rows = db.query(models.User.id).all()
     return {r.id for r in rows}
 

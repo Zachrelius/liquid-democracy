@@ -1,9 +1,12 @@
 """Phase 8.5 — eligible_voter_ids_for_proposal helper tests.
 
 The helper dispatches on proposal scope:
-  - sub-org-scoped: active SubOrgMembership in the sub-org.
-  - parent-org-scoped or no-org-scoped: every user in the DB (legacy
-    behavior preserved bit-for-bit so single-org installs don't regress).
+  - sub-org-scoped (``sub_org_id`` non-null): active SubOrgMembership in the
+    sub-org.
+  - parent-org-scoped (``org_id`` non-null, ``sub_org_id`` null): active
+    OrgMembership in the parent org.
+  - no-org-scoped (``org_id`` null — pre-multi-tenancy fixture): defensive
+    fallback to "all users in the DB".
 """
 
 from __future__ import annotations
@@ -119,29 +122,42 @@ def test_sub_org_proposal_excludes_parent_only_members(db):
 
 
 # ---------------------------------------------------------------------------
-# Parent-org-scoped proposals (legacy behavior preserved)
+# Parent-org-scoped proposals (Session 2 tightened: active OrgMembership only)
 # ---------------------------------------------------------------------------
 
-def test_parent_org_proposal_returns_all_users(db):
-    """Legacy behavior: parent-org-scoped proposals (sub_org_id IS NULL)
-    eligibility = every user in the DB. Phase 8.5 deliberately preserves this
-    so existing single-org tests don't regress; tightening to org-only is a
-    Session 2 route-layer concern."""
+def test_parent_org_proposal_returns_active_org_members(db):
+    """Session 2 tightening: parent-org-scoped proposals (sub_org_id IS NULL,
+    org_id non-null) restrict eligibility to active OrgMembership rows.
+    Non-members are no longer eligible."""
     parent = _make_org(db, "parent")
     alice = make_user(db, "alice")
     bob = make_user(db, "bob")
     _add_membership(db, alice, parent)
-    # bob is NOT a parent-org member but should still be 'eligible' under
-    # the legacy "all users" semantic.
+    # bob is NOT a parent-org member; should NOT be eligible after tightening.
     proposal = _make_proposal(db, alice, org_id=parent.id, sub_org_id=None)
 
     eligible = eligible_voter_ids_for_proposal(db, proposal)
-    assert alice.id in eligible
-    assert bob.id in eligible
+    assert eligible == {alice.id}
+    assert bob.id not in eligible
+
+
+def test_parent_org_proposal_excludes_suspended_members(db):
+    """Suspended OrgMembership rows are NOT eligible."""
+    parent = _make_org(db, "parent")
+    alice = make_user(db, "alice")
+    bob = make_user(db, "bob")
+    _add_membership(db, alice, parent, status="active")
+    _add_membership(db, bob, parent, status="suspended")
+    proposal = _make_proposal(db, alice, org_id=parent.id, sub_org_id=None)
+
+    eligible = eligible_voter_ids_for_proposal(db, proposal)
+    assert eligible == {alice.id}
 
 
 def test_proposal_with_no_org_returns_all_users(db):
-    """Pre-multitenancy proposals (org_id IS NULL) keep the all-users behavior."""
+    """Pre-multi-tenancy proposals (org_id IS NULL) keep the legacy
+    "all users" behavior as a defensive fallback. This case should not arise
+    for production rows since Phase 4 — exists for unit-test convenience."""
     alice = make_user(db, "alice")
     bob = make_user(db, "bob")
     proposal = _make_proposal(db, alice, org_id=None, sub_org_id=None)
