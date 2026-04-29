@@ -2231,6 +2231,113 @@ No SQLite-vs-Postgres divergence surfaced in the new code paths. The `multi_opti
 
 ---
 
+## Test Suite Q: Phase 8.1 cleanup pass — Sankey label polish
+
+### Q1: Sankey column header alphabetization
+
+**Goal:** Multi-option elimination/election column headers display option labels in alphabetical order (Item 4 of Phase 8.1).
+
+**Steps:**
+1. From an incognito window, log in as alice (or any persona that can see the demo Steering Committee proposal).
+2. Open the Steering Committee STV proposal (the same fixture used in Suite N: 5 candidates, 2 winners).
+3. Scroll to the "Elimination Flow" Sankey.
+4. Inspect the column header that pairs Cara Singh + Eli Rojas in a single elimination round.
+
+**Expected:** Header reads "✗ Cara Singh, Eli Rojas" (alphabetical), NOT "✗ Eli Rojas, Cara Singh" (object-iteration order pre-fix).
+
+**Result:** ___
+
+### Q2: "Seat filled by remaining-candidate" annotation
+
+**Goal:** STV winners that win by algorithm halt (never crossed quota) get an explanatory annotation under the Final column header (Item 5 of Phase 8.1).
+
+**Steps:**
+1. Open the Steering Committee STV proposal Sankey (Boris Patel wins by halt at max=6.25 < quota=7.0).
+2. Look for a small italic annotation under the "Final" column header.
+3. Open the Annual Team Offsite STV proposal Sankey (Beach Resort wins by halt at max=8.0 < quota=8.5).
+4. Look for the same annotation under "Final" with Beach Resort's name.
+
+**Expected:** Both proposals show a small, italic, secondary-color annotation below the bold "Final" header. Steering reads "Boris Patel (seat filled by remaining-candidate)" or similar; Annual Team Offsite reads "Beach Resort (seat filled by remaining-candidate)" or similar. Final-column dark-border winner highlighting is unchanged.
+
+**Result:** ___
+
+---
+
+## Appendix: Browser-driven prod verification tooling
+
+When verifying changes on `https://www.liquiddemocracy.us` after a Railway deploy, you'll often need to capture artifacts (SVG, DOM snippets, screenshots) from the live page and pull them down to your workstation. This section covers the tooling, including a known mixed-content gotcha.
+
+### The mixed-content gotcha
+
+**What you'll try first (and why it fails):** spin up a local HTTP upload helper (e.g., `python -m http.server 9876` or a tiny Express receiver), then from the prod page run something like `fetch('http://localhost:9876/upload', { method: 'POST', body: svgString })` in DevTools or via `mcp__claude-in-chrome__javascript_tool`. Chrome blocks this with **mixed-content blocked** because the page is HTTPS and the target is HTTP — modern browsers do not allow HTTPS pages to POST to plain-HTTP localhost. There is no easy way to get the prod-served bundle to bypass this; even granting site permissions for "Insecure content" via chrome://settings is fragile and per-origin. The block happens before any request hits localhost, so you won't see anything in the helper's logs.
+
+You will hit this anytime you try to drive prod artifact capture from inside the running prod page.
+
+### The base64-via-console workaround
+
+Used in Phase 7C.3 prod verification. Trades a network call for an in-band stream over the browser console, which the Claude-in-Chrome MCP can read.
+
+**Capture (run inside the prod tab):**
+```javascript
+// Example: capture an SVG element to base64 and emit in chunked console.log lines
+// (chunking avoids console line-length truncation for large payloads)
+const svg = document.querySelector('svg');               // or whatever selector picks the artifact
+const xml = new XMLSerializer().serializeToString(svg);
+const b64 = btoa(unescape(encodeURIComponent(xml)));     // utf-8 safe
+const CHUNK = 4000;
+console.log(`__CAPTURE_BEGIN__::svg::${b64.length}`);
+for (let i = 0; i < b64.length; i += CHUNK) {
+  console.log(`__CAPTURE_CHUNK__::${b64.slice(i, i + CHUNK)}`);
+}
+console.log(`__CAPTURE_END__`);
+```
+
+For a screenshot (PNG), capture via `html2canvas` if loaded, or rely on the MCP's screenshot facility if available — the MCP-native screenshot tool is preferred when present.
+
+**Reconstruct (on the workstation):**
+```javascript
+// node reconstruct.js < captured-console-log.txt > out.svg
+// Reads the captured console output (paste into a file or pipe stdin), strips the markers,
+// concatenates chunks, base64-decodes, and writes the artifact.
+const fs = require('fs');
+const lines = fs.readFileSync(0, 'utf8').split('\n');
+const chunks = [];
+let inCapture = false;
+for (const line of lines) {
+  if (line.includes('__CAPTURE_BEGIN__')) { inCapture = true; continue; }
+  if (line.includes('__CAPTURE_END__')) { inCapture = false; continue; }
+  if (inCapture) {
+    const m = line.match(/__CAPTURE_CHUNK__::(.+)$/);
+    if (m) chunks.push(m[1]);
+  }
+}
+process.stdout.write(Buffer.from(chunks.join(''), 'base64'));
+```
+
+In a Claude Code session you don't need a separate Node script — the MCP `read_console_messages` tool returns the console output directly, and a single in-line node `-e '...'` invocation can decode + write the file. The Phase 7C.3 verification used exactly that: read_console_messages → grep for the chunk markers → pipe through node → write under `test_results/phase7C3_screenshots/`.
+
+### When this workaround is necessary
+
+| Scenario | Workaround needed? |
+| --- | --- |
+| Browser-driven verification of `https://www.liquiddemocracy.us` (prod) | **Yes** — page is HTTPS, localhost helper is HTTP |
+| Local dev: page at `http://localhost:5173`, helper at `http://localhost:9876` | No — same scheme, plain HTTP fetch works |
+| Local dev with HTTPS dev server (rare) | No — use HTTPS on both sides |
+| Capturing logs / DOM text without binary content | No — `read_console_messages` directly returns text logs |
+
+### Future option: a permanent prod-accessible upload helper
+
+If browser-driven prod verification becomes a frequent operation, consider adding an auth-gated `liquiddemocracy.us/qa-upload` endpoint that accepts base64 PNGs (or other artifacts) and writes them to a known directory or object store. Properties:
+
+- HTTPS native (no mixed-content issue)
+- Auth-gated (admin-only token or session) so it's not an open upload
+- Size-limited and content-type-pinned to avoid abuse
+- Writes go to a directory that's gitignored and cleared periodically
+
+Not implemented as of 2026-04-29. Phase 7C.3 + 8.1 verifications used the base64-via-console approach above. Revisit the implementation cost-benefit when prod sanity is run more than once a month.
+
+---
+
 ## Extending This Document
 
 When new phases are completed, add new test suites to this document following the same format:
