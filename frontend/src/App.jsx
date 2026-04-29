@@ -223,16 +223,9 @@ export default function App() {
           }
         />
 
-        <Route
-          path="/help/sustained-majority"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><SustainedMajorityHelp /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
+        {/* Public — voters reading the floor-approach banner may not yet be
+            logged in (they may be following a /help link from email later) */}
+        <Route path="/help/sustained-majority" element={<SustainedMajorityHelp />} />
 
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
