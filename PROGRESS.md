@@ -1747,3 +1747,78 @@ For the next session's team. Everything below is on the `phase-8.5/data-layer` b
 
 **Branch:** `phase-8.5/data-layer`. Commits: `80ecbbe` (schema), `98caac6` (engine), `ee538ad` (permissions), `ab13800` (org_config), `6f27720` (seed), `2550985` (tests). All tagged Phase 8.5 in subject; `Spec: phase8_5_spec.md` in body. **Do not merge to master until Session 4 closes the pass.**
 
+---
+
+## Phase 8.5 — Sub-Organizations — Session 2: Routes + Audit — 2026-04-29
+
+**Branch:** `phase-8.5/data-layer` (continuing from Session 1 — still NOT merged to master). Session 2 stacks 8 commits on top of Session 1's 7 commits. Same branch through Session 4.
+
+### What shipped (Session 2)
+
+**Surprise (c) resolution — eligibility tightening.** `eligible_voter_ids_for_proposal` now returns active OrgMembership members for parent-org-scoped proposals (org_id non-null, sub_org_id null). Sub-org-scoped proposals continue to return active SubOrgMembership members. The "all users" fallback survives only for the rare `org_id IS NULL` case (pre-multi-tenancy proposals) with an explicit comment. **Surprise of the surprise:** Session 1 over-estimated the breakage. Only 1 existing test needed updating — the conftest `make_proposal()` factory leaves `org_id` NULL, so the 8 tests Session 1 expected to break do not break (they hit the defensive "all users" fallback). The legacy semantic is now contained to that narrow case rather than being the default.
+
+**`get_org_config` migration.** `routes/proposals.py:_validate_proposal_creation` now resolves `allowed_voting_methods` via `get_org_config(target_or_org, ...)`. The handler passes `target_sub_org or org` so the parent-chain walk consults the right scope: sub-org override wins if set, parent default otherwise. Fresh grep across `backend/` for `\.settings\.(get|\[)` returned only this one functional production callsite.
+
+**Sub-org route module — `backend/routes/sub_organizations.py`** (chosen new module rather than extending `routes/organizations.py` which is already ~1500 lines). 13 endpoints:
+
+| Method | Path | Auth | Audit event |
+|---|---|---|---|
+| POST | `/api/orgs/{slug}/sub-orgs` | Parent-org admin | `sub_org.created` |
+| GET | `/api/orgs/{slug}/sub-orgs` | Parent-org member | — |
+| GET | `/api/orgs/{slug}/sub-orgs/{sub_slug}` | Parent-org member (filter on private) | — |
+| PATCH | `/api/orgs/{slug}/sub-orgs/{sub_slug}` | Sub-org admin OR parent-org admin | `sub_org.updated` (+ `privacy_changed`/`cross_scope_delegation_setting_changed` on flag flips) |
+| DELETE | `/api/orgs/{slug}/sub-orgs/{sub_slug}` | Parent-org admin OR sub-org owner | `sub_org.deleted` (409 if scoped content exists) |
+| GET | `/api/orgs/{slug}/sub-orgs/{sub_slug}/members` | Sub-org member or parent-org admin | — |
+| POST | `/sub-orgs/{sub_slug}/members/invite` | Sub-org admin | `sub_org.member_invited` |
+| POST | `/sub-orgs/{sub_slug}/members/request-join` | Parent-org member | `sub_org.member_invited` (`requested:true` variant) |
+| POST | `/sub-orgs/{sub_slug}/members/{uid}/approve` | Sub-org admin | `sub_org.member_joined` |
+| POST | `/sub-orgs/{sub_slug}/members/{uid}/deny` | Sub-org admin | `sub_org.member_removed` (`reason:denied`) |
+| POST | `/sub-orgs/{sub_slug}/members/{uid}/remove` | Sub-org admin | `sub_org.member_removed` (`reason:removed`) |
+| POST | `/sub-orgs/{sub_slug}/members/{uid}/change-role` | Sub-org admin | `sub_org.member_role_changed` |
+| POST | `/api/orgs/{slug}/topics/{topic_id}/promote-to-orgwide` | Sub-org admin or parent-org admin; **body `confirm:true` required** | `topic.promoted_to_orgwide` |
+
+Existing endpoints extended in-place: `POST /topics`, `POST /proposals` (accept optional `sub_org_id`), `GET /topics`, `GET /proposals` (Decisions 5/7 visibility filtering), `GET /api/delegates/public` (Decision 5 scope filter).
+
+Two-level enforcement at API layer (Decision 1): create rejects 400 if `parent_org.parent_org_id IS NOT NULL`. Schema allows arbitrary depth.
+
+**10 new audit event types firing.** `sub_org.created`, `sub_org.updated`, `sub_org.deleted`, `sub_org.privacy_changed`, `sub_org.cross_scope_delegation_setting_changed`, `sub_org.member_invited` (with `requested:true` variant), `sub_org.member_joined`, `sub_org.member_role_changed`, `sub_org.member_removed` (`reason:denied|removed`), `topic.promoted_to_orgwide`. Aggregate-only payloads per Phase 7.5 redaction principles. Sample at `test_results/phase8_5_screenshots/session2_audit_log_sample.txt`.
+
+**Schemas (`backend/schemas.py`).** `SubOrgCreate`, `SubOrgUpdate`, `SubOrgOut`, `SubOrgMemberInvite`, `SubOrgMemberRoleUpdate`, `SubOrgMemberOut`, `PromoteTopicToOrgwide`. Optional `sub_org_id` on `TopicCreate`/`TopicOut`/`ProposalCreate`/`ProposalOut`.
+
+**Backend tests: 339 → 363 passing (+24).** New file `backend/tests/test_sub_org_routes.py` covers CRUD round-trip, two-level enforcement, member flows, scope filtering, promote-to-orgwide, privacy + cross-scope flags, voting method override via `get_org_config`, audit event coverage, permission semantics. Single composite `TestAuditEventCoverage::test_all_eight_event_types_fire` exercises every new audit event in sequence.
+
+**PostgreSQL smoke: PASS.** `postgres:16-alpine` on port 55432, db `ld_smoke_session2`. Smoke script `backend/scripts/phase8_5_pg_smoke_session2.py` exercises the new surface end-to-end (sub-org create → topic scoped → sub-org RCV proposal → parent-scope RCV rejected 403 → parent binary OK → list visibility → audit-event presence). Container removed after.
+
+### Session 3 prerequisites (frontend admin team)
+
+For the next session — frontend admin pages: org switcher tree, sub-org admin views, scope selectors, sub-org settings.
+
+**Route URL list with auth requirements:** see the table above. Schema names map straight to Pydantic shapes in `backend/schemas.py`.
+
+**Decisions made for FE attention:**
+- **Delete returns 409** when any topic/proposal is scoped to the sub-org (chose reject over orphan-cascade). FE delete button should warn or disable when `topic_count + proposal_count > 0` — call `GET /sub-orgs/{slug}` and the topic/proposal lists first, or just handle the 409 with a clear toast.
+- **Promote-to-orgwide requires `confirm:true` in the body.** FE must show a confirmation dialog and only POST after user confirms. Action is irreversible — no demote endpoint by spec.
+- **Privacy flag key:** `settings.private` (boolean).
+- **Cross-scope strict-in-group flag key:** `settings.reject_non_member_delegations` (boolean).
+- **Sub-org override for voting methods** stored as `settings.allowed_voting_methods` (list of strings). Same key as parent — `get_org_config` walks the chain. FE settings page should show the sub-org's own value (if set) and the inherited parent value as a placeholder.
+- **Two-level enforcement at API layer.** FE doesn't need to enforce — server returns 400 if attempted.
+
+**Permissions semantics (FE should mirror to disable buttons):**
+- Parent-org admin = implicit sub-org admin everywhere (Decision 6). `is_sub_org_admin` server-side covers this.
+- Topic creation in a sub-org requires sub-org admin (or parent-org admin). Sub-org *member* alone cannot create topics.
+- Proposal creation in a sub-org requires sub-org membership AND parent-org `moderator+` role (existing parent-permission gate is layered; FE should hide the "create proposal" button for sub-org members who lack parent-org moderator+). **This is tech debt — see below.**
+- Promote-to-orgwide requires sub-org admin or parent-org admin.
+
+**Audit-event payload shapes** — sample file linked above. Structure: `details.changes = {key: {old, new}}` for `sub_org.updated`; flat `{old_value, new_value}` for the two flag-specific events.
+
+**Frontend-relevant tech debt surfaced:**
+1. **Sub-org proposal-creation permission is layered through the parent-org gate.** A sub-org member who is only a parent-org `member` (not moderator+) cannot create proposals in their own sub-org. Test fixture had to bump role to `moderator`. Spec is ambiguous here — does Session 3/4 want parallel topic/proposal-creation roles inside the sub-org independent of the parent-org gate? Surface for design decision before frontend builds the "create proposal" UI.
+2. **`OrgUpdate` schema lacks a `parent_org_id` field**, so existing `PATCH /api/orgs/{slug}` cannot accidentally turn a parent into a sub-org. Defensive but undocumented.
+3. **`Topic.org_id` is parent-org-scoped even for sub-org topics.** Sub-org-scoped topics still set `org_id=parent.id`; the `sub_org_id` is the only scope discriminant. Downstream queries that filter by `org_id` continue to work, but FE topic-listing should only consider `sub_org_id` to determine scope.
+
+### Session 2 commits on `phase-8.5/data-layer`
+
+`6add1a0` (eligibility tighten), `8750f28` (schemas), `5045f8f` (proposals.py + get_org_config + sub_org_id), `ef93686` (sub_organizations route module), `fac0c7d` (organizations.py + delegates.py extensions), `45e7b14` (integration tests +24), `e38905f` (PG smoke harness + audit sample), and the closeout commit for this PROGRESS entry.
+
+Branch still NOT merged to master.
+
