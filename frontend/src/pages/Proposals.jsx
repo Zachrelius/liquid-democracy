@@ -5,6 +5,7 @@ import { useOrg } from '../OrgContext';
 import StatusBadge from '../components/StatusBadge';
 import TopicBadge from '../components/TopicBadge';
 import VoteBar from '../components/VoteBar';
+import MultiOptionResultBar from '../components/MultiOptionResultBar';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
 
@@ -21,8 +22,155 @@ function timeRemaining(votingEnd) {
   return `${hours}h ${mins}m remaining`;
 }
 
+// Phase 7D helpers — pure shape transforms for the proposals list card.
+//
+// Approval: build per-option bars from `tally.option_approvals` keyed by
+// option id, sorted approval-count-descending. Bars are independent —
+// percentage = approvals / votes_cast, NOT normalized across options.
+function buildApprovalBars(proposal, tally) {
+  const counts = tally?.option_approvals || {};
+  const winners = new Set(tally?.winners || []);
+  const total = tally?.votes_cast || tally?.total_ballots_cast || 0;
+  const optsByLabel = (proposal.options || []).map(o => ({
+    id: o.id,
+    label: o.label,
+    count: counts[o.id] ?? 0,
+  }));
+  optsByLabel.sort((a, b) => b.count - a.count);
+  return optsByLabel.map(o => ({
+    label: o.label,
+    percentage: total > 0 ? (o.count / total) * 100 : 0,
+    isWinner: winners.has(o.id),
+  }));
+}
+
+// RCV/STV: first-choice share comes from `tally.rounds[0].option_counts`.
+// Sorted first-choice-count-descending. Winners come from `tally.winners`
+// (the eventual elimination/STV winners — which may differ from
+// first-choice leader). Denominator is `tally.votes_cast` so bar widths
+// reflect ballots-cast share, not within-round share.
+function buildRankedChoiceBars(proposal, tally) {
+  const round0 = Array.isArray(tally?.rounds) && tally.rounds.length > 0
+    ? tally.rounds[0]
+    : null;
+  const counts = round0?.option_counts || {};
+  const winners = new Set(tally?.winners || []);
+  const total = tally?.votes_cast || tally?.total_ballots_cast || 0;
+  const items = (proposal.options || []).map(o => ({
+    id: o.id,
+    label: o.label,
+    count: counts[o.id] ?? 0,
+  }));
+  items.sort((a, b) => b.count - a.count);
+  return items.map(o => ({
+    label: o.label,
+    percentage: total > 0 ? (o.count / total) * 100 : 0,
+    isWinner: winners.has(o.id),
+  }));
+}
+
+function lookupLabel(proposal, optionId) {
+  const opt = (proposal.options || []).find(o => o.id === optionId);
+  return opt?.label || optionId;
+}
+
+// Heading text for closed multi-option proposals: "Winner: X" / "Winners: X, Y"
+// / "Tied: X, Y" depending on tally.winners and tally.tied. tied=true wins
+// over the winner-count framing per spec — when the backend hasn't resolved a
+// tie, render "Tied: ..." rather than picking arbitrarily.
+function closedHeading(proposal, tally) {
+  const winnerIds = Array.isArray(tally?.winners) ? tally.winners : [];
+  if (winnerIds.length === 0) return null;
+  const labels = winnerIds.map(id => lookupLabel(proposal, id));
+  if (tally?.tied === true && !tally?.tie_resolution) {
+    return `Tied: ${labels.join(', ')}`;
+  }
+  if (winnerIds.length === 1) return `Winner: ${labels[0]}`;
+  return `Winners: ${labels.join(', ')}`;
+}
+
+// "Your vote" line per ballot type. Returns null when no vote info available
+// (parent renders "Not cast" itself). For multi-option: tied winners get
+// isWinner styling on bars, but the "Your vote" line is always plain blue.
+function yourVoteLine(proposal, myVote) {
+  if (!myVote) return 'Your vote: Not cast';
+  const viaSuffix = (myVote.cast_by && !myVote.is_direct)
+    ? ` via ${myVote.cast_by.display_name}`
+    : '';
+  if (proposal.voting_method === 'binary') {
+    if (!myVote.vote_value) return 'Your vote: Not cast';
+    return `Your vote: ${myVote.vote_value.toUpperCase()}${viaSuffix}`;
+  }
+  if (proposal.voting_method === 'approval') {
+    const n = Array.isArray(myVote.approvals) ? myVote.approvals.length : 0;
+    if (n === 0 && !myVote.cast_by) return 'Your vote: Not cast';
+    return `Your vote: ${n} option${n === 1 ? '' : 's'} approved${viaSuffix}`;
+  }
+  if (proposal.voting_method === 'ranked_choice') {
+    const n = Array.isArray(myVote.ranking) ? myVote.ranking.length : 0;
+    const m = (proposal.options || []).length;
+    if (n === 0 && !myVote.cast_by) return 'Your vote: Not cast';
+    return `Your vote: ranked ${n} of ${m} option${m === 1 ? '' : 's'}${viaSuffix}`;
+  }
+  return 'Your vote: Not cast';
+}
+
 function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly }) {
   const subOrg = proposal.sub_org_id ? subOrgsById?.[proposal.sub_org_id] : null;
+  const method = proposal.voting_method;
+  const isClosed = proposal.status === 'passed' || proposal.status === 'failed';
+  const isVoting = proposal.status === 'voting';
+
+  // Per-method body content — bar block + "Your vote" line + meta line.
+  let bodyBlock = null;
+  if (tally && (isVoting || isClosed)) {
+    const metaLine = (
+      <div className="flex items-center justify-between text-xs text-gray-500">
+        <span>
+          {tally.votes_cast ?? ((tally.yes ?? 0) + (tally.no ?? 0) + (tally.abstain ?? 0))} of {tally.total_eligible} votes cast
+        </span>
+        {isVoting && proposal.voting_end && <span>{timeRemaining(proposal.voting_end)}</span>}
+      </div>
+    );
+    const voteLine = (
+      <p className="text-xs text-[#2E75B6]">{yourVoteLine(proposal, myVote)}</p>
+    );
+
+    if (method === 'binary') {
+      // Binary preserved bit-for-bit from pre-7D: voting state shows the bar,
+      // the meta line, and "Your vote" if cast; closed shows the bar and
+      // "Final result". The status badge ("Passed"/"Failed") carries the
+      // outcome on closed binary cards.
+      bodyBlock = isClosed ? (
+        <div className="space-y-1">
+          <VoteBar yes={tally.yes} no={tally.no} abstain={tally.abstain} />
+          <p className="text-xs text-gray-500">Final result</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <VoteBar yes={tally.yes} no={tally.no} abstain={tally.abstain} />
+          {metaLine}
+          {myVote && voteLine}
+        </div>
+      );
+    } else if (method === 'approval' || method === 'ranked_choice') {
+      const bars = method === 'approval'
+        ? buildApprovalBars(proposal, tally)
+        : buildRankedChoiceBars(proposal, tally);
+      const heading = isClosed ? closedHeading(proposal, tally) : null;
+      bodyBlock = (
+        <div className="space-y-2">
+          {heading && (
+            <p className="text-sm font-semibold text-[#1B3A5C]">{heading}</p>
+          )}
+          <MultiOptionResultBar options={bars} />
+          {metaLine}
+          {isVoting && voteLine}
+        </div>
+      );
+    }
+  }
+
   return (
     <Link
       to={`/proposals/${proposal.id}`}
@@ -43,7 +191,7 @@ function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly }) {
             </span>
           )}
         </span>
-        <StatusBadge status={proposal.status} />
+        <StatusBadge status={proposal.status} votingMethod={method} />
       </div>
 
       {/* Phase 8.5 — sub-org badge + Decision 7 read-only hint */}
@@ -75,35 +223,13 @@ function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly }) {
         {proposal.created_at && ` · ${new Date(proposal.created_at).toLocaleDateString()}`}
       </p>
 
-      {/* Voting status */}
-      {proposal.status === 'voting' && tally && (
-        <div className="space-y-2">
-          <VoteBar yes={tally.yes} no={tally.no} abstain={tally.abstain} />
-          <div className="flex items-center justify-between text-xs text-gray-500">
-            <span>{tally.votes_cast ?? (tally.yes + tally.no + tally.abstain)} of {tally.total_eligible} votes cast</span>
-            {proposal.voting_end && <span>{timeRemaining(proposal.voting_end)}</span>}
-          </div>
-          {myVote && (
-            <p className="text-xs text-[#2E75B6]">
-              Your vote: {myVote.vote_value?.toUpperCase() ?? 'Not cast'}
-              {myVote.cast_by && !myVote.is_direct ? ` via ${myVote.cast_by.display_name}` : ''}
-            </p>
-          )}
-        </div>
-      )}
+      {bodyBlock}
 
       {proposal.status === 'deliberation' && (
         <p className="text-xs text-blue-500">
           Deliberation period
           {proposal.voting_start ? ` · Opens for voting ${new Date(proposal.voting_start).toLocaleDateString()}` : ''}
         </p>
-      )}
-
-      {(proposal.status === 'passed' || proposal.status === 'failed') && tally && (
-        <div className="space-y-1">
-          <VoteBar yes={tally.yes} no={tally.no} abstain={tally.abstain} />
-          <p className="text-xs text-gray-500">Final result</p>
-        </div>
       )}
     </Link>
   );

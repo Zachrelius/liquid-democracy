@@ -18,7 +18,25 @@ const LABELS = {
   unresolved:   'Awaiting Review',
 };
 
-export default function StatusBadge({ status }) {
+// Phase 7D — multi-option closed proposals (approval / RCV / STV) show a
+// neutral "Decided" badge instead of "Passed"/"Failed" because the binary
+// pass/fail framing doesn't describe the outcome (the winner name carries
+// the decision content on the card body).
+const DECIDED_STYLE = 'bg-blue-100 text-blue-700';
+
+export default function StatusBadge({ status, votingMethod }) {
+  const isMultiOption =
+    votingMethod && votingMethod !== 'binary' &&
+    (status === 'passed' || status === 'failed');
+
+  if (isMultiOption) {
+    return (
+      <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${DECIDED_STYLE}`}>
+        Decided
+      </span>
+    );
+  }
+
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${STYLES[status] || STYLES.draft}`}>
       {LABELS[status] || status}
