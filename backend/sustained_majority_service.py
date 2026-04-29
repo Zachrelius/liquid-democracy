@@ -95,16 +95,17 @@ def is_active_for_proposal(
 # ---------------------------------------------------------------------------
 
 def count_extensions(db: Session, proposal_id: str) -> int:
-    """How many times has this proposal's voting window been extended?
-
-    Counts audit events with action='proposal.window_extended' for the given
-    proposal. Used to enforce the "extend fires once, then fails" rule.
+    """How many times has this proposal's voting window been extended
+    by the worker? Admin-driven extensions via resolve_escalation are
+    excluded — they have actor_id set, and the worker's "extension
+    already used" guard rail should only count system-fired extensions.
     """
     return (
         db.query(models.AuditLog)
         .filter(
             models.AuditLog.action == "proposal.window_extended",
             models.AuditLog.target_id == proposal_id,
+            models.AuditLog.actor_id.is_(None),
         )
         .count()
     )

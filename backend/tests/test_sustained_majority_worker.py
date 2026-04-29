@@ -30,6 +30,7 @@ from sustained_majority_service import (
     capture_snapshot,
     count_extensions,
 )
+from audit_utils import log_audit_event
 
 
 _DUMMY_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewrwKJuRxm5pJmJi"
@@ -368,3 +369,127 @@ class TestRunOneTick:
         worker.run_one_tick(db)  # second run should fail (not extend again)
         assert proposal.status == "failed"
         assert count_extensions(db, proposal.id) == 1  # no second extend
+
+
+# ---------------------------------------------------------------------------
+# count_extensions actor-aware filter (Phase 8.1 Item 2)
+# ---------------------------------------------------------------------------
+
+class TestCountExtensionsActorFilter:
+    """The worker's "extension already used" guard rail should only count
+    system-fired extensions (actor_id IS NULL). Admin-driven extensions via
+    resolve_escalation have actor_id set and must NOT count.
+    """
+
+    def test_admin_extension_not_counted(self, db):
+        """Two window_extended events on the same proposal: one with
+        actor_id=None (worker), one with actor_id=<admin user id>. Only the
+        worker-fired one should count.
+        """
+        author = _user(db, "alice")
+        admin = _user(db, "admin")
+        org = _voting_org(db)
+        proposal = _voting_proposal(db, org=org, author=author)
+        db.commit()
+
+        # Worker-style extension (system actor).
+        log_audit_event(
+            db,
+            action="proposal.window_extended",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=None,
+            details={"proposal_id": proposal.id, "source": "worker"},
+        )
+        # Admin-style extension (actor_id set) — should be excluded.
+        log_audit_event(
+            db,
+            action="proposal.window_extended",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=admin.id,
+            details={"proposal_id": proposal.id, "source": "resolve_escalation"},
+        )
+        db.commit()
+
+        assert count_extensions(db, proposal.id) == 1
+
+    def test_only_admin_extension_returns_zero(self, db):
+        """A standalone admin extension must return 0 — the worker should still
+        be willing to fire its one allowed extension afterwards.
+        """
+        author = _user(db, "alice")
+        admin = _user(db, "admin")
+        org = _voting_org(db)
+        proposal = _voting_proposal(db, org=org, author=author)
+        db.commit()
+
+        log_audit_event(
+            db,
+            action="proposal.window_extended",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=admin.id,
+            details={"proposal_id": proposal.id, "source": "resolve_escalation"},
+        )
+        db.commit()
+
+        assert count_extensions(db, proposal.id) == 0
+
+    def test_apply_failure_mode_extend_admin_then_worker(self, db):
+        """Integration-style: drive the extend path through
+        `apply_failure_mode` twice — once with an admin actor_id (mimicking
+        resolve_escalation's "extend" branch) and once with actor_id=None
+        (worker). The admin call must not consume the worker's one allowed
+        extension.
+
+        Why this scope (not the full worker re-escalate flow): the full
+        escalate→admin-extend→breach→re-escalate sequence requires invoking
+        `evaluate_proposal` against an `escalate`-mode org, then mutating
+        proposal.status back to "voting" after admin resolution, then driving
+        a second breach with snapshot history that satisfies both the
+        approaching-floor + sustained-breach windows. That's >100 lines of
+        fixture wiring whose substance isn't the bug we're fixing — the bug
+        is "do extension counts include admin events?". Calling
+        `apply_failure_mode` twice and asserting `count_extensions == 1`
+        proves the guard rail directly.
+        """
+        author = _user(db, "alice")
+        admin = _user(db, "admin")
+        org = _voting_org(db, settings={
+            "sustained_majority_enabled_default": True,
+            "sustained_majority_floor": 0.45,
+            "sustained_majority_failure_mode": "extend",
+        })
+        proposal = _voting_proposal(db, org=org, author=author)
+        db.commit()
+
+        decision = FailureDecision(
+            should_fire=True,
+            mode="extend",
+            reason="floor breach",
+            breach_sample={"yes": 1, "no": 9},
+        )
+
+        # 1) Admin-driven extend (resolve_escalation analogue).
+        apply_failure_mode(
+            db, proposal, decision=decision, actor_id=admin.id,
+        )
+        db.commit()
+        # Admin extension should not consume the worker's allowance.
+        assert count_extensions(db, proposal.id) == 0
+
+        # 2) Worker-driven extend (system actor).
+        apply_failure_mode(
+            db, proposal, decision=decision, actor_id=None,
+        )
+        db.commit()
+        # Now the worker has used its one extension.
+        assert count_extensions(db, proposal.id) == 1
+
+        # Sanity: total window_extended events is 2 (both wrote audit rows).
+        total = db.query(models.AuditLog).filter(
+            models.AuditLog.action == "proposal.window_extended",
+            models.AuditLog.target_id == proposal.id,
+        ).count()
+        assert total == 2
