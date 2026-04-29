@@ -2107,3 +2107,92 @@ On master, building on Phase 8.5's `9b826d7`:
 
 Live: `https://www.liquiddemocracy.us` bundle `index-Kg8m5C0g.js`.
 
+---
+
+## Phase 9 — Polis Integration — Session 1: API Verification + Data Layer — 2026-04-29
+
+**Branch:** `phase-9/data-layer` (NOT yet merged to master). Session 1 of a four-session pass mirroring Phase 8.5's structure.
+
+**Sessions plan:**
+- **Session 1 (this entry):** pol.is API verification, schema migration, polis_service wrapper, scope helpers, demo seed, 55 backend tests, PG smoke. **DONE.**
+- **Session 2:** ~7 sub-org-aware Polis endpoints, 7 audit event types, Proposal create/update extensions for linked_polis_ids, integration tests.
+- **Session 3:** Frontend admin (Polis nav, list, detail, creation, archive, settings).
+- **Session 4:** Frontend voter UX (link cards, URL detection, privacy modal, public Polis page, notifications, help) + Suite S + prod deploy + SECURITY_REVIEW.md update.
+
+### What shipped (Session 1)
+
+**API verification — first operational task per the dispatch's ordering.** Source-read against `compdemocracy/polis` (edge branch) + live curl probes against `https://pol.is/api/v3`. Findings at `phase9_polis_api_findings.md`. Headline: programmatic conversation creation, seed-statement insertion, archival, participation stats, and data export are all real endpoints that work as the spec assumed. **Meaningful gap:** auth model is JWT-based Bearer (admin OIDC session), not API key. Renamed env var to `POLIS_AUTH_TOKEN`. v1 prod default is the manual-creation fallback flow until CompDemocracy issues an admin auth token (lead action: email `hello@compdemocracy.org`). No length constraints force the schema decisions — `data-xid` accepts 1-999 chars; conversation IDs are 6-10 char opaque slugs.
+
+**Schema migration `e7b3f9a02c14`:**
+- New `polises` table — id/org_id/sub_org_id (mirrors topics+proposals scope shape)/polis_conversation_id String(64)/title/prompt/created_by/status (String, default 'active')/created_at/updated_at/archived_at.
+- New `polis_xids` table (separate, NOT a column on OrgMembership — cleaner separation). UQ `(user_id, org_id)` + global UQ on `polis_xid` value.
+- `proposals.linked_polis_ids` JSON column (nullable, default null).
+- Idempotency pattern from Phase 8.6 hot-fix `b1ab5db`. Reversible. Single-org behavior bit-for-bit preserved.
+
+**`polis_service.py` wrapper** — same isolation pattern as pyrankvote. Functions: `create_conversation` / `add_seed_statement(s)` / `get_participation_stats` / `archive_conversation` / `fetch_export` / `get_or_create_polis_xid`. `PolisAPIError` exception class. HTTP via `httpx` (already in venv). All admin functions raise `PolisAPIError("POLIS_AUTH_TOKEN not configured")` cleanly when empty so routes detect this and dispatch to manual-fallback. Stats reads work without auth and fail-soft to a `live_stats_unavailable: True` shape so routes never blow up.
+
+**Scope helpers (`backend/polis_engine.py`):** `eligible_viewers_for_polis` (Decisions 5/6/7 mirror of `eligible_voter_ids_for_proposal`), `eligible_polis_admin_ids`. **Permission helper:** `permissions.is_polis_admin` (creator OR sub-org admin OR parent-org admin via Decision 6). **xid generator:** `polis_service.get_or_create_polis_xid` with `secrets.token_urlsafe(16)` (~22-char URL-safe), idempotent, per-org isolated, emits `polis.xid_generated` audit event ON FIRST CALL ONLY.
+
+**Demo seed:** Org-wide Polis "Demo Org — Annual Priorities for 2026" by alice, sub-org Polis "Engineering Team — Tooling Priorities" by dave. 10 seed statements each. Placeholder `polis_conversation_id` strings in dev (`demo-polis-org-wide`, `demo-polis-engineering`); production seed runs against a real `POLIS_AUTH_TOKEN` will create real pol.is conversations. Status `active`, no participation history (per spec minimum). Additive idempotent.
+
+**Backend tests: 378 → 433 passing (+55).** Target was ~408+; exceeded. Six new test files covering models / eligibility / admin permissions / xid lifecycle / polis_service module (HTTP mocked via `httpx.MockTransport`) / Proposal.linked_polis_ids JSON round-trip + validation.
+
+**PostgreSQL smoke: PASS** — `pg_smoke.py --mode both --prior-revision d41a8c92f3b1` exercises both fresh-DB and upgrade-from-Phase-8.5. Spot-checks confirm `polises` + `polis_xids` tables exist, `proposals.linked_polis_ids` column exists, alembic head matches.
+
+**`require_polis_for_new_proposals: False`** added to `DEFAULT_ORG_SETTINGS` (Decision 7 — opt-in; default-off is the primary use surface). Sub-orgs inherit via `get_org_config` (Phase 8.5 Decision 9).
+
+### Design surprises
+
+1. **pol.is auth is JWT, not API key.** v1 prod default is the manual-creation fallback flow. Programmatic path lights up after CompDemocracy issues an admin token. **Surface for lead action:** email `hello@compdemocracy.org` to request access.
+2. **Schema choice for `polis_xid`**: separate `polis_xids` table over `OrgMembership` column. No length constraint forced this — picked the cleaner separation per Phase 3 queue-table precedent.
+3. **`requests` not in venv, `httpx` is.** polis_service uses httpx (already a Phase 7 dependency).
+
+### Session 2 prerequisites
+
+For the next session — backend routes + audit + integration tests. Branch is ready to build against.
+
+**Migration revision:** `e7b3f9a02c14` (down: `d41a8c92f3b1`).
+
+**New tables / columns:**
+| Table.column | Type | Nullable | Notes |
+|---|---|---|---|
+| `polises.id` | String UUID PK | no | |
+| `polises.org_id` | String FK→organizations.id | no | |
+| `polises.sub_org_id` | String FK→organizations.id | yes | NULL = org-wide |
+| `polises.polis_conversation_id` | String(64) | yes | Set when created on pol.is (or empty until manual-fallback paste) |
+| `polises.title`, `polises.prompt` | String, Text | no | |
+| `polises.created_by` | String FK→users.id | no | |
+| `polises.status` | String, default 'active' | no | active / archived |
+| `polises.created_at`, `updated_at`, `archived_at` | DateTime | last is nullable | |
+| `polis_xids` table | id PK, user_id FK, org_id FK, polis_xid String(64) UNIQUE, created_at | UQ(user_id, org_id) | |
+| `proposals.linked_polis_ids` | JSON | yes | Empty list when set |
+
+**New helper signatures (importable for routes):**
+- `polis_engine.eligible_viewers_for_polis(db, polis) -> set[str]`
+- `polis_engine.eligible_polis_admin_ids(db, polis) -> set[str]`
+- `permissions.is_polis_admin(db, user_id, polis) -> bool`
+- `polis_service.get_or_create_polis_xid(db, user_id, org_id, *, actor_id=None, ip_address=None) -> str`
+- `polis_service.create_conversation / add_seed_statement(s) / get_participation_stats / archive_conversation / fetch_export`
+- `polis_service.PolisAPIError(message, status_code)`
+
+**API design implication for Session 2** (load-bearing): the create-Polis endpoint must support **both** programmatic (when `POLIS_AUTH_TOKEN` is set → server calls pol.is via `polis_service.create_conversation`) AND manual-fallback (client supplies `polis_conversation_id` directly because admin already created the conversation on pol.is). When the env var is unset, the platform must NOT raise — it must accept the manual path. Recommend the route check `settings.polis_auth_token` and dispatch.
+
+**Validation reference** — `backend/tests/test_proposal_linked_polises.py` contains a `_validate_linked_polis_ids(db, ids, viewer_user_id, viewer_org_id)` helper (exists / in scope / status=active). Session 2 should lift this into `routes/proposals.py` for `POST/PATCH /api/orgs/{slug}/proposals` validation.
+
+**Demo seed identifiers:** filter `models.Polis` by title — "Demo Org — Annual Priorities for 2026" (org-wide, alice) and "Engineering Team — Tooling Priorities" (sub-org, dave).
+
+**7 audit event types Session 2 needs to emit:**
+- `polis.created`, `polis.archived`, `polis.config_changed`, `polis.linked_to_proposal`, `polis.unlinked_from_proposal`, `polis.export_requested` (admin export with deanonymization), `polis.xid_generated` (already wired in `get_or_create_polis_xid`).
+
+### Session 1 commits on `phase-9/data-layer`
+
+`a3613d0` (API findings), `30e7b08` (schema migration + models), `3bd685e` (polis_service + DEPLOYMENT docs), `39afa14` (polis_engine + is_polis_admin), `f391699` (DEFAULT_ORG_SETTINGS + pg_smoke spot-check), `f608304` (demo seed), `d4ff426` (55 unit tests), plus the closeout commit for this PROGRESS entry.
+
+Branch NOT merged to master.
+
+### New tech debt logged
+
+1. **CompDemocracy admin-token contact** — needed before programmatic-creation path can ship to prod. Lead action: email `hello@compdemocracy.org`.
+2. **Real-API integration tests** can't run from CI without an admin token; current tests are HTTP-mocked. Manual verification belongs in Session 4 prod-sanity once a token is provisioned.
+3. **`/embed.js` CSP** — frontend will load from `https://pol.is/embed.js` in Sessions 3-4; confirm `Content-Security-Policy` allows the third-party script source. Frontend session concern.
+
