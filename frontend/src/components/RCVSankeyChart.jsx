@@ -35,6 +35,7 @@ const PADDING = { top: 50, right: 16, bottom: 16, left: 16 };
 const NODE_WIDTH = 15;
 const NODE_PADDING = 10;
 const RECONCILE_TOLERANCE = 0.01; // STV fractional rounding tolerance
+const FLOAT_TOLERANCE = 1e-6; // tighter tolerance for "did this option drop?"
 const HEIGHT = 360;
 
 // Phase 7C.1: synthetic column indices used by Initial / Final nodes. They
@@ -42,6 +43,12 @@ const HEIGHT = 360;
 // columns at the leftmost and rightmost ends of the Sankey.
 const INITIAL_COL = -1;
 // FINAL_COL is rounds.length (computed at use-site).
+
+// Phase 7C.2: synthetic exhausted-ballot sink. Renders as a muted node in any
+// column where the round-to-round transfer leaves volume unaccounted for
+// (ballots whose remaining preferences are all already eliminated/elected).
+const EXHAUSTED_OPT_ID = '__exhausted__';
+const EXHAUSTED_COLOR = '#9CA3AF'; // muted gray, matches voter→option arrow color from 7B.1
 
 function nodeKey(roundIdx, optionId) {
   // roundIdx may be -1 (Initial) or rounds.length (Final). String-keying
@@ -160,30 +167,56 @@ export function buildSankeyData(tally) {
   }
 
   // Build links between rounds r and r+1.
+  // Synthetic Exhausted nodes are appended lazily — only when a round
+  // actually has unaccounted volume.
   const links = [...initialLinks];
+
   for (let r = 0; r < rounds.length - 1; r++) {
     const cur = rounds[r];
     const nxt = rounds[r + 1];
     const curCounts = cur.option_counts || {};
     const nxtCounts = nxt.option_counts || {};
     const transferBreakdown = nxt.transfer_breakdown || {};
-    const transferFrom = nxt.transferred_from || cur.transferred_from || cur.eliminated || null;
+    const prevElected = Array.isArray(cur.elected) ? cur.elected : [];
 
-    for (const [oid, nxtRaw] of Object.entries(nxtCounts)) {
-      const nxtCount = Number(nxtRaw) || 0;
+    // Phase 7C.2: detect ALL options whose count dropped between r and r+1
+    // (not just nxt.transferred_from, which pyrankvote 2.0.6 names only one
+    // of when there are paired surplus+elimination events in the same round).
+    // The drop volume is what flowed out; the breakdown is what flowed in to
+    // survivors; the difference is exhausted ballots.
+    const allOptionIds = new Set([
+      ...Object.keys(curCounts),
+      ...Object.keys(nxtCounts),
+    ]);
+    const drops = {}; // optionId -> drop amount (>0)
+    let totalDropVolume = 0;
+    for (const oid of allOptionIds) {
+      const prev = Number(curCounts[oid]) || 0;
+      const next = Number(nxtCounts[oid]) || 0;
+      const d = prev - next;
+      if (d > FLOAT_TOLERANCE) {
+        drops[oid] = d;
+        totalDropVolume += d;
+      }
+    }
+    const droppedOpts = Object.keys(drops);
+    const totalGainVolume = Object.values(transferBreakdown).reduce(
+      (s, v) => s + (Number(v) || 0),
+      0
+    );
+    const exhaustedVolume = Math.max(0, totalDropVolume - totalGainVolume);
+
+    // 1) Carry links: each option that survives forward flows its retained
+    //    portion (= min(prev, next)) from r to r+1. This is faithful even in
+    //    the multi-source case — the carry is whatever the option already had.
+    for (const oid of Object.keys(nxtCounts)) {
+      const nxtCount = Number(nxtCounts[oid]) || 0;
       if (nxtCount <= 0) continue;
       const targetKey = nodeKey(r + 1, oid);
       if (!nodeIdx.has(targetKey)) continue;
 
-      const gain = Number(transferBreakdown[oid]) || 0;
-      // Carry: own previous count flows forward, minus any "gain" that came
-      // from elsewhere. (gain is the portion of nxtCount that originated
-      // from transferFrom.)
-      const carry = Math.max(0, nxtCount - gain);
-      // Defend against gain > nxtCount due to float rounding.
-      const transferAmt = Math.max(0, Math.min(nxtCount, gain));
-
-      // Carry link from same option in previous round (only if it existed).
+      const prevCount = Number(curCounts[oid]) || 0;
+      const carry = Math.max(0, Math.min(prevCount, nxtCount));
       const carrySourceKey = nodeKey(r, oid);
       if (carry > 0 && nodeIdx.has(carrySourceKey)) {
         links.push({
@@ -193,34 +226,120 @@ export function buildSankeyData(tally) {
           kind: 'carry',
         });
       }
+    }
 
-      // Transfer link from transferFrom -> oid.
-      if (transferAmt > 0 && transferFrom && transferFrom !== oid) {
-        const transferSourceKey = nodeKey(r, transferFrom);
-        if (nodeIdx.has(transferSourceKey)) {
+    // 2) Transfer links — single-source vs. multi-source dispatch.
+    if (droppedOpts.length === 0) {
+      // No drops at all (rare but possible — e.g., a no-op round). Nothing to
+      // transfer.
+    } else if (droppedOpts.length === 1) {
+      // Clean single-source round: emit links from the dropped option to each
+      // gainer using the breakdown's exact values, plus a synthetic
+      // "exhausted" link if breakdown sums to less than the drop.
+      const [dropOpt] = droppedOpts;
+      const isSurplus = prevElected.includes(dropOpt);
+      const transferKind = isSurplus ? 'transfer-surplus' : 'transfer';
+      const dropSourceKey = nodeKey(r, dropOpt);
+      if (nodeIdx.has(dropSourceKey)) {
+        for (const [gainOpt, gainRaw] of Object.entries(transferBreakdown)) {
+          const gain = Number(gainRaw) || 0;
+          if (gain <= 0) continue;
+          if (gainOpt === dropOpt) continue; // defensive
+          const tgtKey = nodeKey(r + 1, gainOpt);
+          if (!nodeIdx.has(tgtKey)) continue;
           links.push({
-            source: transferSourceKey,
-            target: targetKey,
-            value: transferAmt,
-            kind: 'transfer',
+            source: dropSourceKey,
+            target: tgtKey,
+            value: gain,
+            kind: transferKind,
           });
+        }
+        if (exhaustedVolume > FLOAT_TOLERANCE) {
+          const exKey = nodeKey(r + 1, EXHAUSTED_OPT_ID);
+          if (!nodeIdx.has(exKey)) {
+            nodeIdx.set(exKey, nodes.length);
+            nodes.push({
+              id: exKey,
+              roundIdx: r + 1,
+              optionId: EXHAUSTED_OPT_ID,
+              count: 0, // accumulate as we add inbound links below
+              kind: 'exhausted',
+            });
+          }
+          nodes[nodeIdx.get(exKey)].count += exhaustedVolume;
+          links.push({
+            source: dropSourceKey,
+            target: exKey,
+            value: exhaustedVolume,
+            kind: 'transfer-exhausted',
+          });
+        }
+      }
+    } else {
+      // Multi-source round (Decision 1 fix): pyrankvote packed paired events
+      // into one ElectionResultRound. Attribute breakdown proportionally to
+      // each dropped option by its share of total drop volume. This is a
+      // faithful summary of total flow, not an exact per-ballot trace —
+      // tooltip copy uses "~" + "approximate" to disclose this honestly.
+      for (const dropOpt of droppedOpts) {
+        const dropAmt = drops[dropOpt];
+        const share = totalDropVolume > 0 ? dropAmt / totalDropVolume : 0;
+        const dropSourceKey = nodeKey(r, dropOpt);
+        if (!nodeIdx.has(dropSourceKey)) continue;
+        const isSurplus = prevElected.includes(dropOpt);
+        const transferKind = isSurplus ? 'transfer-surplus' : 'transfer-multi-source';
+
+        for (const [gainOpt, gainRaw] of Object.entries(transferBreakdown)) {
+          const gain = Number(gainRaw) || 0;
+          if (gain <= 0) continue;
+          if (gainOpt === dropOpt) continue;
+          const tgtKey = nodeKey(r + 1, gainOpt);
+          if (!nodeIdx.has(tgtKey)) continue;
+          const value = share * gain;
+          if (value <= FLOAT_TOLERANCE) continue;
+          links.push({
+            source: dropSourceKey,
+            target: tgtKey,
+            value,
+            kind: transferKind,
+          });
+        }
+
+        if (exhaustedVolume > FLOAT_TOLERANCE) {
+          const exVal = share * exhaustedVolume;
+          if (exVal > FLOAT_TOLERANCE) {
+            const exKey = nodeKey(r + 1, EXHAUSTED_OPT_ID);
+            if (!nodeIdx.has(exKey)) {
+              nodeIdx.set(exKey, nodes.length);
+              nodes.push({
+                id: exKey,
+                roundIdx: r + 1,
+                optionId: EXHAUSTED_OPT_ID,
+                count: 0,
+                kind: 'exhausted',
+              });
+            }
+            nodes[nodeIdx.get(exKey)].count += exVal;
+            links.push({
+              source: dropSourceKey,
+              target: exKey,
+              value: exVal,
+              kind: 'transfer-exhausted',
+            });
+          }
         }
       }
     }
 
-    // Reconciliation check (best-effort, never throw): if the eliminated
-    // option's outgoing transfer total significantly mismatches its previous
-    // count, we still render — the user may see the imbalance visually.
-    if (transferFrom && curCounts[transferFrom] != null) {
-      const elimCount = Number(curCounts[transferFrom]) || 0;
-      const totalTransfer = Object.values(transferBreakdown).reduce(
-        (s, v) => s + (Number(v) || 0),
-        0
-      );
-      if (Math.abs(elimCount - totalTransfer) > RECONCILE_TOLERANCE * Math.max(1, elimCount)) {
-        // Mismatch — likely exhausted ballots. Not an error; just note it.
-        // We could surface this to the user, but for now we render as-is.
-      }
+    // Reconciliation check (best-effort, never throw): if total drop volume
+    // doesn't match total gain + exhausted (within tolerance), we still
+    // render. The exhausted sink absorbs the difference.
+    if (
+      Math.abs(totalDropVolume - (totalGainVolume + exhaustedVolume)) >
+      RECONCILE_TOLERANCE * Math.max(1, totalDropVolume)
+    ) {
+      // Mismatch — float-rounding slop typically. We render as-is; the
+      // exhausted node already absorbs the unaccounted volume.
     }
   }
 
@@ -273,11 +392,15 @@ export default function RCVSankeyChart({ tally, proposal }) {
   }, [proposal, tally]);
 
   const labelOf = useCallback(
-    (oid) => optionLabelMap[oid] || oid,
+    (oid) => {
+      if (oid === EXHAUSTED_OPT_ID) return 'Exhausted ballots';
+      return optionLabelMap[oid] || oid;
+    },
     [optionLabelMap]
   );
   const colorOf = useCallback(
     (oid) => {
+      if (oid === EXHAUSTED_OPT_ID) return EXHAUSTED_COLOR;
       const meta = optionMeta.get(oid) || { id: oid, display_order: 0 };
       return colorForOption(meta);
     },
@@ -403,6 +526,14 @@ export default function RCVSankeyChart({ tally, proposal }) {
       }
     });
 
+    // Phase 7C.2: any transfer-flavored link kind gets the dashed
+    // stroke + slightly higher opacity (vs. the carry-forward solid look).
+    const isTransferKind = (k) =>
+      k === 'transfer' ||
+      k === 'transfer-surplus' ||
+      k === 'transfer-multi-source' ||
+      k === 'transfer-exhausted';
+
     // Links layer (under nodes).
     const linkG = g.append('g').attr('class', 'sankey-links').attr('fill', 'none');
     const link = linkG
@@ -412,8 +543,8 @@ export default function RCVSankeyChart({ tally, proposal }) {
       .attr('d', sankeyLinkHorizontal())
       .attr('stroke', (d) => colorOf(d.source.optionId))
       .attr('stroke-width', (d) => Math.max(1, d.width))
-      .attr('stroke-opacity', (d) => (d.kind === 'transfer' ? 0.55 : 0.35))
-      .attr('stroke-dasharray', (d) => (d.kind === 'transfer' ? '4,2' : null))
+      .attr('stroke-opacity', (d) => (isTransferKind(d.kind) ? 0.55 : 0.35))
+      .attr('stroke-dasharray', (d) => (isTransferKind(d.kind) ? '4,2' : null))
       .style('mix-blend-mode', 'multiply');
 
     link
@@ -439,7 +570,7 @@ export default function RCVSankeyChart({ tally, proposal }) {
         );
       })
       .on('mouseleave', function () {
-        link.attr('stroke-opacity', (l) => (l.kind === 'transfer' ? 0.55 : 0.35));
+        link.attr('stroke-opacity', (l) => (isTransferKind(l.kind) ? 0.55 : 0.35));
         setTooltip(null);
       });
 
@@ -493,6 +624,21 @@ export default function RCVSankeyChart({ tally, proposal }) {
         return `${truncated} (${formatCount(d.count)})`;
       });
 
+    // Phase 7C.2: label synthetic Exhausted nodes wherever they appear so
+    // the user knows what the muted gray slab represents. Hovering still
+    // shows the exact volume; the inline label is the at-a-glance cue.
+    nodeSel
+      .filter((d) => d.optionId === EXHAUSTED_OPT_ID)
+      .append('text')
+      .attr('x', (d) => d.x1 + 4)
+      .attr('y', (d) => (d.y0 + d.y1) / 2)
+      .attr('dy', '0.35em')
+      .attr('text-anchor', 'start')
+      .attr('font-size', 10)
+      .attr('font-style', 'italic')
+      .attr('fill', '#6B7280')
+      .text((d) => `Exhausted (${formatCount(d.count)})`);
+
     // Hover on node — highlight incident links, dim others.
     nodeSel
       .on('mouseenter', function (event, d) {
@@ -520,7 +666,7 @@ export default function RCVSankeyChart({ tally, proposal }) {
         );
       })
       .on('mouseleave', function () {
-        link.attr('stroke-opacity', (l) => (l.kind === 'transfer' ? 0.55 : 0.35));
+        link.attr('stroke-opacity', (l) => (isTransferKind(l.kind) ? 0.55 : 0.35));
         setTooltip(null);
       });
   }, [sankeyData, dimensions, tally, winners, labelOf, colorOf]);
@@ -571,6 +717,34 @@ export default function RCVSankeyChart({ tally, proposal }) {
                     <div className="text-gray-500 mt-0.5">
                       {tooltip.roundLabel} · {formatCount(tooltip.value)} vote
                       {tooltip.value === 1 ? '' : 's'}
+                    </div>
+                  </>
+                ) : tooltip.linkKind === 'transfer-surplus' ? (
+                  <>
+                    <div className="font-semibold text-[#1B3A5C]">
+                      {tooltip.srcLabel} → {tooltip.tgtLabel}
+                    </div>
+                    <div className="text-gray-500 mt-0.5">
+                      Surplus transfer: {formatCount(tooltip.value)} vote
+                      {tooltip.value === 1 ? '' : 's'} (each ballot above threshold contributed a fractional vote to its next preference).
+                    </div>
+                  </>
+                ) : tooltip.linkKind === 'transfer-multi-source' ? (
+                  <>
+                    <div className="font-semibold text-[#1B3A5C]">
+                      {tooltip.srcLabel} → {tooltip.tgtLabel}
+                    </div>
+                    <div className="text-gray-500 mt-0.5">
+                      Combined-round transfer: ~{formatCount(tooltip.value)} vote
+                      {tooltip.value === 1 ? '' : 's'} (this round had multiple eliminations; share is approximate, not ballot-traced).
+                    </div>
+                  </>
+                ) : tooltip.linkKind === 'transfer-exhausted' ? (
+                  <>
+                    <div className="font-semibold text-[#1B3A5C]">{tooltip.srcLabel}</div>
+                    <div className="text-gray-500 mt-0.5">
+                      Exhausted: {formatCount(tooltip.value)} vote
+                      {tooltip.value === 1 ? '' : 's'} (no remaining preference on these ballots).
                     </div>
                   </>
                 ) : (

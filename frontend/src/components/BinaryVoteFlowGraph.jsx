@@ -430,50 +430,86 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
             maxWidth: 240,
           }}
         >
-          <div className="font-semibold text-[#1B3A5C]">
-            {tooltip.node.isAnonymous ? 'Anonymous voter' : tooltip.node.label}
-          </div>
-          {tooltip.node.is_public_delegate && !tooltip.node.isAnonymous && (
-            <div className="text-green-600 text-[10px]">Public Delegate</div>
-          )}
-          {tooltip.node.isAnonymous && (
-            <div className="text-gray-500 text-[11px] mt-1 leading-snug">
-              An anonymous voter — only public delegates and users you follow
-              show their names. Their ballot is included in the visualization.
-            </div>
-          )}
-          <div className="mt-1">
-            {tooltip.node.vote ? (
-              <span
-                className={`font-medium ${
-                  tooltip.node.vote === 'yes'
-                    ? 'text-[#2D8A56]'
-                    : tooltip.node.vote === 'no'
-                    ? 'text-[#C0392B]'
-                    : 'text-gray-500'
-                }`}
-              >
-                {tooltip.node.vote.toUpperCase()}
-                {tooltip.node.vote_source === 'delegation'
-                  ? tooltip.node.vote === 'abstain'
-                    ? (() => {
-                        const name = lookupDelegateName(tooltip.node, data);
-                        return name
-                          ? ` (via delegation from ${name})`
-                          : ' (via delegation)';
-                      })()
-                    : ' (via delegation)'
-                  : ' (direct)'}
-              </span>
-            ) : (
-              <span className="text-gray-400">Not voted</span>
-            )}
-          </div>
-          {tooltip.node.delegator_count > 0 && (
-            <div className="text-gray-500 mt-0.5">
-              {tooltip.node.delegator_count} delegator{tooltip.node.delegator_count > 1 ? 's' : ''} (
-              {tooltip.node.total_vote_weight} total weight)
-            </div>
+          {/* Phase 7C.2 Decision 3: anonymous trimmed two-line form. Header
+              line includes the vote (the at-a-glance fact for binary); a
+              shorter privacy explainer follows. Named-voter form is unchanged. */}
+          {tooltip.node.isAnonymous ? (
+            <>
+              <div className="font-semibold text-[#1B3A5C]">
+                Anonymous voter
+                {tooltip.node.vote ? (
+                  <>
+                    {' · '}
+                    <span
+                      className={`font-medium ${
+                        tooltip.node.vote === 'yes'
+                          ? 'text-[#2D8A56]'
+                          : tooltip.node.vote === 'no'
+                          ? 'text-[#C0392B]'
+                          : 'text-gray-500'
+                      }`}
+                    >
+                      {tooltip.node.vote.toUpperCase()}
+                    </span>
+                  </>
+                ) : null}
+              </div>
+              <div className="text-gray-500 text-[11px] mt-1 leading-snug">
+                Their ballot is included; only public delegates and people you
+                follow show names.
+              </div>
+              {!tooltip.node.vote && (
+                <div className="mt-1 text-gray-400">Not voted</div>
+              )}
+              {tooltip.node.delegator_count > 0 && (
+                <div className="text-gray-500 mt-0.5">
+                  {tooltip.node.delegator_count} delegator{tooltip.node.delegator_count > 1 ? 's' : ''} (
+                  {tooltip.node.total_vote_weight} total weight)
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="font-semibold text-[#1B3A5C]">
+                {tooltip.node.label}
+              </div>
+              {tooltip.node.is_public_delegate && (
+                <div className="text-green-600 text-[10px]">Public Delegate</div>
+              )}
+              <div className="mt-1">
+                {tooltip.node.vote ? (
+                  <span
+                    className={`font-medium ${
+                      tooltip.node.vote === 'yes'
+                        ? 'text-[#2D8A56]'
+                        : tooltip.node.vote === 'no'
+                        ? 'text-[#C0392B]'
+                        : 'text-gray-500'
+                    }`}
+                  >
+                    {tooltip.node.vote.toUpperCase()}
+                    {tooltip.node.vote_source === 'delegation'
+                      ? tooltip.node.vote === 'abstain'
+                        ? (() => {
+                            const name = lookupDelegateName(tooltip.node, data);
+                            return name
+                              ? ` (via delegation from ${name})`
+                              : ' (via delegation)';
+                          })()
+                        : ' (via delegation)'
+                      : ' (direct)'}
+                  </span>
+                ) : (
+                  <span className="text-gray-400">Not voted</span>
+                )}
+              </div>
+              {tooltip.node.delegator_count > 0 && (
+                <div className="text-gray-500 mt-0.5">
+                  {tooltip.node.delegator_count} delegator{tooltip.node.delegator_count > 1 ? 's' : ''} (
+                  {tooltip.node.total_vote_weight} total weight)
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -500,21 +536,35 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
           </div>
           <div className="space-y-1.5 text-gray-600">
             {selectedNode.vote ? (
-              <p>
-                Vote:{' '}
-                <span
-                  className={`font-semibold ${
-                    selectedNode.vote === 'yes'
-                      ? 'text-[#2D8A56]'
-                      : selectedNode.vote === 'no'
-                      ? 'text-[#C0392B]'
-                      : 'text-gray-500'
-                  }`}
-                >
-                  {selectedNode.vote.toUpperCase()}
-                </span>
-                {selectedNode.vote_source === 'delegation' ? ' (via delegation)' : ' (direct)'}
-              </p>
+              selectedNode.vote === 'abstain' && selectedNode.vote_source === 'delegation' ? (
+                // Phase 7C.2 Decision 4: inherited-abstain copy now matches
+                // the hover tooltip's 7C.1 form. Name the delegate when known;
+                // fall back to the unnamed form when the delegate is anonymous.
+                <p>
+                  {(() => {
+                    const name = lookupDelegateName(selectedNode, data);
+                    return name
+                      ? `Abstained (via delegation from ${name})`
+                      : 'Abstained (via delegation)';
+                  })()}
+                </p>
+              ) : (
+                <p>
+                  Vote:{' '}
+                  <span
+                    className={`font-semibold ${
+                      selectedNode.vote === 'yes'
+                        ? 'text-[#2D8A56]'
+                        : selectedNode.vote === 'no'
+                        ? 'text-[#C0392B]'
+                        : 'text-gray-500'
+                    }`}
+                  >
+                    {selectedNode.vote.toUpperCase()}
+                  </span>
+                  {selectedNode.vote_source === 'delegation' ? ' (via delegation)' : ' (direct)'}
+                </p>
+              )
             ) : (
               <p className="text-gray-400">Has not voted on this proposal</p>
             )}

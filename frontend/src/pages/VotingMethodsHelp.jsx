@@ -166,6 +166,11 @@ export default function VotingMethodsHelp() {
             show transfers from an eliminated option to others. Hover any slab or flow to see exact
             counts. STV winners are highlighted in the final column.
           </p>
+          <p className="text-sm text-gray-600 leading-relaxed">
+            STV transfers can be surpluses (a winner's overflow ballots redistributing fractionally)
+            or eliminations (a losing option's ballots redistributing whole). Hover any flow line to
+            see which.
+          </p>
         </div>
 
         <p className="text-sm text-gray-500">

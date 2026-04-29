@@ -724,11 +724,17 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
   if (!data) return null;
 
   // Detail panel ballot rendering — method-aware.
+  // Phase 7C.2 Decision 4: inherited-abstain copy now matches the hover
+  // tooltip's 7C.1 form ("Abstained (via delegation from {Name})") instead
+  // of the older "Abstained (no options selected) via delegation" two-piece.
   function renderBallotDetail(n) {
     const total = options.length;
     if (votingMethod === 'approval') {
       const approvals = n.ballot?.approvals || [];
       if (approvals.length === 0) {
+        if (n.vote_source === 'delegation') {
+          return <p>{renderAbstainTooltipText(n, data, votingMethod)}</p>;
+        }
         return <p>Abstained (no options selected)</p>;
       }
       const labels = approvals.map((id) => optionMap.get(id)?.label || id);
@@ -748,6 +754,9 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
     if (votingMethod === 'ranked_choice') {
       const ranking = n.ballot?.ranking || [];
       if (ranking.length === 0) {
+        if (n.vote_source === 'delegation') {
+          return <p>{renderAbstainTooltipText(n, data, votingMethod)}</p>;
+        }
         return <p>Abstained (no options ranked)</p>;
       }
       return (
@@ -767,6 +776,16 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
       );
     }
     return null;
+  }
+
+  // Phase 7C.2 Decision 4: tell whether the selected node is an
+  // inherited abstain (so we can suppress the redundant "via delegation"
+  // footer line — the new copy already includes "via delegation from X").
+  function isInheritedAbstain(n) {
+    if (!n || n.vote_source !== 'delegation') return false;
+    if (votingMethod === 'approval') return (n.ballot?.approvals || []).length === 0;
+    if (votingMethod === 'ranked_choice') return (n.ballot?.ranking || []).length === 0;
+    return false;
   }
 
   const nonVoterCount = data.nodes.filter((n) => n.type === 'non_voter').length;
@@ -881,36 +900,68 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
             </>
           ) : (
             <>
-              <div className="font-semibold text-[#1B3A5C]">
-                {tooltip.node.isAnonymous ? 'Anonymous voter' : tooltip.node.label}
-              </div>
-              {tooltip.node.is_public_delegate && !tooltip.node.isAnonymous && (
-                <div className="text-green-600 text-[10px]">Public Delegate</div>
-              )}
-              {tooltip.node.isAnonymous && (
-                <div className="text-gray-500 text-[11px] mt-1 leading-snug">
-                  An anonymous voter — only public delegates and users you
-                  follow show their names. Their ballot is included in the
-                  visualization.
-                </div>
-              )}
-              <div className="mt-1 text-gray-600">
-                {tooltip.node.isAbstainer
-                  ? renderAbstainTooltipText(tooltip.node, data, votingMethod)
-                  : votingMethod === 'approval'
-                  ? `${tooltip.node.ballot?.approvals?.length || 0} of ${
-                      options.length
-                    } options approved`
-                  : `${tooltip.node.ballot?.ranking?.length || 0} of ${
-                      options.length
-                    } options ranked`}
-              </div>
-              {tooltip.node.delegator_count > 0 && (
-                <div className="text-gray-500 mt-0.5">
-                  {tooltip.node.delegator_count} delegator
-                  {tooltip.node.delegator_count > 1 ? 's' : ''} ({tooltip.node.total_vote_weight}{' '}
-                  total weight)
-                </div>
+              {/* Phase 7C.2 Decision 3: anonymous voter trimmed two-line
+                  tooltip. Line 1 (header): "Anonymous voter · {n} of {m}
+                  options approved/ranked". Line 2 (privacy explainer):
+                  shorter than the 7C.1 wall-of-text form. */}
+              {tooltip.node.isAnonymous ? (
+                <>
+                  <div className="font-semibold text-[#1B3A5C]">
+                    Anonymous voter
+                    {tooltip.node.isAbstainer
+                      ? ''
+                      : votingMethod === 'approval'
+                      ? ` · ${tooltip.node.ballot?.approvals?.length || 0} of ${
+                          options.length
+                        } options approved`
+                      : ` · ranked ${tooltip.node.ballot?.ranking?.length || 0} of ${
+                          options.length
+                        } options`}
+                  </div>
+                  <div className="text-gray-500 text-[11px] mt-1 leading-snug">
+                    Their ballot is included; only public delegates and people
+                    you follow show names.
+                  </div>
+                  {tooltip.node.isAbstainer && (
+                    <div className="mt-1 text-gray-600">
+                      {renderAbstainTooltipText(tooltip.node, data, votingMethod)}
+                    </div>
+                  )}
+                  {tooltip.node.delegator_count > 0 && (
+                    <div className="text-gray-500 mt-0.5">
+                      {tooltip.node.delegator_count} delegator
+                      {tooltip.node.delegator_count > 1 ? 's' : ''} ({tooltip.node.total_vote_weight}{' '}
+                      total weight)
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="font-semibold text-[#1B3A5C]">
+                    {tooltip.node.label}
+                  </div>
+                  {tooltip.node.is_public_delegate && (
+                    <div className="text-green-600 text-[10px]">Public Delegate</div>
+                  )}
+                  <div className="mt-1 text-gray-600">
+                    {tooltip.node.isAbstainer
+                      ? renderAbstainTooltipText(tooltip.node, data, votingMethod)
+                      : votingMethod === 'approval'
+                      ? `${tooltip.node.ballot?.approvals?.length || 0} of ${
+                          options.length
+                        } options approved`
+                      : `${tooltip.node.ballot?.ranking?.length || 0} of ${
+                          options.length
+                        } options ranked`}
+                  </div>
+                  {tooltip.node.delegator_count > 0 && (
+                    <div className="text-gray-500 mt-0.5">
+                      {tooltip.node.delegator_count} delegator
+                      {tooltip.node.delegator_count > 1 ? 's' : ''} ({tooltip.node.total_vote_weight}{' '}
+                      total weight)
+                    </div>
+                  )}
+                </>
               )}
             </>
           )}
@@ -942,9 +993,10 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
             {selectedNode.ballot ? (
               <div>
                 {renderBallotDetail(selectedNode)}
-                {selectedNode.vote_source === 'delegation' && (
-                  <p className="text-xs text-gray-400 mt-1">via delegation</p>
-                )}
+                {selectedNode.vote_source === 'delegation' &&
+                  !isInheritedAbstain(selectedNode) && (
+                    <p className="text-xs text-gray-400 mt-1">via delegation</p>
+                  )}
               </div>
             ) : (
               <p className="text-gray-400">Has not voted on this proposal</p>

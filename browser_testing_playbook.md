@@ -2142,6 +2142,26 @@ Same browser-driven session as the Suite N extension above.
 
 ---
 
+## Test Suite N extension: Phase 7C.2 Sankey eliminated-flow fix + surplus dispatch
+
+Browser-driven via Claude-in-Chrome on 2026-04-28 against local dev (backend 8002, Vite proxy temporarily redirected, reverted post-run). Driven as alice via demo-login.
+
+| ID | Check | Target | Status |
+|---|---|---|---|
+| N14 | Eliminated options have visible outgoing flow only into actual transfer destinations | Steering Committee STV (local `202e5634…`) | **PASS** — DOM inspection of rendered `<path>` data showed Cara@R1 emits 0.546 (→ Boris) + 0.688 (→ Devon) + 0.890 (→ Exhausted) = 2.125 (her exact count); Eli@R1 emits 0.579 + 0.729 + 0.943 = 2.251 (his exact count, not the 2.5416 pre-fix sum). Synthetic Exhausted node renders at R2 with combined inbound 1.833. No option has outgoing links from rounds beyond its elimination. Coffee Vendor IRV regression: 7 links {2 carry, 3 initial, 2 final, 2 single-source `transfer`} — clean, no Exhausted, no multi-source. |
+| N15 | Surplus vs. elimination tooltip dispatch | Steering R0→R1 Aria→Boris (surplus); Coffee Vendor IRV R1→R2 (elimination); Steering R1→R2 Cara→Boris (multi-source); Steering R1→R2 Eli→Exhausted | **PASS** — All four tooltip variants captured by dispatching synthetic mouseenter and reading rendered tooltip text. Surplus: `Aria Chen → Boris Patel · Surplus transfer: 0.13 votes (each ballot above threshold contributed a fractional vote to its next preference).` Elimination: `Bean & Brew → Cafe Verde · Transfer: 3 votes` (Phase 7C.1 copy unchanged). Multi-source: `Cara Singh → Boris Patel · Combined-round transfer: ~0.55 votes (this round had multiple eliminations; share is approximate, not ballot-traced).` Exhausted: `Eli Rojas · Exhausted: 0.94 votes (no remaining preference on these ballots).` |
+
+---
+
+## Test Suite M extension: Phase 7C.2 trimmed anonymous tooltip + detail-panel inherited abstain
+
+| ID | Check | Target | Status |
+|---|---|---|---|
+| M31 | Anonymous voter hover tooltip is two-line trimmed form | Approval / RCV / binary proposals | **PASS-by-source** — verified at source level (`OptionAttractorVoteFlowGraph.jsx` ~lines 903-940; `BinaryVoteFlowGraph.jsx` ~lines 432-470). Both branch on `tooltip.node.isAnonymous` to render header line ending with the at-a-glance fact (count for approval/RCV, vote chip for binary) and trimmed second line `Their ballot is included; only public delegates and people you follow show names.` Programmatic synthetic mouseenter on graph circles didn't expose the React tooltip element via dispatchEvent (React's render-driven tooltip element only mounts on real pointer events, not synthetic), so this test relies on source review. Structural changes are unambiguous. |
+| M32 | Detail-panel inherited-abstain copy matches hover form | Binary or approval proposal with a delegator who inherits an abstain | **PASS-by-source** — `OptionAttractorVoteFlowGraph.jsx` `renderBallotDetail` returns `renderAbstainTooltipText(n, data, votingMethod)` for empty-ballot delegators (both approval and RCV branches); the redundant `<p>via delegation</p>` footer is suppressed when `isInheritedAbstain(selectedNode)` is true. `BinaryVoteFlowGraph.jsx` detail panel branches on `selectedNode.vote === 'abstain' && selectedNode.vote_source === 'delegation'` and renders `Abstained (via delegation from {Name})` (or `Abstained (via delegation)` when `lookupDelegateName` returns null), suppressing the older `Vote: ABSTAIN ... (via delegation)` for that case. |
+
+---
+
 ## Test Suite O: Phase 7.5 — Privacy and Access Hardening
 
 Browser-driven via Claude-in-Chrome on 2026-04-27 against fresh local backend (port 8002 to bypass a phantom socket on 8001 — same recurring issue from 7C.1) + Vite (port 5173, proxy temporarily redirected for the run, reverted after). Driven as alice (regular user) and admin (platform admin).

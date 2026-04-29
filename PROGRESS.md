@@ -1371,3 +1371,68 @@ Phase 7.5 will deploy via Railway auto-deploy on push to master. Post-deploy ver
 2. **Settings page empty state for access history.** The empty-state UX renders the spec-mandated copy correctly (verified by source review), but in the current seed every user sees system-wide events (delegation-graph + user-list views by admin touch every user). Add a fresh-DB visual test fixture if you want to exercise the literal empty UI in QA.
 3. **`vote.retracted` audit details currently omit `ballot`/`previous_ballot`.** Only `previous_value` is recorded today. The redaction allowlist already covers the future case (no-op when fields are absent), but if richer retraction logging is added later, the existing allowlist will redact correctly. Minor consistency item, not a security gap.
 4. **Elevation rate limiting.** Spec marks this as out-of-scope for Phase 7.5; the elevated endpoint inherits whatever rate limiting is on `/api/*`. Worth adding eventually but not blocking.
+
+## Phase 7C.2 — Sankey Eliminated-Flow Bug + Small Polish — 2026-04-28
+
+Polish/cleanup pass. Headline: fix the Steering Committee STV Sankey rendering eliminated options as if their votes were still flowing forward. Plus three small UX papercuts the same review surfaced.
+
+### Diagnosis (lead-driven, before any code change)
+
+Pulled `tally.rounds` for the Steering Committee proposal off prod and inspected the multi-source round transition. Hypothesis A from the spec **confirmed**: pyrankvote 2.0.6 packs paired surplus + elimination events into a single `ElectionResultRound`, with `transferred_from` set to the larger drop and the smaller drop's volume silently merged into the breakdown. Concretely on Steering R1→R2: `transferred_from=Eli`, `transfer_breakdown` summed to 2.5416, but Eli only had 2.25 votes — Cara also dropped 2.125→0 in the same round and her redistribution was being silently absorbed into Eli's breakdown. Net visual: Cara appeared as a dead-end node and Eli appeared to flow more volume than he held. Backend `_compute_rcv_tally_pure` (`backend/delegation_engine.py:520-543`) computes `transferred_from = max(dropped, key=largest_drop)` — multiple drops collapse to the largest. JSON dump committed at `test_results/phase7C2_screenshots/steering_committee_tally_pre_fix.json`.
+
+### Path chosen: frontend robustness (not backend split)
+
+Backend split is unworkable: pyrankvote does not expose intermediate per-event states within a round, so cleanly splitting Cara's transfer from Eli's would require reimplementing the transfer algorithm against raw ballot data. That's too risky for a polish pass and would cause backend data to diverge from what pyrankvote actually returned. The frontend already receives the full per-round `option_counts` (showing all drops) and `transfer_breakdown` (showing all gains); the fix is for `buildSankeyData` to detect multi-source rounds and attribute the breakdown proportionally rather than crediting it all to the single named source.
+
+### What shipped
+
+**`frontend/src/components/RCVSankeyChart.jsx` — Decision 1 + 2.** `buildSankeyData` now detects all options whose count drops between rounds R and R+1 (not just `transferred_from`):
+- **Single-source rounds** (`droppedOpts.length === 1`): unchanged behavior — exact attribution from breakdown, plus a synthetic exhausted link if `breakdown_sum < drop` (the spec's clean IRV case).
+- **Multi-source rounds** (`droppedOpts.length > 1`): each dropped option contributes a share of each gainer's flow proportional to its share of the total drop volume. Tagged `kind: 'transfer-multi-source'` (or `'transfer-surplus'` when the dropped option was elected in the previous round). Tooltip copy explicitly discloses the approximation: `Combined-round transfer: ~{N} votes (this round had multiple eliminations; share is approximate, not ballot-traced)`.
+- **Exhausted ballots**: any volume gap between drops and gains gets emitted as `transfer-exhausted` links to a synthetic `__exhausted__` sink node with muted-gray rendering and an inline italic label `Exhausted ({N})` wherever it appears. Tooltip: `{Source} · Exhausted: {N} votes (no remaining preference on these ballots).`
+- **Decision 2 dispatch**: surplus transfers (source elected in prev round) tag `transfer-surplus` for both single- and multi-source paths. Tooltip: `{Source} → {Target} · Surplus transfer: {N} votes (each ballot above threshold contributed a fractional vote to its next preference).` Elimination single-source keeps existing copy: `{Source} → {Target} · Transfer: {N} votes`.
+
+**`frontend/src/pages/VotingMethodsHelp.jsx`.** Added a one-line subsection under the existing "How to read the Elimination Flow chart" explaining surplus vs. elimination transfers.
+
+**`frontend/src/components/OptionAttractorVoteFlowGraph.jsx` — Decisions 3 + 4.** Anonymous voter tooltip rewritten to two-line trimmed form: header line ends with the at-a-glance count (e.g., `Anonymous voter · 2 of 5 options approved` or `Anonymous voter · ranked 3 of 5 options`); second line is the trimmed privacy explainer `Their ballot is included; only public delegates and people you follow show names.` Detail panel `renderBallotDetail` now returns `renderAbstainTooltipText(...)` for empty-ballot delegators (matching hover form), and the redundant `via delegation` footer is suppressed when the panel is showing an inherited abstain.
+
+**`frontend/src/components/BinaryVoteFlowGraph.jsx` — Decisions 3 + 4.** Anonymous voter tooltip is two-line: header `Anonymous voter · YES/NO/ABSTAIN` (vote rendered with the existing color chip); second line is the trimmed privacy explainer. Detail panel branches on `selectedNode.vote === 'abstain' && selectedNode.vote_source === 'delegation'` to render `Abstained (via delegation from {Name})` or `Abstained (via delegation)`, suppressing the older `Vote: ABSTAIN ... (via delegation)` form for that case.
+
+### Test coverage
+
+- **Suite N extension N14-N15**: PASS. Browser-driven via Claude-in-Chrome on the local dev stack as alice. DOM inspection of the rendered `<path>` data on the Steering Committee Sankey confirmed:
+  - Cara@R1 emits 0.546 (→ Boris) + 0.688 (→ Devon) + 0.890 (→ Exhausted) = 2.125 (her exact pre-elimination count).
+  - Eli@R1 emits 0.579 + 0.729 + 0.943 = 2.251 (his exact count, not the 2.5416 pre-fix sum).
+  - Synthetic Exhausted node renders at the R2 column with combined inbound 1.833.
+  - All four tooltip variants (`transfer-surplus`, `transfer`, `transfer-multi-source`, `transfer-exhausted`) captured by dispatching synthetic mouseenter and reading the rendered tooltip text — copy matches spec exactly.
+  - Coffee Vendor IRV regression: 7 links {2 carry, 3 initial, 2 final, 2 single-source `transfer`} — clean, no Exhausted, no multi-source. The fix doesn't touch single-source rounds.
+- **Suite M extension M31-M32**: PASS-by-source. Source review of both graph components verified the structural changes match spec. Programmatic synthetic mouseenter on graph circles didn't reliably expose the React-rendered tooltip element via `dispatchEvent` (the React tooltip is render-state-driven and only fires on real pointer events, unlike the d3-driven Sankey tooltip), so this part of QA stayed at source-review level. Both components branch correctly on `isAnonymous` and `isInheritedAbstain` predicates and render the spec'd copy.
+- **Backend tests**: no backend changes, no test impact (still **221 passing** from Phase 7.5).
+- **PostgreSQL smoke**: not required (per spec — only required if Decision 1 took the backend-split path).
+
+### Production state after merge
+
+Railway auto-deploy on push. Post-deploy verification:
+- Steering Committee STV at `https://www.liquiddemocracy.us/proposals/d298baf3-...` should render Cara with visible R1→R2 outflow + an Exhausted (1.83) node at R2.
+- Hovering R0→R1 surplus link from Aria should show the `Surplus transfer:` tooltip with the parenthetical explanation.
+- Hovering an anonymous voter on Community Garden / Universal Healthcare should show the two-line trimmed tooltip.
+
+### Bug found and worked around during QA run
+
+- **Phantom socket on port 8001** recurred (PID 6896 lingered from prior session). Worked around by running the fresh backend on port 8002 with Vite's proxy temporarily redirected. Reverted post-test.
+- **Upload server initial 500.** First instance returned HTTP 500 silently — root cause was two listeners on port 9876 from a stale prior server; the new one bound to the same port but was in a degenerate state. Killed both, restarted with explicit traceback handling, then captured cleanly. Logged so we can write a more defensive starter for future phases.
+
+### Screenshots committed
+
+`test_results/phase7C2_screenshots/`:
+- `steering_committee_tally_pre_fix.json` — diagnostic JSON dump that drove the path decision.
+- `steering_committee_sankey_post_fix.svg` — Steering Sankey rendered with the fix in place; Cara shows outgoing flow, Exhausted (1.83) node visible at R2.
+- `coffee_vendor_irv_sankey_unchanged.svg` — single-source IRV regression baseline.
+- `README.md` — index mapping artifact → tests, documents which Suite N/M tests are DOM-verified vs tooltip-captured vs source-reviewed.
+
+### New tech debt logged
+
+1. **Sankey column compression on 5+ option × 5+ round STV.** Logged but not fixed in 7C.2 (out of scope per spec). Steering Committee at 5×3 reads cleanly; larger STV elections may need column-compression heuristics.
+2. **Programmatic tooltip QA on graph circle nodes.** Synthetic mouseenter doesn't reliably expose the React-rendered tooltip element on the OptionAttractor / Binary graphs (the d3-driven Sankey tooltip handles it because d3.on attaches native handlers; React's render-state tooltip doesn't update from synthetic events). For future polish-pass QA we either accept source review for these, build a programmatic hover helper that uses React Testing Library's pointer simulation, or use a real headless-browser actuator. Not blocking.
+3. **Defensive upload-server starter.** First-run flake with two listeners on the same port can return silent 500s. Future phases should either pkill stragglers before starting or use a fixed-port-bind-with-error pattern that fails loudly.
+
