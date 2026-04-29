@@ -10,6 +10,7 @@ import schemas
 from audit_utils import log_audit_event
 from database import get_db
 from delegation_engine import engine as delegation_engine, resolve_vote_pure, ApprovalTally, RCVTally
+from org_config import get_org_config
 from permissions import can_see_votes
 
 router = APIRouter(prefix="/api/proposals", tags=["proposals"])
@@ -49,6 +50,7 @@ def _build_proposal_out(proposal: models.Proposal) -> schemas.ProposalOut:
         topics=proposal.proposal_topics,
         options=proposal.options,
         sustained_majority_enabled=proposal.sustained_majority_enabled,
+        sub_org_id=getattr(proposal, "sub_org_id", None),
     )
 
 
@@ -57,8 +59,15 @@ def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[mode
     # Check org allowed_voting_methods. Ranked-choice in particular is
     # opt-in per org — return 403 (not 400) when the method is not enabled,
     # matching the Phase 7 spec.
-    if org and org.settings:
-        allowed = org.settings.get("allowed_voting_methods", ["binary", "approval"])
+    # Phase 8.5: walk the parent chain via get_org_config so a sub-org can
+    # enable a voting method its parent doesn't, or vice-versa (Decision 9).
+    if org is not None:
+        from routes.organizations import DEFAULT_ORG_SETTINGS
+        allowed = get_org_config(
+            org,
+            "allowed_voting_methods",
+            DEFAULT_ORG_SETTINGS["allowed_voting_methods"],
+        )
         if body.voting_method not in allowed:
             status_code = 403 if body.voting_method == "ranked_choice" else 400
             raise HTTPException(

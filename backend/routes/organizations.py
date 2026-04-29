@@ -865,13 +865,35 @@ def list_org_topics(
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_membership),
 ):
-    """List org topics."""
+    """List org topics, filtered by viewer scope (Decision 5).
+
+    Parent-org-wide topics (sub_org_id IS NULL) are always visible. Sub-org
+    topics are visible only to (a) sub-org members, or (b) parent-org admins
+    (Decision 6 implicit power).
+    """
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
-    return db.query(models.Topic).filter(
+    all_topics = db.query(models.Topic).filter(
         models.Topic.org_id == org.id,
     ).order_by(models.Topic.name).all()
+
+    is_parent_admin = membership.role in ("admin", "owner")
+    if is_parent_admin:
+        return all_topics
+
+    # Resolve sub-orgs the current user belongs to under this parent.
+    visible_sub_org_ids = {row.sub_org_id for row in db.query(
+        models.SubOrgMembership.sub_org_id
+    ).filter(
+        models.SubOrgMembership.user_id == current_user.id,
+        models.SubOrgMembership.status == "active",
+    ).all()}
+
+    return [
+        t for t in all_topics
+        if t.sub_org_id is None or t.sub_org_id in visible_sub_org_ids
+    ]
 
 
 @router.post("/{org_slug}/topics", response_model=schemas.TopicOut, status_code=201)
@@ -880,12 +902,46 @@ def create_org_topic(
     body: schemas.TopicCreate,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
-    admin_membership: models.OrgMembership = Depends(require_org_admin),
+    membership: models.OrgMembership = Depends(require_org_membership),
 ):
-    """Create topic (admin)."""
+    """Create topic.
+
+    Phase 8.5 scope handling:
+      - If `sub_org_id` is None: parent-org-wide topic; requires parent-org
+        admin (existing behavior).
+      - If `sub_org_id` is non-null: sub-org-scoped topic; the requested
+        sub-org must be a child of `org_slug`, and the actor must be an
+        active sub-org admin (or parent-org admin via implicit power).
+    """
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
+
+    if body.sub_org_id is None:
+        # Parent-org-wide topic — admin-only as before.
+        if membership.role not in ("admin", "owner"):
+            raise HTTPException(status_code=403, detail="Admin access required")
+        target_sub_org_id = None
+    else:
+        sub_org = db.query(models.Organization).filter(
+            models.Organization.id == body.sub_org_id,
+            models.Organization.parent_org_id == org.id,
+        ).first()
+        if sub_org is None:
+            raise HTTPException(
+                status_code=400,
+                detail="sub_org_id is not a sub-org of this parent",
+            )
+        from permissions import is_sub_org_admin
+        if not is_sub_org_admin(db, current_user.id, sub_org):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Sub-org admin (or parent-org admin) required to create "
+                    "topics scoped to this sub-org"
+                ),
+            )
+        target_sub_org_id = sub_org.id
 
     # Check for duplicate name within the org
     existing = db.query(models.Topic).filter(
@@ -900,6 +956,7 @@ def create_org_topic(
         description=body.description,
         color=body.color,
         org_id=org.id,
+        sub_org_id=target_sub_org_id,
     )
     db.add(topic)
     db.commit()
@@ -970,7 +1027,16 @@ def list_org_proposals(
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_membership),
 ):
-    """List org proposals."""
+    """List org proposals.
+
+    Phase 8.5 visibility (Decision 7):
+      - Parent-org-wide proposals: visible to all parent-org members.
+      - Sub-org proposals where the sub-org is NOT private: visible to all
+        parent-org members (read-only for non-sub-org-members; visibility is
+        decoupled from voting/delegation eligibility).
+      - Sub-org proposals where the sub-org has settings.private = True:
+        visible only to sub-org members and parent-org admins (Decision 6).
+    """
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
@@ -980,6 +1046,40 @@ def list_org_proposals(
     if topic_id:
         q = q.join(models.ProposalTopic).filter(models.ProposalTopic.topic_id == topic_id)
     proposals = q.order_by(models.Proposal.created_at.desc()).all()
+
+    is_parent_admin = membership.role in ("admin", "owner")
+    if not is_parent_admin:
+        # Resolve which (private) sub-orgs the viewer is a member of, so
+        # private-flag filtering is correct.
+        viewer_sub_org_ids = {row.sub_org_id for row in db.query(
+            models.SubOrgMembership.sub_org_id
+        ).filter(
+            models.SubOrgMembership.user_id == current_user.id,
+            models.SubOrgMembership.status == "active",
+        ).all()}
+
+        # Build a {sub_org_id -> private_bool} cache, only for sub-orgs that
+        # actually appear in the proposal list (typically just a few).
+        relevant_sub_org_ids = {p.sub_org_id for p in proposals if p.sub_org_id}
+        private_map: dict[str, bool] = {}
+        if relevant_sub_org_ids:
+            for sub in db.query(models.Organization).filter(
+                models.Organization.id.in_(relevant_sub_org_ids)
+            ).all():
+                private_map[sub.id] = bool((sub.settings or {}).get("private", False))
+
+        filtered = []
+        for p in proposals:
+            if p.sub_org_id is None:
+                filtered.append(p)
+                continue
+            if not private_map.get(p.sub_org_id, False):
+                filtered.append(p)
+                continue
+            # Private sub-org: only members can see.
+            if p.sub_org_id in viewer_sub_org_ids:
+                filtered.append(p)
+        proposals = filtered
 
     from routes.proposals import _build_proposal_out
     return [_build_proposal_out(p) for p in proposals]
@@ -992,19 +1092,94 @@ def create_org_proposal(
     request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
-    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
+    membership: models.OrgMembership = Depends(require_org_membership),
 ):
-    """Create proposal within org (moderator, admin, or owner)."""
+    """Create proposal within org.
+
+    Permission dispatches on ``body.sub_org_id``:
+      - Parent-org-scoped (sub_org_id is None): requires parent-org
+        moderator/admin/owner role — same gate as before Phase 8.5
+        Session 3.
+      - Sub-org-scoped (sub_org_id is non-null): requires sub-org-internal
+        moderator+/admin/owner OR parent-org admin/owner (Decision 6
+        implicit power). A sub-org *member* (plain role) cannot create
+        proposals; they vote on existing ones.
+
+    The previous implementation used a hard ``require_org_moderator_or_admin``
+    Depends() that gated everyone — including sub-org members who weren't
+    parent-org moderators. We softened to ``require_org_membership`` and
+    dispatch the moderator+ check inside the body so the sub-org-internal
+    role can govern sub-org-scoped actions (Session 2 tech debt #1).
+    """
+    from permissions import can_create_proposal_in_sub_org
+
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
 
+    # Phase 8.5: resolve sub-org scope BEFORE _validate_proposal_creation so
+    # the voting-method allowlist walks the correct org chain (sub-org
+    # override -> parent default).
+    target_sub_org: Optional[models.Organization] = None
+    if body.sub_org_id is not None:
+        target_sub_org = db.query(models.Organization).filter(
+            models.Organization.id == body.sub_org_id,
+            models.Organization.parent_org_id == org.id,
+        ).first()
+        if target_sub_org is None:
+            raise HTTPException(
+                status_code=400,
+                detail="sub_org_id is not a sub-org of this parent",
+            )
+        # Sub-org-scoped: sub-org-internal moderator+ (or parent-org admin
+        # via implicit power) required. Sub-org plain members cannot create.
+        if not can_create_proposal_in_sub_org(db, current_user.id, target_sub_org):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Sub-org moderator, admin, or owner role required to "
+                    "create proposals scoped to this sub-org "
+                    "(parent-org admin/owner also permitted via implicit power)."
+                ),
+            )
+    else:
+        # Parent-org-scoped: preserve the legacy moderator+ gate.
+        if membership.role not in ("moderator", "admin", "owner"):
+            raise HTTPException(
+                status_code=403,
+                detail="Moderator access required",
+            )
+
     from routes.proposals import _validate_proposal_creation, _create_proposal_options
-    _validate_proposal_creation(body, org)
+    # Pass the sub-org (when present) so the voting-method allowlist resolves
+    # via get_org_config — sub-org overrides take precedence over parent.
+    _validate_proposal_creation(body, target_sub_org or org)
 
     for t in body.topics:
-        if not db.get(models.Topic, t.topic_id):
+        topic_obj = db.get(models.Topic, t.topic_id)
+        if not topic_obj:
             raise HTTPException(status_code=400, detail=f"Topic {t.topic_id} not found")
+        # Phase 8.5: scope-compatibility for proposal topics.
+        # Parent-org proposal: only parent-org-wide topics allowed.
+        # Sub-org proposal: only parent-org-wide OR same-sub-org topics allowed.
+        if target_sub_org is None:
+            if topic_obj.sub_org_id is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Topic {topic_obj.id} is scoped to a sub-org and "
+                        "cannot be used by a parent-org-wide proposal"
+                    ),
+                )
+        else:
+            if topic_obj.sub_org_id is not None and topic_obj.sub_org_id != target_sub_org.id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Topic {topic_obj.id} is scoped to a different "
+                        "sub-org and cannot be used here"
+                    ),
+                )
 
     # Phase 8 — sustained-majority per-proposal override. Reject non-null
     # value when the org disallows per-proposal overrides.
@@ -1016,6 +1191,7 @@ def create_org_proposal(
         body=body.body,
         author_id=current_user.id,
         org_id=org.id,
+        sub_org_id=target_sub_org.id if target_sub_org else None,
         voting_method=body.voting_method,
         num_winners=body.num_winners,
         pass_threshold=body.pass_threshold,

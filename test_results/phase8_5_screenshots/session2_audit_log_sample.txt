@@ -1,0 +1,153 @@
+[
+  {
+    "action": "sub_org.created",
+    "target_type": "organization",
+    "target_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+    "actor_id": "40a666f9-f23b-45c0-8737-a7c6f22c4726",
+    "details": {
+      "sub_org_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+      "name": "S",
+      "slug": "scope1",
+      "parent_org_id": "266aa351-e705-45de-85f0-b437842c4011"
+    }
+  },
+  {
+    "action": "sub_org.updated",
+    "target_type": "organization",
+    "target_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+    "actor_id": "40a666f9-f23b-45c0-8737-a7c6f22c4726",
+    "details": {
+      "sub_org_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+      "changes": {
+        "name": {
+          "old": "S",
+          "new": "S2"
+        }
+      }
+    }
+  },
+  {
+    "action": "sub_org.updated",
+    "target_type": "organization",
+    "target_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+    "actor_id": "40a666f9-f23b-45c0-8737-a7c6f22c4726",
+    "details": {
+      "sub_org_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+      "changes": {
+        "settings": {
+          "private": {
+            "old": null,
+            "new": true
+          }
+        }
+      }
+    }
+  },
+  {
+    "action": "sub_org.privacy_changed",
+    "target_type": "organization",
+    "target_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+    "actor_id": "40a666f9-f23b-45c0-8737-a7c6f22c4726",
+    "details": {
+      "sub_org_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+      "old_value": false,
+      "new_value": true
+    }
+  },
+  {
+    "action": "sub_org.updated",
+    "target_type": "organization",
+    "target_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+    "actor_id": "40a666f9-f23b-45c0-8737-a7c6f22c4726",
+    "details": {
+      "sub_org_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+      "changes": {
+        "settings": {
+          "reject_non_member_delegations": {
+            "old": null,
+            "new": true
+          }
+        }
+      }
+    }
+  },
+  {
+    "action": "sub_org.cross_scope_delegation_setting_changed",
+    "target_type": "organization",
+    "target_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+    "actor_id": "40a666f9-f23b-45c0-8737-a7c6f22c4726",
+    "details": {
+      "sub_org_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+      "old_value": false,
+      "new_value": true
+    }
+  },
+  {
+    "action": "sub_org.member_invited",
+    "target_type": "sub_org_membership",
+    "target_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+    "actor_id": "40a666f9-f23b-45c0-8737-a7c6f22c4726",
+    "details": {
+      "sub_org_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+      "target_user_id": "eef47a22-9ae3-4d18-8655-96fe83e124cf",
+      "role": "member"
+    }
+  },
+  {
+    "action": "sub_org.member_joined",
+    "target_type": "sub_org_membership",
+    "target_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+    "actor_id": "40a666f9-f23b-45c0-8737-a7c6f22c4726",
+    "details": {
+      "sub_org_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+      "target_user_id": "eef47a22-9ae3-4d18-8655-96fe83e124cf",
+      "role": "member"
+    }
+  },
+  {
+    "action": "sub_org.member_role_changed",
+    "target_type": "sub_org_membership",
+    "target_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+    "actor_id": "40a666f9-f23b-45c0-8737-a7c6f22c4726",
+    "details": {
+      "sub_org_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+      "target_user_id": "eef47a22-9ae3-4d18-8655-96fe83e124cf",
+      "old_role": "member",
+      "new_role": "moderator"
+    }
+  },
+  {
+    "action": "sub_org.member_removed",
+    "target_type": "sub_org_membership",
+    "target_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+    "actor_id": "40a666f9-f23b-45c0-8737-a7c6f22c4726",
+    "details": {
+      "sub_org_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+      "target_user_id": "eef47a22-9ae3-4d18-8655-96fe83e124cf",
+      "reason": "removed"
+    }
+  },
+  {
+    "action": "topic.promoted_to_orgwide",
+    "target_type": "topic",
+    "target_id": "ff64dafc-6d8f-4f63-b2c4-8cc42b345a14",
+    "actor_id": "40a666f9-f23b-45c0-8737-a7c6f22c4726",
+    "details": {
+      "topic_id": "ff64dafc-6d8f-4f63-b2c4-8cc42b345a14",
+      "name": "T1",
+      "promoted_from_sub_org_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+      "promoted_by": "40a666f9-f23b-45c0-8737-a7c6f22c4726"
+    }
+  },
+  {
+    "action": "sub_org.deleted",
+    "target_type": "organization",
+    "target_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+    "actor_id": "40a666f9-f23b-45c0-8737-a7c6f22c4726",
+    "details": {
+      "sub_org_id": "a2cf0bbe-3715-496e-a254-fe6b268934f1",
+      "name": "S2",
+      "slug": "scope1"
+    }
+  }
+]

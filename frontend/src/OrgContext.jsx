@@ -10,6 +10,10 @@ export function OrgProvider({ children }) {
   const [currentOrg, setCurrentOrgState] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Phase 8.5: cache of sub-orgs visible to the current user, keyed by parent
+  // org slug. Populated lazily — see fetchSubOrgsFor.
+  const [subOrgsByParent, setSubOrgsByParent] = useState({});
+
   const setCurrentOrg = useCallback((org) => {
     setCurrentOrgState(org);
     if (org) {
@@ -56,6 +60,31 @@ export function OrgProvider({ children }) {
     refreshOrgs();
   }, [refreshOrgs]);
 
+  // Phase 8.5 — fetch the list of sub-orgs visible to the current user
+  // under a given parent slug. Caches the result by parent slug. Backend
+  // privacy filter (Decision 7) handles which sub-orgs are returned.
+  const fetchSubOrgsFor = useCallback(async (parentSlug, force = false) => {
+    if (!parentSlug) return [];
+    if (!force && subOrgsByParent[parentSlug]) return subOrgsByParent[parentSlug];
+    try {
+      const list = await api.get(`/api/orgs/${parentSlug}/sub-orgs`);
+      setSubOrgsByParent(prev => ({ ...prev, [parentSlug]: list }));
+      return list;
+    } catch {
+      setSubOrgsByParent(prev => ({ ...prev, [parentSlug]: [] }));
+      return [];
+    }
+  }, [subOrgsByParent]);
+
+  // Convenience: drop cached sub-org list for a parent (call after CRUD).
+  const invalidateSubOrgs = useCallback((parentSlug) => {
+    setSubOrgsByParent(prev => {
+      const next = { ...prev };
+      delete next[parentSlug];
+      return next;
+    });
+  }, []);
+
   const isAdmin = !!(currentOrg && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'owner'));
   const isOwner = !!(currentOrg && currentOrg.user_role === 'owner');
   const isModerator = !!(currentOrg && currentOrg.user_role === 'moderator');
@@ -72,6 +101,10 @@ export function OrgProvider({ children }) {
       isModeratorOrAdmin,
       loading,
       refreshOrgs,
+      // Phase 8.5
+      subOrgsByParent,
+      fetchSubOrgsFor,
+      invalidateSubOrgs,
     }}>
       {children}
     </OrgContext.Provider>

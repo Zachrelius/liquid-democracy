@@ -21,7 +21,8 @@ function timeRemaining(votingEnd) {
   return `${hours}h ${mins}m remaining`;
 }
 
-function ProposalCard({ proposal, myVote, tally }) {
+function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly }) {
+  const subOrg = proposal.sub_org_id ? subOrgsById?.[proposal.sub_org_id] : null;
   return (
     <Link
       to={`/proposals/${proposal.id}`}
@@ -44,6 +45,20 @@ function ProposalCard({ proposal, myVote, tally }) {
         </span>
         <StatusBadge status={proposal.status} />
       </div>
+
+      {/* Phase 8.5 — sub-org badge + Decision 7 read-only hint */}
+      {subOrg && (
+        <div className="flex flex-wrap items-center gap-2 mb-3">
+          <span className="text-xs bg-cyan-50 text-cyan-700 border border-cyan-200 px-2 py-0.5 rounded-full font-medium">
+            {subOrg.name}
+          </span>
+          {isReadOnly && (
+            <span className="text-xs text-gray-500 italic">
+              View only — you&apos;re not a member
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Topic badges */}
       {proposal.topics?.length > 0 && (
@@ -95,13 +110,18 @@ function ProposalCard({ proposal, myVote, tally }) {
 }
 
 export default function Proposals() {
-  const { currentOrg } = useOrg();
+  const { currentOrg, userOrgs } = useOrg();
   const [proposals, setProposals] = useState([]);
   const [topics, setTopics] = useState([]);
   const [tallies, setTallies] = useState({});
   const [myVotes, setMyVotes] = useState({});
   const [statusFilter, setStatusFilter] = useState('all');
   const [topicFilter, setTopicFilter] = useState('');
+  // Phase 8.5 — UI-only scope filter. 'all' (default) keeps the existing
+  // server payload as-is; 'current' narrows to proposals whose sub_org_id
+  // matches currentOrg when currentOrg is itself a sub-org.
+  const [scopeFilter, setScopeFilter] = useState('all');
+  const [subOrgsById, setSubOrgsById] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -111,6 +131,28 @@ export default function Proposals() {
       : '/api/topics';
     api.get(topicsUrl).then(setTopics).catch(() => {});
   }, [currentOrg]);
+
+  // Phase 8.5 — fetch the parent's sub-orgs so we can render scope badges
+  // and the Decision-7 read-only hint on cards. Resolves the parent slug
+  // from currentOrg (walking up if currentOrg is itself a sub-org).
+  useEffect(() => {
+    if (!currentOrg) return;
+    let parentSlug;
+    if (currentOrg.parent_org_id) {
+      const parent = userOrgs.find(o => o.id === currentOrg.parent_org_id);
+      parentSlug = parent?.slug;
+    } else {
+      parentSlug = currentOrg.slug;
+    }
+    if (!parentSlug) return;
+    api.get(`/api/orgs/${parentSlug}/sub-orgs`)
+      .then(list => {
+        const map = {};
+        for (const s of list || []) map[s.id] = s;
+        setSubOrgsById(map);
+      })
+      .catch(() => setSubOrgsById({}));
+  }, [currentOrg, userOrgs]);
 
   useEffect(() => {
     setLoading(true);
@@ -193,6 +235,34 @@ export default function Proposals() {
             ))}
           </select>
         )}
+
+        {/* Phase 8.5 — scope filter. Only meaningful when currentOrg is a
+            sub-org (server already returns the right payload; this is a
+            UI narrow). */}
+        {currentOrg?.parent_org_id && (
+          <div className="flex bg-white border border-gray-200 rounded-lg overflow-hidden">
+            <button
+              onClick={() => setScopeFilter('all')}
+              className={`px-3 py-1.5 text-sm transition-colors ${
+                scopeFilter === 'all'
+                  ? 'bg-[#1B3A5C] text-white'
+                  : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              Everything I&apos;m eligible for
+            </button>
+            <button
+              onClick={() => setScopeFilter('current')}
+              className={`px-3 py-1.5 text-sm transition-colors ${
+                scopeFilter === 'current'
+                  ? 'bg-[#1B3A5C] text-white'
+                  : 'text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              {currentOrg.name} only
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Content */}
@@ -224,14 +294,30 @@ export default function Proposals() {
         </div>
       ) : (
         <div className="space-y-4">
-          {proposals.map(p => (
-            <ProposalCard
-              key={p.id}
-              proposal={p}
-              tally={tallies[p.id]}
-              myVote={myVotes[p.id]}
-            />
-          ))}
+          {proposals
+            .filter(p => {
+              if (scopeFilter !== 'current') return true;
+              // 'current' narrows to the current sub-org. Only meaningful when
+              // currentOrg is a sub-org; the toggle isn't shown otherwise.
+              return p.sub_org_id === currentOrg?.id;
+            })
+            .map(p => {
+              const subOrg = p.sub_org_id ? subOrgsById[p.sub_org_id] : null;
+              // Decision 7 — non-member viewers see read-only treatment. The
+              // sub-org's user_role is null when the viewer isn't an active
+              // member; non-null when they are.
+              const isReadOnly = !!subOrg && !subOrg.user_role;
+              return (
+                <ProposalCard
+                  key={p.id}
+                  proposal={p}
+                  tally={tallies[p.id]}
+                  myVote={myVotes[p.id]}
+                  subOrgsById={subOrgsById}
+                  isReadOnly={isReadOnly}
+                />
+              );
+            })}
         </div>
       )}
     </div>

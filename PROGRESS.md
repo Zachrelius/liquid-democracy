@@ -1650,3 +1650,252 @@ Screenshots: `test_results/phase8_1_screenshots/Q1_Q2_steering_sankey_prod.svg` 
 1. **`react-refresh/only-export-components` warnings on `RCVSankeyChart.jsx`** — pre-existing on the `deriveDisplayColumns` and `buildSankeyData` exports. Splitting the two helpers into a sibling util file would clear them. Stale tech debt, not a Phase 8.1 regression.
 2. **`mcp__claude-in-chrome__javascript_tool` blocks raw base64 returns** — surfaced when capturing the Annual Team Offsite SVG. The base64-via-console workaround documented in Item 6 is the right path; programmatic capture from the JS tool needs an obfuscation trick or a different transport. Worth knowing for future prod-verification passes.
 
+---
+
+## Phase 8.5 — Sub-Organizations — Session 1: Data Layer — 2026-04-29
+
+**Branch:** `phase-8.5/data-layer` (NOT yet merged to master). Session 1 of a four-session pass; the data layer is testable in isolation but isn't user-facing until Session 4 ships frontend + Suite R. No prod deploy this session.
+
+**Sessions plan (recap):**
+- **Session 1 (this entry):** schema migration, pure/service-layer scope handling, permissions + org-config helpers, demo seed, 48 backend tests, PG smoke. **DONE.**
+- **Session 2 (next):** ~12 sub-org route endpoints (CRUD, membership, promote-to-org-wide), audit events, scope-aware list filtering on existing endpoints, integration tests.
+- **Session 3:** frontend admin (org switcher tree, sub-org admin pages, scope selectors, sub-org settings).
+- **Session 4:** frontend voter UX (Decision 10 scope-coverage indicators, cross-scope disclosure, list filtering, vote-flow graph orphan-voter rendering), Suite R browser tests, prod deploy + sanity.
+
+### What shipped (Session 1)
+
+**Schema migration (`d41a8c92f3b1`):**
+- `organizations.parent_org_id` — nullable self-FK, indexed
+- New `sub_org_memberships` table parallel to `org_memberships` (UQ `(user_id, sub_org_id)`, indexes on each)
+- `topics.sub_org_id`, `proposals.sub_org_id`, `delegate_profiles.sub_org_id` — all nullable FK to organizations, indexed
+- Reversible: SQLite uses `batch_alter_table`; PostgreSQL uses `DROP COLUMN ... CASCADE` so the downgrade is name-agnostic (production PG DBs come up via `create_tables` + `alembic stamp head` and have SQLAlchemy auto-named FKs, not the migration's hand-named ones).
+- All existing rows get NULL in the new columns post-upgrade — single-org behavior is bit-for-bit unchanged.
+
+**Pure-layer + service-layer scope handling (`backend/delegation_engine.py`):**
+- New `eligible_voter_ids_for_proposal(db, proposal)` helper. Sub-org-scoped (`sub_org_id IS NOT NULL`) → active SubOrgMembership members. Parent-org-scoped → existing legacy semantic (all users — see Surprise (c) below).
+- `compute_tally` narrows to the new helper for sub-org proposals only.
+- The pure layer (`resolve_vote_pure` / `find_delegate_pure`) required no changes: Decision 8 (cross-scope delegation) works through the existing chain-behavior fallback when a non-member delegate has no ballot. Verified by `test_delegation_scope.py`. Decision 8's "uses existing mechanics" claim holds.
+
+**Permission helper (`backend/permissions.py`):**
+- New `is_sub_org_admin(db, user_id, sub_org)` implementing Decision 6's implicit-admin pattern (sub-org admin OR parent-org admin → True). ValueError if `sub_org.parent_org_id IS NULL`. Read-time only, not stored.
+
+**Org-config helper (new `backend/org_config.py`):**
+- `get_org_config(org, key, default)` walks the parent chain (Decision 9). Bounded at 5 hops with RuntimeError on overflow.
+- `sustained_majority.get_sustained_majority_config` migrated to use `get_org_config`. For top-level orgs the walk degenerates to the prior `org.settings.get(key) → DEFAULTS[key]` semantic — bit-for-bit equivalent. All existing 31 sustained-majority tests pass without modification.
+
+**Demo seed (`backend/seed_data.py`):**
+- Sub-org `Engineering Team` (slug `demo-engineering`) under `demo`.
+- 4 members: `dave` (sub-org admin), `carol`, `voter01`, `voter02`. **`alice` deliberately NOT a sub-org member** — exercises the implicit parent-org-admin power persona for Suite R.
+- Sub-org-scoped topic `Engineering Practices`.
+- Sub-org-scoped proposal `Engineering Team — Adopt Trunk-Based Development` in voting status. dave/carol vote yes, voter01 votes no, voter02 abstains via cross-scope delegation to `econ_bob` (parent-org-only user; Decision 8 in action).
+- Pure data — no audit events emitted (Session 2 will add them when route handlers ship).
+- Re-running the seed is a no-op for the new rows.
+
+**Backend tests (+48, total 339 passing):**
+- `test_sub_org_models.py` (13) — schema, cascade, UQ, two-level depth allowed at schema layer.
+- `test_eligible_voters.py` (7) — eligibility dispatch on `sub_org_id`.
+- `test_org_config.py` (10) — parent-chain walk, defaults, cycle protection.
+- `test_permissions_sub_org.py` (12) — implicit admin coverage, edge cases.
+- `test_delegation_scope.py` (6) — pure-layer scope filtering + Decision 8 chain-behavior coverage.
+
+**PostgreSQL smoke: PASS, reversibility verified.** `postgres:16-alpine` on port 55432 in Docker. `alembic upgrade head` + `alembic downgrade -1` + `alembic upgrade head` all clean. Five focused test files re-run against a PG-backed `db` fixture: 48/48 in 36.09s (~36× SQLite time, confirming PG actually exercised).
+
+### Design surprises
+
+**(a) Decision 8 confirmed without new code paths.** Cross-scope delegation works through the existing chain-behavior fallback. `revert_direct` and `abstain` resolve to "not cast" exactly as if the non-member delegate just hadn't voted; `accept_sub` walks one more hop. Coverage: `test_cross_scope_non_member_delegate_*` in `test_delegation_scope.py`.
+
+**(b) `get_org_config` migration of `get_sustained_majority_config` is bit-for-bit equivalent for top-level orgs.** Net new behavior only fires when a sub-org is involved.
+
+**(c) Parent-org "eligibility" is currently "all users."** The legacy `compute_tally` used `db.query(models.User.id).all()` for all proposals, including parent-org-scoped ones. Tightening this to active OrgMembership-only (the natural read of Decision 2) breaks 8 existing tests in `test_ranked_choice_voting.py` and `test_sustained_majority_worker.py` that create voters without OrgMembership rows. **Session 1 deliberately preserved the legacy "all users" semantic for non-sub-org proposals**, dispatching only on `proposal.sub_org_id IS NOT NULL`. The spec text *"Where existing code only ever needs parent-org eligibility… leave it alone"* is the explicit license. **Session 2 should revisit at the route layer** where eligibility is the natural concern, and either tighten consistently with proper test fixtures or document why the legacy semantic stays.
+
+**(d) PG reversibility forced a name-agnostic downgrade.** Production PG DBs come up via `create_tables` + `alembic stamp head`, so FK constraints have SQLAlchemy auto-names (`<table>_<col>_fkey`), not the migration's hand-named ones. The downgrade now uses `DROP COLUMN ... CASCADE` on PG (which auto-drops the FK and index) and `batch_alter_table` on SQLite. More robust to future migration auto-rename quirks too.
+
+### Session 2 prerequisites
+
+For the next session's team. Everything below is on the `phase-8.5/data-layer` branch, ready to build against.
+
+**Migration revision ID:** `d41a8c92f3b1` (replaces base `c5f3a2b81e07`).
+
+**New tables / columns:**
+| Table.column | Type | Nullable | Indexed | Notes |
+|---|---|---|---|---|
+| `organizations.parent_org_id` | String FK→organizations.id | yes | yes | NULL = top-level org |
+| `sub_org_memberships.id` | String PK | no | — | UUID |
+| `sub_org_memberships.user_id` | String FK→users.id | no | yes | UQ with sub_org_id |
+| `sub_org_memberships.sub_org_id` | String FK→organizations.id | no | yes | UQ with user_id |
+| `sub_org_memberships.role` | String | no | — | default `member`; member/moderator/admin/owner |
+| `sub_org_memberships.status` | String | no | — | default `active`; active/suspended/pending_approval |
+| `sub_org_memberships.joined_at` | DateTime | no | — | |
+| `topics.sub_org_id` | String FK→organizations.id | yes | yes | NULL = parent-org-wide |
+| `proposals.sub_org_id` | String FK→organizations.id | yes | yes | NULL = parent-org-wide |
+| `delegate_profiles.sub_org_id` | String FK→organizations.id | yes | yes | derived from topic, stored for query efficiency |
+
+**New helper signatures (all importable now):**
+- `delegation_engine.eligible_voter_ids_for_proposal(db: Session, proposal: models.Proposal) -> set[str]` — sub-org-scoped → active SubOrgMembership; everything else → legacy "all users."
+- `permissions.is_sub_org_admin(db: Session, user_id: str, sub_org: models.Organization) -> bool` — raises ValueError if `sub_org.parent_org_id IS NULL`.
+- `org_config.get_org_config(org: Organization | None, key: str, default: Any = None) -> Any` — walks parent chain; bounded at 5 hops with RuntimeError on overflow; None org returns default.
+
+**Demo seed structure (additive idempotent, already in `seed_data.py`):**
+- Sub-org name `Engineering Team`, slug `demo-engineering`, parent `demo`.
+- Members: `dave` (role `admin`), `carol`, `voter01` (Aiyana Adebayo), `voter02` (Bo Beauchamp).
+- alice deliberately NOT a sub-org member — exercises Decision-6 implicit parent-org-admin power for Suite R.
+- Sub-org topic name `Engineering Practices`.
+- Sub-org proposal title `Engineering Team — Adopt Trunk-Based Development`, status `voting`, voted on by sub-org members + cross-scope delegation example via `voter02 → econ_bob`.
+
+**Pending callsite to migrate to `get_org_config`:**
+- `backend/routes/proposals.py:61` — `org.settings.get("allowed_voting_methods", [...])`. Canonical Decision-9 sub-org-override candidate. Session 2 should migrate as part of the routes work since each callsite needs case-by-case review of failure modes.
+
+**Branch:** `phase-8.5/data-layer`. Commits: `80ecbbe` (schema), `98caac6` (engine), `ee538ad` (permissions), `ab13800` (org_config), `6f27720` (seed), `2550985` (tests). All tagged Phase 8.5 in subject; `Spec: phase8_5_spec.md` in body. **Do not merge to master until Session 4 closes the pass.**
+
+---
+
+## Phase 8.5 — Sub-Organizations — Session 2: Routes + Audit — 2026-04-29
+
+**Branch:** `phase-8.5/data-layer` (continuing from Session 1 — still NOT merged to master). Session 2 stacks 8 commits on top of Session 1's 7 commits. Same branch through Session 4.
+
+### What shipped (Session 2)
+
+**Surprise (c) resolution — eligibility tightening.** `eligible_voter_ids_for_proposal` now returns active OrgMembership members for parent-org-scoped proposals (org_id non-null, sub_org_id null). Sub-org-scoped proposals continue to return active SubOrgMembership members. The "all users" fallback survives only for the rare `org_id IS NULL` case (pre-multi-tenancy proposals) with an explicit comment. **Surprise of the surprise:** Session 1 over-estimated the breakage. Only 1 existing test needed updating — the conftest `make_proposal()` factory leaves `org_id` NULL, so the 8 tests Session 1 expected to break do not break (they hit the defensive "all users" fallback). The legacy semantic is now contained to that narrow case rather than being the default.
+
+**`get_org_config` migration.** `routes/proposals.py:_validate_proposal_creation` now resolves `allowed_voting_methods` via `get_org_config(target_or_org, ...)`. The handler passes `target_sub_org or org` so the parent-chain walk consults the right scope: sub-org override wins if set, parent default otherwise. Fresh grep across `backend/` for `\.settings\.(get|\[)` returned only this one functional production callsite.
+
+**Sub-org route module — `backend/routes/sub_organizations.py`** (chosen new module rather than extending `routes/organizations.py` which is already ~1500 lines). 13 endpoints:
+
+| Method | Path | Auth | Audit event |
+|---|---|---|---|
+| POST | `/api/orgs/{slug}/sub-orgs` | Parent-org admin | `sub_org.created` |
+| GET | `/api/orgs/{slug}/sub-orgs` | Parent-org member | — |
+| GET | `/api/orgs/{slug}/sub-orgs/{sub_slug}` | Parent-org member (filter on private) | — |
+| PATCH | `/api/orgs/{slug}/sub-orgs/{sub_slug}` | Sub-org admin OR parent-org admin | `sub_org.updated` (+ `privacy_changed`/`cross_scope_delegation_setting_changed` on flag flips) |
+| DELETE | `/api/orgs/{slug}/sub-orgs/{sub_slug}` | Parent-org admin OR sub-org owner | `sub_org.deleted` (409 if scoped content exists) |
+| GET | `/api/orgs/{slug}/sub-orgs/{sub_slug}/members` | Sub-org member or parent-org admin | — |
+| POST | `/sub-orgs/{sub_slug}/members/invite` | Sub-org admin | `sub_org.member_invited` |
+| POST | `/sub-orgs/{sub_slug}/members/request-join` | Parent-org member | `sub_org.member_invited` (`requested:true` variant) |
+| POST | `/sub-orgs/{sub_slug}/members/{uid}/approve` | Sub-org admin | `sub_org.member_joined` |
+| POST | `/sub-orgs/{sub_slug}/members/{uid}/deny` | Sub-org admin | `sub_org.member_removed` (`reason:denied`) |
+| POST | `/sub-orgs/{sub_slug}/members/{uid}/remove` | Sub-org admin | `sub_org.member_removed` (`reason:removed`) |
+| POST | `/sub-orgs/{sub_slug}/members/{uid}/change-role` | Sub-org admin | `sub_org.member_role_changed` |
+| POST | `/api/orgs/{slug}/topics/{topic_id}/promote-to-orgwide` | Sub-org admin or parent-org admin; **body `confirm:true` required** | `topic.promoted_to_orgwide` |
+
+Existing endpoints extended in-place: `POST /topics`, `POST /proposals` (accept optional `sub_org_id`), `GET /topics`, `GET /proposals` (Decisions 5/7 visibility filtering), `GET /api/delegates/public` (Decision 5 scope filter).
+
+Two-level enforcement at API layer (Decision 1): create rejects 400 if `parent_org.parent_org_id IS NOT NULL`. Schema allows arbitrary depth.
+
+**10 new audit event types firing.** `sub_org.created`, `sub_org.updated`, `sub_org.deleted`, `sub_org.privacy_changed`, `sub_org.cross_scope_delegation_setting_changed`, `sub_org.member_invited` (with `requested:true` variant), `sub_org.member_joined`, `sub_org.member_role_changed`, `sub_org.member_removed` (`reason:denied|removed`), `topic.promoted_to_orgwide`. Aggregate-only payloads per Phase 7.5 redaction principles. Sample at `test_results/phase8_5_screenshots/session2_audit_log_sample.txt`.
+
+**Schemas (`backend/schemas.py`).** `SubOrgCreate`, `SubOrgUpdate`, `SubOrgOut`, `SubOrgMemberInvite`, `SubOrgMemberRoleUpdate`, `SubOrgMemberOut`, `PromoteTopicToOrgwide`. Optional `sub_org_id` on `TopicCreate`/`TopicOut`/`ProposalCreate`/`ProposalOut`.
+
+**Backend tests: 339 → 363 passing (+24).** New file `backend/tests/test_sub_org_routes.py` covers CRUD round-trip, two-level enforcement, member flows, scope filtering, promote-to-orgwide, privacy + cross-scope flags, voting method override via `get_org_config`, audit event coverage, permission semantics. Single composite `TestAuditEventCoverage::test_all_eight_event_types_fire` exercises every new audit event in sequence.
+
+**PostgreSQL smoke: PASS.** `postgres:16-alpine` on port 55432, db `ld_smoke_session2`. Smoke script `backend/scripts/phase8_5_pg_smoke_session2.py` exercises the new surface end-to-end (sub-org create → topic scoped → sub-org RCV proposal → parent-scope RCV rejected 403 → parent binary OK → list visibility → audit-event presence). Container removed after.
+
+### Session 3 prerequisites (frontend admin team)
+
+For the next session — frontend admin pages: org switcher tree, sub-org admin views, scope selectors, sub-org settings.
+
+**Route URL list with auth requirements:** see the table above. Schema names map straight to Pydantic shapes in `backend/schemas.py`.
+
+**Decisions made for FE attention:**
+- **Delete returns 409** when any topic/proposal is scoped to the sub-org (chose reject over orphan-cascade). FE delete button should warn or disable when `topic_count + proposal_count > 0` — call `GET /sub-orgs/{slug}` and the topic/proposal lists first, or just handle the 409 with a clear toast.
+- **Promote-to-orgwide requires `confirm:true` in the body.** FE must show a confirmation dialog and only POST after user confirms. Action is irreversible — no demote endpoint by spec.
+- **Privacy flag key:** `settings.private` (boolean).
+- **Cross-scope strict-in-group flag key:** `settings.reject_non_member_delegations` (boolean).
+- **Sub-org override for voting methods** stored as `settings.allowed_voting_methods` (list of strings). Same key as parent — `get_org_config` walks the chain. FE settings page should show the sub-org's own value (if set) and the inherited parent value as a placeholder.
+- **Two-level enforcement at API layer.** FE doesn't need to enforce — server returns 400 if attempted.
+
+**Permissions semantics (FE should mirror to disable buttons):**
+- Parent-org admin = implicit sub-org admin everywhere (Decision 6). `is_sub_org_admin` server-side covers this.
+- Topic creation in a sub-org requires sub-org admin (or parent-org admin). Sub-org *member* alone cannot create topics.
+- Proposal creation in a sub-org requires sub-org membership AND parent-org `moderator+` role (existing parent-permission gate is layered; FE should hide the "create proposal" button for sub-org members who lack parent-org moderator+). **This is tech debt — see below.**
+- Promote-to-orgwide requires sub-org admin or parent-org admin.
+
+**Audit-event payload shapes** — sample file linked above. Structure: `details.changes = {key: {old, new}}` for `sub_org.updated`; flat `{old_value, new_value}` for the two flag-specific events.
+
+**Frontend-relevant tech debt surfaced:**
+1. **Sub-org proposal-creation permission is layered through the parent-org gate.** A sub-org member who is only a parent-org `member` (not moderator+) cannot create proposals in their own sub-org. Test fixture had to bump role to `moderator`. Spec is ambiguous here — does Session 3/4 want parallel topic/proposal-creation roles inside the sub-org independent of the parent-org gate? Surface for design decision before frontend builds the "create proposal" UI.
+2. **`OrgUpdate` schema lacks a `parent_org_id` field**, so existing `PATCH /api/orgs/{slug}` cannot accidentally turn a parent into a sub-org. Defensive but undocumented.
+3. **`Topic.org_id` is parent-org-scoped even for sub-org topics.** Sub-org-scoped topics still set `org_id=parent.id`; the `sub_org_id` is the only scope discriminant. Downstream queries that filter by `org_id` continue to work, but FE topic-listing should only consider `sub_org_id` to determine scope.
+
+### Session 2 commits on `phase-8.5/data-layer`
+
+`6add1a0` (eligibility tighten), `8750f28` (schemas), `5045f8f` (proposals.py + get_org_config + sub_org_id), `ef93686` (sub_organizations route module), `fac0c7d` (organizations.py + delegates.py extensions), `45e7b14` (integration tests +24), `e38905f` (PG smoke harness + audit sample), and the closeout commit for this PROGRESS entry.
+
+Branch still NOT merged to master.
+
+---
+
+## Phase 8.5 — Sub-Organizations — Session 3: Frontend Admin — 2026-04-29
+
+**Branch:** `phase-8.5/data-layer` (continuing — still NOT merged to master). Session 3 stacks 5 commits on top of Sessions 1+2's 15.
+
+### What shipped (Session 3)
+
+**Backend — sub-org proposal-creation permission helper.** `permissions.can_create_proposal_in_sub_org(db, user_id, sub_org)` is True if EITHER active SubOrgMembership with role moderator/admin/owner OR `is_sub_org_admin` (parent-org admin via Decision 6 implicit power). `routes/organizations.py` POST `/api/orgs/{slug}/proposals` now uses `Depends(require_org_membership)` + in-body dispatch on `sub_org_id`: sub-org-scoped path calls the new helper; parent-org-scoped path keeps the legacy `moderator+` check. **Resolves Session 2 tech debt #1.** Sub-org `member` (no elevated role) still cannot create proposals — they vote on existing ones, mirroring how parent-org proposal creation works. **Backend tests: 363 → 373 passing (+10).**
+
+403 detail wording for sub-org-scoped path: `"Sub-org moderator, admin, or owner role required to create proposals scoped to this sub-org (parent-org admin/owner also permitted via implicit power)."` Parent-org-scoped 403 still reads `"Moderator access required"` (unchanged).
+
+**Frontend — sub-org admin page family.** Six new pages under `/admin/sub-orgs/...` route family (separate from existing `/admin/*` parent-org pages):
+- `SubOrgList.jsx` — list + create form (parent-org admin)
+- `SubOrgSettings.jsx` — Identity / Visibility (`settings.private`) / Cross-scope (`settings.reject_non_member_delegations`) / Voting-methods override (with parent-inheritance placeholder, `get_org_config` walk semantic) / Sustained-majority override (5 keys, "inherit from parent" toggle per key) / Danger zone (delete with topic+proposal count guard, handles 409 toast)
+- `SubOrgMembers.jsx` — pending/active/suspended lists, invite-by-search of parent-org members, role-change dropdown, approve/deny/remove actions
+- `SubOrgProposals.jsx` — list + scope-locked create form (topic dropdown filtered to parent-org-wide + this sub-org's per Decision 3)
+- `SubOrgTopics.jsx` — list + scope-locked create + Promote-to-org-wide button (confirmation dialog → POST `{confirm:true}`)
+- `SubOrgList.jsx` ("create new sub-org" form for parent-org admin)
+
+Supporting:
+- `useSubOrg.js` hook — resolves `parentSlug`/`subSlug` from URL, fetches sub-org detail
+- `SubOrgErrorState.jsx` — friendly inline 403/404 panel; permission gating leans on the server (Decision 6 `is_sub_org_admin` is source of truth)
+
+**Frontend — org switcher tree + breadcrumb.** `Nav.jsx` flat switcher rewritten as a tree dropdown: parent + indented sub-orgs. When `currentOrg` is a sub-org, breadcrumb display + the legacy admin dropdown hides itself so users can't accidentally hit `/admin/settings` with a sub-org slug. Parent-org admins see "Sub-Organizations" entry under Admin → manage. `OrgContext.jsx` gains `subOrgsByParent` cache + `fetchSubOrgsFor(parentSlug, force?)` lazy-loader + `invalidateSubOrgs(parentSlug)`. Pure additions; no breaking changes to `useOrg` shape.
+
+**Frontend — scope selectors on existing forms.**
+- `Topics.jsx` (parent-org admin Topics page) — scope dropdown on create form (parent-org-wide default + sub-orgs the user is admin in); sub-org badge on rows; Promote-to-org-wide button on sub-org-scoped rows.
+- `ProposalManagement.jsx` — same scope dropdown; topic dropdown filters to in-scope topics; eligibility hint when sub-org scope selected ("Only [Sub-Org Name] members will be able to vote on this proposal.").
+
+**App.jsx** — six new routes for the sub-org admin route family. Each gated through `ProtectedRoute > OrgProvider > AdminOnlyRoute > Layout`. Permission gating is server-side (Decision 6 `is_sub_org_admin`); pages surface 403/404 inline rather than wrapper-redirect.
+
+**Suite R Preview** in `browser_testing_playbook.md` — R1-R15 verbatim from spec. Built but not run this session — Suite R requires Session 4's voter UX surface (delegation modal scope coverage, "your vote" cross-scope status, vote-flow graph orphan rendering, scope filter on voter lists).
+
+### Multi-persona local-dev verification
+
+Persona-flow verification was **NOT executed live this session** — browser permission for localhost was denied during the QA pass, and the parent dispatch defers Suite R to Session 4 anyway. Build verifies clean (1,150.80 kB JS / 314.46 kB gzipped — modest +51 kB raw vs Phase 8.1 for six new pages plus admin work). Server-side gating is the source of truth (Decision 6 `is_sub_org_admin` enforces 403 on unauthorized access; pages render `SubOrgErrorState` inline).
+
+**Expected behavior per persona** (to be confirmed in Session 4 prod sanity):
+
+| Persona | Org switcher | Admin controls | Notes |
+|---|---|---|---|
+| **alice** (parent admin, NOT in Engineering) | Sees `demo` + `Engineering Team` (Decision 6) | Full admin on demo + on Engineering Team via `/admin/sub-orgs/demo-engineering/*` | "manage" link appears next to Engineering in switcher |
+| **dave** (Engineering admin, parent-org member) | Sees `demo` + `Engineering Team` | Engineering admin pages reachable; parent-org admin pages 403 from server | Hides parent-org admin dropdown when scope is sub-org |
+| **carol** (Engineering member, non-admin) | Sees `demo` + `Engineering Team` | No admin dropdown; URL-jump to sub-org admin pages → server 403 → friendly inline error | |
+| **voter02** (parent-org member, not in Engineering) | Sees `demo`. Engineering Team **may** appear depending on Decision-7 default visibility (`settings.private=false` by default). | No admin controls | **Surface for Session 4:** when default-visible, voter UX needs read-only treatment (Session 4's territory). |
+
+### UX surprises / questions for Session 4
+
+1. **Decision 7 default visibility for non-members** (voter02 case). When voter02 sees Engineering Team in the switcher, picking it sets `currentOrg` to a sub-org she has no `user_role` in. Session 4 voter-side proposals/delegations pages need to render: (a) read-only badges on Engineering proposals in the voter list, (b) suppress Vote buttons, (c) show a "you're not a member of this sub-org" hint somewhere visible.
+2. **Switcher non-admin treatment.** Currently the same dropdown row is used for all sub-org viewers. The "manage" link appears only when admin, but for non-admin members on a private sub-org the `private` text-pill could feel redundant. Worth user-testing in Session 4.
+3. **Sustained-majority override row layout.** Stacks the inheritance hint inline with each toggle; works but gets dense with five keys. If user testing shows confusion, consider collapsing per-key controls under one "Customize" disclosure.
+
+### Session 4 prerequisites (frontend voter UX team)
+
+For the next (and final) session — frontend voter UX (Decision 10), Suite R browser tests, prod deploy + sanity.
+
+**Decision 10 touchpoints with API contract notes:**
+- **Delegation modal scope coverage indicator.** API: `GET /api/orgs/{slug}/sub-orgs` returns the parent's sub-org list; `GET /api/orgs/{slug}/sub-orgs/{sub_slug}/members` returns active members. To compute coverage for a candidate delegate, intersect their active sub-org memberships with the user's. No new endpoint needed; UI composition only.
+- **Cross-scope disclosure copy** in delegation creation flow. Implementation under-the-hood is per-topic delegation; the modal's "Apply to: ☑ All my scopes (default) / ☐ Only parent-org topics / ☐ Only [Sub-Org] topics" radio just chooses which topics get the delegation row created.
+- **Proposal-detail "your vote" status for scope mismatch.** When the proposal's `sub_org_id` is set and the user's delegate isn't a sub-org member, the existing `/results` payload already returns "not cast" for that voter; UI just needs new copy: "Your vote: not yet cast — your delegate Beth isn't in [Sub-Org Name]" with a link to set a specific delegate.
+- **Vote-flow graph orphan rendering.** Existing logic should handle this naturally (orphaned voter node with no incoming delegation edge); visual confirmation needed during QA.
+- **Scope filter on voter proposal/topic lists.** `GET /api/orgs/{slug}/proposals` and `/topics` already filter server-side per Decision 7; voter-side UI needs the toggle "everything I'm eligible for" (default) vs "current sub-org only" + the read-only badge for sub-org content visible to non-members.
+
+**Suite R (15 tests).** Listed in `browser_testing_playbook.md` Suite R Preview block. Cover R1-R15 against the demo seed (`Engineering Team` sub-org, dave admin, carol/voter01/voter02 members, alice as implicit-power parent-org admin).
+
+**Multi-persona prod sanity.** Verify the four personas exercise correctly on prod after Railway deploy. The Session 3 admin paths are rehearsed in spec but not live-tested locally; Session 4 prod sanity is where they get confirmed.
+
+**Known tech debt to surface in Session 4 closeout** (not yet logged elsewhere):
+- The `currentOrg` shape changes when scope is sub-org (carries `parent_org_id`). Pages that consume `currentOrg.user_role` may receive non-undefined values for sub-org-membership-roles vs parent-org-roles; check ProposalDetail / Delegations / Settings for any place that mixes scopes implicitly.
+
+### Session 3 commits on `phase-8.5/data-layer`
+
+`781b0f8` (sub-org proposal permission helper +10 tests), `02dfc8a` (sub-org admin page family — 6 new pages + hook + error component), `ca93017` (org switcher tree + sub-org admin routing), `97b1473` (scope selectors on Topics + ProposalManagement), `9475926` (Suite R Preview block), and the closeout commit for this PROGRESS entry.
+
+Branch still NOT merged to master.
+

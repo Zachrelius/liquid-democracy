@@ -11,7 +11,7 @@ const PRESET_COLORS = [
 ];
 
 export default function Topics() {
-  const { currentOrg } = useOrg();
+  const { currentOrg, fetchSubOrgsFor } = useOrg();
   const toast = useToast();
   const confirm = useConfirm();
   const [topics, setTopics] = useState([]);
@@ -23,11 +23,16 @@ export default function Topics() {
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [newColor, setNewColor] = useState('#6366f1');
+  // Phase 8.5 — scope selector. '' == parent-org-wide (sub_org_id null).
+  const [newScope, setNewScope] = useState('');
 
   // Edit form state
   const [editName, setEditName] = useState('');
   const [editDesc, setEditDesc] = useState('');
   const [editColor, setEditColor] = useState('#6366f1');
+
+  // Phase 8.5 — sub-orgs available for the scope dropdown.
+  const [subOrgs, setSubOrgs] = useState([]);
 
   const slug = currentOrg?.slug;
 
@@ -39,7 +44,14 @@ export default function Topics() {
     } catch { /* ignore */ } finally {
       setLoading(false);
     }
-  }, [slug]);
+    // Sub-org scope dropdown only meaningful at parent-org scope.
+    if (currentOrg && !currentOrg.parent_org_id) {
+      try {
+        const subs = await fetchSubOrgsFor(slug);
+        setSubOrgs(subs || []);
+      } catch { setSubOrgs([]); }
+    }
+  }, [slug, currentOrg, fetchSubOrgsFor]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -53,15 +65,33 @@ export default function Topics() {
   async function handleCreate(e) {
     e.preventDefault();
     try {
-      await api.post(`/api/orgs/${slug}/topics`, { name: newName, description: newDesc, color: newColor });
+      const payload = { name: newName, description: newDesc, color: newColor };
+      if (newScope) payload.sub_org_id = newScope;
+      await api.post(`/api/orgs/${slug}/topics`, payload);
       toast.success('Topic created');
       setNewName('');
       setNewDesc('');
       setNewColor('#6366f1');
+      setNewScope('');
       setShowCreate(false);
       load();
     } catch (err) {
       toast.error(err.message);
+    }
+  }
+
+  async function handlePromote(topic) {
+    const ok = await confirm({
+      title: 'Promote to org-wide?',
+      message: `"${topic.name}" will become visible to all parent-org members and usable by any proposal. This is IRREVERSIBLE.`,
+    });
+    if (!ok) return;
+    try {
+      await api.post(`/api/orgs/${slug}/topics/${topic.id}/promote-to-orgwide`, { confirm: true });
+      toast.success(`"${topic.name}" promoted to org-wide`);
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Failed to promote');
     }
   }
 
@@ -154,6 +184,24 @@ export default function Topics() {
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
             />
           </div>
+          {subOrgs.length > 0 && (
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Scope</label>
+              <select
+                value={newScope}
+                onChange={e => setNewScope(e.target.value)}
+                className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              >
+                <option value="">Parent-org-wide (default)</option>
+                {subOrgs.map(s => (
+                  <option key={s.id} value={s.id}>{s.name} only</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                Sub-org topics are visible only to that sub-org's members and parent-org admins.
+              </p>
+            </div>
+          )}
           <div>
             <label className="block text-xs text-gray-500 mb-1">Color</label>
             <ColorPicker value={newColor} onChange={setNewColor} />
@@ -231,11 +279,27 @@ export default function Topics() {
                       style={{ backgroundColor: t.color }}
                     />
                     <div>
-                      <p className="text-sm font-medium text-gray-800">{t.name}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-gray-800">{t.name}</p>
+                        {t.sub_org_id && (
+                          <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">
+                            {(subOrgs.find(s => s.id === t.sub_org_id)?.name) || 'sub-org'}
+                          </span>
+                        )}
+                      </div>
                       {t.description && <p className="text-xs text-gray-400">{t.description}</p>}
                     </div>
                   </div>
                   <div className="flex gap-2">
+                    {t.sub_org_id && (
+                      <button
+                        onClick={() => handlePromote(t)}
+                        className="text-xs text-[#2E75B6] hover:underline"
+                        title="Make this topic visible to the whole parent org"
+                      >
+                        Promote to org-wide
+                      </button>
+                    )}
                     <button
                       onClick={() => startEdit(t)}
                       className="text-xs text-[#2E75B6] hover:underline"

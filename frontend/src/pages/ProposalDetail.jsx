@@ -248,7 +248,7 @@ function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerif
 }
 
 function ApprovalResultsPanel({ tally, proposal }) {
-  const { currentOrg, isAdmin } = useOrg();
+  const { currentOrg, userOrgs, isAdmin } = useOrg();
   const toast = useToast();
   const confirm = useConfirm();
   const [resolving, setResolving] = useState(false);
@@ -263,6 +263,14 @@ function ApprovalResultsPanel({ tally, proposal }) {
   const tied = tally.tied;
   const tieResolution = tally.tie_resolution || proposal.tie_resolution;
 
+  // Phase 8.5 — proposals always belong to the parent org (sub-org-scoped
+  // proposals still set org_id=parent.id; sub_org_id is the only scope
+  // discriminant). Always resolve the parent slug so admin actions reach
+  // the correct route handler when currentOrg happens to be a sub-org.
+  const parentSlug = currentOrg?.parent_org_id
+    ? userOrgs.find(o => o.id === currentOrg.parent_org_id)?.slug
+    : currentOrg?.slug;
+
   async function handleResolveTie(optionId) {
     const label = optionLabels[optionId] || optionId;
     const ok = await confirm({
@@ -273,7 +281,7 @@ function ApprovalResultsPanel({ tally, proposal }) {
     if (!ok) return;
     setResolving(true);
     try {
-      await api.post(`/api/orgs/${currentOrg.slug}/proposals/${proposal.id}/resolve-tie`, {
+      await api.post(`/api/orgs/${parentSlug}/proposals/${proposal.id}/resolve-tie`, {
         selected_option_id: optionId,
       });
       toast.success('Tie resolved');
@@ -650,6 +658,7 @@ function VoteGraphLegend({ proposal, voteGraph }) {
 export default function ProposalDetail() {
   const { id } = useParams();
   const { user } = useAuth();
+  const { currentOrg, userOrgs } = useOrg();
   const [proposal, setProposal] = useState(null);
   const [tally, setTally] = useState(null);
   const [myVote, setMyVote] = useState(null);
@@ -658,6 +667,12 @@ export default function ProposalDetail() {
   const [sankeyOpen, setSankeyOpen] = useState(window.innerWidth >= 768);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Phase 8.5 — scope-aware state. subOrg is the proposal's sub-org (or null
+  // for parent-org-wide proposals). delegations is fetched lazily so we can
+  // detect cross-scope situations (Decision 10 moment 2).
+  const [subOrg, setSubOrg] = useState(null);
+  const [subOrgMembers, setSubOrgMembers] = useState(null);
+  const [delegations, setDelegations] = useState([]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -679,6 +694,15 @@ export default function ProposalDetail() {
           setVoteGraph(graph);
         } catch {/* graph is optional — don't fail the page */}
       }
+
+      // Phase 8.5 — fetch the user's delegations so we can detect cross-scope
+      // delegate situations on sub-org proposals (Decision 10 moment 2). This
+      // is independent of the proposal scope; we always need it to render the
+      // "your delegate isn't in [Sub-Org]" branch.
+      try {
+        const dels = await api.get('/api/delegations');
+        setDelegations(dels);
+      } catch {/* ignore — branch will simply not fire */}
     } catch (e) {
       setError(e.message || 'Failed to load proposal');
     } finally {
@@ -687,6 +711,50 @@ export default function ProposalDetail() {
   }, [id]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Phase 8.5 — when the proposal carries a sub_org_id, look up the sub-org
+  // (for name + the viewer's user_role) and the member roster so we can
+  // detect membership for both the viewer and any candidate delegate.
+  useEffect(() => {
+    if (!proposal?.sub_org_id) {
+      setSubOrg(null);
+      setSubOrgMembers(null);
+      return;
+    }
+    // Resolve the parent slug. If currentOrg is itself a sub-org we walk up
+    // via userOrgs; otherwise currentOrg IS the parent. In rare cases where
+    // currentOrg isn't loaded yet we bail and re-run when it changes.
+    let parentSlug = null;
+    if (currentOrg) {
+      if (currentOrg.parent_org_id) {
+        const parent = userOrgs.find(o => o.id === currentOrg.parent_org_id);
+        parentSlug = parent?.slug || null;
+      } else {
+        parentSlug = currentOrg.slug;
+      }
+    }
+    if (!parentSlug) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const subs = await api.get(`/api/orgs/${parentSlug}/sub-orgs`);
+        if (cancelled) return;
+        const found = subs.find(s => s.id === proposal.sub_org_id);
+        if (found) setSubOrg(found);
+        // Roster — only fetchable by sub-org members or parent-org admins;
+        // 403 is expected for non-member viewers and is treated as "no
+        // roster" so the read-only treatment still renders.
+        try {
+          const members = await api.get(
+            `/api/orgs/${parentSlug}/sub-orgs/${found?.slug || ''}/members`
+          );
+          if (!cancelled) setSubOrgMembers(members);
+        } catch {/* non-member: no roster */}
+      } catch {/* ignore — we degrade gracefully */}
+    })();
+    return () => { cancelled = true; };
+  }, [proposal?.sub_org_id, currentOrg, userOrgs]);
 
   const refreshVote = useCallback(async () => {
     try {
@@ -715,6 +783,49 @@ export default function ProposalDetail() {
   const isVoting = proposal.status === 'voting';
   const isClosed = ['passed', 'failed', 'withdrawn'].includes(proposal.status);
 
+  // ── Phase 8.5 — scope detection (Decisions 7 + 10) ────────────────────────
+  // hasSubOrgScope: proposal is sub-org-scoped (sub_org_id is set).
+  // isSubOrgMember: the current viewer has an active sub-org membership.
+  //   We use SubOrgOut.user_role (non-null = active member) when available;
+  //   if for some reason the sub-org fetch was blocked we fall back to the
+  //   member roster check.
+  // crossScopeDelegate: a delegate, if any, that is NOT in the sub-org's
+  //   active member set — used to decide whether to show the new "your
+  //   delegate isn't in [Sub-Org]" copy and to surface the delegate's name.
+  const hasSubOrgScope = !!proposal.sub_org_id;
+  const isSubOrgMember = hasSubOrgScope ? !!subOrg?.user_role : true;
+  const memberIdSet = new Set(
+    (subOrgMembers || [])
+      .filter(m => m.status === 'active')
+      .map(m => m.user_id)
+  );
+  const proposalTopicIds = new Set(
+    (proposal.topics || []).map(pt => pt.topic_id)
+  );
+  // Find a delegation relevant to this proposal: matches a topic id, OR is
+  // the global default (topic_id == null). We only flag the cross-scope
+  // case when we actually know who the sub-org members are.
+  let crossScopeDelegate = null;
+  if (
+    hasSubOrgScope &&
+    isSubOrgMember &&
+    subOrgMembers &&
+    myVote &&
+    !myVote.is_direct &&
+    myVote?.vote_value == null
+  ) {
+    const relevantDels = delegations.filter(d => {
+      if (d.topic_id == null) return true; // global default
+      return proposalTopicIds.has(d.topic_id);
+    });
+    for (const d of relevantDels) {
+      if (!memberIdSet.has(d.delegate_id)) {
+        crossScopeDelegate = d.delegate;
+        break;
+      }
+    }
+  }
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       {/* Back link */}
@@ -735,6 +846,15 @@ export default function ProposalDetail() {
               {proposal.voting_method === 'ranked_choice' && (
                 <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">
                   {(proposal.num_winners ?? 1) > 1 ? `STV · ${proposal.num_winners} winners` : 'Ranked-Choice (IRV)'}
+                </span>
+              )}
+              {/* Phase 8.5 — sub-org scope badge (Decision 7 surface) */}
+              {hasSubOrgScope && subOrg && (
+                <span
+                  title={`Scoped to ${subOrg.name}`}
+                  className="text-xs bg-cyan-50 text-cyan-700 border border-cyan-200 px-2 py-0.5 rounded-full font-medium"
+                >
+                  {subOrg.name}
                 </span>
               )}
               {proposal.topics?.map(pt => (
@@ -853,9 +973,57 @@ export default function ProposalDetail() {
 
         {/* Sidebar — 1/3 width */}
         <div className="mt-8 lg:mt-0 space-y-4">
-          {/* Vote panel */}
-          {isVoting && (
-            <div className="bg-white border border-gray-200 rounded-xl p-5">
+          {/* Phase 8.5 — Decision 7 read-only treatment for non-members of a
+              sub-org-scoped proposal. Replaces the vote panel with text and
+              suppresses the Delegate button (also hidden by virtue of not
+              rendering the panel). */}
+          {isVoting && hasSubOrgScope && !isSubOrgMember && (
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-5">
+              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">
+                Your Vote
+              </h3>
+              <p className="text-sm text-gray-600">
+                View only — you&apos;re not a member of {subOrg?.name || 'this sub-organization'}.
+              </p>
+            </div>
+          )}
+
+          {/* Phase 8.5 — Decision 10 cross-scope copy. Shown when the viewer
+              IS a sub-org member but their delegate is not, and the engine
+              produced "not cast" as a result. Two action links: set a more
+              specific delegate, or vote directly (jumps to the vote panel). */}
+          {isVoting && hasSubOrgScope && isSubOrgMember && crossScopeDelegate && (
+            <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 space-y-2">
+              <p className="text-sm text-gray-700">
+                Your vote: not yet cast — your delegate{' '}
+                <span className="font-medium">{crossScopeDelegate.display_name}</span>{' '}
+                isn&apos;t in {subOrg?.name || 'this sub-organization'}
+              </p>
+              <div className="flex gap-3 text-xs">
+                <Link
+                  to="/delegations"
+                  className="text-[#2E75B6] hover:underline"
+                >
+                  Set a specific delegate
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const el = document.getElementById('vote-panel');
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }}
+                  className="text-[#2E75B6] hover:underline"
+                >
+                  Vote directly
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Vote panel — only when the viewer can act (parent-scoped, or sub-
+              org member). Non-members see the read-only block above instead. */}
+          {isVoting && (!hasSubOrgScope || isSubOrgMember) && (
+            <div id="vote-panel" className="bg-white border border-gray-200 rounded-xl p-5">
               {proposal.voting_method === 'approval' ? (
                 <ApprovalBallot
                   proposal={proposal}
