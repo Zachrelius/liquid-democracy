@@ -39,8 +39,18 @@ def list_public_delegates(
     topic_id: Optional[str] = Query(None),
     org_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(auth_utils.get_optional_user),
 ):
-    """Browse public delegates, optionally filtered by topic and/or org."""
+    """Browse public delegates, optionally filtered by topic and/or org.
+
+    Phase 8.5 (Decision 5): when a `topic_id` is not specified and the viewer
+    is authenticated, hide profiles whose ONLY active topics are sub-org topics
+    the viewer isn't a member of (not a hard block — search-by-name still
+    finds them; this is just browse-default scope filtering).
+
+    Anonymous viewers continue to see all profiles, since we have no scope
+    context to filter against.
+    """
     q = db.query(models.User).join(
         models.DelegateProfile,
         models.DelegateProfile.user_id == models.User.id,
@@ -52,6 +62,44 @@ def list_public_delegates(
         q = q.filter(models.DelegateProfile.topic_id == topic_id)
 
     users = q.distinct().all()
+
+    # Decision 5 scope filter: if the caller is authenticated and didn't
+    # specify a topic, suppress delegates whose only active profiles are on
+    # sub-org topics the viewer can't see.
+    if current_user is not None and topic_id is None:
+        viewer_sub_org_ids = {row.sub_org_id for row in db.query(
+            models.SubOrgMembership.sub_org_id
+        ).filter(
+            models.SubOrgMembership.user_id == current_user.id,
+            models.SubOrgMembership.status == "active",
+        ).all()}
+
+        # Pre-fetch each candidate's active profile topics joined with their
+        # sub_org_id so we can decide visibility per user with one query.
+        # Topic.sub_org_id is the source of truth for scope.
+        rows = db.query(
+            models.DelegateProfile.user_id,
+            models.Topic.sub_org_id,
+        ).join(
+            models.Topic, models.Topic.id == models.DelegateProfile.topic_id,
+        ).filter(
+            models.DelegateProfile.is_active.is_(True),
+            models.DelegateProfile.user_id.in_([u.id for u in users] or [""]),
+        ).all()
+
+        per_user_scopes: dict[str, set[Optional[str]]] = {}
+        for user_id, sub_org_id in rows:
+            per_user_scopes.setdefault(user_id, set()).add(sub_org_id)
+
+        visible: list[models.User] = []
+        for u in users:
+            scopes = per_user_scopes.get(u.id, set())
+            # Visible if at least one profile is parent-org-wide (None) OR
+            # one is in a sub-org the viewer belongs to.
+            if None in scopes or any(s in viewer_sub_org_ids for s in scopes if s):
+                visible.append(u)
+        users = visible
+
     return [_build_public_delegate(db, u) for u in users]
 
 
