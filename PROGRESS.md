@@ -1555,3 +1555,98 @@ Railway auto-deploys on push to `master`. Post-deploy verification (Suite P brow
 - **Real-time (sub-minute) snapshot evaluation** — out of scope; 5-min cadence balances stale-detection vs DB write volume. Configurable per-deployment via env var.
 - **Per-instance lock-table mechanism** — not implemented; env-var-based instance ID matching is sufficient for single-instance Railway. If we scale to multiple replicas, a DB-level lock-table mechanism (acquire-or-skip with TTL on a dedicated `worker_locks` table) is the right next step. Logged here so future ops know the path.
 - **`sustained_majority_floor` was already in `DEFAULT_ORG_SETTINGS` from a prior phase as a stub.** That key is now wired to the actual code path; no migration needed for orgs that had it set.
+
+---
+
+## Phase 8.1 — Six-Item Tech Debt Cleanup Pass — 2026-04-29
+
+**Goal:** Clear six independent tech-debt items from Phase 7C.2, 7C.3, and 8 closeout reports in one focused pass. None user-blocking; cumulative value is keeping the tech-debt list from accumulating. Numbered 8.1 (not 8.5) so the 8.5 slot stays reserved for the upcoming Sub-Organizations feature.
+
+### Per-item status
+
+| # | Item | Status | Commit |
+|---|---|---|---|
+| 1 | Make `/help/voting-methods` public route | ✅ DONE | `5b29620` |
+| 2 | `count_extensions` actor-aware filter (admin extends don't consume worker budget) + 3 new tests | ✅ DONE | `47685ac` |
+| 3 | Audit other public-content routes for the same gating bug | ✅ DONE — no other surprises | (in this entry) |
+| 4 | Alphabetize multi-option label lists in Sankey + sister components | ✅ DONE | `c1e6015` (non-Sankey) + `b249dae` (Sankey) |
+| 5 | "Seat filled by remaining-candidate" annotation under Sankey Final | ✅ DONE | `b249dae` |
+| 6 | Document mixed-content QA workaround in `browser_testing_playbook.md` | ✅ DONE | `94e4e75` |
+
+### Backend
+
+`count_extensions` (Item 2) gained a single `models.AuditLog.actor_id.is_(None)` filter so admin-driven extensions via `resolve_escalation` (which writes `actor_id=current_user.id`) no longer count toward the worker's "extension already used, next breach fails" guard rail. Without this, the first time a production org configures `failure_mode: escalate`, an admin's manual extend would have consumed the worker's single-extension budget and the next floor breach would have failed directly rather than re-escalating to the admin. Three new tests in `TestCountExtensionsActorFilter`:
+
+1. Worker-style + admin-style events: count returns 1.
+2. Admin-only events: count returns 0.
+3. `apply_failure_mode` driven twice (admin extend then worker extend): count returns 1, demonstrating the resolve_escalation → worker handoff doesn't trip the guard rail.
+
+**Backend test count: 288 → 291 passing** in 42.10s. No regressions.
+
+**PostgreSQL smoke: PASS.** Required this pass for the `actor_id IS NULL` predicate (the project has been bitten twice by SQLite-vs-Postgres divergence on nullable-column queries). Pattern: `postgresql://<user>:<pw>@localhost:55432/ld_smoke` against a fresh `postgres:16-alpine`. Three layers verified: direct `count_extensions` calls with hand-built rows; full `test_sustained_majority_worker.py` (16 tests, 8.63s — 17× the SQLite time, confirming PG is actually exercised); full `test_sustained_majority_api.py` (15 tests including the resolve_escalation/extend admin paths, 11.51s).
+
+The integration scope chosen for the new test #3 was the simpler "call apply_failure_mode twice" flow rather than the full escalate→admin-resolve→re-breach→re-escalate worker loop (>100 lines of fixture wiring). Rationale documented in the test docstring: the bug is the actor filter, and calling `apply_failure_mode(actor_id=admin)` then `apply_failure_mode(actor_id=None)` exercises the same write paths that `resolve_escalation` and the worker use.
+
+### Frontend
+
+**Item 1 (App.jsx route gating):** removed the `ProtectedRoute` + `OrgProvider` + `Layout` wrapping from the `/help/voting-methods` route, matching the pattern already used by `/help/sustained-majority`, `/about`, `/why`, `/security`, `/privacy`, `/terms`. `VotingMethodsHelp` uses no auth or org context, so no component refactor was needed.
+
+**Item 4 (alphabetization):** four user-visible multi-option label sites now sort with `localeCompare`:
+
+- `RCVSankeyChart.jsx:543-552` — column-header `✓` / `✗` lists
+- `RCVResultsPanel.jsx:236` — per-round "Elected this round" callout
+- `OptionAttractorVoteFlowGraph.jsx:740-742` — anonymous-voter approval-list tooltip
+- `VoteFlowGraph.jsx:117-122` — approval-method "Tied winners" comma list
+
+Skipped (intentionally ordered, not alphabetical): STV winners numbered list (election sequence), RCV ballot ranking lists (rank order is the data).
+
+**Item 5 (halt annotation):** `deriveDisplayColumns` now returns `{ columns, crossedQuota }` (single caller in `RCVSankeyChart.jsx` updated). When the rendering loop reaches the Final column it computes `haltWinners = winners \ crossedQuota`; if non-empty, a second `<text>` element renders below the bold "Final" header with the halt-winner names (alphabetized) followed by `(seat filled by remaining-candidate)`. Visual treatment: font-size 9, font-style italic, fill `#6B7280`, positioned at `y = PADDING.top - ELIM_LABEL_PX + 4` (12px below the "Final" title at y=24). No separate event column added — Final-column dark-border highlighting on the slab still does the primary visual work; the annotation is purely explanatory.
+
+Bundle size: 1,099.91 kB / 305.64 kB gzipped (no notable delta — added ~25 SLOC).
+
+### Item 3 — public-content route audit
+
+Walked every `<Route>` in `frontend/src/App.jsx`. Result: only Item 1's route was wrong — no other surprises.
+
+| Route | Should be | Actual | Notes |
+|---|---|---|---|
+| `/login`, `/register`, `/verify-email`, `/forgot-password`, `/reset-password` | Public | Public ✅ | Auth flow |
+| `/proposals`, `/proposals/:id`, `/delegations`, `/users/:id`, `/settings`, `/orgs`, `/orgs/create`, `/setup` | Protected | Protected ✅ | Member content |
+| `/admin/*` (settings, members, proposals, topics, delegates, analytics) | Admin-protected | Admin-protected ✅ | Admin-only |
+| `/help/voting-methods` | Public | **Was protected → fixed in Item 1** | Public after `5b29620` |
+| `/help/sustained-majority` | Public | Public ✅ | Already public from Phase 8 follow-up `6633a73` |
+| `/about`, `/why`, `/security`, `/demo`, `/`, `/privacy`, `/terms` | Public | Public ✅ | Marketing / legal |
+
+Browser-driven prod verification: hit each public-content route in turn after `localStorage.clear()` (simulating an unauthenticated visitor), confirmed each returned 200 without redirect to `/login`. The two help routes were also navigated client-side to confirm React rendering (h1 + content) without auth.
+
+### Documentation
+
+**Item 6** added a section to `browser_testing_playbook.md` covering the HTTPS-prod-page → HTTP-localhost mixed-content gotcha and the base64-via-console workaround the Phase 7C.3 QA teammate used. Includes the exact JS capture template, Node reconstruct snippet, and a when-needed table. Flags the auth-gated `/qa-upload` permanent helper as a future option (not implemented — Phase 7C.3 + 8.1 verifications used the workaround successfully). Also added Suite Q test entries (Q1 alphabetization, Q2 halt annotation) for browser-driven verification of Items 4 + 5.
+
+### Suite Q — browser-verified on prod
+
+Bundle deployed: `index-DBV4tyoe.js` (Railway, ~5 minutes after the master push of `b723757..94e4e75`).
+
+- **Q1 (column-header alphabetization):** ✅ PASS. Steering Committee Sankey column header reads `✗ Cara Singh, Eli Rojas` (alphabetical). Pre-fix would have been `✗ Eli Rojas, Cara Singh`.
+- **Q2 (halt-winner annotation):** ✅ PASS. Steering Committee Final column shows `Boris Patel (seat filled by remaining-candidate)` directly below the bold "Final" title — font-size 9, italic, `#6B7280`. Annual Team Offsite same template with `Beach Resort (seat filled by remaining-candidate)` confirmed via DOM `<text>` enumeration. Both proposals: Final-column dark-border winner highlighting unchanged.
+
+Screenshots: `test_results/phase8_1_screenshots/Q1_Q2_steering_sankey_prod.svg` plus `README.md` documenting the Annual Team Offsite DOM-only verification.
+
+### Files added / modified
+
+**Backend:**
+- Modified: `backend/sustained_majority_service.py` (one-line filter + docstring), `backend/tests/test_sustained_majority_worker.py` (one new test class with 3 tests).
+
+**Frontend:**
+- Modified: `frontend/src/App.jsx` (route fix), `frontend/src/components/RCVSankeyChart.jsx` (column-header sort + deriveDisplayColumns shape change + halt annotation), `frontend/src/components/RCVResultsPanel.jsx` + `OptionAttractorVoteFlowGraph.jsx` + `VoteFlowGraph.jsx` (alphabetization).
+
+**Documentation / closeout:**
+- Modified: `browser_testing_playbook.md` (Suite Q + mixed-content workaround appendix), this file.
+- New: `test_results/phase8_1_screenshots/Q1_Q2_steering_sankey_prod.svg` + `README.md`.
+- Removed: stale `phase8_5_cleanup_spec.md` (was a one-line redirect note pointing to `phase8_1_spec.md`; the 8.5 slot is reserved for sub-organizations).
+
+### New tech debt logged
+
+1. **`react-refresh/only-export-components` warnings on `RCVSankeyChart.jsx`** — pre-existing on the `deriveDisplayColumns` and `buildSankeyData` exports. Splitting the two helpers into a sibling util file would clear them. Stale tech debt, not a Phase 8.1 regression.
+2. **`mcp__claude-in-chrome__javascript_tool` blocks raw base64 returns** — surfaced when capturing the Annual Team Offsite SVG. The base64-via-console workaround documented in Item 6 is the right path; programmatic capture from the JS tool needs an obfuscation trick or a different transport. Worth knowing for future prod-verification passes.
+
