@@ -119,3 +119,60 @@ def public_delegate_topic_ids(db: Session, user_id: str) -> set[str]:
         models.DelegateProfile.is_active.is_(True),
     ).all()
     return {r.topic_id for r in rows}
+
+
+# ---------------------------------------------------------------------------
+# Phase 8.5 — Sub-org permission helper
+# ---------------------------------------------------------------------------
+
+_ADMIN_ROLES = ("admin", "owner")
+
+
+def is_sub_org_admin(
+    db: Session, user_id: str, sub_org: models.Organization
+) -> bool:
+    """Decision 6: True iff ``user_id`` can act as admin of ``sub_org``.
+
+    A user qualifies if EITHER:
+      (a) They have an active SubOrgMembership in ``sub_org`` with role
+          'admin' or 'owner', OR
+      (b) They have an active OrgMembership in the parent org
+          (``sub_org.parent_org_id``) with role 'admin' or 'owner' — the
+          implicit-admin pattern (parent-org admins govern all sub-orgs).
+
+    Sub-org admins do NOT have powers outside their sub-org. This helper
+    only answers "can this user admin THIS specific sub-org?". The implicit-
+    admin pattern is read-time, not stored — no row says "alice is admin of
+    every sub-org"; we just check her parent-org role at each call site.
+
+    Raises ValueError if ``sub_org`` is not actually a sub-org
+    (parent_org_id IS NULL). The helper is for sub-orgs only; callers
+    asking about parent-org admin powers should use the existing
+    OrgMembership-based checks in routes/organizations.py.
+    """
+    if sub_org.parent_org_id is None:
+        raise ValueError(
+            "is_sub_org_admin called on a non-sub-org "
+            f"(organization id={sub_org.id} has parent_org_id=NULL). "
+            "This helper is only valid for sub-orgs."
+        )
+
+    # (a) Direct sub-org admin/owner
+    sub_membership = db.query(models.SubOrgMembership).filter(
+        models.SubOrgMembership.user_id == user_id,
+        models.SubOrgMembership.sub_org_id == sub_org.id,
+        models.SubOrgMembership.status == "active",
+    ).first()
+    if sub_membership is not None and sub_membership.role in _ADMIN_ROLES:
+        return True
+
+    # (b) Parent-org admin/owner (implicit power)
+    parent_membership = db.query(models.OrgMembership).filter(
+        models.OrgMembership.user_id == user_id,
+        models.OrgMembership.org_id == sub_org.parent_org_id,
+        models.OrgMembership.status == "active",
+    ).first()
+    if parent_membership is not None and parent_membership.role in _ADMIN_ROLES:
+        return True
+
+    return False
