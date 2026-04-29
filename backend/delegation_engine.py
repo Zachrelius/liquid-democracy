@@ -703,6 +703,38 @@ class DelegationGraphStore:
 
 
 # ---------------------------------------------------------------------------
+# Eligibility helper — Phase 8.5
+# ---------------------------------------------------------------------------
+
+def eligible_voter_ids_for_proposal(
+    db: Session, proposal: models.Proposal
+) -> set[str]:
+    """Return the set of user IDs eligible to vote on this proposal.
+
+    Phase 8.5 dispatches on ``proposal.sub_org_id``:
+      - sub-org-scoped proposals (sub_org_id IS NOT NULL): active
+        SubOrgMembership in that sub-org.
+      - parent-org-scoped proposals (sub_org_id IS NULL) and proposals with
+        no org context: every user in the DB. This preserves the existing
+        single-org behavior bit-for-bit — the old ``compute_tally`` used
+        ``db.query(models.User.id).all()`` for every proposal, and existing
+        tests / route flows depend on that semantic. Tightening parent-org
+        eligibility is a Session 2 concern (route-layer change) and explicitly
+        out of scope for the data-layer pass.
+    """
+    sub_org_id = getattr(proposal, "sub_org_id", None)
+    if sub_org_id:
+        rows = db.query(models.SubOrgMembership.user_id).filter(
+            models.SubOrgMembership.sub_org_id == sub_org_id,
+            models.SubOrgMembership.status == "active",
+        ).all()
+        return {r.user_id for r in rows}
+
+    rows = db.query(models.User.id).all()
+    return {r.id for r in rows}
+
+
+# ---------------------------------------------------------------------------
 # Service layer — DB access lives here, calls the pure functions
 # ---------------------------------------------------------------------------
 
@@ -725,6 +757,14 @@ class DelegationService:
         """
         Fetch everything needed to resolve all votes on a proposal and pack it
         into a ProposalContext.
+
+        Phase 8.5 scope handling: ``proposal_topics`` is the proposal's own
+        topic list (which the proposal-creation route is responsible for keeping
+        in scope). Sub-org-scope filtering happens at the topic level — a
+        sub-org-scoped proposal may only attach parent-org-wide topics or its
+        own sub-org's topics; a parent-org-wide proposal may only attach
+        parent-org-wide topics. The pure resolver doesn't need to re-check
+        scope because the topics are already filtered upstream.
         """
         proposal_topics = [pt.topic_id for pt in proposal.proposal_topics]
         voting_method = getattr(proposal, "voting_method", "binary") or "binary"
@@ -835,15 +875,31 @@ class DelegationService:
     ) -> ProposalTally | ApprovalTally | RCVTally:
         """
         Build context once, resolve all users, return aggregate tally.
+
+        Phase 8.5: eligibility dispatches on proposal scope —
+          - sub-org-scoped proposals tally only sub-org members
+          - everything else (parent-org-scoped or no-org) tallies every user,
+            matching the existing single-org behavior bit-for-bit.
+
+        For non-sub-org proposals we keep the original "all users in DB-order"
+        query so RCV/STV ballot insertion order is preserved exactly (the pure
+        layer is order-stable but tie-break ordering across runs benefits from
+        deterministic insertion). Only sub-org-scoped proposals take the new
+        membership-filtered path.
         """
         ctx = self._build_context(proposal, db)
-        all_user_ids = [u.id for u in db.query(models.User.id).all()]
+        sub_org_id = getattr(proposal, "sub_org_id", None)
+        if sub_org_id:
+            eligible_ids = eligible_voter_ids_for_proposal(db, proposal)
+            user_ids = sorted(eligible_ids)
+        else:
+            user_ids = [u.id for u in db.query(models.User.id).all()]
         option_ids: list[str] = []
         num_winners = getattr(proposal, "num_winners", 1) or 1
         if ctx.voting_method == "ranked_choice":
             option_ids = [opt.id for opt in proposal.options]
         return compute_tally_pure(
-            all_user_ids, ctx,
+            user_ids, ctx,
             option_ids=option_ids,
             num_winners=num_winners,
         )
