@@ -823,6 +823,20 @@ def _seed_demo(db: Session) -> dict:
         _set_delegation(db, u, env_emma, environment)
         _set_delegation(db, u, env_emma, economy)
 
+    # Phase 8.6 Item 2 — voter02's Economy delegation (Decision 8 cross-scope
+    # demo fixture). voter02 is a parent-org member who later gets added to
+    # the Engineering sub-org (Phase 8.5 sub-org block below). She delegates
+    # Economy → econ_bob, who is NOT a sub-org member. The trunk-based
+    # proposal (sub-org-scoped) carries Economy as a secondary topic, so the
+    # delegation engine resolves voter02's vote to econ_bob, who isn't an
+    # eligible voter under sub-org scope — chain-behavior produces "not cast"
+    # (Decision 8) and the proposal-detail page renders the cross-scope
+    # "your vote" copy (Decision 10). This row was missing from the seed
+    # through Phase 8.5; adding it unblocks Suite R9 prod verification.
+    # _set_delegation is idempotent (skip-if-exists), so re-running the seed
+    # against an existing prod DB adds the row if missing, no-op if present.
+    _set_delegation(db, extra_users[1], econ_bob, economy)
+
     # Carbon prop — env_emma + econ_bob voted yes; extra_users[0..5] delegate env
     for u in extra_users[:5]:
         _set_delegation(db, u, env_emma, environment)
@@ -1144,8 +1158,11 @@ def _seed_demo(db: Session) -> dict:
     #     her exclusion from the sub-org gives QA a clean "non-member with
     #     parent-org admin" persona to exercise Suite R scenarios with.
     #   - voter02 has a delegation set in the parent-org seed above
-    #     (econ_bob on Economy). econ_bob is NOT a sub-org member, which
-    #     makes voter02 + econ_bob the canonical Decision 8 cross-scope
+    #     (econ_bob on Economy — added in Phase 8.6 Item 2; the Phase 8.5
+    #     Session 4 trunk-based proposal already wires Economy as a
+    #     secondary relevance topic, so once both pieces are in place R9
+    #     fires). econ_bob is NOT a sub-org member, which makes
+    #     voter02 + econ_bob the canonical Decision 8 cross-scope
     #     delegation pair: voter02 will hit the chain-behavior path on
     #     sub-org proposals where their delegate isn't an eligible voter.
     eng_sub_org = _get_or_create_sub_org(
