@@ -1185,7 +1185,14 @@ def _seed_demo(db: Session) -> dict:
     db.flush()
 
     # Sub-org-scoped proposal (Decision 3 / Decision 8). In voting status
-    # using the sub-org-scoped topic.
+    # using the sub-org-scoped topic. Per Decision 3, sub-org proposals may
+    # also reference parent-org-wide topics — we add Economy at low
+    # relevance so voter02's existing Economy → econ_bob delegation
+    # actually resolves on this proposal. That makes the proposal the
+    # canonical Decision-10-moment-2 fixture: voter02 has a delegation
+    # that the engine resolves, the resolved delegate (econ_bob) isn't a
+    # sub-org member, and the chain-behavior fallback fires — exactly the
+    # case Suite R R9 needs to verify the cross-scope "your vote" copy.
     eng_proposal = _get_or_create_proposal(
         db,
         title="Engineering Team — Adopt Trunk-Based Development",
@@ -1199,7 +1206,7 @@ def _seed_demo(db: Session) -> dict:
         ),
         author_id=dave.id,
         status="voting",
-        topic_relevances=[(eng_practices, 1.0)],
+        topic_relevances=[(eng_practices, 1.0), (economy, 0.4)],
         days_ago_deliberation=8,
         days_ago_voting=2,
         days_ahead_close=5,
@@ -1209,11 +1216,14 @@ def _seed_demo(db: Session) -> dict:
 
     # Sub-org members vote on the sub-org proposal. Mix of yes/no/abstain.
     # voter02 (extra_users[1]) does NOT vote directly — this is the cross-
-    # scope delegation case: voter02 delegates Economy → econ_bob (set in
-    # parent-org seed), but econ_bob isn't a member of eng_sub_org and has
-    # no delegate position on Engineering Practices. The chain-behavior
-    # accept_sub default falls through cleanly (Decision 8) and voter02's
-    # ballot resolves to "not cast" on the sub-org proposal.
+    # scope delegation case. voter02 delegates Economy → econ_bob; the
+    # proposal carries Economy as a secondary topic, so the engine resolves
+    # voter02's delegate to econ_bob. econ_bob isn't a member of
+    # eng_sub_org (parent-org-only), so eligible_voter_ids excludes him,
+    # he has no ballot, and the accept_sub chain-behavior default falls
+    # through to "not cast" (Decision 8). The frontend detects this exact
+    # case (delegation resolved, delegate not in sub_org_id member set)
+    # and renders the Decision-10-moment-2 cross-scope "your vote" copy.
     _cast_vote(db, dave, eng_proposal, "yes")
     _cast_vote(db, carol, eng_proposal, "yes")
     _cast_vote(db, extra_users[0], eng_proposal, "no")
