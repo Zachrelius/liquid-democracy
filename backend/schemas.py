@@ -175,6 +175,8 @@ class TopicCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=500)
     color: str = "#6366f1"
+    # Phase 8.5: optional sub-org scope. NULL = parent-org-wide (default).
+    sub_org_id: Optional[str] = None
 
     @field_validator("color")
     @classmethod
@@ -189,6 +191,10 @@ class TopicOut(BaseModel):
     name: str
     description: str
     color: str
+    # Phase 8.5: NULL for parent-org-wide topics. Tests/clients can rely on
+    # this to render scope badges; existing single-org clients receive None
+    # everywhere and behave unchanged.
+    sub_org_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -268,6 +274,10 @@ class ProposalCreate(BaseModel):
     # null = inherit org default; True/False = explicit. Server rejects
     # non-null when org has `sustained_majority_per_proposal_override: false`.
     sustained_majority_enabled: Optional[bool] = None
+    # Phase 8.5: optional sub-org scope. NULL = parent-org-wide (default).
+    # If non-null, all referenced topics must be either parent-org-wide or
+    # the same sub-org's; eligibility derives via SubOrgMembership.
+    sub_org_id: Optional[str] = None
 
     @field_validator("voting_method")
     @classmethod
@@ -333,6 +343,8 @@ class ProposalOut(BaseModel):
     options: list[OptionOut] = []
     # Phase 8 — null = inherit org default; True/False = explicit override.
     sustained_majority_enabled: Optional[bool] = None
+    # Phase 8.5 — null for parent-org-wide proposals.
+    sub_org_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -1121,3 +1133,94 @@ class MemberRoleUpdate(BaseModel):
         if v not in ("member", "moderator", "admin"):
             raise ValueError("role must be member, moderator, or admin")
         return v
+
+
+# ---------------------------------------------------------------------------
+# Phase 8.5 — Sub-organizations
+# ---------------------------------------------------------------------------
+
+class SubOrgCreate(BaseModel):
+    """Body for `POST /api/orgs/{slug}/sub-orgs`."""
+    name: str = Field(min_length=1, max_length=200)
+    slug: str = Field(min_length=3, max_length=50)
+    description: str = ""
+    settings: Optional[dict] = None
+
+    @field_validator("slug")
+    @classmethod
+    def validate_slug(cls, v: str) -> str:
+        if not _SLUG_RE.match(v):
+            raise ValueError(
+                "Slug must be 3-50 characters, lowercase alphanumeric and hyphens only, "
+                "cannot start or end with a hyphen"
+            )
+        return v
+
+
+class SubOrgUpdate(BaseModel):
+    """Body for `PATCH /api/orgs/{slug}/sub-orgs/{sub_slug}`."""
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    description: Optional[str] = None
+    settings: Optional[dict] = None
+
+
+class SubOrgOut(BaseModel):
+    id: str
+    name: str
+    slug: str
+    description: str
+    parent_org_id: str
+    settings: dict = {}
+    member_count: Optional[int] = None
+    user_role: Optional[str] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SubOrgMemberInvite(BaseModel):
+    """Body for `POST /api/orgs/{slug}/sub-orgs/{sub_slug}/members/invite`."""
+    user_id: str
+    role: str = "member"
+
+    @field_validator("user_id")
+    @classmethod
+    def validate_user_id(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        if v not in ("member", "moderator", "admin", "owner"):
+            raise ValueError("role must be member, moderator, admin, or owner")
+        return v
+
+
+class SubOrgMemberRoleUpdate(BaseModel):
+    role: str
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        if v not in ("member", "moderator", "admin", "owner"):
+            raise ValueError("role must be member, moderator, admin, or owner")
+        return v
+
+
+class SubOrgMemberOut(BaseModel):
+    user_id: str
+    username: str
+    display_name: str
+    email: Optional[str] = None
+    role: str
+    status: str
+    joined_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PromoteTopicToOrgwide(BaseModel):
+    """Body for `POST /api/orgs/{slug}/topics/{topic_id}/promote-to-orgwide`.
+
+    Decision 3 — promotion is irreversible. The route requires
+    `confirm: true` to ensure clients have shown a confirmation UI.
+    """
+    confirm: bool = False
