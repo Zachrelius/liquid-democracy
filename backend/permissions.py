@@ -126,6 +126,7 @@ def public_delegate_topic_ids(db: Session, user_id: str) -> set[str]:
 # ---------------------------------------------------------------------------
 
 _ADMIN_ROLES = ("admin", "owner")
+_SUB_ORG_PROPOSAL_CREATOR_ROLES = ("moderator", "admin", "owner")
 
 
 def is_sub_org_admin(
@@ -176,3 +177,47 @@ def is_sub_org_admin(
         return True
 
     return False
+
+
+def can_create_proposal_in_sub_org(
+    db: Session, user_id: str, sub_org: models.Organization,
+) -> bool:
+    """Decision 6 + Session 3 clarification.
+
+    A user can create proposals scoped to a sub-org if EITHER:
+      - they have an active SubOrgMembership in the sub-org with role
+        IN ('moderator', 'admin', 'owner'); OR
+      - they are a parent-org admin/owner (implicit sub-org admin via
+        is_sub_org_admin already covers this — we just call through).
+
+    A sub-org `member` (no elevated role) cannot create proposals;
+    they can vote on existing ones. This matches how parent-org
+    proposal creation already works (parent-org moderator+ required).
+
+    Raises ValueError if ``sub_org.parent_org_id IS NULL`` — programmer
+    error; use the existing org-moderator gate for parent-org-scoped
+    proposals.
+    """
+    if sub_org.parent_org_id is None:
+        raise ValueError(
+            "can_create_proposal_in_sub_org called on a non-sub-org "
+            f"(organization id={sub_org.id} has parent_org_id=NULL). "
+            "This helper is only valid for sub-orgs; use the existing "
+            "org-moderator gate for parent-org-scoped proposals."
+        )
+
+    # (a) Active sub-org membership with moderator+ role
+    sub_membership = db.query(models.SubOrgMembership).filter(
+        models.SubOrgMembership.user_id == user_id,
+        models.SubOrgMembership.sub_org_id == sub_org.id,
+        models.SubOrgMembership.status == "active",
+    ).first()
+    if (
+        sub_membership is not None
+        and sub_membership.role in _SUB_ORG_PROPOSAL_CREATOR_ROLES
+    ):
+        return True
+
+    # (b) Implicit parent-org-admin path. Decision 6: parent-org admin/owner
+    # has implicit sub-org admin power, which includes proposal creation.
+    return is_sub_org_admin(db, user_id, sub_org)

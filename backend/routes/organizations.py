@@ -1092,9 +1092,27 @@ def create_org_proposal(
     request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
-    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
+    membership: models.OrgMembership = Depends(require_org_membership),
 ):
-    """Create proposal within org (moderator, admin, or owner)."""
+    """Create proposal within org.
+
+    Permission dispatches on ``body.sub_org_id``:
+      - Parent-org-scoped (sub_org_id is None): requires parent-org
+        moderator/admin/owner role — same gate as before Phase 8.5
+        Session 3.
+      - Sub-org-scoped (sub_org_id is non-null): requires sub-org-internal
+        moderator+/admin/owner OR parent-org admin/owner (Decision 6
+        implicit power). A sub-org *member* (plain role) cannot create
+        proposals; they vote on existing ones.
+
+    The previous implementation used a hard ``require_org_moderator_or_admin``
+    Depends() that gated everyone — including sub-org members who weren't
+    parent-org moderators. We softened to ``require_org_membership`` and
+    dispatch the moderator+ check inside the body so the sub-org-internal
+    role can govern sub-org-scoped actions (Session 2 tech debt #1).
+    """
+    from permissions import can_create_proposal_in_sub_org
+
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
@@ -1113,20 +1131,23 @@ def create_org_proposal(
                 status_code=400,
                 detail="sub_org_id is not a sub-org of this parent",
             )
-        # Actor must be an active sub-org member (or parent-org admin via
-        # implicit power) to create a sub-org-scoped proposal.
-        sm = db.query(models.SubOrgMembership).filter(
-            models.SubOrgMembership.user_id == current_user.id,
-            models.SubOrgMembership.sub_org_id == target_sub_org.id,
-            models.SubOrgMembership.status == "active",
-        ).first()
-        if sm is None and admin_membership.role not in ("admin", "owner"):
+        # Sub-org-scoped: sub-org-internal moderator+ (or parent-org admin
+        # via implicit power) required. Sub-org plain members cannot create.
+        if not can_create_proposal_in_sub_org(db, current_user.id, target_sub_org):
             raise HTTPException(
                 status_code=403,
                 detail=(
-                    "Sub-org membership (or parent-org admin) required to "
-                    "create proposals scoped to this sub-org"
+                    "Sub-org moderator, admin, or owner role required to "
+                    "create proposals scoped to this sub-org "
+                    "(parent-org admin/owner also permitted via implicit power)."
                 ),
+            )
+    else:
+        # Parent-org-scoped: preserve the legacy moderator+ gate.
+        if membership.role not in ("moderator", "admin", "owner"):
+            raise HTTPException(
+                status_code=403,
+                detail="Moderator access required",
             )
 
     from routes.proposals import _validate_proposal_creation, _create_proposal_options

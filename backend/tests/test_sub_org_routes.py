@@ -408,10 +408,12 @@ class TestTopicAndProposalScope:
         parent = _org(db, "parent")
         sub = _org(db, "sub", parent_org_id=parent.id)
         _membership(db, parent, admin, role="admin")
-        # sub_admin needs parent-org moderator role at minimum so the
-        # existing `require_org_moderator_or_admin` gate on POST proposals
-        # passes; the sub-org admin check is layered on top.
-        _membership(db, parent, sub_admin, role="moderator")
+        # Phase 8.5 Session 3: sub_admin only needs plain parent-org
+        # `member` role now that proposal-creation in a sub-org is gated
+        # by the sub-org-internal role (via can_create_proposal_in_sub_org).
+        # The previous bump to `moderator` was a workaround for the
+        # layered `require_org_moderator_or_admin` Depends() gate.
+        _membership(db, parent, sub_admin, role="member")
         _membership(db, parent, parent_only, role="member")
         _membership(db, parent, sub_member, role="member")
         _sub_membership(db, sub, sub_admin, role="admin")
