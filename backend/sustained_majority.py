@@ -72,16 +72,48 @@ def get_sustained_majority_config(org_or_settings: Any) -> SustainedMajorityConf
     """
     Lazy, defaults-applying accessor for org-level sustained-majority config.
 
-    Accepts either an Organization model (uses .settings) or a raw settings
-    dict, which keeps callers simple. Missing keys fall back to DEFAULTS so
-    pre-Phase-8 orgs read clean values without a backfill.
+    Accepts either an Organization model (uses .settings, walking the parent
+    chain via :func:`org_config.get_org_config` per Phase 8.5 Decision 9) or
+    a raw settings dict, which keeps callers simple. Missing keys fall back
+    to DEFAULTS so pre-Phase-8 orgs read clean values without a backfill.
+
+    Phase 8.5: when an Organization is passed and it's a sub-org, each key
+    resolves via the parent-chain walk: sub-org's own setting → parent's
+    setting → DEFAULTS. For parent orgs (parent_org_id IS NULL), the walk
+    degenerates to a single lookup followed by DEFAULTS — bit-for-bit
+    equivalent to the prior ``raw.get(key, DEFAULTS[...])`` pattern. Raw-dict
+    callers (tests, internal worker re-evaluations) keep the old behavior
+    unchanged.
     """
-    if hasattr(org_or_settings, "settings"):
-        raw = org_or_settings.settings or {}
-    elif isinstance(org_or_settings, dict):
-        raw = org_or_settings
-    else:
-        raw = {}
+    # Two paths: (1) Organization model — use the parent-chain-aware
+    # get_org_config helper; (2) raw dict — preserve the old direct-lookup
+    # behavior for tests and internal consumers that synthesize a settings
+    # blob without an org.
+    is_org = hasattr(org_or_settings, "settings") and not isinstance(
+        org_or_settings, dict
+    )
+    if is_org:
+        # Local import to avoid a circular dep with models at module load time
+        # (org_config imports models, sustained_majority is imported by routes
+        # that already have models loaded — but we keep this defensive).
+        from org_config import get_org_config
+
+        def _read(key: str) -> Any:
+            return get_org_config(org_or_settings, key, DEFAULTS[key])
+
+        failure_mode = _read("sustained_majority_failure_mode")
+        if failure_mode not in ALLOWED_FAILURE_MODES:
+            failure_mode = "fail"
+        return SustainedMajorityConfig(
+            enabled_default=bool(_read("sustained_majority_enabled_default")),
+            per_proposal_override=bool(_read("sustained_majority_per_proposal_override")),
+            threshold=float(_read("sustained_majority_threshold")),
+            floor=float(_read("sustained_majority_floor")),
+            failure_mode=failure_mode,
+        )
+
+    # Raw-dict path: dict, None, or unknown — same logic as before.
+    raw = org_or_settings if isinstance(org_or_settings, dict) else {}
 
     failure_mode = raw.get(
         "sustained_majority_failure_mode",
