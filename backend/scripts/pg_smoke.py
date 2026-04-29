@@ -61,10 +61,11 @@ _BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
-# Default prior revision: Phase 8 sustained-majority. The next pass after
-# this one should bump this default to ``d41a8c92f3b1`` (Phase 8.5) so the
-# harness exercises Phase 8.5 → Phase 8.6+next path.
-_DEFAULT_PRIOR_REV = "c5f3a2b81e07"
+# Default prior revision: Phase 8.5 sub-organizations. Phase 9 bumps this
+# from c5f3a2b81e07 (Phase 8) to d41a8c92f3b1 (Phase 8.5) so the harness
+# exercises the Phase 8.5 → Phase 9 upgrade path that Session 1's migration
+# ships. The next pass should bump again to e7b3f9a02c14 (Phase 9).
+_DEFAULT_PRIOR_REV = "d41a8c92f3b1"
 
 _DEFAULT_PG_IMAGE = "postgres:16-alpine"
 _DEFAULT_PG_PORT = 55433  # Distinct from Phase 8.5's 55432 to avoid clash.
@@ -205,6 +206,8 @@ def _smoke_spot_check(db_url: str, label: str) -> None:
       - Phase 8.5's ``sub_org_memberships`` table exists (the one whose
         creation collided in the 502 incident).
       - Phase 8's ``proposals.sustained_majority_enabled`` column exists.
+      - Phase 9's ``polises`` and ``polis_xids`` tables exist.
+      - Phase 9's ``proposals.linked_polis_ids`` column exists.
       - alembic_version row matches the chain head.
 
     Run after each mode; passes only if the schema was actually constructed
@@ -229,6 +232,28 @@ def _smoke_spot_check(db_url: str, label: str) -> None:
             )).scalar()
             assert res, (
                 f"[{label}] proposals.sustained_majority_enabled column missing"
+            )
+
+            # Phase 9's polises table.
+            res = conn.execute(text(
+                "SELECT to_regclass('public.polises') IS NOT NULL"
+            )).scalar()
+            assert res, f"[{label}] polises table missing"
+
+            # Phase 9's polis_xids table.
+            res = conn.execute(text(
+                "SELECT to_regclass('public.polis_xids') IS NOT NULL"
+            )).scalar()
+            assert res, f"[{label}] polis_xids table missing"
+
+            # Phase 9's linked_polis_ids column on proposals.
+            res = conn.execute(text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema='public' AND table_name='proposals' "
+                "AND column_name='linked_polis_ids'"
+            )).scalar()
+            assert res, (
+                f"[{label}] proposals.linked_polis_ids column missing"
             )
 
             # alembic_version row matches head

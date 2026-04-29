@@ -50,6 +50,13 @@ DEFAULT_ORG_SETTINGS = {
     "sustained_majority_threshold": 0.50,
     "sustained_majority_floor": 0.45,
     "sustained_majority_failure_mode": "fail",
+    # Phase 9 Decision 7 — opt-in "every new proposal must link a Polis"
+    # governance norm. Default off; sub-orgs inherit via get_org_config.
+    # When True, the proposal-creation route requires at least one valid
+    # linked_polis_id; when False, linking is optional. Always opt-in:
+    # most small-org decisions (meeting times, budget allocations under $X)
+    # don't need structured deliberation.
+    "require_polis_for_new_proposals": False,
 }
 
 
