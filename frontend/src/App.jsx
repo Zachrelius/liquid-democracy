@@ -212,19 +212,10 @@ export default function App() {
           }
         />
 
-        <Route
-          path="/help/voting-methods"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><VotingMethodsHelp /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-
-        {/* Public — voters reading the floor-approach banner may not yet be
-            logged in (they may be following a /help link from email later) */}
+        {/* Public — help pages are purely informational and may be linked from
+            external surfaces (Security & Trust, etc.) where the visitor is not
+            logged in. Don't gate them on auth. */}
+        <Route path="/help/voting-methods" element={<VotingMethodsHelp />} />
         <Route path="/help/sustained-majority" element={<SustainedMajorityHelp />} />
 
         <Route path="/privacy" element={<Privacy />} />
