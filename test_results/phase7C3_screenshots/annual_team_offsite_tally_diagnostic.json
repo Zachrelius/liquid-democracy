@@ -1,0 +1,96 @@
+{
+  "proposal_id": "6b7ec039-b398-41fc-9773-745c2a73be77",
+  "voting_method": "ranked_choice",
+  "yes": 0,
+  "no": 0,
+  "abstain": 0,
+  "not_cast": 25,
+  "total_eligible": 42,
+  "votes_cast": 17,
+  "yes_pct": 0.0,
+  "no_pct": 0.0,
+  "abstain_pct": 0.0,
+  "quorum_met": true,
+  "threshold_met": false,
+  "time_series": [],
+  "option_approvals": null,
+  "option_labels": {
+    "699c30e3-d196-499d-b8b7-94c030377375": "Mountain Lodge",
+    "27a18c78-612c-4b7b-8e18-55d60e764549": "Beach Resort",
+    "ebc4d370-d7fe-4b0c-bfa6-52e79f6fda2d": "Urban Workshop",
+    "a5671868-2d2a-4bac-bb43-7fb01ac81f60": "Forest Cabin"
+  },
+  "total_ballots_cast": 17,
+  "total_abstain": 0,
+  "winners": [
+    "27a18c78-612c-4b7b-8e18-55d60e764549"
+  ],
+  "tied": false,
+  "tie_resolution": null,
+  "rounds": [
+    {
+      "round_number": 0,
+      "option_counts": {
+        "27a18c78-612c-4b7b-8e18-55d60e764549": 5.0,
+        "699c30e3-d196-499d-b8b7-94c030377375": 5.0,
+        "a5671868-2d2a-4bac-bb43-7fb01ac81f60": 4.0,
+        "ebc4d370-d7fe-4b0c-bfa6-52e79f6fda2d": 3.0
+      },
+      "eliminated": "ebc4d370-d7fe-4b0c-bfa6-52e79f6fda2d",
+      "elected": [],
+      "transferred_from": null,
+      "transfer_breakdown": {}
+    },
+    {
+      "round_number": 1,
+      "option_counts": {
+        "27a18c78-612c-4b7b-8e18-55d60e764549": 6.0,
+        "699c30e3-d196-499d-b8b7-94c030377375": 6.0,
+        "a5671868-2d2a-4bac-bb43-7fb01ac81f60": 4.0,
+        "ebc4d370-d7fe-4b0c-bfa6-52e79f6fda2d": 0.0
+      },
+      "eliminated": "a5671868-2d2a-4bac-bb43-7fb01ac81f60",
+      "elected": [],
+      "transferred_from": "ebc4d370-d7fe-4b0c-bfa6-52e79f6fda2d",
+      "transfer_breakdown": {
+        "699c30e3-d196-499d-b8b7-94c030377375": 1.0,
+        "27a18c78-612c-4b7b-8e18-55d60e764549": 1.0
+      }
+    },
+    {
+      "round_number": 2,
+      "option_counts": {
+        "27a18c78-612c-4b7b-8e18-55d60e764549": 8.0,
+        "699c30e3-d196-499d-b8b7-94c030377375": 7.0,
+        "a5671868-2d2a-4bac-bb43-7fb01ac81f60": 0.0,
+        "ebc4d370-d7fe-4b0c-bfa6-52e79f6fda2d": 0.0
+      },
+      "eliminated": "699c30e3-d196-499d-b8b7-94c030377375",
+      "elected": [
+        "27a18c78-612c-4b7b-8e18-55d60e764549"
+      ],
+      "transferred_from": "a5671868-2d2a-4bac-bb43-7fb01ac81f60",
+      "transfer_breakdown": {
+        "699c30e3-d196-499d-b8b7-94c030377375": 1.0,
+        "27a18c78-612c-4b7b-8e18-55d60e764549": 2.0
+      }
+    }
+  ],
+  "method": "irv",
+  "num_winners": 1,
+  "sustained_majority": {
+    "active": false,
+    "threshold": 0.5,
+    "floor": 0.45,
+    "failure_mode": "fail",
+    "current_support": null,
+    "distance_to_floor": null,
+    "floor_breached": false,
+    "approaching_floor": false,
+    "in_stable_result_window": false,
+    "stable_result_locked": false,
+    "current_winners": [],
+    "extension_count": 0,
+    "voting_end": "2026-05-02T11:40:53.483643"
+  }
+}

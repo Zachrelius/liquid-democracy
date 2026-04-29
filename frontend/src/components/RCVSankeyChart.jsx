@@ -57,6 +57,60 @@ function nodeKey(roundIdx, optionId) {
 }
 
 /**
+ * Derives the visible column list from observed option_counts transitions.
+ * Returns an array of { rawRoundIdx, electedNames, eliminatedNames } for
+ * rounds that have at least one observable event (election by quota crossing or
+ * elimination by count drop to zero). Rounds with no event are omitted —
+ * collapse no-event rounds, pyrankvote bundles events unevenly.
+ *
+ * rawRoundIdx maps back to tally.rounds[r].option_counts for slab math.
+ *
+ * quota: the election threshold (H-B = totalBallots / (numWinners + 1)).
+ * For IRV, numWinners = 1, so quota = totalBallots / 2.
+ */
+export function deriveDisplayColumns(tally) {
+  if (!tally || !Array.isArray(tally.rounds) || tally.rounds.length === 0) return [];
+  const rounds = tally.rounds;
+  const totalBallots = tally.total_ballots_cast || 0;
+  const numWinners = tally.num_winners || 1;
+  const quota = totalBallots > 0 ? totalBallots / (numWinners + 1) : Infinity;
+
+  const crossedQuota = new Set(); // option IDs that have crossed quota in prior columns
+
+  const result = [];
+
+  for (let toIdx = 0; toIdx < rounds.length; toIdx++) {
+    // For toIdx=0 (Round 0), prev = Round 0 itself (Initial mirrors it identically).
+    const curCounts = rounds[toIdx].option_counts || {};
+    const prevCounts = toIdx === 0 ? curCounts : rounds[toIdx - 1].option_counts || {};
+
+    const eliminated = [];
+    for (const [oid, prevVal] of Object.entries(prevCounts)) {
+      const pv = prevVal || 0;
+      const cv = (curCounts[oid] || 0);
+      if (pv > FLOAT_TOLERANCE && cv <= FLOAT_TOLERANCE) {
+        eliminated.push(oid);
+      }
+    }
+
+    const elected = [];
+    for (const [oid, curVal] of Object.entries(curCounts)) {
+      const cv = curVal || 0;
+      if (cv >= quota - FLOAT_TOLERANCE && !crossedQuota.has(oid)) {
+        elected.push(oid);
+        crossedQuota.add(oid);
+      }
+    }
+
+    if (elected.length > 0 || eliminated.length > 0) {
+      result.push({ rawRoundIdx: toIdx, elected, eliminated });
+    }
+  }
+
+  return result;
+}
+
+/**
  * Pure helper: convert tally.rounds[] into d3-sankey nodes + links.
  *
  * Returns { nodes, links } or null if not enough data to build a chart.
@@ -476,54 +530,62 @@ export default function RCVSankeyChart({ tally, proposal }) {
       colXs.push({ r, x });
     }
 
+    // Build a map from rawRoundIdx -> event label, derived from observed
+    // option_counts transitions (not pyrankvote metadata).
+    const displayCols = deriveDisplayColumns(tally);
+    const eventByRound = new Map(
+      displayCols.map(({ rawRoundIdx, elected, eliminated }) => {
+        const parts = [];
+        if (elected.length > 0) parts.push(`✓ ${elected.map(labelOf).join(', ')}`);
+        if (eliminated.length > 0) parts.push(`✗ ${eliminated.map(labelOf).join(', ')}`);
+        return [rawRoundIdx, { label: parts.join(' · '), hasElected: elected.length > 0, hasEliminated: eliminated.length > 0 }];
+      })
+    );
+
     const roundLabelG = g.append('g').attr('class', 'round-labels');
     colXs.forEach(({ r, x }) => {
       const cx = x + NODE_WIDTH / 2;
-      let title;
-      if (r === -1) title = 'Initial';
-      else if (r === FINAL_COL_IDX) title = 'Final';
-      else title = `Round ${r + 1}`;
+
+      // Initial and Final always render their title; intermediate rounds
+      // render a title only if they have an observable event.
+      if (r === -1) {
+        roundLabelG
+          .append('text')
+          .text('Initial')
+          .attr('x', cx)
+          .attr('y', PADDING.top - ELIM_LABEL_PX - 8)
+          .attr('text-anchor', 'middle')
+          .attr('font-size', 11)
+          .attr('font-weight', 600)
+          .attr('fill', '#1B3A5C');
+        return;
+      }
+      if (r === FINAL_COL_IDX) {
+        roundLabelG
+          .append('text')
+          .text('Final')
+          .attr('x', cx)
+          .attr('y', PADDING.top - ELIM_LABEL_PX - 8)
+          .attr('text-anchor', 'middle')
+          .attr('font-size', 11)
+          .attr('font-weight', 600)
+          .attr('fill', '#1B3A5C');
+        return;
+      }
+
+      const event = eventByRound.get(r);
+      if (!event) return; // collapse no-event round: no column header rendered
 
       roundLabelG
         .append('text')
-        .text(title)
+        .text(event.label)
         .attr('x', cx)
-        .attr('y', PADDING.top - ELIM_LABEL_PX - 8)
+        .attr('y', PADDING.top - 8)
         .attr('text-anchor', 'middle')
-        .attr('font-size', 11)
-        .attr('font-weight', 600)
-        .attr('fill', '#1B3A5C');
-
-      // Initial / Final columns don't carry round-level elimination/elected
-      // annotations.
-      if (r === -1 || r === FINAL_COL_IDX) return;
-
-      const round = tally.rounds[r];
-      const elimId = round?.eliminated;
-      const electedIds = round?.elected || [];
-
-      if (elimId) {
-        roundLabelG
-          .append('text')
-          .text(`✗ ${labelOf(elimId)}`)
-          .attr('x', cx)
-          .attr('y', PADDING.top - 8)
-          .attr('text-anchor', 'middle')
-          .attr('font-size', 10)
-          .attr('font-weight', 500)
-          .attr('fill', '#C0392B')
-          .attr('text-decoration', 'line-through');
-      } else if (electedIds.length > 0) {
-        roundLabelG
-          .append('text')
-          .text(`✓ ${electedIds.map(labelOf).join(', ')}`)
-          .attr('x', cx)
-          .attr('y', PADDING.top - 8)
-          .attr('text-anchor', 'middle')
-          .attr('font-size', 10)
-          .attr('font-weight', 500)
-          .attr('fill', '#2D8A56');
-      }
+        .attr('font-size', 10)
+        .attr('font-weight', 500)
+        .attr('fill', event.hasElected && !event.hasEliminated ? '#2D8A56' : event.hasEliminated && !event.hasElected ? '#C0392B' : '#1B3A5C')
+        .attr('text-decoration', event.hasEliminated && !event.hasElected ? 'line-through' : null);
     });
 
     // Phase 7C.2: any transfer-flavored link kind gets the dashed

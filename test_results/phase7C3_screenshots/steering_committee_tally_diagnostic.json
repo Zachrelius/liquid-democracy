@@ -1,0 +1,105 @@
+{
+  "proposal_id": "d298baf3-822d-4b13-9be5-c24acf3881b9",
+  "voting_method": "ranked_choice",
+  "yes": 0,
+  "no": 0,
+  "abstain": 0,
+  "not_cast": 21,
+  "total_eligible": 42,
+  "votes_cast": 21,
+  "yes_pct": 0.0,
+  "no_pct": 0.0,
+  "abstain_pct": 0.0,
+  "quorum_met": true,
+  "threshold_met": false,
+  "time_series": [],
+  "option_approvals": null,
+  "option_labels": {
+    "b6c8f903-d834-4f4f-89cc-115c446a473e": "Aria Chen",
+    "02a65349-b7d5-445c-8632-ad71af538b9b": "Boris Patel",
+    "9d78781d-6c2f-462a-b906-3e00737d0fe8": "Cara Singh",
+    "7adcf721-5971-4fa3-bb5d-8388f3e457a7": "Devon Park",
+    "faa15c12-e39f-4113-83c5-15c9d4f5bbba": "Eli Rojas"
+  },
+  "total_ballots_cast": 21,
+  "total_abstain": 0,
+  "winners": [
+    "b6c8f903-d834-4f4f-89cc-115c446a473e",
+    "02a65349-b7d5-445c-8632-ad71af538b9b"
+  ],
+  "tied": false,
+  "tie_resolution": null,
+  "rounds": [
+    {
+      "round_number": 0,
+      "option_counts": {
+        "b6c8f903-d834-4f4f-89cc-115c446a473e": 8.0,
+        "02a65349-b7d5-445c-8632-ad71af538b9b": 5.0,
+        "7adcf721-5971-4fa3-bb5d-8388f3e457a7": 4.0,
+        "9d78781d-6c2f-462a-b906-3e00737d0fe8": 2.0,
+        "faa15c12-e39f-4113-83c5-15c9d4f5bbba": 2.0
+      },
+      "eliminated": null,
+      "elected": [
+        "b6c8f903-d834-4f4f-89cc-115c446a473e"
+      ],
+      "transferred_from": null,
+      "transfer_breakdown": {}
+    },
+    {
+      "round_number": 1,
+      "option_counts": {
+        "b6c8f903-d834-4f4f-89cc-115c446a473e": 7.0,
+        "02a65349-b7d5-445c-8632-ad71af538b9b": 5.125,
+        "7adcf721-5971-4fa3-bb5d-8388f3e457a7": 4.5,
+        "faa15c12-e39f-4113-83c5-15c9d4f5bbba": 2.25,
+        "9d78781d-6c2f-462a-b906-3e00737d0fe8": 2.125
+      },
+      "eliminated": "9d78781d-6c2f-462a-b906-3e00737d0fe8",
+      "elected": [],
+      "transferred_from": "b6c8f903-d834-4f4f-89cc-115c446a473e",
+      "transfer_breakdown": {
+        "02a65349-b7d5-445c-8632-ad71af538b9b": 0.125,
+        "9d78781d-6c2f-462a-b906-3e00737d0fe8": 0.125,
+        "7adcf721-5971-4fa3-bb5d-8388f3e457a7": 0.5,
+        "faa15c12-e39f-4113-83c5-15c9d4f5bbba": 0.25
+      }
+    },
+    {
+      "round_number": 2,
+      "option_counts": {
+        "b6c8f903-d834-4f4f-89cc-115c446a473e": 7.0,
+        "02a65349-b7d5-445c-8632-ad71af538b9b": 6.25,
+        "7adcf721-5971-4fa3-bb5d-8388f3e457a7": 5.916666666666666,
+        "faa15c12-e39f-4113-83c5-15c9d4f5bbba": 0.0,
+        "9d78781d-6c2f-462a-b906-3e00737d0fe8": 0.0
+      },
+      "eliminated": "7adcf721-5971-4fa3-bb5d-8388f3e457a7",
+      "elected": [
+        "02a65349-b7d5-445c-8632-ad71af538b9b"
+      ],
+      "transferred_from": "faa15c12-e39f-4113-83c5-15c9d4f5bbba",
+      "transfer_breakdown": {
+        "02a65349-b7d5-445c-8632-ad71af538b9b": 1.125,
+        "7adcf721-5971-4fa3-bb5d-8388f3e457a7": 1.416666666666666
+      }
+    }
+  ],
+  "method": "stv",
+  "num_winners": 2,
+  "sustained_majority": {
+    "active": false,
+    "threshold": 0.5,
+    "floor": 0.45,
+    "failure_mode": "fail",
+    "current_support": null,
+    "distance_to_floor": null,
+    "floor_breached": false,
+    "approaching_floor": false,
+    "in_stable_result_window": false,
+    "stable_result_locked": false,
+    "current_winners": [],
+    "extension_count": 0,
+    "voting_end": null
+  }
+}
