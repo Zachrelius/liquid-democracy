@@ -33,69 +33,93 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Hot-fix path: start.sh runs SQLAlchemy create_tables() BEFORE alembic
+    # upgrade. On an existing prod DB getting Phase 8.5 for the first time,
+    # create_tables sees the new SubOrgMembership model class and creates
+    # the sub_org_memberships table directly. Then this migration runs and
+    # would fail trying to op.create_table the same table again.
+    # Existing-table-add-column ops are not affected (create_tables only
+    # creates missing tables; it doesn't sync columns on existing ones),
+    # but we defensive-skip those too in case a partial earlier run left
+    # them in place.
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    existing_tables = set(inspector.get_table_names())
+
+    def _has_column(table: str, column: str) -> bool:
+        try:
+            return column in {c['name'] for c in inspector.get_columns(table)}
+        except Exception:
+            return False
+
     # 1. Organization.parent_org_id (nullable, self-referential FK, indexed).
-    with op.batch_alter_table('organizations', schema=None) as batch_op:
-        batch_op.add_column(
-            sa.Column('parent_org_id', sa.String(), nullable=True)
-        )
-        batch_op.create_foreign_key(
-            'fk_organizations_parent_org_id',
-            'organizations', ['parent_org_id'], ['id'],
-        )
-        batch_op.create_index(
-            'ix_organizations_parent_org_id', ['parent_org_id'], unique=False,
-        )
+    if not _has_column('organizations', 'parent_org_id'):
+        with op.batch_alter_table('organizations', schema=None) as batch_op:
+            batch_op.add_column(
+                sa.Column('parent_org_id', sa.String(), nullable=True)
+            )
+            batch_op.create_foreign_key(
+                'fk_organizations_parent_org_id',
+                'organizations', ['parent_org_id'], ['id'],
+            )
+            batch_op.create_index(
+                'ix_organizations_parent_org_id', ['parent_org_id'], unique=False,
+            )
 
     # 2. New table sub_org_memberships (parallel to org_memberships).
-    op.create_table(
-        'sub_org_memberships',
-        sa.Column('id', sa.String(), nullable=False),
-        sa.Column('user_id', sa.String(), nullable=False),
-        sa.Column('sub_org_id', sa.String(), nullable=False),
-        sa.Column('role', sa.String(), nullable=False, server_default='member'),
-        sa.Column('status', sa.String(), nullable=False, server_default='active'),
-        sa.Column('joined_at', sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(['user_id'], ['users.id']),
-        sa.ForeignKeyConstraint(['sub_org_id'], ['organizations.id']),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('user_id', 'sub_org_id', name='uq_sub_org_membership_user_sub_org'),
-    )
-    op.create_index(
-        'ix_sub_org_memberships_user_id', 'sub_org_memberships', ['user_id'], unique=False,
-    )
-    op.create_index(
-        'ix_sub_org_memberships_sub_org_id', 'sub_org_memberships', ['sub_org_id'], unique=False,
-    )
+    if 'sub_org_memberships' not in existing_tables:
+        op.create_table(
+            'sub_org_memberships',
+            sa.Column('id', sa.String(), nullable=False),
+            sa.Column('user_id', sa.String(), nullable=False),
+            sa.Column('sub_org_id', sa.String(), nullable=False),
+            sa.Column('role', sa.String(), nullable=False, server_default='member'),
+            sa.Column('status', sa.String(), nullable=False, server_default='active'),
+            sa.Column('joined_at', sa.DateTime(), nullable=False),
+            sa.ForeignKeyConstraint(['user_id'], ['users.id']),
+            sa.ForeignKeyConstraint(['sub_org_id'], ['organizations.id']),
+            sa.PrimaryKeyConstraint('id'),
+            sa.UniqueConstraint('user_id', 'sub_org_id', name='uq_sub_org_membership_user_sub_org'),
+        )
+        op.create_index(
+            'ix_sub_org_memberships_user_id', 'sub_org_memberships', ['user_id'], unique=False,
+        )
+        op.create_index(
+            'ix_sub_org_memberships_sub_org_id', 'sub_org_memberships', ['sub_org_id'], unique=False,
+        )
 
     # 3. Topic.sub_org_id
-    with op.batch_alter_table('topics', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('sub_org_id', sa.String(), nullable=True))
-        batch_op.create_foreign_key(
-            'fk_topics_sub_org_id', 'organizations', ['sub_org_id'], ['id'],
-        )
-        batch_op.create_index(
-            'ix_topics_sub_org_id', ['sub_org_id'], unique=False,
-        )
+    if not _has_column('topics', 'sub_org_id'):
+        with op.batch_alter_table('topics', schema=None) as batch_op:
+            batch_op.add_column(sa.Column('sub_org_id', sa.String(), nullable=True))
+            batch_op.create_foreign_key(
+                'fk_topics_sub_org_id', 'organizations', ['sub_org_id'], ['id'],
+            )
+            batch_op.create_index(
+                'ix_topics_sub_org_id', ['sub_org_id'], unique=False,
+            )
 
     # 4. Proposal.sub_org_id
-    with op.batch_alter_table('proposals', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('sub_org_id', sa.String(), nullable=True))
-        batch_op.create_foreign_key(
-            'fk_proposals_sub_org_id', 'organizations', ['sub_org_id'], ['id'],
-        )
-        batch_op.create_index(
-            'ix_proposals_sub_org_id', ['sub_org_id'], unique=False,
-        )
+    if not _has_column('proposals', 'sub_org_id'):
+        with op.batch_alter_table('proposals', schema=None) as batch_op:
+            batch_op.add_column(sa.Column('sub_org_id', sa.String(), nullable=True))
+            batch_op.create_foreign_key(
+                'fk_proposals_sub_org_id', 'organizations', ['sub_org_id'], ['id'],
+            )
+            batch_op.create_index(
+                'ix_proposals_sub_org_id', ['sub_org_id'], unique=False,
+            )
 
     # 5. DelegateProfile.sub_org_id
-    with op.batch_alter_table('delegate_profiles', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('sub_org_id', sa.String(), nullable=True))
-        batch_op.create_foreign_key(
-            'fk_delegate_profiles_sub_org_id', 'organizations', ['sub_org_id'], ['id'],
-        )
-        batch_op.create_index(
-            'ix_delegate_profiles_sub_org_id', ['sub_org_id'], unique=False,
-        )
+    if not _has_column('delegate_profiles', 'sub_org_id'):
+        with op.batch_alter_table('delegate_profiles', schema=None) as batch_op:
+            batch_op.add_column(sa.Column('sub_org_id', sa.String(), nullable=True))
+            batch_op.create_foreign_key(
+                'fk_delegate_profiles_sub_org_id', 'organizations', ['sub_org_id'], ['id'],
+            )
+            batch_op.create_index(
+                'ix_delegate_profiles_sub_org_id', ['sub_org_id'], unique=False,
+            )
 
 
 def downgrade() -> None:
