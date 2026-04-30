@@ -230,6 +230,21 @@ def health():
     return {"status": "ok", "version": "0.1.0"}
 
 
+@app.get("/api/public-config")
+def public_config():
+    """Frontend-readable feature flags. No auth — read at app boot.
+
+    Phase 9: ``polis_token_configured`` drives the manual-fallback UX
+    (when the platform doesn't have a pol.is admin token configured,
+    Polis-create + archive surfaces show "complete this step on pol.is"
+    reminders rather than treating the API call as the source of truth).
+    """
+    from settings import settings
+    return {
+        "polis_token_configured": bool(getattr(settings, "polis_auth_token", "") or ""),
+    }
+
+
 @app.get("/api/health/ready")
 def health_ready():
     """Readiness probe — verifies database connectivity."""
