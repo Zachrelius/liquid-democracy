@@ -51,6 +51,11 @@ export default function SubOrgSettings() {
   const [vmOverride, setVmOverride] = useState(false);
   const [vmList, setVmList] = useState(['binary']);
 
+  // Deliberation (Phase 9) — `require_polis_for_new_proposals` follows the
+  // same per-key inherit/override pattern as the SM keys.
+  const [requirePolisOverride, setRequirePolisOverride] = useState(false);
+  const [requirePolisValue, setRequirePolisValue] = useState(false);
+
   // Sustained-majority overrides — per-key boolean "override"
   const [smOverrides, setSmOverrides] = useState({}); // {key: bool}
   const [smValues, setSmValues] = useState({}); // {key: value}
@@ -93,6 +98,15 @@ export default function SubOrgSettings() {
     });
     setSmOverrides(overs);
     setSmValues(vals);
+
+    // Deliberation (Phase 9) — sub-org override on require_polis_for_new_proposals.
+    if (Object.prototype.hasOwnProperty.call(s, 'require_polis_for_new_proposals')) {
+      setRequirePolisOverride(true);
+      setRequirePolisValue(!!s.require_polis_for_new_proposals);
+    } else {
+      setRequirePolisOverride(false);
+      setRequirePolisValue(false);
+    }
   }, [subOrg]);
 
   // Fetch topic/proposal counts under this sub-org (for delete gate).
@@ -174,6 +188,10 @@ export default function SubOrgSettings() {
         payload[k] = null;
       }
     });
+    // Deliberation (Phase 9) — sub-org override on require_polis_for_new_proposals.
+    payload.require_polis_for_new_proposals = requirePolisOverride
+      ? !!requirePolisValue
+      : null;
     return payload;
   }
 
@@ -410,6 +428,46 @@ export default function SubOrgSettings() {
             setOverride={v => setSmOverrides(p => ({ ...p, sustained_majority_failure_mode: v }))}
             setValue={v => setSmValues(p => ({ ...p, sustained_majority_failure_mode: v }))}
           />
+        </div>
+      </section>
+
+      {/* Deliberation (Phase 9) */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Deliberation</h2>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+          <p className="text-xs text-gray-500">
+            Inherits from parent: <strong>{parentSettings?.require_polis_for_new_proposals ? 'on' : 'off'}</strong>
+          </p>
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!requirePolisOverride}
+              onChange={e => setRequirePolisOverride(!e.target.checked)}
+              className="mt-0.5 accent-[#2E75B6]"
+            />
+            <div>
+              <p className="text-sm text-gray-700">Use parent default</p>
+              <p className="text-xs text-gray-400">
+                Walk up to the parent org for this setting. Uncheck to set an explicit value here.
+              </p>
+            </div>
+          </label>
+          {requirePolisOverride && (
+            <label className="flex items-start gap-3 cursor-pointer pl-6">
+              <input
+                type="checkbox"
+                checked={!!requirePolisValue}
+                onChange={e => setRequirePolisValue(e.target.checked)}
+                className="mt-0.5 accent-[#2E75B6]"
+              />
+              <div>
+                <p className="text-sm text-gray-700">Require linked Polis for new proposals</p>
+                <p className="text-xs text-gray-400">
+                  Most small orgs leave this off; larger orgs that want structured deliberation as norm turn it on.
+                </p>
+              </div>
+            </label>
+          )}
         </div>
       </section>
 

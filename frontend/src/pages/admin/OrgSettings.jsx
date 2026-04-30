@@ -338,6 +338,27 @@ export default function OrgSettings() {
         </div>
       </section>
 
+      {/* Deliberation (Phase 9) */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Deliberation</h2>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={settings.require_polis_for_new_proposals ?? false}
+              onChange={e => updateSetting('require_polis_for_new_proposals', e.target.checked)}
+              className="mt-0.5 accent-[#2E75B6]"
+            />
+            <div>
+              <p className="text-sm text-gray-700">Require linked Polis for new proposals</p>
+              <p className="text-xs text-gray-400">
+                Most small orgs leave this off; larger orgs that want structured deliberation as norm turn it on.
+              </p>
+            </div>
+          </label>
+        </div>
+      </section>
+
       {/* Public Delegates */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Public Delegates</h2>
