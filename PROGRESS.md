@@ -2196,3 +2196,86 @@ Branch NOT merged to master.
 2. **Real-API integration tests** can't run from CI without an admin token; current tests are HTTP-mocked. Manual verification belongs in Session 4 prod-sanity once a token is provisioned.
 3. **`/embed.js` CSP** — frontend will load from `https://pol.is/embed.js` in Sessions 3-4; confirm `Content-Security-Policy` allows the third-party script source. Frontend session concern.
 
+---
+
+## Phase 9 — Polis Integration — Session 2: Routes + Audit + Proposal Extensions — 2026-04-30
+
+**Branch:** `phase-9/data-layer` (continuing — still NOT merged to master). Session 2 stacks 7 commits on Session 1's 8.
+
+### What shipped (Session 2)
+
+**Schema migration `e72362fd7cd5` (down `e7b3f9a02c14`)** — adds `polises.intended_seed_statements` JSON column. Source of truth for `polis_service.add_seed_statements()` when `POLIS_AUTH_TOKEN` is set; reference list for the manual-fallback "paste these into pol.is admin UI" UX when it's not. Idempotent (b1ab5db pattern). Reversible.
+
+**6 new endpoints in `backend/routes/polises.py`** plus xid endpoint already partially wired in Session 1:
+
+| Method | Path | Auth | Audit |
+|---|---|---|---|
+| POST | `/api/orgs/{slug}/polises` | org moderator+ (org-wide) OR sub-org admin (sub-org) | `polis.created` |
+| GET | `/api/orgs/{slug}/polises` | org member; scope-filtered via `eligible_viewers_for_polis` | — |
+| GET | `/api/orgs/{slug}/polises/{polis_id}` | viewer in `eligible_viewers_for_polis` | — |
+| PATCH | `/api/orgs/{slug}/polises/{polis_id}` | `is_polis_admin` | `polis.config_changed` (title), `polis.archived` (status) |
+| POST | `/api/orgs/{slug}/polises/{polis_id}/xid` | viewer in `eligible_viewers_for_polis` | `polis.xid_generated` (first call only) |
+| GET | `/api/orgs/{slug}/polises/{polis_id}/export[?deanonymize=true]` | `is_polis_admin` | `polis.export_requested` |
+
+**Dual-path create** is the load-bearing piece. Single endpoint dispatches on `settings.polis_auth_token`:
+- **Programmatic path** (token set): ignores any operator-supplied `polis_conversation_id` (always uses the API-returned slug so embed URLs stay aligned), calls `polis_service.create_conversation` + per-seed `add_seed_statement`, atomic on `PolisAPIError`. `partial_seed_failures` populated when 9/10 inserted etc.
+- **Manual-fallback path** (token unset): requires `polis_conversation_id` from operator (the slug they created on pol.is), 400 if absent. `manual_seed_statements_required: true` in response.
+- Both paths: `intended_seed_statements` stored regardless. `programmatic_path` flag in the response tells the FE which dispatch ran.
+
+**Archive flow** records both platform-side state and pol.is API call result. `polis.archived` audit detail includes `polis_api_call_result: 'success' | 'failed' | 'no_token'` so the manual-fallback case (platform marked archived but pol.is conversation may still be live) is auditable.
+
+**Proposal extensions (`routes/proposals.py` + `routes/organizations.py`):**
+- POST/PATCH proposal endpoints accept optional `linked_polis_ids: list[str]`. Validation helper `_validate_linked_polis_ids` lifted from Session 1's `tests/test_proposal_linked_polises.py` into `routes/proposals.py` (existence / scope / status='active'; HTTPException 400 on first failure).
+- When `get_org_config(org, "require_polis_for_new_proposals", False)` is True, reject creation/update without at least one valid `linked_polis_id`. Sub-orgs inherit via parent-chain walk (Decision 9).
+- Audit on diff: `polis.linked_to_proposal` per newly-linked Polis, `polis.unlinked_from_proposal` per removed link.
+- `GET /api/orgs/{slug}/proposals/{id}` response includes resolved `linked_polises: [{id, title, prompt, status, participation_count}]`. Stats fail-soft per Session 1's pattern.
+
+**Pydantic schemas (`backend/schemas.py`):** `PolisCreate` / `PolisUpdate` / `PolisOut` / `PolisCreateResponse` / `PolisXidResponse`. `linked_polis_ids` added to `ProposalCreate` / `ProposalUpdate` / `ProposalOut`.
+
+**Audit events firing** (all 7 polis.* types — 1 from Session 1 + 6 new this session): `polis.created`, `polis.config_changed`, `polis.archived` (with `polis_api_call_result`), `polis.linked_to_proposal`, `polis.unlinked_from_proposal`, `polis.xid_generated`, `polis.export_requested`. Aggregate-only payloads per Phase 7.5 redaction. Sample at `test_results/phase9_screenshots/session2_audit_log_sample.txt` (9 rows captured by `TestAuditEventCoverage::test_all_six_polis_audit_events_fire`).
+
+**Backend tests: 433 → 459 passing (+26).** Spec target was ~450+. Single new file `backend/tests/test_polis_routes.py`. Multi-persona scope visibility (alice/dave/carol/voter02/frank), permission gating (Decision 6 implicit + non-admin denial), dual-path create coverage (HTTP-mocked programmatic + no-token manual-fallback), `require_polis_for_new_proposals` enforce + sub-org override, audit-event coverage composite, export endpoint admin/non-admin paths.
+
+**PostgreSQL smoke: PASS** — `pg_smoke.py --mode both --prior-revision e7b3f9a02c14` exercises both fresh-DB and upgrade-from-Session-1 paths. Spot-check confirms `polises.intended_seed_statements` column exists post-upgrade.
+
+### Session 3 prerequisites (frontend admin team)
+
+For the next session — admin-side UI: Polis nav, list page, detail page, creation form, archive action, "Deliberation" settings section.
+
+**Route URL list with auth requirements:** see the table above. Schema names map straight to Pydantic shapes in `backend/schemas.py`.
+
+**Dual-path create — FE attention items:**
+- **`programmatic_path` flag** in `PolisCreateResponse` tells the FE which dispatch ran. The "Create Polis" form's success state should branch on this — show different copy / next steps depending on path.
+- **`manual_seed_statements_required: true`** when present means the operator entered seeds but no API token is set — render a "paste these into the pol.is admin UI" panel using `polis.intended_seed_statements`.
+- **`partial_seed_failures`** is non-null when the API path inserted some seeds but not all — surface a "9/10 inserted, retry on pol.is" warning. Optional but recommended.
+- **`polis_api_call_result`** in `polis.archived` audit details: `success` / `failed` / `no_token`. The `failed` and `no_token` cases mean the platform marked archived but the pol.is conversation may still accept participation; admin must close manually. **Tech-debt note:** the API response on archive doesn't currently include this field — only the audit log does. FE may need an audit-log fetch or a new response field — see tech debt #3 below.
+
+**FE schema-to-component map:**
+- `PolisOut.embed_url` is computed server-side from `polis_api_base_url + conversation_id`. Returns `null` when conversation_id is missing (manual-fallback Polis pre-paste). FE iframe should hide when null.
+- `PolisOut.intended_seed_statements` is the field FE renders for the manual-fallback "paste these into pol.is admin UI" UX.
+- `PolisOut.participation_stats` (when included on detail) carries `live_stats_unavailable: true` flag when stats fetch failed — show a "stats temporarily unavailable" banner rather than zeros.
+- `ProposalOut.linked_polis_ids` is the array of UUIDs; resolve to `linked_polises` (rich shape) is included on detail GET only — FE should request detail GET when rendering link cards.
+
+**Permissions semantics (FE should mirror to disable buttons):**
+- Polis create — org `moderator+` for org-wide; `is_sub_org_admin` for sub-org (Decision 6 implicit covers parent-org admin without sub-org membership).
+- Polis archive / title edit — `is_polis_admin` (creator OR sub-org admin OR parent-org admin).
+- Polis export — `is_polis_admin`. Deanonymize-true flag: same gate; UI confirmation dialog recommended given the privacy implication.
+- xid endpoint — auto-called when iframe mounts; FE doesn't need a UI for it.
+
+### Session 2 commits on `phase-9/data-layer`
+
+`8cac889` (schema migration), `fa0e701` (Pydantic schemas), `21bfa32` (Polis CRUD route module), `dff0bc1` (Proposal extensions), `42b7ef5` (26 integration tests), `e75c043` (PG smoke + audit log sample), plus the closeout commit for this PROGRESS entry.
+
+Branch still NOT merged to master.
+
+### CompDemocracy contact status
+
+Out-of-band per the dispatch — lead's job. No update from CompDemocracy as of Session 2 close. v1 ships against the manual-fallback path; programmatic path lights up when token is provisioned.
+
+### New tech debt logged (Session 2)
+
+1. **N+1 on `linked_polises` resolution** — `GET /api/orgs/{slug}/proposals/{id}` makes one `polis_service.get_participation_stats` HTTP call per linked Polis. Spec frames "small number per proposal" so left as-is; if real-world usage spikes link counts, batch the stats fetch or render a "loading…" skeleton client-side.
+2. **Deanonymized export shape** is a single-file concatenation with a `--- POLIS EXPORT ---` separator. v1-grade; multipart MIME or paired-files response would be cleaner.
+3. **Manual-fallback archive doesn't surface "go close on pol.is" reminder in the response.** Audit captures `polis_api_call_result: 'no_token' | 'failed'` for ops review, but the API response is a plain `PolisOut`. FE design discussion needed: fetch audit log, or extend response with a result field? Surface for Session 3.
+4. **`org_config.get_org_config` walks `parent_org` ORM relationship** — on SQLite-in-memory may need explicit `db.refresh(sub)` after creation for the relationship to populate. Session 2's `require_polis_for_new_proposals` sub-org-override test does this. Worth a note in the helper docstring.
+
