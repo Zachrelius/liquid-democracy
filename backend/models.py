@@ -677,6 +677,17 @@ class Polis(Base):
     )
     archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
+    # Phase 9 Session 2: operator-entered seed statements at create-Polis time.
+    # Programmatic path (POLIS_AUTH_TOKEN set): source of truth for
+    # polis_service.add_seed_statements() so a partial-failure replay can
+    # know what was supposed to be inserted. Manual-fallback path (no token):
+    # reference list for the "paste these into pol.is admin UI" UX in the
+    # frontend. Nullable; treated as "none recorded" (== empty list) by
+    # consumers. Stored as a JSON array of strings.
+    intended_seed_statements: Mapped[Optional[list[str]]] = mapped_column(
+        JSON, nullable=True,
+    )
+
     organization: Mapped["Organization"] = relationship(
         "Organization", foreign_keys=[org_id],
     )
