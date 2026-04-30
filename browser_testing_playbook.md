@@ -2372,6 +2372,36 @@ voter lists) lands.
 
 ---
 
+## Suite S Preview — Phase 9 Polis Integration (Session 4)
+
+Suite S will be 12 browser-driven tests covering the Polis flow end-to-end.
+Built but not run this session (frontend voter UX, embed iframe, URL detection,
+privacy disclosure modal, public Polis page, notification badge, help page are
+all Session 4 territory; Session 3 shipped admin-side UI only). Test list per
+the spec:
+
+- **S1** — Org admin creates a Polis via the create form; appears in admin Polis list.
+- **S2** — Sub-org admin creates sub-org Polis; visible to sub-org members, hidden from non-sub-org parent-org-only members when sub-org `settings.private` is true.
+- **S3** — Polis detail page renders embedded iframe with correct `data-xid` and prompt.
+- **S4** — Privacy disclosure modal appears on first Polis visit; dismisses; doesn't reappear on same-Polis revisit.
+- **S5** — Proposal author creates proposal with linked Polis via picker; proposal detail page renders link card.
+- **S6** — Proposal body URL detection: pasting a pol.is URL into proposal body renders as link card.
+- **S7** — Org-config require-polis: when true, proposal creation form blocks submission without link; when false, link is optional.
+- **S8** — Sub-org override of require-polis: sub-org admin overrides parent's setting; proposal creation in sub-org uses sub-org's value.
+- **S9** — Polis archive: admin archives a Polis; existing linked proposals show "archived" state on link cards.
+- **S10** — Polis list scope filtering: voter02 (parent-org-only member) does not see Engineering Team Polises in list when private flag is on; alice (parent admin) sees all.
+- **S11** — New-Polis notification badge: creating a Polis in scope increments member's notification badge.
+- **S12** — Help page accessible without auth: incognito browser hits `/help/polis`, page renders.
+
+Demo seed (Phase 9 Session 2): parent org `demo` with at least one org-wide
+Polis and one sub-org Polis with seed statements. Admin-side flows from
+Session 3 are exercisable now via local dev; Suite S itself runs in Session 4
+once voter UX (link cards on proposal detail, URL detection in proposal body,
+privacy disclosure modal, public Polis member view, notification badge,
+`/help/polis` page) lands.
+
+---
+
 ## Extending This Document
 
 When new phases are completed, add new test suites to this document following the same format:
