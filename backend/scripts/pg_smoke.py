@@ -61,11 +61,12 @@ _BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
-# Default prior revision: Phase 8.5 sub-organizations. Phase 9 bumps this
-# from c5f3a2b81e07 (Phase 8) to d41a8c92f3b1 (Phase 8.5) so the harness
-# exercises the Phase 8.5 → Phase 9 upgrade path that Session 1's migration
-# ships. The next pass should bump again to e7b3f9a02c14 (Phase 9).
-_DEFAULT_PRIOR_REV = "d41a8c92f3b1"
+# Default prior revision: Phase 9 Session 1 (e7b3f9a02c14). Session 2 ships
+# a single column-add (`polises.intended_seed_statements`) on top of Session
+# 1's data layer; the upgrade-from-prior path exercises ONLY that increment
+# rather than re-running Session 1's table-create from Phase 8.5. Bump again
+# in the next pass.
+_DEFAULT_PRIOR_REV = "e7b3f9a02c14"
 
 _DEFAULT_PG_IMAGE = "postgres:16-alpine"
 _DEFAULT_PG_PORT = 55433  # Distinct from Phase 8.5's 55432 to avoid clash.
@@ -254,6 +255,16 @@ def _smoke_spot_check(db_url: str, label: str) -> None:
             )).scalar()
             assert res, (
                 f"[{label}] proposals.linked_polis_ids column missing"
+            )
+
+            # Phase 9 Session 2's intended_seed_statements column on polises.
+            res = conn.execute(text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema='public' AND table_name='polises' "
+                "AND column_name='intended_seed_statements'"
+            )).scalar()
+            assert res, (
+                f"[{label}] polises.intended_seed_statements column missing"
             )
 
             # alembic_version row matches head

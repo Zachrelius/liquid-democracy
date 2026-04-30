@@ -1,0 +1,138 @@
+Phase 9 Session 2 — sample audit log rows from the TestAuditEventCoverage composite test sequence.
+Captures one of each of the 7 polis.* event types, in natural emission order.
+
+[
+  {
+    "id": "1cb366e9-b031-460e-94dc-3a9f911c40f3",
+    "timestamp": "2026-04-30 00:09:06.684204",
+    "actor_id": "9b18497d-af3b-4364-aa26-f8b567ab7e19",
+    "action": "polis.created",
+    "target_type": "polis",
+    "target_id": "9db2e0c8-67f2-4889-bfaa-f73f79960401",
+    "details": {
+      "polis_id": "9db2e0c8-67f2-4889-bfaa-f73f79960401",
+      "org_id": "11c9bbb4-2c45-4205-8d33-d1925c4f7004",
+      "sub_org_id": null,
+      "title": "Audit-T",
+      "programmatic_path": false,
+      "polis_conversation_id": "audit-conv-1"
+    },
+    "ip_address": "testclient"
+  },
+  {
+    "id": "587b5170-9cf2-406b-9172-c279f4ee908e",
+    "timestamp": "2026-04-30 00:09:06.692938",
+    "actor_id": "9b18497d-af3b-4364-aa26-f8b567ab7e19",
+    "action": "polis.created",
+    "target_type": "polis",
+    "target_id": "f97b1906-1896-470c-9a53-000935dc2f70",
+    "details": {
+      "polis_id": "f97b1906-1896-470c-9a53-000935dc2f70",
+      "org_id": "11c9bbb4-2c45-4205-8d33-d1925c4f7004",
+      "sub_org_id": null,
+      "title": "Other",
+      "programmatic_path": false,
+      "polis_conversation_id": "audit-conv-2"
+    },
+    "ip_address": "testclient"
+  },
+  {
+    "id": "b2197c50-e96d-443a-9578-a45a3741f28e",
+    "timestamp": "2026-04-30 00:09:06.710965",
+    "actor_id": "9b18497d-af3b-4364-aa26-f8b567ab7e19",
+    "action": "polis.linked_to_proposal",
+    "target_type": "polis",
+    "target_id": "9db2e0c8-67f2-4889-bfaa-f73f79960401",
+    "details": {
+      "proposal_id": "2a12958c-56d2-4412-a467-8c7b1a96fdd6",
+      "polis_id": "9db2e0c8-67f2-4889-bfaa-f73f79960401",
+      "by_actor": "9b18497d-af3b-4364-aa26-f8b567ab7e19"
+    },
+    "ip_address": "testclient"
+  },
+  {
+    "id": "8ae6248c-4070-4f7f-997f-56850b516d06",
+    "timestamp": "2026-04-30 00:09:06.865781",
+    "actor_id": "9b18497d-af3b-4364-aa26-f8b567ab7e19",
+    "action": "polis.linked_to_proposal",
+    "target_type": "polis",
+    "target_id": "f97b1906-1896-470c-9a53-000935dc2f70",
+    "details": {
+      "proposal_id": "2a12958c-56d2-4412-a467-8c7b1a96fdd6",
+      "polis_id": "f97b1906-1896-470c-9a53-000935dc2f70",
+      "by_actor": "9b18497d-af3b-4364-aa26-f8b567ab7e19"
+    },
+    "ip_address": null
+  },
+  {
+    "id": "752b132a-daa5-4377-9349-0be01d88a0d9",
+    "timestamp": "2026-04-30 00:09:06.865781",
+    "actor_id": "9b18497d-af3b-4364-aa26-f8b567ab7e19",
+    "action": "polis.unlinked_from_proposal",
+    "target_type": "polis",
+    "target_id": "9db2e0c8-67f2-4889-bfaa-f73f79960401",
+    "details": {
+      "proposal_id": "2a12958c-56d2-4412-a467-8c7b1a96fdd6",
+      "polis_id": "9db2e0c8-67f2-4889-bfaa-f73f79960401",
+      "by_actor": "9b18497d-af3b-4364-aa26-f8b567ab7e19"
+    },
+    "ip_address": null
+  },
+  {
+    "id": "8aa5811d-cc1e-4045-a65f-dcc67cd4cb25",
+    "timestamp": "2026-04-30 00:09:06.980519",
+    "actor_id": "9b18497d-af3b-4364-aa26-f8b567ab7e19",
+    "action": "polis.config_changed",
+    "target_type": "polis",
+    "target_id": "9db2e0c8-67f2-4889-bfaa-f73f79960401",
+    "details": {
+      "polis_id": "9db2e0c8-67f2-4889-bfaa-f73f79960401",
+      "changes": {
+        "title": {
+          "old": "Audit-T",
+          "new": "Audit-T (renamed)"
+        }
+      }
+    },
+    "ip_address": "testclient"
+  },
+  {
+    "id": "cc559e86-a2fc-48b6-91aa-0a9655ab8987",
+    "timestamp": "2026-04-30 00:09:06.986516",
+    "actor_id": "9b18497d-af3b-4364-aa26-f8b567ab7e19",
+    "action": "polis.archived",
+    "target_type": "polis",
+    "target_id": "9db2e0c8-67f2-4889-bfaa-f73f79960401",
+    "details": {
+      "polis_id": "9db2e0c8-67f2-4889-bfaa-f73f79960401",
+      "polis_api_call_result": "no_token"
+    },
+    "ip_address": "testclient"
+  },
+  {
+    "id": "b78300ff-c578-4544-be94-3525e3785d79",
+    "timestamp": "2026-04-30 00:09:06.993514",
+    "actor_id": "9b18497d-af3b-4364-aa26-f8b567ab7e19",
+    "action": "polis.export_requested",
+    "target_type": "polis",
+    "target_id": "f97b1906-1896-470c-9a53-000935dc2f70",
+    "details": {
+      "polis_id": "f97b1906-1896-470c-9a53-000935dc2f70",
+      "deanonymized": false
+    },
+    "ip_address": "testclient"
+  },
+  {
+    "id": "e1c29455-859b-4d42-b906-f801f41b8b43",
+    "timestamp": "2026-04-30 00:09:07.003514",
+    "actor_id": "9b18497d-af3b-4364-aa26-f8b567ab7e19",
+    "action": "polis.xid_generated",
+    "target_type": "polis_xid",
+    "target_id": "688452b5-a1af-4a2d-a6e0-3857187572a8",
+    "details": {
+      "user_id": "9b18497d-af3b-4364-aa26-f8b567ab7e19",
+      "org_id": "11c9bbb4-2c45-4205-8d33-d1925c4f7004"
+    },
+    "ip_address": "testclient"
+  }
+]
