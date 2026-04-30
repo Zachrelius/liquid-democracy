@@ -278,6 +278,11 @@ class ProposalCreate(BaseModel):
     # If non-null, all referenced topics must be either parent-org-wide or
     # the same sub-org's; eligibility derives via SubOrgMembership.
     sub_org_id: Optional[str] = None
+    # Phase 9 Decision 2 / Decision 7: structurally-recorded Polis links.
+    # Validated at route layer (each ID must exist, viewer must be in
+    # eligible_viewers_for_polis, status must be active). Required when
+    # the org's `require_polis_for_new_proposals` config is True.
+    linked_polis_ids: Optional[list[str]] = None
 
     @field_validator("voting_method")
     @classmethod
@@ -306,6 +311,10 @@ class ProposalUpdate(BaseModel):
     # Use Field with explicit default sentinel so omitted vs. null differ:
     # we only update the column when the field is present in the payload.
     sustained_majority_enabled: Optional[bool] = Field(default=None)
+    # Phase 9 — replace the linked-Polis set on update (omitted = leave alone).
+    # When present, the route diffs old vs. new and emits
+    # `polis.linked_to_proposal` / `polis.unlinked_from_proposal` per change.
+    linked_polis_ids: Optional[list[str]] = Field(default=None)
 
     @field_validator("topics", mode="before")
     @classmethod
@@ -345,6 +354,10 @@ class ProposalOut(BaseModel):
     sustained_majority_enabled: Optional[bool] = None
     # Phase 8.5 — null for parent-org-wide proposals.
     sub_org_id: Optional[str] = None
+    # Phase 9 — structurally-linked Polises. Stored on Proposal.linked_polis_ids
+    # JSON column; resolved into rich objects on detail GET.
+    linked_polis_ids: Optional[list[str]] = None
+    linked_polises: Optional[list[dict]] = None
 
     model_config = {"from_attributes": True}
 
@@ -1224,3 +1237,94 @@ class PromoteTopicToOrgwide(BaseModel):
     `confirm: true` to ensure clients have shown a confirmation UI.
     """
     confirm: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — Polis schemas
+# ---------------------------------------------------------------------------
+
+class PolisCreate(BaseModel):
+    """Body for `POST /api/orgs/{slug}/polises`.
+
+    Dual-path create per `phase9_polis_api_findings.md`:
+      - Programmatic path (settings.polis_auth_token set): the route calls
+        pol.is to create the conversation and seed it; `polis_conversation_id`
+        in the body is ignored (the route computes it from the API response).
+      - Manual-fallback (no auth token): the operator created the conversation
+        on pol.is themselves and pastes the slug in `polis_conversation_id`.
+        The seed_statements list is preserved as `intended_seed_statements`
+        on the platform record so the FE can render "paste these into pol.is
+        admin UI" UX.
+    """
+    title: str = Field(min_length=1, max_length=500)
+    prompt: str = Field(min_length=1, max_length=10000)
+    sub_org_id: Optional[str] = None
+    seed_statements: list[str] = Field(default_factory=list, max_length=200)
+    polis_conversation_id: Optional[str] = Field(
+        default=None, min_length=1, max_length=300,
+    )
+
+
+class PolisUpdate(BaseModel):
+    """Body for `PATCH /api/orgs/{slug}/polises/{polis_id}`.
+
+    Only title edits and archival are exposed in v1 (Decision 8 lifecycle:
+    active -> archived). `status` may only be `'archived'` — other transitions
+    are rejected at the route layer.
+    """
+    title: Optional[str] = Field(default=None, min_length=1, max_length=500)
+    status: Optional[str] = Field(default=None)
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v != "archived":
+            raise ValueError(
+                "status may only be set to 'archived' (v1 lifecycle)"
+            )
+        return v
+
+
+class PolisOut(BaseModel):
+    id: str
+    org_id: str
+    sub_org_id: Optional[str] = None
+    polis_conversation_id: Optional[str] = None
+    title: str
+    prompt: str
+    status: str
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+    archived_at: Optional[datetime] = None
+    intended_seed_statements: Optional[list[str]] = None
+    embed_url: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PolisCreateResponse(BaseModel):
+    """Response for `POST /api/orgs/{slug}/polises`.
+
+    `programmatic_path` tells the frontend which dispatch ran:
+      - True: pol.is API was called; `polis_conversation_id` is real and
+        seeds were inserted server-side. Check `partial_seed_failures` for
+        per-seed error info if any seed posts failed.
+      - False: manual-fallback. Operator must seed manually via the pol.is
+        admin UI; FE should render the `intended_seed_statements` from
+        `polis` for "paste these in" UX. `manual_seed_statements_required`
+        is True in this case.
+    """
+    polis: PolisOut
+    programmatic_path: bool
+    manual_seed_statements_required: Optional[bool] = None
+    partial_seed_failures: Optional[list[dict]] = None
+
+
+class PolisXidResponse(BaseModel):
+    """Response for `POST /api/orgs/{slug}/polises/{polis_id}/xid`.
+
+    The xid is the Decision-4 pseudonymous bridging ID passed to pol.is's
+    embed via `data-xid`. Lazily generated on first call per (user, org).
+    """
+    polis_xid: str
