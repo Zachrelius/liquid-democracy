@@ -38,8 +38,10 @@ import Polises from './pages/admin/Polises';
 import PolisDetail from './pages/admin/PolisDetail';
 import CreatePolis from './pages/admin/CreatePolis';
 import SubOrgPolises from './pages/admin/SubOrgPolises';
+import Polis from './pages/Polis';
 import VotingMethodsHelp from './pages/VotingMethodsHelp';
 import SustainedMajorityHelp from './pages/SustainedMajorityHelp';
+import PolisHelp from './pages/PolisHelp';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Landing from './pages/Landing';
@@ -360,11 +362,28 @@ export default function App() {
           element={<Navigate to="settings" replace />}
         />
 
+        {/* Phase 9 — voter-facing Polis page (Decision 4 + 5 surface). Gated
+            ProtectedRoute > OrgProvider > Layout. No AdminRoute — voters
+            access this. Server-side `eligible_viewers_for_polis` returns
+            403/404 if out-of-scope; the page surfaces those as friendly
+            errors (read-only banner for sub-org non-members per Decision 7). */}
+        <Route
+          path="/orgs/:slug/polises/:polis_id"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><Polis /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+
         {/* Public — help pages are purely informational and may be linked from
             external surfaces (Security & Trust, etc.) where the visitor is not
             logged in. Don't gate them on auth. */}
         <Route path="/help/voting-methods" element={<VotingMethodsHelp />} />
         <Route path="/help/sustained-majority" element={<SustainedMajorityHelp />} />
+        <Route path="/help/polis" element={<PolisHelp />} />
 
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />

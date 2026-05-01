@@ -115,8 +115,12 @@ export default function CreatePolis() {
     return (
       <SuccessPanel
         result={result}
+        parentSlug={parentSlug}
         pastedConversationId={pastedConversationId}
         setPastedConversationId={setPastedConversationId}
+        onConnected={(updatedPolis) => {
+          setResult(prev => prev ? { ...prev, polis: updatedPolis } : prev);
+        }}
         onGoToDetail={() => {
           const id = result.polis.id;
           if (isSubOrgRoute) {
@@ -360,13 +364,15 @@ export default function CreatePolis() {
  */
 function SuccessPanel({
   result,
-  pastedConversationId, setPastedConversationId, onGoToDetail,
+  parentSlug,
+  pastedConversationId, setPastedConversationId, onGoToDetail, onConnected,
 }) {
   const toast = useToast();
   const polis = result.polis;
   const programmatic = !!result.programmatic_path;
   const partialFailures = result.partial_seed_failures || [];
   const seeds = polis.intended_seed_statements || [];
+  const [savingConn, setSavingConn] = useState(false);
 
   function copyOne(text) {
     if (!text) return;
@@ -384,24 +390,34 @@ function SuccessPanel({
     );
   }
 
-  // TODO (Session 4 / API gap): the manual-fallback flow ideally lets the
-  // operator paste a conversation_id post-create and PATCH it onto the row.
-  // Session 2's PATCH only accepts `title` and `status`. Until that's
-  // extended, we capture the value here in component state but the Save
-  // handler is a no-op + toast that surfaces the gap. With the current
-  // backend the operator must include the conversation_id in the create
-  // request (see CreatePolis form) — this success-panel field is reserved
-  // for the future where create-without-conversation-id becomes valid.
+  // Phase 9 Session 4 — the API gap is closed (PolisUpdate accepts
+  // polis_conversation_id; one-shot connect, audited as polis.connected).
+  // Wire the Save button to PATCH and refresh the success panel state on
+  // success so the input disappears. 400 = "already set" or empty.
   async function handleSaveConversationId() {
-    // SESSION 4 TODO: when PATCH is extended, replace this with:
-    //   await api.patch(`/api/orgs/${parentSlug}/polises/${polis.id}`, {
-    //     polis_conversation_id: pastedConversationId.trim(),
-    //   });
-    toast.error(
-      'API gap: the platform-side PATCH does not yet accept polis_conversation_id. ' +
-      'See Session 3 closeout report. As a workaround, the conversation_id was ' +
-      'captured at create-time on the previous form.',
-    );
+    const cid = pastedConversationId.trim();
+    if (!cid) {
+      toast.error('Paste a conversation_id first.');
+      return;
+    }
+    if (!parentSlug) {
+      toast.error('Cannot resolve org slug — refresh and try again.');
+      return;
+    }
+    setSavingConn(true);
+    try {
+      const updated = await api.patch(
+        `/api/orgs/${parentSlug}/polises/${polis.id}`,
+        { polis_conversation_id: cid },
+      );
+      toast.success('Connected to pol.is — conversation_id saved.');
+      if (onConnected) onConnected(updated);
+      setPastedConversationId('');
+    } catch (e) {
+      toast.error(e.message || 'Failed to save conversation_id.');
+    } finally {
+      setSavingConn(false);
+    }
   }
 
   if (programmatic) {
@@ -504,27 +520,30 @@ function SuccessPanel({
         </div>
       </div>
 
-      {/* Conversation_id input (post-create). Currently disabled until
-          API gap is closed; see Session 3 closeout. */}
+      {/* Conversation_id input (post-create) — Phase 9 Session 4: wired to
+          PATCH polis_conversation_id (one-shot connect). Once saved, the
+          panel re-renders with the captured-at-create-time line above and
+          this input disappears. */}
       {!polis.polis_conversation_id && (
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
-          <p className="text-sm font-semibold text-gray-700">Paste conversation_id (optional)</p>
+          <p className="text-sm font-semibold text-gray-700">Paste conversation_id</p>
           <div className="flex items-center gap-2">
             <input
               type="text"
               value={pastedConversationId}
               onChange={e => setPastedConversationId(e.target.value)}
               placeholder="e.g. 3jrhnuhnjs"
-              className="flex-1 max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              disabled={savingConn}
+              className="flex-1 max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] disabled:opacity-50"
             />
             <button
               onClick={handleSaveConversationId}
-              className="text-sm px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6]"
-            >Save</button>
+              disabled={savingConn || !pastedConversationId.trim()}
+              className="text-sm px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
+            >{savingConn ? 'Saving…' : 'Save'}</button>
           </div>
-          <p className="text-xs text-amber-600">
-            Note: this field is wired through, but the platform-side PATCH does
-            not yet accept polis_conversation_id (Session 4 prerequisite).
+          <p className="text-xs text-gray-500">
+            Once saved, the conversation_id is locked (one-shot connect — admin tooling required to change it).
           </p>
         </div>
       )}
