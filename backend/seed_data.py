@@ -427,6 +427,50 @@ def _add_sub_org_membership(
     return m
 
 
+def _get_or_create_polis(
+    db: Session,
+    title: str,
+    prompt: str,
+    org_id: str,
+    sub_org_id: Optional[str],
+    created_by: str,
+    polis_conversation_id: Optional[str] = None,
+    status: str = "active",
+    seed_statements_count: int = 10,
+) -> models.Polis:
+    """Phase 9: idempotent Polis seed.
+
+    Skip-if-exists keyed on title + org_id + sub_org_id, so re-running
+    seed never creates duplicates. ``seed_statements_count`` is metadata
+    only — the seed doesn't actually call pol.is (no
+    POLIS_AUTH_TOKEN in dev). Real-API seed insertion is Session 2/4.
+    """
+    existing = db.query(models.Polis).filter(
+        models.Polis.title == title,
+        models.Polis.org_id == org_id,
+        models.Polis.sub_org_id == sub_org_id,
+    ).first()
+    if existing:
+        return existing
+    polis = models.Polis(
+        title=title,
+        prompt=prompt,
+        org_id=org_id,
+        sub_org_id=sub_org_id,
+        created_by=created_by,
+        polis_conversation_id=polis_conversation_id,
+        status=status,
+    )
+    db.add(polis)
+    db.flush()
+    log.info(
+        "Seeded Polis %r (id=%s, sub_org_id=%s, conv=%s, %d seed statements planned)",
+        title, polis.id, sub_org_id, polis_conversation_id,
+        seed_statements_count,
+    )
+    return polis
+
+
 def _seed_demo(db: Session) -> dict:
     log.info("Seeding Phase 2 full demo scenario…")
 
@@ -1249,6 +1293,58 @@ def _seed_demo(db: Session) -> dict:
 
     db.commit()
     log.info("Phase 8.5 sub-org seed scenarios added.")
+
+    # ── Phase 9: Polis seed scenarios ─────────────────────────────────────
+    # Decision 1 (first-class artifact), Decision 5 (visibility mirrors
+    # topics/proposals), Decision 6 (creator-tier matches topic creation).
+    #
+    # Two seed Polises so QA can exercise both scopes without manual
+    # creation:
+    #   1. Org-wide "Annual Priorities for 2026" — created by alice
+    #      (parent-org admin), visible to all demo-org members.
+    #   2. Sub-org-scoped "Engineering — Tooling Priorities" — created by
+    #      dave (sub-org admin), visible to Engineering Team members
+    #      plus parent-org admins (alice) per Decision 7 default visibility.
+    #
+    # `polis_conversation_id` uses placeholder slugs in dev/demo since we
+    # don't have POLIS_AUTH_TOKEN configured. The frontend's iframe embed
+    # will fail-soft against these placeholders (Polis returns "conversation
+    # not found"). Production seed runs would need real conversation IDs —
+    # that's Session 2/4 work.
+    _get_or_create_polis(
+        db,
+        title="Demo Org — Annual Priorities for 2026",
+        prompt=(
+            "What should the Demo Org focus on this year? Share statements "
+            "about priorities, areas of investment, or directions worth "
+            "exploring. Vote agree/disagree on others' statements to find "
+            "consensus and divergence."
+        ),
+        org_id=demo_org.id,
+        sub_org_id=None,
+        created_by=alice.id,
+        polis_conversation_id="demo-polis-org-wide",
+        seed_statements_count=10,
+    )
+    _get_or_create_polis(
+        db,
+        title="Engineering Team — Tooling Priorities",
+        prompt=(
+            "What engineering tooling investments would have the most "
+            "impact on team productivity over the next quarter? Submit "
+            "statements about CI/CD, testing infra, code review tooling, "
+            "or developer-experience improvements; vote on others' to "
+            "surface team consensus."
+        ),
+        org_id=demo_org.id,
+        sub_org_id=eng_sub_org.id,
+        created_by=dave.id,
+        polis_conversation_id="demo-polis-engineering",
+        seed_statements_count=10,
+    )
+
+    db.commit()
+    log.info("Phase 9 Polis seed scenarios added.")
 
     all_usernames = ["alice", "dr_chen", "econ_bob", "carol", "dave", "env_emma",
                      "rights_raj", "frank", "admin"] + [u for (u, _) in seed_voter_names]

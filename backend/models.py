@@ -287,6 +287,14 @@ class Proposal(Base):
     # Authors can only set non-null when org has
     # `sustained_majority_per_proposal_override: true`.
     sustained_majority_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # Phase 9: structurally-recorded links to Polis artifacts. List of
+    # `polises.id` UUID strings. Null = unset (no structural links); empty
+    # list = author explicitly cleared. URL-detected links in the proposal
+    # body are NOT stored here — they are rendered by the body parser at
+    # read time. This column only carries the structurally-recorded set
+    # used by the `require_polis_for_new_proposals` enforcement and the
+    # admin "linked deliberations" picker.
+    linked_polis_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now, nullable=False)
 
@@ -618,3 +626,112 @@ class DelegationIntent(Base):
     delegate: Mapped["User"] = relationship("User", foreign_keys=[delegate_id])
     topic: Mapped[Optional["Topic"]] = relationship("Topic")
     follow_request: Mapped["FollowRequest"] = relationship("FollowRequest")
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — Polis (standalone deliberation artifact)
+# ---------------------------------------------------------------------------
+
+class Polis(Base):
+    """A standalone deliberation artifact, parallel to Topic and Proposal.
+
+    Phase 9 Decision 1: a Polis is a first-class organizational artifact
+    with its own lifecycle (`active` -> `archived`), not a phase coupled
+    to a proposal. Visibility scope mirrors topics/proposals: org-wide
+    when ``sub_org_id`` IS NULL, sub-org-scoped otherwise.
+
+    The platform stores ``polis_conversation_id`` (the opaque slug returned
+    by pol.is, 6-300 chars per pol.is API) so we can build embed URLs and
+    fetch live participation stats. The column is nullable to support the
+    manual-creation fallback flow (admin creates the conversation on pol.is
+    first, then pastes the conversation_id into the platform); see
+    `phase9_polis_api_findings.md`.
+    """
+    __tablename__ = "polises"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    # Phase 9 Decision 5: NULL = org-wide, non-NULL = sub-org-scoped.
+    sub_org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=True, index=True,
+    )
+    # Opaque slug from pol.is. 6-300 chars per pol.is API; nullable for
+    # manual-creation fallback / pending states.
+    polis_conversation_id: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, index=True,
+    )
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True,
+    )
+    # Phase 9 Decision 8: lifecycle is `active` -> `archived`. Stored as
+    # plain String to match Phase 8's pattern (avoids enum-rebuild
+    # migration headaches across PG/SQLite).
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, onupdate=_now, nullable=False,
+    )
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # Phase 9 Session 2: operator-entered seed statements at create-Polis time.
+    # Programmatic path (POLIS_AUTH_TOKEN set): source of truth for
+    # polis_service.add_seed_statements() so a partial-failure replay can
+    # know what was supposed to be inserted. Manual-fallback path (no token):
+    # reference list for the "paste these into pol.is admin UI" UX in the
+    # frontend. Nullable; treated as "none recorded" (== empty list) by
+    # consumers. Stored as a JSON array of strings.
+    intended_seed_statements: Mapped[Optional[list[str]]] = mapped_column(
+        JSON, nullable=True,
+    )
+
+    organization: Mapped["Organization"] = relationship(
+        "Organization", foreign_keys=[org_id],
+    )
+    sub_organization: Mapped[Optional["Organization"]] = relationship(
+        "Organization", foreign_keys=[sub_org_id],
+    )
+    creator: Mapped["User"] = relationship("User", foreign_keys=[created_by])
+
+
+class PolisXid(Base):
+    """Per-user-per-org pseudonymous ID for pol.is participation.
+
+    Phase 9 Decision 4 — identity bridging. The `polis_xid` is an opaque
+    random string passed to pol.is via the embed's ``data-xid`` attribute,
+    so that:
+      - participants get cross-session continuity within a Polis (same xid
+        -> same dot in the visualization);
+      - pol.is doesn't see platform user identity;
+      - the platform can deanonymize for moderation by joining
+        ``polis_xid -> user_id``.
+
+    Generated lazily on the user's first Polis interaction in the org via
+    `polis_service.get_or_create_polis_xid`. Per-org-isolated: the same
+    user gets a different xid in different orgs.
+    """
+    __tablename__ = "polis_xids"
+    __table_args__ = (
+        UniqueConstraint("user_id", "org_id", name="uq_polis_xid_user_org"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True,
+    )
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    # Opaque random string. Format: secrets.token_urlsafe(16) ~ 22 chars.
+    # Pol.is accepts xid 1-999 chars (see phase9_polis_api_findings.md), so
+    # this fits comfortably with headroom.
+    polis_xid: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+
+    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
+    organization: Mapped["Organization"] = relationship(
+        "Organization", foreign_keys=[org_id],
+    )

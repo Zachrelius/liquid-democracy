@@ -5,6 +5,7 @@ import useSubOrg from '../../useSubOrg';
 import { useToast } from '../../components/Toast';
 import StatusBadge from '../../components/StatusBadge';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
+import LinkedPolisesPicker from '../../components/LinkedPolisesPicker';
 
 /**
  * Phase 8.5 — Sub-Org Proposals admin page.
@@ -137,6 +138,8 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
   const [selectedTopics, setSelectedTopics] = useState([]);
   const [passThreshold, setPassThreshold] = useState(orgSettings?.default_pass_threshold ?? 0.5);
   const [quorumThreshold, setQuorumThreshold] = useState(orgSettings?.default_quorum_threshold ?? 0.4);
+  const [linkedPolisIds, setLinkedPolisIds] = useState([]);
+  const requirePolis = orgSettings?.require_polis_for_new_proposals === true;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -155,6 +158,10 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (requirePolis && (linkedPolisIds || []).length === 0) {
+      setError('At least one linked Polis is required for proposals in this sub-org.');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -172,6 +179,9 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
       }
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
+      }
+      if ((linkedPolisIds || []).length > 0) {
+        payload.linked_polis_ids = linkedPolisIds;
       }
       await api.post(`/api/orgs/${parentSlug}/proposals`, payload);
       toast.success('Proposal created');
@@ -288,6 +298,17 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
           <input type="range" min={0} max={100} value={Math.round(quorumThreshold * 100)} onChange={e => setQuorumThreshold(parseInt(e.target.value, 10) / 100)} className="w-full accent-[#2E75B6]" />
         </div>
       </div>
+
+      {/* Phase 9 — Linked Deliberations picker. Sub-org proposals always
+          carry sub_org_id, so the picker always renders here (no scope
+          guard needed — we always have a scope). */}
+      <LinkedPolisesPicker
+        parentSlug={parentSlug}
+        scopeSubOrgId={subOrg.id}
+        value={linkedPolisIds}
+        onChange={setLinkedPolisIds}
+        required={requirePolis}
+      />
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 

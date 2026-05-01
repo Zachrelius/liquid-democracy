@@ -5,6 +5,7 @@ import api from '../../api';
 import StatusBadge from '../../components/StatusBadge';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
+import LinkedPolisesPicker from '../../components/LinkedPolisesPicker';
 
 function OptionsEditor({ options, onChange }) {
   function updateOption(idx, field, value) {
@@ -122,6 +123,13 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
   const smOverrideAllowed = orgSettings?.sustained_majority_per_proposal_override !== false;
   const orgSmDefault = orgSettings?.sustained_majority_enabled_default === true;
   const [smEnabled, setSmEnabled] = useState(orgSmDefault);
+  // Phase 9 — Linked Polises (Decision 2 + 7). When org config has
+  // `require_polis_for_new_proposals` true, at least one link is required;
+  // form blocks submission otherwise. The org config walks parent chain
+  // server-side via `get_org_config`; for parent-org-wide proposals the
+  // value lives on `currentOrg.settings`.
+  const requirePolis = orgSettings?.require_polis_for_new_proposals === true;
+  const [linkedPolisIds, setLinkedPolisIds] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -163,6 +171,13 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
 
   async function handleSubmit(e) {
     e.preventDefault();
+    // Phase 9 — block submission when require_polis_for_new_proposals is
+    // true and the picker is empty. Server enforces this too; we surface
+    // it inline so the operator doesn't round-trip a 400.
+    if (requirePolis && (linkedPolisIds || []).length === 0 && scope) {
+      setError('At least one linked Polis is required for proposals in this scope.');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -188,6 +203,12 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
       // diverges from the org default; otherwise let null inherit.
       if (smOverrideAllowed && smEnabled !== orgSmDefault) {
         payload.sustained_majority_enabled = smEnabled;
+      }
+      // Phase 9 — structurally-recorded Polis links (Decision 2). Server
+      // rejects this on parent-org-wide proposals (linked_polis_ids only
+      // supported on org-scoped proposals); only include when scoped.
+      if (scope && (linkedPolisIds || []).length > 0) {
+        payload.linked_polis_ids = linkedPolisIds;
       }
       await api.post(`/api/orgs/${slug}/proposals`, payload);
       toast.success('Proposal created');
@@ -391,6 +412,20 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
           />
         </div>
       </div>
+
+      {/* Phase 9 — Linked Deliberations picker. Backend currently rejects
+          linked_polis_ids on parent-org-wide proposals (only org-scoped
+          proposals can carry structural links — see routes/proposals.py),
+          so the picker only renders when a sub-org scope is selected. */}
+      {scope && (
+        <LinkedPolisesPicker
+          parentSlug={slug}
+          scopeSubOrgId={scope}
+          value={linkedPolisIds}
+          onChange={setLinkedPolisIds}
+          required={requirePolis}
+        />
+      )}
 
       {/* Phase 8 — Sustained-Majority toggle (only when org allows override) */}
       {smOverrideAllowed && (

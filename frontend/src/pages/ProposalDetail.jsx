@@ -16,7 +16,48 @@ import RankedBallot from '../components/RankedBallot';
 import RCVResultsPanel from '../components/RCVResultsPanel';
 import RCVSankeyChart from '../components/RCVSankeyChart';
 import SustainedMajorityPanel from '../components/SustainedMajorityPanel';
+import LinkedPolisCard from '../components/LinkedPolisCard';
 import { colorForOption } from '../components/voteFlowGraphUtils';
+
+/**
+ * Phase 9 Session 4 — pol.is URL detection in proposal bodies.
+ *
+ * Detects pol.is conversation URLs in two forms:
+ *   - Raw URL:           https://pol.is/<6-10-char-id>
+ *   - Markdown link:     [text](https://pol.is/<id>)
+ *
+ * The conversation ID is the 6-10-char lowercase alphanumeric token
+ * documented in `phase9_polis_api_findings.md`. We deliberately accept
+ * up to 12 chars to allow for occasional longer slugs without false
+ * negatives, and stop at common URL terminators (whitespace, ), ],
+ * punctuation followed by space, etc.).
+ *
+ * Returns an array of { conversationId, originalUrl } unique by
+ * conversationId in first-seen order.
+ *
+ * Implementation choice: client-side, post-markdown-render. The proposal
+ * body markdown rendering is a tiny inline helper (`renderMarkdown`) that
+ * doesn't expose a plugin point; intercepting at server-side would mean
+ * touching the markdown sanitizer in ``backend/schemas.py``. Client-side
+ * walking of the rendered HTML is simpler and keeps the URL-detection
+ * logic colocated with the link-card UI it feeds.
+ */
+const POLIS_URL_RE = /https?:\/\/(?:www\.)?pol\.is\/([a-z0-9]{6,12})\b/gi;
+
+function detectPolisUrlsInBody(body) {
+  if (!body) return [];
+  const found = [];
+  const seen = new Set();
+  let m;
+  POLIS_URL_RE.lastIndex = 0;
+  while ((m = POLIS_URL_RE.exec(body)) !== null) {
+    const id = (m[1] || '').toLowerCase();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    found.push({ conversationId: id, originalUrl: m[0] });
+  }
+  return found;
+}
 
 // Simple markdown renderer (no external dep needed for basics)
 function renderMarkdown(text) {
@@ -673,6 +714,13 @@ export default function ProposalDetail() {
   const [subOrg, setSubOrg] = useState(null);
   const [subOrgMembers, setSubOrgMembers] = useState(null);
   const [delegations, setDelegations] = useState([]);
+  // Phase 9 — Polis link card state. `linkedPolises` is the resolved list
+  // (structural + URL-detected, deduped). `polisLookup` is a parent-org
+  // Polis list keyed by id, used to (a) resolve structural ids when the
+  // unscoped proposal endpoint didn't return the rich `linked_polises` and
+  // (b) look up URL-detected conversation_ids against the viewer's
+  // visibility scope.
+  const [linkedPolises, setLinkedPolises] = useState([]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -755,6 +803,108 @@ export default function ProposalDetail() {
     })();
     return () => { cancelled = true; };
   }, [proposal?.sub_org_id, currentOrg, userOrgs]);
+
+  // Phase 9 — resolve linked Polises for the link-card section.
+  //
+  // Sources, in order of preference:
+  //   1. `proposal.linked_polises` (rich, when the org-scoped endpoint was
+  //      hit — currently we use the unscoped /api/proposals/{id} which does
+  //      NOT pass `db` to `_build_proposal_out`, so this is usually null).
+  //   2. `proposal.linked_polis_ids` resolved against the parent-org Polis
+  //      list — fetched once for the parent slug and used for both
+  //      structural lookups and URL-detected conversation_id matching.
+  //   3. URL detection from `proposal.body` — pol.is URLs that resolve to a
+  //      visible Polis become cards; URLs that don't resolve fall through
+  //      to plain links in the body (we don't render a "missing" card for
+  //      URL-detected references — only for structural ids that fail).
+  useEffect(() => {
+    if (!proposal) {
+      setLinkedPolises([]);
+      return;
+    }
+    let cancelled = false;
+    let parentSlug = null;
+    if (currentOrg) {
+      if (currentOrg.parent_org_id) {
+        parentSlug = userOrgs.find(o => o.id === currentOrg.parent_org_id)?.slug || null;
+      } else {
+        parentSlug = currentOrg.slug;
+      }
+    }
+    (async () => {
+      // Detected URLs (always client-side, even when structural data is rich
+      // — voters who pasted a pol.is URL into the body get the link card too).
+      const detected = detectPolisUrlsInBody(proposal.body);
+
+      // Source 1: rich resolved list straight from the proposal payload.
+      if (Array.isArray(proposal.linked_polises) && proposal.linked_polises.length > 0) {
+        if (!cancelled) {
+          // Fold in URL-detected polises that resolve against the rich list.
+          const byConvId = new Map();
+          proposal.linked_polises.forEach(p => {
+            if (p?.polis_conversation_id) byConvId.set(p.polis_conversation_id, p);
+          });
+          const extras = [];
+          detected.forEach(({ conversationId }) => {
+            const hit = byConvId.get(conversationId);
+            if (hit && !proposal.linked_polises.some(p => p.id === hit.id)) {
+              extras.push(hit);
+            }
+          });
+          setLinkedPolises([...proposal.linked_polises, ...extras]);
+        }
+        return;
+      }
+
+      // Source 2/3: need parent-org Polis list. Bail if scope unavailable
+      // (viewer has no currentOrg yet) — we'll re-run when it lands.
+      if (!parentSlug) return;
+      const ids = Array.isArray(proposal.linked_polis_ids)
+        ? proposal.linked_polis_ids
+        : [];
+      if (ids.length === 0 && detected.length === 0) {
+        if (!cancelled) setLinkedPolises([]);
+        return;
+      }
+      let polisList = [];
+      try {
+        polisList = await api.get(`/api/orgs/${parentSlug}/polises`);
+      } catch {/* viewer might not have list permission — bail */ return; }
+      if (cancelled) return;
+
+      const byId = new Map();
+      const byConvId = new Map();
+      (polisList || []).forEach(p => {
+        if (p?.id) byId.set(p.id, p);
+        if (p?.polis_conversation_id) byConvId.set(p.polis_conversation_id, p);
+      });
+
+      const out = [];
+      const seen = new Set();
+      // Structural ids first (ordering preserved); ids that don't resolve
+      // become "Polis no longer available" cards so voters see the gap.
+      ids.forEach(id => {
+        const hit = byId.get(id);
+        if (hit) {
+          if (!seen.has(hit.id)) { out.push(hit); seen.add(hit.id); }
+        } else {
+          out.push({ __missing: true, id, originalUrl: null });
+          seen.add(id);
+        }
+      });
+      // URL-detected: only include if resolves to a visible Polis (per spec
+      // — unresolved URLs fall back to the in-body plain link).
+      detected.forEach(({ conversationId }) => {
+        const hit = byConvId.get(conversationId);
+        if (hit && !seen.has(hit.id)) {
+          out.push(hit);
+          seen.add(hit.id);
+        }
+      });
+      if (!cancelled) setLinkedPolises(out);
+    })();
+    return () => { cancelled = true; };
+  }, [proposal, currentOrg, userOrgs]);
 
   const refreshVote = useCallback(async () => {
     try {
@@ -890,6 +1040,46 @@ export default function ProposalDetail() {
             />
           ) : (
             <p className="text-gray-400 italic text-sm">No description provided.</p>
+          )}
+
+          {/* Phase 9 — Linked Deliberations (link cards for structurally-
+              attached + URL-detected pol.is references). Renders above the
+              vote panel sidebar so voters notice the deliberation alongside
+              the ballot. */}
+          {linkedPolises.length > 0 && (
+            <section className="space-y-2">
+              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+                Linked Deliberations
+              </h3>
+              <div className="space-y-3">
+                {linkedPolises.map((p, i) => {
+                  if (p.__missing) {
+                    return (
+                      <LinkedPolisCard
+                        key={`missing-${p.id || i}`}
+                        polis={null}
+                        orgSlug={null}
+                        missing
+                        originalUrl={p.originalUrl}
+                      />
+                    );
+                  }
+                  const cardSlug = (() => {
+                    if (currentOrg?.parent_org_id) {
+                      return userOrgs.find(o => o.id === currentOrg.parent_org_id)?.slug;
+                    }
+                    return currentOrg?.slug;
+                  })();
+                  return (
+                    <LinkedPolisCard
+                      key={p.id || i}
+                      polis={p}
+                      orgSlug={cardSlug}
+                    />
+                  );
+                })}
+              </div>
+            </section>
           )}
 
           {/* Options list for multi-option proposals (visible when not actively voting) */}

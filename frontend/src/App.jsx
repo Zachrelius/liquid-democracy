@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './AuthContext';
 import { OrgProvider } from './OrgContext';
+import { PublicConfigProvider } from './PublicConfigContext';
 import { ToastProvider } from './components/Toast';
 import { ConfirmProvider } from './components/ConfirmDialog';
 import ProtectedRoute from './ProtectedRoute';
@@ -32,8 +33,15 @@ import SubOrgSettings from './pages/admin/SubOrgSettings';
 import SubOrgMembers from './pages/admin/SubOrgMembers';
 import SubOrgProposals from './pages/admin/SubOrgProposals';
 import SubOrgTopics from './pages/admin/SubOrgTopics';
+// Phase 9 — Polis admin route family
+import Polises from './pages/admin/Polises';
+import PolisDetail from './pages/admin/PolisDetail';
+import CreatePolis from './pages/admin/CreatePolis';
+import SubOrgPolises from './pages/admin/SubOrgPolises';
+import Polis from './pages/Polis';
 import VotingMethodsHelp from './pages/VotingMethodsHelp';
 import SustainedMajorityHelp from './pages/SustainedMajorityHelp';
+import PolisHelp from './pages/PolisHelp';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Landing from './pages/Landing';
@@ -55,6 +63,7 @@ function Layout({ children }) {
 export default function App() {
   return (
     <AuthProvider>
+      <PublicConfigProvider>
       <ToastProvider>
       <ConfirmProvider>
       <Routes>
@@ -205,6 +214,46 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        {/* Phase 9 — Polis admin routes (parent-org scope). Polis create
+            is gated AdminRoute (moderator+ matches the topic-create tier);
+            list/detail also AdminRoute so backend permission rules are the
+            source of truth (admin controls hide on non-polis-admin viewers). */}
+        <Route
+          path="/admin/polises"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <AdminRoute>
+                  <Layout><Polises /></Layout>
+                </AdminRoute>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/polises/create"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <AdminRoute>
+                  <Layout><CreatePolis /></Layout>
+                </AdminRoute>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/polises/:polis_id"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <AdminRoute>
+                  <Layout><PolisDetail /></Layout>
+                </AdminRoute>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/admin/analytics"
           element={
@@ -274,9 +323,59 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        {/* Phase 9 — sub-org Polis admin routes. Pattern mirrors topics/
+            proposals: no AdminRoute wrapper because SubOrgErrorState
+            surfaces 403/404 inline rather than redirecting (Decision-6
+            implicit power makes a wrapper-time check awkward). */}
+        <Route
+          path="/admin/sub-orgs/:sub_slug/polises"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><SubOrgPolises /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/sub-orgs/:sub_slug/polises/create"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><CreatePolis /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/admin/sub-orgs/:sub_slug/polises/:polis_id"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><PolisDetail /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="/admin/sub-orgs/:sub_slug"
           element={<Navigate to="settings" replace />}
+        />
+
+        {/* Phase 9 — voter-facing Polis page (Decision 4 + 5 surface). Gated
+            ProtectedRoute > OrgProvider > Layout. No AdminRoute — voters
+            access this. Server-side `eligible_viewers_for_polis` returns
+            403/404 if out-of-scope; the page surfaces those as friendly
+            errors (read-only banner for sub-org non-members per Decision 7). */}
+        <Route
+          path="/orgs/:slug/polises/:polis_id"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><Polis /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
         />
 
         {/* Public — help pages are purely informational and may be linked from
@@ -284,6 +383,7 @@ export default function App() {
             logged in. Don't gate them on auth. */}
         <Route path="/help/voting-methods" element={<VotingMethodsHelp />} />
         <Route path="/help/sustained-majority" element={<SustainedMajorityHelp />} />
+        <Route path="/help/polis" element={<PolisHelp />} />
 
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
@@ -299,6 +399,7 @@ export default function App() {
       </Routes>
       </ConfirmProvider>
       </ToastProvider>
+      </PublicConfigProvider>
     </AuthProvider>
   );
 }

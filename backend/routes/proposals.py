@@ -12,6 +12,7 @@ from database import get_db
 from delegation_engine import engine as delegation_engine, resolve_vote_pure, ApprovalTally, RCVTally
 from org_config import get_org_config
 from permissions import can_see_votes
+from polis_engine import eligible_viewers_for_polis
 
 router = APIRouter(prefix="/api/proposals", tags=["proposals"])
 
@@ -29,7 +30,125 @@ def _proposal_or_404(proposal_id: str, db: Session) -> models.Proposal:
     return p
 
 
-def _build_proposal_out(proposal: models.Proposal) -> schemas.ProposalOut:
+def _validate_linked_polis_ids(
+    db: Session,
+    ids: list[str],
+    viewer_user_id: str,
+    viewer_org_id: str,
+) -> None:
+    """Phase 9 Session 2: validate proposal->Polis links at create/update time.
+
+    Each ID must:
+      1. Exist in the `polises` table.
+      2. Belong to the same parent org as the proposal (sub-org sub-scopes
+         are handled at the route layer separately when sub_org_id is set
+         on the proposal — for v1 we accept any same-org Polis the viewer
+         can see, mirroring how URL-detection links work).
+      3. Be `status='active'` (archived Polises cannot be newly linked;
+         existing links stay because we only validate the diff on update).
+      4. Have the viewer in `eligible_viewers_for_polis` (Decision 5/6/7).
+
+    Raises HTTPException(400) on the FIRST failure encountered with a
+    detail string the FE can render verbatim. We could batch all errors
+    but a single-error-per-call shape is simpler and matches the topic-
+    scope-validation pattern in routes/organizations.py.
+
+    Lift of the helper from `tests/test_proposal_linked_polises.py` into
+    the route module per Session 2 prerequisites.
+    """
+    for pid in ids:
+        polis = db.query(models.Polis).filter(models.Polis.id == pid).first()
+        if polis is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"linked_polis_id {pid} does not exist",
+            )
+        if polis.org_id != viewer_org_id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"linked_polis_id {pid} belongs to a different organization"
+                ),
+            )
+        if polis.status != "active":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"linked_polis_id {pid} is not active "
+                    f"(status={polis.status})"
+                ),
+            )
+        viewers = eligible_viewers_for_polis(db, polis)
+        if viewer_user_id not in viewers:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"linked_polis_id {pid} is out of viewer scope; you "
+                    "cannot link a Polis you cannot see."
+                ),
+            )
+
+
+def _build_linked_polises(
+    db: Session, proposal: models.Proposal,
+) -> Optional[list[dict]]:
+    """Resolve `linked_polis_ids` into rich objects for ProposalOut.
+
+    Phase 9 spec (proposal detail GET): returns
+    `[{id, title, prompt, status, participation_count}]` for each linked
+    Polis. Uses fail-soft `polis_service.get_participation_stats` so a
+    pol.is API outage doesn't 500 proposal detail.
+
+    N+1 footnote: one stats fetch per linked Polis. v1 spec says "small
+    number of linked Polises per proposal" — surfaced as a tech-debt
+    note rather than over-engineered here.
+    """
+    ids = proposal.linked_polis_ids or []
+    if not ids:
+        return None
+    out: list[dict] = []
+    for pid in ids:
+        p = db.query(models.Polis).filter(models.Polis.id == pid).first()
+        if p is None:
+            # Polis was deleted out from under the proposal. Render a
+            # tombstone so the FE can show "Polis no longer available".
+            out.append({
+                "id": pid, "title": None, "prompt": None,
+                "status": "missing", "participation_count": None,
+            })
+            continue
+        participation: Optional[int]
+        if p.polis_conversation_id:
+            try:
+                from polis_service import get_participation_stats
+                stats = get_participation_stats(p.polis_conversation_id)
+                participation = stats.get("participant_count")
+            except Exception:
+                participation = None
+        else:
+            participation = None
+        out.append({
+            "id": p.id,
+            "title": p.title,
+            "prompt": p.prompt,
+            "status": p.status,
+            "participation_count": participation,
+        })
+    return out
+
+
+def _build_proposal_out(
+    proposal: models.Proposal, db: Optional[Session] = None,
+) -> schemas.ProposalOut:
+    """Build the ProposalOut payload.
+
+    `db` is optional; when provided, `linked_polises` is resolved with
+    title/prompt/participation. When absent (existing call sites that
+    pre-date Phase 9 don't pass it), `linked_polis_ids` is still
+    returned as the raw list and `linked_polises` is None — frontend
+    can choose to do its own resolution or treat absent as "didn't ask
+    for the rich resolution".
+    """
     return schemas.ProposalOut(
         id=proposal.id,
         title=proposal.title,
@@ -51,7 +170,54 @@ def _build_proposal_out(proposal: models.Proposal) -> schemas.ProposalOut:
         options=proposal.options,
         sustained_majority_enabled=proposal.sustained_majority_enabled,
         sub_org_id=getattr(proposal, "sub_org_id", None),
+        linked_polis_ids=proposal.linked_polis_ids,
+        linked_polises=_build_linked_polises(db, proposal) if db is not None else None,
     )
+
+
+def _emit_polis_link_diff_audits(
+    db: Session,
+    proposal: models.Proposal,
+    old_ids: list[str],
+    new_ids: list[str],
+    actor_id: str,
+    ip_address: Optional[str] = None,
+) -> None:
+    """Emit `polis.linked_to_proposal` / `polis.unlinked_from_proposal`
+    one event per added / removed Polis.
+
+    Pure diff against the old set. Idempotent: re-saving the same set
+    emits zero events.
+    """
+    old_set, new_set = set(old_ids or []), set(new_ids or [])
+    for pid in new_set - old_set:
+        log_audit_event(
+            db,
+            action="polis.linked_to_proposal",
+            target_type="polis",
+            target_id=pid,
+            actor_id=actor_id,
+            details={
+                "proposal_id": proposal.id,
+                "polis_id": pid,
+                "by_actor": actor_id,
+            },
+            ip_address=ip_address,
+        )
+    for pid in old_set - new_set:
+        log_audit_event(
+            db,
+            action="polis.unlinked_from_proposal",
+            target_type="polis",
+            target_id=pid,
+            actor_id=actor_id,
+            details={
+                "proposal_id": proposal.id,
+                "polis_id": pid,
+                "by_actor": actor_id,
+            },
+            ip_address=ip_address,
+        )
 
 
 def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[models.Organization] = None):
@@ -222,6 +388,20 @@ def create_proposal(
         if not db.get(models.Topic, t.topic_id):
             raise HTTPException(status_code=400, detail=f"Topic {t.topic_id} not found")
 
+    # Phase 9 — global (non-org) proposals don't have an org_id, so linked
+    # Polis validation is skipped here (Polises always live under an org).
+    # The org-scoped create endpoint in routes/organizations.py runs the
+    # full validation. Reject linked_polis_ids on global proposals to
+    # avoid silent acceptance.
+    if body.linked_polis_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "linked_polis_ids is only supported on org-scoped proposals; "
+                "create the proposal under /api/orgs/{slug}/proposals."
+            ),
+        )
+
     proposal = models.Proposal(
         title=body.title,
         body=body.body,
@@ -331,9 +511,39 @@ def update_proposal(
                 },
             )
 
+    # Phase 9 — linked Polises diff. Only run when the field is present in
+    # the payload (omitted = leave existing links alone). For org-scoped
+    # proposals, validate against scope rules (existence + viewer scope +
+    # active status). Global proposals reject linked_polis_ids hard since
+    # Polises live under an org.
+    if "linked_polis_ids" in body.model_fields_set and body.linked_polis_ids is not None:
+        if proposal.org_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "linked_polis_ids is only supported on org-scoped "
+                    "proposals."
+                ),
+            )
+        old_ids = list(proposal.linked_polis_ids or [])
+        new_ids = list(body.linked_polis_ids)
+        # Only validate the *new* additions (existing links could now be
+        # archived; we don't want to forcibly re-validate them on every
+        # PATCH). Removed IDs need no validation.
+        added = [pid for pid in new_ids if pid not in old_ids]
+        if added:
+            _validate_linked_polis_ids(
+                db, added, current_user.id, proposal.org_id,
+            )
+        proposal.linked_polis_ids = new_ids if new_ids else None
+        _emit_polis_link_diff_audits(
+            db, proposal, old_ids, new_ids,
+            actor_id=current_user.id,
+        )
+
     db.commit()
     db.refresh(proposal)
-    return _build_proposal_out(proposal)
+    return _build_proposal_out(proposal, db)
 
 
 @router.post("/{proposal_id}/advance", response_model=schemas.ProposalOut)

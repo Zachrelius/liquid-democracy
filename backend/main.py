@@ -17,7 +17,7 @@ from database import create_tables, get_db, SessionLocal
 from delegation_engine import graph_store
 from settings import settings
 from websocket import manager as ws_manager
-from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations
+from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +185,7 @@ app.include_router(delegates.router)
 app.include_router(follows.router)
 app.include_router(organizations.router)
 app.include_router(sub_organizations.router)
+app.include_router(polises.router)
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +228,21 @@ def startup() -> None:
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": "0.1.0"}
+
+
+@app.get("/api/public-config")
+def public_config():
+    """Frontend-readable feature flags. No auth — read at app boot.
+
+    Phase 9: ``polis_token_configured`` drives the manual-fallback UX
+    (when the platform doesn't have a pol.is admin token configured,
+    Polis-create + archive surfaces show "complete this step on pol.is"
+    reminders rather than treating the API call as the source of truth).
+    """
+    from settings import settings
+    return {
+        "polis_token_configured": bool(getattr(settings, "polis_auth_token", "") or ""),
+    }
 
 
 @app.get("/api/health/ready")

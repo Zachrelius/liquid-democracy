@@ -54,6 +54,17 @@ class Settings(BaseSettings):
     # Hard kill-switch for ops emergencies.
     sustained_majority_worker_disable: bool = False
 
+    # Phase 9 — pol.is integration. The hosted pol.is API uses JWT-based auth
+    # rather than an API key (see `phase9_polis_api_findings.md`); this is the
+    # Bearer JWT obtained from a pol.is admin session that polis_service.py
+    # sends in the `Authorization: Bearer <token>` header. Empty string =
+    # programmatic API integration disabled (manual create-conversation-on-pol.is
+    # fallback flow is the v1 prod default until CompDemocracy admin-token
+    # access or self-hosting lands).
+    polis_auth_token: str = ""
+    # Base URL for the pol.is API. Override for self-hosted instances.
+    polis_api_base_url: str = "https://pol.is"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

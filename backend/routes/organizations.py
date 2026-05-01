@@ -15,6 +15,7 @@ import models
 import schemas
 from audit_utils import log_audit_event
 from database import get_db
+from org_config import get_org_config
 from org_middleware import (
     get_org_context,
     require_org_membership,
@@ -50,6 +51,13 @@ DEFAULT_ORG_SETTINGS = {
     "sustained_majority_threshold": 0.50,
     "sustained_majority_floor": 0.45,
     "sustained_majority_failure_mode": "fail",
+    # Phase 9 Decision 7 — opt-in "every new proposal must link a Polis"
+    # governance norm. Default off; sub-orgs inherit via get_org_config.
+    # When True, the proposal-creation route requires at least one valid
+    # linked_polis_id; when False, linking is optional. Always opt-in:
+    # most small-org decisions (meeting times, budget allocations under $X)
+    # don't need structured deliberation.
+    "require_polis_for_new_proposals": False,
 }
 
 
@@ -1186,6 +1194,29 @@ def create_org_proposal(
     from sustained_majority_service import validate_per_proposal_override
     validate_per_proposal_override(body.sustained_majority_enabled, org)
 
+    # Phase 9 Decision 7 — `require_polis_for_new_proposals` enforcement.
+    # Walks parent chain via get_org_config so a sub-org can override
+    # parent's setting.
+    require_polis = bool(get_org_config(
+        target_sub_org or org,
+        "require_polis_for_new_proposals",
+        DEFAULT_ORG_SETTINGS["require_polis_for_new_proposals"],
+    ))
+    linked_ids = list(body.linked_polis_ids or [])
+    if require_polis and not linked_ids:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This organization requires every new proposal to link at "
+                "least one Polis (require_polis_for_new_proposals)."
+            ),
+        )
+    if linked_ids:
+        from routes.proposals import _validate_linked_polis_ids
+        _validate_linked_polis_ids(
+            db, linked_ids, current_user.id, org.id,
+        )
+
     proposal = models.Proposal(
         title=body.title,
         body=body.body,
@@ -1197,6 +1228,7 @@ def create_org_proposal(
         pass_threshold=body.pass_threshold,
         quorum_threshold=body.quorum_threshold,
         sustained_majority_enabled=body.sustained_majority_enabled,
+        linked_polis_ids=linked_ids if linked_ids else None,
     )
     db.add(proposal)
     db.flush()
@@ -1239,10 +1271,22 @@ def create_org_proposal(
         ip_address=request.client.host if request.client else None,
     )
 
+    # Phase 9 — emit polis.linked_to_proposal once per linked Polis on
+    # creation. Reuses the same diff-emit helper used on PATCH; with
+    # old_ids=[] every new id becomes an "added".
+    if linked_ids:
+        from routes.proposals import _emit_polis_link_diff_audits
+        _emit_polis_link_diff_audits(
+            db, proposal,
+            old_ids=[], new_ids=linked_ids,
+            actor_id=current_user.id,
+            ip_address=request.client.host if request.client else None,
+        )
+
     db.commit()
     db.refresh(proposal)
     from routes.proposals import _build_proposal_out
-    return _build_proposal_out(proposal)
+    return _build_proposal_out(proposal, db)
 
 
 @router.get("/{org_slug}/proposals/{proposal_id}", response_model=schemas.ProposalOut)
@@ -1253,7 +1297,12 @@ def get_org_proposal(
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_membership),
 ):
-    """Get proposal detail within org context."""
+    """Get proposal detail within org context.
+
+    Phase 9: includes resolved `linked_polises` array (title/prompt/status/
+    participation_count) when the proposal has structurally-recorded
+    Polis links.
+    """
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
@@ -1264,7 +1313,7 @@ def get_org_proposal(
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found in this organization")
     from routes.proposals import _build_proposal_out
-    return _build_proposal_out(proposal)
+    return _build_proposal_out(proposal, db)
 
 
 @router.post("/{org_slug}/proposals/{proposal_id}/advance", response_model=schemas.ProposalOut)

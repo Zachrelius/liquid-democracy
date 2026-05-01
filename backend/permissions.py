@@ -221,3 +221,50 @@ def can_create_proposal_in_sub_org(
     # (b) Implicit parent-org-admin path. Decision 6: parent-org admin/owner
     # has implicit sub-org admin power, which includes proposal creation.
     return is_sub_org_admin(db, user_id, sub_org)
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — Polis admin permission helper
+# ---------------------------------------------------------------------------
+
+def is_polis_admin(
+    db: Session, user_id: str, polis: models.Polis,
+) -> bool:
+    """Phase 9 Decision 6 — True iff ``user_id`` can admin a Polis.
+
+    A user qualifies if ANY of:
+      (a) They are the Polis creator (``polis.created_by``).
+      (b) For sub-org Polises, they pass ``is_sub_org_admin`` for the
+          Polis's sub-org (covers both direct sub-org admins/owners AND
+          parent-org admins/owners via Decision 6 implicit power).
+      (c) For org-wide Polises, they have an active OrgMembership in
+          ``polis.org_id`` with role IN ('moderator', 'admin', 'owner') —
+          matching the org-wide topic-creation tier.
+
+    Edge case: if a user creates a Polis and then loses their
+    moderator+ role, they remain admin of THAT Polis via (a). This
+    matches how proposal authors retain edit power on their drafts.
+    """
+    if polis.created_by == user_id:
+        return True
+
+    if polis.sub_org_id is not None:
+        # Sub-org Polis.
+        sub_org = polis.sub_organization
+        if sub_org is None:
+            sub_org = db.query(models.Organization).filter(
+                models.Organization.id == polis.sub_org_id,
+            ).first()
+        if sub_org is None:
+            return False
+        return is_sub_org_admin(db, user_id, sub_org)
+
+    # Org-wide Polis.
+    membership = db.query(models.OrgMembership).filter(
+        models.OrgMembership.user_id == user_id,
+        models.OrgMembership.org_id == polis.org_id,
+        models.OrgMembership.status == "active",
+    ).first()
+    if membership is None:
+        return False
+    return membership.role in ("moderator", "admin", "owner")

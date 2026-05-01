@@ -203,6 +203,9 @@ export default function SubOrgList() {
                 <Link to={`/admin/sub-orgs/${s.slug}/topics`} className="text-[#2E75B6] hover:underline">
                   Topics
                 </Link>
+                <Link to={`/admin/sub-orgs/${s.slug}/polises`} className="text-[#2E75B6] hover:underline">
+                  Polises
+                </Link>
               </div>
             </div>
           ))}
