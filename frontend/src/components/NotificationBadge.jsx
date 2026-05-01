@@ -2,6 +2,41 @@ import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
 
+/**
+ * Phase 9 Session 4 — Polis-created notifications.
+ *
+ * The platform doesn't have a generic notification feed (`/api/notifications`
+ * does not exist as of Session 4); the existing badge is composed from
+ * listing-endpoint polls — follow-requests + voting-status proposals.
+ * Decision 10 calls for a single in-app badge bump when a new Polis
+ * appears in the viewer's scope.
+ *
+ * Client-side approach (matches existing pattern): poll the user's orgs +
+ * each org's `/api/orgs/{slug}/polises` list, compare against a localStorage
+ * "last seen" timestamp keyed per (user, org). Polises with `created_at`
+ * after the last-seen mark are surfaced as notifications. The user "clears"
+ * a Polis notification by clicking through (we update the per-org last-seen
+ * on dropdown open, mirroring how the existing notifications track click-
+ * through implicitly).
+ *
+ * This is a single-shot notification per Polis — not ongoing updates — per
+ * the spec ("Single notification per Polis, not ongoing updates").
+ */
+
+const POLIS_LAST_SEEN_PREFIX = 'polis_last_seen_';
+
+function readLastSeen(orgSlug) {
+  try {
+    const raw = window.localStorage.getItem(POLIS_LAST_SEEN_PREFIX + orgSlug);
+    return raw ? Number(raw) : 0;
+  } catch { return 0; }
+}
+function writeLastSeen(orgSlug, ts) {
+  try {
+    window.localStorage.setItem(POLIS_LAST_SEEN_PREFIX + orgSlug, String(ts));
+  } catch { /* best-effort */ }
+}
+
 export default function NotificationBadge() {
   const [count, setCount] = useState(0);
   const [items, setItems] = useState([]);
@@ -12,9 +47,10 @@ export default function NotificationBadge() {
     let mounted = true;
     async function load() {
       try {
-        const [incoming, proposals] = await Promise.all([
+        const [incoming, proposals, orgs] = await Promise.all([
           api.get('/api/follows/requests/incoming'),
           api.get('/api/proposals?status=voting'),
+          api.get('/api/orgs').catch(() => []),
         ]);
 
         const notifs = [];
@@ -36,6 +72,42 @@ export default function NotificationBadge() {
           notifs.push({
             text: `${unresolved} proposal${unresolved > 1 ? 's' : ''} need your vote`,
             link: '/proposals',
+          });
+        }
+
+        // Phase 9 — new-Polis notifications. Poll each parent org the user
+        // belongs to and surface Polises created after the per-org
+        // "last seen" timestamp. Sub-orgs are reached via their parent's
+        // polises endpoint (the backend visibility filter handles which
+        // ones the viewer sees). To avoid noise on first sign-in, treat a
+        // missing last-seen as "now" (no historical bump).
+        const parentOrgs = (orgs || []).filter(o => !o.parent_org_id);
+        const polisCalls = await Promise.allSettled(
+          parentOrgs.slice(0, 10).map(o =>
+            api.get(`/api/orgs/${o.slug}/polises`).then(list => ({ org: o, list }))
+          ),
+        );
+        for (const r of polisCalls) {
+          if (r.status !== 'fulfilled') continue;
+          const { org, list } = r.value;
+          const lastSeen = readLastSeen(org.slug);
+          if (lastSeen === 0) {
+            // Initialize without bumping the badge; the next poll will
+            // surface anything created after this moment.
+            writeLastSeen(org.slug, Date.now());
+            continue;
+          }
+          const fresh = (list || []).filter(p => {
+            if (!p?.created_at) return false;
+            return new Date(p.created_at).getTime() > lastSeen;
+          });
+          fresh.forEach(p => {
+            notifs.push({
+              text: `New deliberation: ${p.title}`,
+              link: `/orgs/${org.slug}/polises/${p.id}`,
+              // Used when the dropdown is opened to clear this notif.
+              _polisOrgSlug: org.slug,
+            });
           });
         }
 
@@ -92,7 +164,15 @@ export default function NotificationBadge() {
                 <li key={i}>
                   <Link
                     to={item.link}
-                    onClick={() => setOpen(false)}
+                    onClick={() => {
+                      setOpen(false);
+                      // Phase 9 — clicking a Polis notification updates the
+                      // per-org last-seen so the same Polis doesn't keep
+                      // bumping the badge after the user has visited it.
+                      if (item._polisOrgSlug) {
+                        writeLastSeen(item._polisOrgSlug, Date.now());
+                      }
+                    }}
                     className="block px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
                   >
                     {item.text}
