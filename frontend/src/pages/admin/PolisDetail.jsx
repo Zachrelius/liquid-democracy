@@ -8,6 +8,9 @@ import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 import useSubOrg from '../../useSubOrg';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
+import PolisEmbed from '../../components/PolisEmbed';
+import PolisDisclosureModal from '../../components/PolisDisclosureModal';
+import useShouldShowDisclosure from '../../hooks/useShouldShowDisclosure';
 
 /**
  * Phase 9 Session 3 — Polis detail page (admin scope).
@@ -62,11 +65,17 @@ export default function PolisDetail() {
   const [deanonymize, setDeanonymize] = useState(false);
   const [archiving, setArchiving] = useState(false);
 
-  // Phase 9 Session 4 prep: stash the xid so the iframe (which Session 4
-  // mounts) can pass it as `data-xid` on the embed. Idempotent on the
-  // server — repeat calls return the same xid for (user, org).
+  // Phase 9 Session 4: stash the xid so PolisEmbed can pass it as
+  // `data-xid` on the embed. Idempotent on the server — repeat calls
+  // return the same xid for (user, org).
   const [polisXid, setPolisXid] = useState(null);
   const xidRequested = useRef(false);
+
+  // Phase 9 Session 4 — privacy disclosure modal also fires on the admin
+  // detail page when an admin who hasn't dismissed it for THIS Polis
+  // visits. Per-Polis localStorage keying ensures dismissing on one
+  // Polis doesn't suppress the modal on another.
+  const [shouldShow, dismiss] = useShouldShowDisclosure(polisId);
 
   const load = useCallback(async () => {
     if (!parentSlug || !polisId) return;
@@ -259,6 +268,9 @@ export default function PolisDetail() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
+      {/* First-visit-per-Polis privacy disclosure (Decision 4 — verbatim) */}
+      <PolisDisclosureModal open={shouldShow} onDismiss={dismiss} />
+
       {/* Breadcrumb */}
       <div>
         <p className="text-xs text-gray-400 mb-1">
@@ -352,33 +364,16 @@ export default function PolisDetail() {
         )}
       </section>
 
-      {/* Embed placeholder (Session 4 will mount the actual iframe here) */}
+      {/* Embed — Session 4: live pol.is embed via shared PolisEmbed.
+          Falls back to a friendly "not yet connected" placeholder when the
+          conversation_id is absent (manual-fallback pre-paste state). */}
       <section className="space-y-2">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Conversation</h2>
-        <div
-          className="bg-white border border-dashed border-gray-300 rounded-xl flex items-center justify-center text-center text-sm text-gray-500 px-6"
-          style={{ minHeight: 600 }}
-          data-conversation-id={conversationId || ''}
-          data-xid={polisXid || ''}
-        >
-          {/*
-            Session 4 will replace this placeholder with the pol.is embed:
-              <div class="polis" data-conversation_id="..." data-xid="..."></div>
-              <script async src="https://pol.is/embed.js"></script>
-            CSP must allow https://pol.is in script-src and frame-src for the
-            embed to load (currently no CSP headers are set — see Session 3
-            report). The xid is wired up here so the iframe binding is ready.
-          */}
-          <div>
-            <p>Live Polis embed available in Session 4.</p>
-            {conversationId
-              ? <p className="text-xs text-gray-400 mt-1">conversation_id: <code>{conversationId}</code></p>
-              : <p className="text-xs text-amber-600 mt-1">conversation_id not set — connect on pol.is first.</p>}
-            {polisXid
-              ? <p className="text-xs text-gray-400 mt-1">data-xid wired (length {polisXid.length}).</p>
-              : <p className="text-xs text-gray-400 mt-1">data-xid pending…</p>}
-          </div>
-        </div>
+        <PolisEmbed
+          conversationId={conversationId}
+          xid={polisXid}
+          height={600}
+        />
       </section>
 
       {/* Admin controls */}
