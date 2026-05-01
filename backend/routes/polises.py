@@ -393,6 +393,12 @@ def update_polis(
     `polis_api_call_result: 'failed' | 'no_token' | 'success'` so we
     can audit the manual-fallback "platform archived but pol.is is
     still live" case (admin must close on pol.is manually).
+
+    Phase 9 Session 4 gap fix: also accepts `polis_conversation_id` for
+    the manual-fallback "paste slug" Save flow. One-shot connect — only
+    valid when the Polis currently has no conversation_id. Emits
+    `polis.connected` on success. If multiple fields are sent in one
+    PATCH, all updates apply atomically; events fire alongside each other.
     """
     parent = _parent_or_404(db, org_slug)
     polis = _polis_or_404(db, parent, polis_id)
@@ -400,7 +406,43 @@ def update_polis(
     if not is_polis_admin(db, current_user.id, polis):
         raise HTTPException(status_code=403, detail="Polis admin access required")
 
-    # Title update first (so a same-request title-change-and-archive emits
+    # Conversation_id connect (one-shot, manual-fallback wire-up). Done
+    # before title/archive so a same-request connect-and-rename emits
+    # `polis.connected` first, in dispatch order. Validate the value is
+    # non-empty after stripping; reject if already set (irreversible).
+    if body.polis_conversation_id is not None:
+        cid = body.polis_conversation_id.strip()
+        if not cid:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "polis_conversation_id must be a non-empty string"
+                ),
+            )
+        if polis.polis_conversation_id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "polis_conversation_id is already set on this Polis "
+                    "and cannot be changed (one-shot connect — "
+                    "irreversible without admin tooling)."
+                ),
+            )
+        polis.polis_conversation_id = cid
+        log_audit_event(
+            db,
+            action="polis.connected",
+            target_type="polis",
+            target_id=polis.id,
+            actor_id=current_user.id,
+            details={
+                "polis_id": polis.id,
+                "polis_conversation_id": cid,
+            },
+            ip_address=request.client.host if request.client else None,
+        )
+
+    # Title update next (so a same-request title-change-and-archive emits
     # both events in their natural order).
     if body.title is not None and body.title != polis.title:
         old_title = polis.title

@@ -1268,12 +1268,19 @@ class PolisCreate(BaseModel):
 class PolisUpdate(BaseModel):
     """Body for `PATCH /api/orgs/{slug}/polises/{polis_id}`.
 
-    Only title edits and archival are exposed in v1 (Decision 8 lifecycle:
+    Title edits and archival are exposed in v1 (Decision 8 lifecycle:
     active -> archived). `status` may only be `'archived'` — other transitions
     are rejected at the route layer.
+
+    Phase 9 Session 4 gap fix: also accepts `polis_conversation_id` to wire
+    the manual-fallback CreatePolis "paste slug" success-panel Save button.
+    The route enforces a one-shot connect — the field is only writable when
+    the Polis's current `polis_conversation_id` is NULL. Once set, swapping
+    it out requires admin tooling (audited as `polis.connected`).
     """
     title: Optional[str] = Field(default=None, min_length=1, max_length=500)
     status: Optional[str] = Field(default=None)
+    polis_conversation_id: Optional[str] = None
 
     @field_validator("status")
     @classmethod

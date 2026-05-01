@@ -421,6 +421,92 @@ class TestPolisPermissions:
 
 
 # ===========================================================================
+# Phase 9 Session 4 — one-shot conversation_id connect (manual-fallback wire-up)
+# ===========================================================================
+
+class TestPolisConnectConversationId:
+    """PATCH-with-polis_conversation_id: the success-panel "paste slug"
+    flow's backend half. One-shot connect — only valid when current value
+    is NULL; rejects empty/whitespace; emits `polis.connected`."""
+
+    def test_allowed_when_null_emits_connected_audit(self, db, client):
+        admin = _user(db, "admin")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        # Create a Polis without a conversation_id (manual-fallback pre-paste).
+        polis = _polis_row(db, parent, admin, conversation_id=None)
+        db.commit()
+        polis_id = polis.id
+
+        resp = client.patch(
+            f"/api/orgs/{parent.slug}/polises/{polis_id}",
+            json={"polis_conversation_id": "manual-pasted-slug"},
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["polis_conversation_id"] == "manual-pasted-slug"
+
+        db.expire_all()
+        refreshed = db.query(models.Polis).filter(
+            models.Polis.id == polis_id,
+        ).first()
+        assert refreshed.polis_conversation_id == "manual-pasted-slug"
+
+        events = _audit(db, action="polis.connected")
+        assert len(events) == 1
+        assert events[0].details["polis_id"] == polis_id
+        assert events[0].details["polis_conversation_id"] == "manual-pasted-slug"
+
+    def test_rejected_when_already_set(self, db, client):
+        admin = _user(db, "admin")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        polis = _polis_row(db, parent, admin, conversation_id="existing-conv-id")
+        db.commit()
+
+        resp = client.patch(
+            f"/api/orgs/{parent.slug}/polises/{polis.id}",
+            json={"polis_conversation_id": "different-id"},
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 400
+        detail = resp.json()["detail"].lower()
+        assert "irreversible" in detail or "one-shot" in detail
+        # No connected audit emitted.
+        assert _audit(db, action="polis.connected") == []
+        # Original conversation_id preserved.
+        db.expire_all()
+        refreshed = db.query(models.Polis).filter(
+            models.Polis.id == polis.id,
+        ).first()
+        assert refreshed.polis_conversation_id == "existing-conv-id"
+
+    def test_empty_or_whitespace_rejected(self, db, client):
+        admin = _user(db, "admin")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        polis = _polis_row(db, parent, admin, conversation_id=None)
+        db.commit()
+
+        for bad in ("", "   ", "\t\n "):
+            resp = client.patch(
+                f"/api/orgs/{parent.slug}/polises/{polis.id}",
+                json={"polis_conversation_id": bad},
+                headers=_auth(admin),
+            )
+            assert resp.status_code == 400, (bad, resp.text)
+            assert "non-empty" in resp.json()["detail"].lower()
+        # No connected audit ever emitted.
+        assert _audit(db, action="polis.connected") == []
+        # Polis still null.
+        db.expire_all()
+        refreshed = db.query(models.Polis).filter(
+            models.Polis.id == polis.id,
+        ).first()
+        assert refreshed.polis_conversation_id is None
+
+
+# ===========================================================================
 # List scope visibility
 # ===========================================================================
 
@@ -703,14 +789,15 @@ class TestRequirePolis:
 # ===========================================================================
 
 class TestAuditEventCoverage:
-    def test_all_six_polis_audit_events_fire(self, db, client, monkeypatch):
-        """Single sequence exercising:
+    def test_all_polis_audit_events_fire(self, db, client, monkeypatch):
+        """Single sequence exercising every Polis-side audit event:
           1. polis.created (manual fallback)
-          2. polis.linked_to_proposal (via proposal create)
-          3. polis.unlinked_from_proposal (via proposal patch)
-          4. polis.config_changed (title edit)
-          5. polis.archived
-          6. polis.export_requested
+          2. polis.connected (Session 4 — manual-fallback paste-slug Save)
+          3. polis.linked_to_proposal (via proposal create)
+          4. polis.unlinked_from_proposal (via proposal patch)
+          5. polis.config_changed (title edit)
+          6. polis.archived
+          7. polis.export_requested
 
         polis.xid_generated is exercised in TestPolisXid; the helper-level
         tests already cover the audit shape (Session 1 unit tests).
@@ -720,19 +807,55 @@ class TestAuditEventCoverage:
         _membership(db, parent, alice, role="admin")
         db.commit()
 
-        # 1. polis.created
-        resp = client.post(
-            f"/api/orgs/{parent.slug}/polises",
-            json={
+        # 1. polis.created — create the Polis WITHOUT a conversation_id so we
+        # can test polis.connected on the same row in step 2. The manual-
+        # fallback path normally requires polis_conversation_id at create
+        # time; bypass that by inserting the row directly via a SQL upsert
+        # would couple to internals — instead we create with a placeholder
+        # then null it out, which mirrors a future "create-then-paste-later"
+        # FE flow. (Spec Session 4: success-panel paste-slug uses this exact
+        # sequence: create endpoint returns a row whose conversation_id is
+        # operator-supplied; the connect-via-PATCH path is reached only when
+        # an admin needs to LATER set/swap, hence the null pre-state.)
+        unconnected = models.Polis(
+            org_id=parent.id,
+            title="Audit-T",
+            prompt="Q",
+            created_by=alice.id,
+            status="active",
+            polis_conversation_id=None,
+            intended_seed_statements=["s1"],
+        )
+        db.add(unconnected); db.flush()
+        # Emit the polis.created audit event manually to mirror what the
+        # POST route does (we sidestepped the route to land in the null-
+        # conversation_id pre-state).
+        from audit_utils import log_audit_event as _log
+        _log(
+            db,
+            action="polis.created",
+            target_type="polis",
+            target_id=unconnected.id,
+            actor_id=alice.id,
+            details={
+                "polis_id": unconnected.id,
+                "org_id": parent.id,
+                "sub_org_id": None,
                 "title": "Audit-T",
-                "prompt": "Q",
-                "seed_statements": ["s1"],
-                "polis_conversation_id": "audit-conv-1",
+                "programmatic_path": False,
+                "polis_conversation_id": None,
             },
+        )
+        db.commit()
+        polis_id = unconnected.id
+
+        # 2. polis.connected — paste-slug Save flow (Session 4).
+        connect_resp = client.patch(
+            f"/api/orgs/{parent.slug}/polises/{polis_id}",
+            json={"polis_conversation_id": "audit-conv-1"},
             headers=_auth(alice),
         )
-        assert resp.status_code == 201, resp.text
-        polis_id = resp.json()["polis"]["id"]
+        assert connect_resp.status_code == 200, connect_resp.text
 
         # Create another Polis to enable a swap-link scenario.
         resp2 = client.post(
@@ -801,10 +924,12 @@ class TestAuditEventCoverage:
         )
         assert exp_resp.status_code == 200
 
-        # Assert all six event types present.
+        # Assert all seven event types present (8th is polis.xid_generated,
+        # exercised in TestPolisXid + Session 1 unit tests).
         events = {e.action for e in _audit(db)}
         for action in (
             "polis.created",
+            "polis.connected",
             "polis.linked_to_proposal",
             "polis.unlinked_from_proposal",
             "polis.config_changed",
@@ -812,6 +937,11 @@ class TestAuditEventCoverage:
             "polis.export_requested",
         ):
             assert action in events, f"missing audit event: {action}"
+
+        # Verify polis.connected payload shape (aggregate-only per Phase 7.5).
+        conn_event = next(e for e in _audit(db) if e.action == "polis.connected")
+        assert conn_event.details["polis_id"] == polis_id
+        assert conn_event.details["polis_conversation_id"] == "audit-conv-1"
 
         # Verify polis.archived payload includes polis_api_call_result
         arc_event = next(e for e in _audit(db) if e.action == "polis.archived")
