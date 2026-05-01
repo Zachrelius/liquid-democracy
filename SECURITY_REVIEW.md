@@ -370,3 +370,51 @@ mapping between audit actions and user-facing entries.
   technical (see `DEPLOYMENT.md` "Current Deployment Status").
 - Encrypted-at-rest ballot storage (Tier 3 cryptographic work, deferred).
 - Splitting `is_admin=True` into finer-grained sub-roles.
+
+---
+
+## Polis Identity Model (Phase 9, 2026-05-01)
+
+Phase 9 introduced Polis (pol.is) as a first-class deliberation artifact. Polis statements are inherently more public than ballots — other participants see them, and the visualization is the whole point of the tool. The platform tells users this directly through the privacy disclosure modal that fires on first visit to any Polis (see Decision 4 of `phase9_spec.md`). The technical implementation makes that framing honest.
+
+### Pseudonymization via per-org `polis_xid`
+
+When a member first opens a Polis in an org, the backend generates an opaque random string (`secrets.token_urlsafe(16)` ≈ 22 URL-safe characters) and stores the mapping `(user_id, org_id) → polis_xid` in the `polis_xids` table. The platform passes only `polis_xid` to pol.is via the embed's `data-xid` attribute. **pol.is itself never sees the platform's `user_id`.**
+
+Cross-session continuity: the same user revisiting the same Polis in the same org gets the same xid, so their votes and statements stay attributed to a single point in the visualization. The xid is per-org isolated — joining a second org and visiting a Polis there generates a fresh xid, so two orgs that share a member can't correlate behavior through pol.is.
+
+### Platform-side deanonymization for moderation
+
+The `polis_xids` table is queryable by platform admins (or via the `?deanonymize=true` flag on the data export endpoint `GET /api/orgs/{slug}/polises/{polis_id}/export`). When deanonymized export is requested, the platform joins pol.is's export against the local xid-to-user mapping and produces output with platform user IDs and display names. This is intended for moderation-of-last-resort: identifying the source of a statement that violates the org's norms, or auditing a participation pattern the platform admin reasonably believes is abusive.
+
+The deanonymization request itself emits a `polis.export_requested` audit event with `deanonymized: bool`. The audit captures *that* it was requested, **not** the contents of the export (matches the Phase 7.5 redaction principles for vote audit elevation).
+
+### Privacy boundary visible to users
+
+The first-visit disclosure modal tells users — verbatim:
+
+> Your votes and statements here are visible to other participants. They're tied to a per-org pseudonym, not your name. The platform can identify who said what if needed for moderation, and your participation is recorded for cross-session continuity. This is different from voting on proposals, which stays private by default.
+
+The disclosure dismisses per-Polis (localStorage key `polis_disclosed_<polis_id>`), not per-user globally — every Polis has its own privacy considerations and the user is reminded once per artifact.
+
+### What pol.is sees vs. what the platform sees
+
+| Information | pol.is sees | Platform sees | Notes |
+| --- | --- | --- | --- |
+| `polis_xid` | Yes (as `data-xid`) | Yes | The shared opaque token |
+| Statement votes | Yes (own UI) | Available via export | |
+| Statement text | Yes (own UI) | Available via export | |
+| Platform `user_id` | **No** | Yes | The deanonymization key lives only platform-side |
+| Display name | **No** | Yes | Joined to xids only via deanonymized export |
+| Email | **No** | Yes | Never sent to pol.is |
+| Cross-org behavior | **No** (each org has its own xid) | Yes (admin per-org) | Per-org isolation prevents cross-org correlation |
+
+### Threat model summary
+
+A user who reads the disclosure understands the asymmetry: their *identity-on-pol.is* is opaque, but their *identity-on-the-platform* is recoverable for moderation. This is the trade-off the disclosure makes explicit. The platform doesn't oversell pseudonymity; users get protection from casual identification by other participants but not from the platform admin.
+
+### Deferred (out of scope for Phase 9)
+
+- Multi-admin approval for deanonymized exports (matches the deferred multi-admin approval for ballot audit elevation under Phase 7.5).
+- Self-hosted Polis (Tier 3.9). Hosted pol.is is the v1 surface; the data-flow described above assumes hosted.
+- Cross-Polis analytics or organizational dashboards. Useful future work; distinct privacy posture, distinct review.
