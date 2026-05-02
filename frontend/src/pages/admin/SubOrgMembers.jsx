@@ -95,6 +95,16 @@ export default function SubOrgMembers() {
       load();
     } catch (e) { toast.error(e.message); }
   }
+  // Phase 9.6 — direct-add (parent-org admin / sub-org admin only).
+  // Skips the invitation/approval flow for parent-org members already on
+  // the platform. Backend audits this as `sub_org_member.added_directly`.
+  async function handleDirectAdd(userId, role) {
+    try {
+      await api.post(`/api/orgs/${parentSlug}/sub-orgs/${subSlug}/members/add`, { user_id: userId, role });
+      toast.success('Member added');
+      load();
+    } catch (e) { toast.error(e.message || 'Failed to add member'); }
+  }
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-10">
@@ -178,6 +188,13 @@ export default function SubOrgMembers() {
         </section>
       )}
 
+      {/* Direct add (Phase 9.6) — fast path for parent-org admins */}
+      <DirectAddSection
+        parentMembers={parentMembers}
+        existingIds={new Set(members.map(m => m.user_id))}
+        onAdd={handleDirectAdd}
+      />
+
       {/* Invite */}
       <InviteSection
         parentMembers={parentMembers}
@@ -185,6 +202,76 @@ export default function SubOrgMembers() {
         onInvite={handleInvite}
       />
     </div>
+  );
+}
+
+function DirectAddSection({ parentMembers, existingIds, onAdd }) {
+  const [userId, setUserId] = useState('');
+  const [role, setRole] = useState('member');
+  const [submitting, setSubmitting] = useState(false);
+
+  const candidates = useMemo(() => {
+    return parentMembers.filter(p => !existingIds.has(p.user_id));
+  }, [parentMembers, existingIds]);
+
+  async function handleSubmit() {
+    if (!userId) return;
+    setSubmitting(true);
+    try {
+      await onAdd(userId, role);
+      // Reset form after success (errors surface via toast in parent).
+      setUserId('');
+      setRole('member');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="space-y-3">
+      <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Add member directly</h3>
+      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+        <p className="text-xs text-gray-500">
+          Skip the invitation flow for parent-org members already on the platform.
+        </p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select
+            value={userId}
+            onChange={e => setUserId(e.target.value)}
+            disabled={candidates.length === 0}
+            className="flex-1 min-w-[16rem] px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] disabled:bg-gray-50 disabled:text-gray-400"
+          >
+            <option value="">
+              {candidates.length === 0
+                ? 'All parent-org members are already in this sub-org'
+                : 'Select a parent-org member…'}
+            </option>
+            {candidates.map(p => (
+              <option key={p.user_id} value={p.user_id}>
+                {p.display_name} (@{p.username}{p.email ? ` · ${p.email}` : ''})
+              </option>
+            ))}
+          </select>
+          <select
+            value={role}
+            onChange={e => setRole(e.target.value)}
+            className="text-sm border border-gray-300 rounded-lg px-3 py-2"
+          >
+            <option value="member">member</option>
+            <option value="moderator">moderator</option>
+            <option value="admin">admin</option>
+          </select>
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!userId || submitting}
+            className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
+          >
+            {submitting ? 'Adding…' : 'Add'}
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
 
