@@ -184,6 +184,13 @@ class User(Base):
         nullable=False,
         default="require_approval",
     )
+    # Phase 9.5 — per-user override on the org-creation cap. NULL = use the
+    # platform default of 3. A non-null value (including 0) overrides for
+    # this user only. Z's account is the obvious case for a high override or
+    # NULL passthrough; ordinary users hit the default.
+    org_creation_limit: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
     proposals: Mapped[list["Proposal"]] = relationship("Proposal", back_populates="author")
@@ -581,6 +588,27 @@ class RefreshToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
     user: Mapped["User"] = relationship("User")
+
+
+class PlatformSetting(Base):
+    """Phase 9.5 — single-row-per-key platform-wide config.
+
+    Picked Option A (table) per the spec: a `(key, value, updated_at)` table
+    is more extensible than stuffing JSON onto an existing row. Initial seed
+    inserted by the 373e1f066cc1 migration: ``('org_creation_mode', 'open')``.
+
+    `value` is JSON so we can store strings, bools, numbers, or nested
+    config without further schema work. Read at hot paths (e.g.
+    `POST /api/orgs` reads `org_creation_mode`); writes go through the
+    `PATCH /api/admin/platform-settings` endpoint, which audits old/new.
+    """
+    __tablename__ = "platform_settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[Optional[object]] = mapped_column(JSON, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, onupdate=_now, nullable=False,
+    )
 
 
 class DelegationIntent(Base):

@@ -639,3 +639,85 @@ After each path, a spot-check verifies the resulting schema (key tables exist, `
 1. Bump `--prior-revision`'s default in `pg_smoke.py` to the current head (i.e., the revision that is now the "prior" for your new migration).
 2. Add a column / table check in `_smoke_spot_check` that asserts your pass's schema additions actually landed.
 3. Run `pg_smoke.py` with both modes locally before opening the PR. Both must PASS. If `upgrade` fails, the migration has an ordering bug — fix it before deploy, do not ship-and-pray.
+
+---
+
+## Org Creation Friction Model (Phase 9.5)
+
+The platform allows any authenticated user to create an org by default — the in-person pilot recruitment scenario depends on no admin-approval bottleneck. Instead, four layers of friction sit in front of `POST /api/orgs`. They run in this order; the first one that fails is the user-visible error.
+
+### The four gates
+
+1. **Platform mode (kill switch).** The `platform_settings.org_creation_mode` row stores either `open` (default) or `approval_required`. When `approval_required`, every create request returns `403` with detail `"Org creation is temporarily paused — please contact support@liquiddemocracy.us"`. **Tool of last resort.** Flip it during an active spam attack while you investigate; do not leave it set as a routine state.
+
+2. **Email verification.** The user must have `email_verified=True`. If not, returns `403` with detail `"Please verify your email before creating an organization"`. The frontend renders this with a "Resend verification email" button. This is the **primary spam filter** — free protection since email verification is already required for voting and delegation.
+
+3. **Per-user lifetime cap.** Each user has an effective limit equal to `User.org_creation_limit` if set, else the platform default `3`. The check counts orgs the user owns (`OrgMembership.role == 'owner'`); if `count >= effective_limit`, returns `403` with detail `"You have created the maximum number of organizations (N). Contact support@liquiddemocracy.us if you need more."`. One legitimate user rarely creates more than three orgs; the support-contact path is the manual override without making approval the default.
+
+4. **Platform-wide rate limit.** Counts `org.created` audit events in the last hour. If `>= 20`, returns **`429`** (transient, not 403) with detail `"The platform is processing many organization-creation requests right now — please try again in a few minutes."`. Sits well above realistic legitimate volume (1-2/day) but caps blast radius of a mass-creation attack.
+
+### Audit enrichment
+
+Every successful `org.created` event records:
+- `creator_email_verified_age_seconds` — time between user's email verification and now (helps spot "verified-and-immediately-created" patterns)
+- `platform_org_creation_hour_count` — platform-wide org count in the past hour at moment of creation
+- `creator_user_agent` — for spam-pattern correlation
+- `ip_address` — already captured via existing `request.client.host`
+
+These don't enforce anything; they're the data foundation for the deferred monitoring layer.
+
+### Tuning the gates
+
+Three admin endpoints (all gated `is_admin=True`):
+
+```bash
+# Read current settings
+GET /api/admin/platform-settings
+
+# Flip the kill switch (or any platform setting)
+PATCH /api/admin/platform-settings
+Body: {"key": "org_creation_mode", "value": "approval_required"}
+
+# Lift a specific user's per-user cap (or set lower; null restores default)
+PATCH /api/admin/users/{user_id}/org-creation-limit
+Body: {"limit": null}        # restore platform default of 3
+Body: {"limit": 100}         # bump to 100
+Body: {"limit": 0}           # block this user from creating any
+```
+
+All three are audited — `platform_settings.changed` and `user.org_creation_limit_changed` events with `old_value`/`new_value` pairs.
+
+### Direct DB edits (emergency / no admin user available)
+
+If the admin endpoints aren't usable for some reason, both gates can be flipped via direct SQL:
+
+```sql
+-- Flip the kill switch on
+UPDATE platform_settings SET value = '"approval_required"' WHERE key = 'org_creation_mode';
+-- ... and back off
+UPDATE platform_settings SET value = '"open"' WHERE key = 'org_creation_mode';
+
+-- Lift Z's account cap (or any user's)
+UPDATE users SET org_creation_limit = NULL WHERE username = 'zach';   -- restore default 3
+UPDATE users SET org_creation_limit = 100 WHERE username = 'zach';    -- bump to 100
+```
+
+Note `value` on `platform_settings` is JSON-typed, so string values need their JSON quoting (`'"approval_required"'` not `'approval_required'`).
+
+### Recovery path: what to do if mass spam ever happens
+
+1. **Flip the kill switch first.** `PATCH /api/admin/platform-settings` body `{"key": "org_creation_mode", "value": "approval_required"}`. Buys time without losing any in-flight legitimate creations.
+2. **Investigate the audit log.** `SELECT * FROM audit_log WHERE action = 'org.created' AND timestamp > now() - interval '24 hours'` — look at IP addresses, user-agent strings, account email-verification ages, org-name patterns.
+3. **Surgical response.** Cap the offending users' `org_creation_limit` to 0; consider raising the rate limit or restoring `open` mode if the attack signature is identifiable enough to filter by other means.
+4. **Restore `open` mode** when you're confident the attack vector is closed.
+
+### Deferred monitoring (Phase 9.7 / Phase 10)
+
+This pass deliberately ships only the manual kill switch + the audit enrichment that will feed monitoring. **Anomaly detection, email alerts, and automatic kill-switch triggering are out of scope.** A follow-up pass should add:
+
+- Hourly background job querying audit log for spam patterns (>5 orgs/hour platform-wide, same-IP-multiple-accounts, gibberish org names, sub-60s-verify-then-create patterns). Email alerts to `support@liquiddemocracy.us`.
+- Admin dashboard view of org-creation activity (last 24h / 7d / 30d, per-user, rate-limit utilization, current settings with toggle controls).
+- Auto-pause-with-admin-override at a higher threshold (e.g., 20+ orgs/hour) — flip to `approval_required` automatically and email Z.
+- "Create your own org" invite tokens for in-person recruitment scenarios where the prospect would be over their per-user cap.
+
+Without this layer, the kill switch is a **recovery tool, not a defense.** Layer 4 (the rate limit) is the only automatic protection. Build the monitoring layer when there's evidence it's needed.

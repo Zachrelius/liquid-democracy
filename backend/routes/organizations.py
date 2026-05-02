@@ -118,6 +118,12 @@ def setup_status(
 # Organization CRUD
 # ============================================================================
 
+# Phase 9.5 — org-creation gate constants. Centralized so admin endpoints
+# and tests can reference them without scattering literals.
+DEFAULT_PER_USER_ORG_LIMIT = 3
+PLATFORM_HOURLY_ORG_RATE_LIMIT = 20
+
+
 @router.post("", response_model=schemas.OrgOut, status_code=status.HTTP_201_CREATED)
 def create_organization(
     body: schemas.OrgCreate,
@@ -125,9 +131,99 @@ def create_organization(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
-    """Create a new organization. Creator becomes owner."""
+    """Create a new organization. Creator becomes owner.
+
+    Phase 9.5 — gates run in this order; the frontend keys off both
+    status code and detail text:
+
+      1. Platform kill switch (`platform_settings.org_creation_mode`).
+         When `'approval_required'`, return 403.
+      2. Email-verification check (Layer 1 spam filter). 403 when False.
+      3. Per-user lifetime cap (Layer 1.5). Effective limit is
+         `current_user.org_creation_limit` if set else 3. Counts owned orgs
+         (`OrgMembership.role == 'owner'`). 403 when count >= limit.
+      4. Platform-wide hourly rate limit (Layer 3). Counts `org.created`
+         audit events in the past hour. 429 when count >= 20 (transient,
+         not 403).
+
+    On success, audit `org.created` with enriched details:
+      - `creator_email_verified_age_seconds`  int seconds since the user's
+        EmailVerification.verified_at (latest successful), or None.
+      - `platform_org_creation_hour_count`    same count from gate 4,
+        captured pre-insert post-validation.
+      - `creator_user_agent`                  request header verbatim.
+    """
+    # Gate 1 — platform mode (kill switch)
+    mode_row = db.get(models.PlatformSetting, "org_creation_mode")
+    org_creation_mode = mode_row.value if mode_row is not None else "open"
+    if org_creation_mode == "approval_required":
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Org creation is temporarily paused — please contact "
+                "support@liquiddemocracy.us"
+            ),
+        )
+
+    # Gate 2 — email verification
+    if not current_user.email_verified:
+        raise HTTPException(
+            status_code=403,
+            detail="Please verify your email before creating an organization",
+        )
+
+    # Gate 3 — per-user cap
+    effective_limit = (
+        current_user.org_creation_limit
+        if current_user.org_creation_limit is not None
+        else DEFAULT_PER_USER_ORG_LIMIT
+    )
+    owned_count = db.query(models.OrgMembership).filter(
+        models.OrgMembership.user_id == current_user.id,
+        models.OrgMembership.role == "owner",
+    ).count()
+    if owned_count >= effective_limit:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"You have created the maximum number of organizations "
+                f"({effective_limit}). Contact support@liquiddemocracy.us "
+                f"if you need more."
+            ),
+        )
+
+    # Gate 4 — platform-wide hourly rate limit
+    one_hour_ago = _now() - timedelta(hours=1)
+    hour_count = db.query(models.AuditLog).filter(
+        models.AuditLog.action == "org.created",
+        models.AuditLog.timestamp > one_hour_ago,
+    ).count()
+    if hour_count >= PLATFORM_HOURLY_ORG_RATE_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "The platform is processing many organization-creation "
+                "requests right now — please try again in a few minutes."
+            ),
+        )
+
+    # Slug-uniqueness check stays as a 400 (validation, not a gate).
     if db.query(models.Organization).filter(models.Organization.slug == body.slug).first():
         raise HTTPException(status_code=400, detail="Organization slug already taken")
+
+    # Compute audit-enrichment values BEFORE inserting the new audit row so
+    # `platform_org_creation_hour_count` reflects the pre-insert population.
+    verified_age_seconds: Optional[int] = None
+    latest_verification = db.query(models.EmailVerification).filter(
+        models.EmailVerification.user_id == current_user.id,
+        models.EmailVerification.verified_at.isnot(None),
+    ).order_by(models.EmailVerification.verified_at.desc()).first()
+    if latest_verification and latest_verification.verified_at:
+        verified_age_seconds = int(
+            (_now() - latest_verification.verified_at).total_seconds()
+        )
+
+    user_agent = request.headers.get("user-agent", "")
 
     org = models.Organization(
         name=body.name,
@@ -155,7 +251,13 @@ def create_organization(
         target_type="organization",
         target_id=org.id,
         actor_id=current_user.id,
-        details={"name": org.name, "slug": org.slug},
+        details={
+            "name": org.name,
+            "slug": org.slug,
+            "creator_email_verified_age_seconds": verified_age_seconds,
+            "platform_org_creation_hour_count": hour_count,
+            "creator_user_agent": user_agent,
+        },
         ip_address=request.client.host if request.client else None,
     )
 

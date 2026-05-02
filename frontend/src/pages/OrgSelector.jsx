@@ -10,6 +10,31 @@ export default function OrgSelector() {
     navigate('/proposals');
   }
 
+  // Phase 9.5 — empty-state CTA when the user is in zero orgs.
+  if (userOrgs.length === 0) {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-20">
+        <div className="text-center">
+          <h1 className="text-2xl font-semibold text-[#1B3A5C] mb-3">
+            You're not in any organizations yet
+          </h1>
+          <p className="text-sm text-gray-500 mb-8">
+            Create your own organization or wait for an invitation.
+          </p>
+          <button
+            onClick={() => navigate('/orgs/create')}
+            className="inline-block px-6 py-2.5 bg-[#1B3A5C] text-white text-sm rounded-lg hover:bg-[#2E75B6] transition-colors"
+          >
+            Create Organization
+          </button>
+          <p className="text-xs text-gray-400 mt-6">
+            Have an invitation? Click the link in the email.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-12">
       <h1 className="text-2xl font-semibold text-[#1B3A5C] mb-2">Your Organizations</h1>

@@ -852,6 +852,19 @@ class TimeSimulationRequest(BaseModel):
         return _validate_uuid(v)
 
 
+# Phase 9.5 — admin-only platform-settings + per-user org-creation-limit
+# patches. `value` and `limit` are intentionally permissive: `value` is JSON
+# (str/bool/number/dict are all valid), `limit` is `int | None` (None
+# clears the override and restores the platform default of 3).
+class PlatformSettingPatch(BaseModel):
+    key: str = Field(min_length=1, max_length=100)
+    value: Any = None
+
+
+class OrgCreationLimitPatch(BaseModel):
+    limit: Optional[int] = Field(default=None, ge=0)
+
+
 # ---------------------------------------------------------------------------
 # Audit Log
 # ---------------------------------------------------------------------------

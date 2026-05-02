@@ -220,6 +220,101 @@ def make_admin(
     return user
 
 
+# ---------------------------------------------------------------------------
+# Phase 9.5 — Platform settings + per-user org-creation-limit override
+# ---------------------------------------------------------------------------
+
+@router.get("/platform-settings")
+def get_platform_settings(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_admin),
+) -> dict:
+    """Return all platform_settings rows as a `{key: value}` dict.
+
+    Phase 9.5 — used by the future monitoring dashboard. Today the only
+    seeded key is `org_creation_mode` (`'open'` by default; flippable to
+    `'approval_required'` for the manual kill switch).
+    """
+    rows = db.query(models.PlatformSetting).all()
+    return {r.key: r.value for r in rows}
+
+
+@router.patch("/platform-settings")
+def patch_platform_settings(
+    body: schemas.PlatformSettingPatch,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_admin),
+) -> dict:
+    """Upsert one platform_settings row by key.
+
+    Phase 9.5 — body shape `{key, value}`. Audited as
+    `platform_settings.changed` with `{key, old_value, new_value}`.
+    """
+    row = db.get(models.PlatformSetting, body.key)
+    old_value = row.value if row else None
+    if row is None:
+        row = models.PlatformSetting(key=body.key, value=body.value)
+        db.add(row)
+    else:
+        row.value = body.value
+
+    log_audit_event(
+        db,
+        action="platform_settings.changed",
+        target_type="platform_setting",
+        target_id=body.key,
+        actor_id=current_user.id,
+        details={
+            "key": body.key,
+            "old_value": old_value,
+            "new_value": body.value,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    return {"key": body.key, "value": body.value}
+
+
+@router.patch("/users/{user_id}/org-creation-limit", response_model=schemas.UserOut)
+def patch_user_org_creation_limit(
+    user_id: str,
+    body: schemas.OrgCreationLimitPatch,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_admin),
+):
+    """Set (or clear) a user's org_creation_limit override.
+
+    Phase 9.5 — `limit: int | null`. Null restores the platform default of
+    3. Audited as `user.org_creation_limit_changed` with the target user
+    plus the old/new values for forensic context.
+    """
+    user = db.get(models.User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    old_value = user.org_creation_limit
+    user.org_creation_limit = body.limit
+
+    log_audit_event(
+        db,
+        action="user.org_creation_limit_changed",
+        target_type="user",
+        target_id=user.id,
+        actor_id=current_user.id,
+        details={
+            "target_user_id": user.id,
+            "old_value": old_value,
+            "new_value": body.limit,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 @router.get("/audit", response_model=list[schemas.AuditLogOut])
 def get_audit_log(
     action: Optional[str] = Query(None, description="Filter by action type, e.g. 'vote.cast'"),
