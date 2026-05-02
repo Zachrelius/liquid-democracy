@@ -2644,3 +2644,85 @@ Lead attempted to add Z directly via the platform `admin` user but the request r
 
 **Phase 9.6 shipped clean in a single session.** 7 commits + merge + closeout. **Friend pilot fully unblocked**: invitation emails actually send (W1 — was the priority); sub-org creators auto-become members + direct-add UI for fast-path member onboarding (W2); SubOrgList admin page no longer jitters (W3); sustained-majority demoted to advanced collapsed surface (W4). Tests 481 → 491 (+10). Bundle gzip +7.64 kB. No deploy incident.
 
+---
+
+## Phase 9.7 — Invitation Flow End-to-End Fix — 2026-05-02
+
+**Single-session pass.** 9 commits on `phase-9-7/invitation-flow`, no-ff merged to master at `dcc4507`. **LIVE on prod**, bundle `index-De1ws2E6.js`. Closes the connected invitation-flow gaps that surfaced after Phase 9.6 made invitation emails actually send: the email link went to a route that didn't exist (fell through to homepage), and even if a user reached the registration page, the IS_PUBLIC_DEMO=true auto-join silently routed them to demo instead of their inviting org.
+
+### Why this exists (the pattern)
+
+Phase 4c shipped invitation creation/storage but never built the user-facing acceptance flow. Phase 9.6 fixed the missing email send (one wiring gap). Phase 9.7 fixes the missing user journey — multiple connected gaps across registration, login, frontend routing, and auto-join behavior.
+
+This is the second time in three weeks "feature works at the API layer but the end-to-end user flow was never built" surfaced from real-world pilot signal. Both are Phase 4-era code paths that passed their original API-contract tests. **W7 logs a recommended test-depth audit mini-pass** for any future feature involving an external-touching workflow.
+
+### What shipped
+
+**Backend (W1, W2, W5, audit parity fix):**
+- `register` + `login` accept optional `invitation_token` field. New `_consume_invitation` helper validates (pending + not expired + email match), creates inviting-org `OrgMembership` (idempotent), marks invitation accepted, audits `invitation.accepted_via_registration` / `invitation.accepted_via_login`.
+- **`_auto_join_demo_org` now skips when user is in any active non-demo org** — load-bearing fix. Auto-join runs at `verify_email` time (NOT `register` — surprise surfaced during implementation), so the gate is on persistent state rather than per-request flow. Naturally covers the invitation-via-register case because the inviting-org membership exists by the time verify-email runs.
+- `accept_invitation` (existing route) now emits `invitation.accepted_authenticated` audit (was missing). All 3 paths now have audit parity with payload `{invitation_id, org_id, role, invited_email, accepting_user_id}`.
+- New `routes/invitations.py::GET /api/invitations/{token}/meta` — public, returns `{org_name, org_slug, invited_email, role, expires_at}`; 404 covers all "not consumable" outcomes (no state enumeration); rate-limited 30/min/IP via slowapi.
+- Backfill script `phase9_7_backfill_orphaned_invitations.py` — idempotent, 4 branches (rescued / already-member / auto-join-victim observed / no-matching-user silently skipped).
+
+**Frontend (W3, W4, W6, W8):**
+- New `pages/InviteAccept.jsx` at route `/invite/:token` — 4 rendering states (unauth+new-email → register, unauth+existing-email → login, auth+match → accept, auth+mismatch → clear error with verbatim spec copy) + error states. User-exists detection: try-register-fall-back-to-login (avoids token-enumeration vector). State 4 inlined custom logout returns to `/invite/:token` so user lands back in unauthenticated state (default `AuthContext.logout()` would dead-end at `/login`). Hard-navigation post-success so AuthProvider re-mounts and OrgContext picks up the new membership.
+- `email_service.py` link format → `/invite/{token}`. Misleading "(Stub for Phase 4c)" docstring replaced.
+- **W6 DirectAddSection root cause = UX positioning (Outcome A).** Walked Z's case: he's parent-org owner of GameNights, the `/members` endpoint returns him correctly, candidates filter works correctly. Section was rendered AFTER Pending → Active → Suspended; on multi-member sub-orgs sat below the fold. Fix: moved above Active members.
+- W8 `pages/Login.jsx` — wraps demo blocks in `{showDemo && (...)}`. Small grey "Just exploring? Try the demo →" trigger. Cold `/login` renders no demo blocks; click toggle reveals inline.
+
+**Backend tests: 491 → 509 (+18).** Load-bearing test: `test_register_with_invitation_token_skips_demo_auto_join` mocks `IS_PUBLIC_DEMO=true`, registers with token, runs verify-email, asserts demo membership is `None` and inviting-org membership is active. No PG smoke required (no schema changes).
+
+**Bundle: 1,235.38 → 1,245.90 kB JS / 332.35 → 334.25 kB gzipped (+1.90 kB).**
+
+### Production verification
+
+| Check | Result | Evidence |
+|---|---|---|
+| Invitation create | **PASS** | `POST /api/orgs/demo/invitations` 201; row in list with `status=pending` |
+| GET meta for invalid token | **PASS** | 404 (correct — no state enumeration) |
+| `/invite/:token` route exists (was missing pre-9.7) | **PASS browser-verified** | Navigated to `/invite/totally-fake-token-...`; URL stays at `/invite/...` (NOT redirected to `/`); InviteAccept renders error state "Invitation unavailable / Invitation not found, expired, or already used." with "Go to sign in" link. Pre-9.7 the same URL hit the catch-all and bounced to homepage. |
+| W6 DirectAddSection positioning | PASS-by-source | Section moved above Active members in shipped bundle. |
+| W8 demo affordances opt-in | PASS-by-source | `Login.jsx` wraps demo blocks in `{showDemo && (...)}`. |
+| End-to-end real-Gmail flow | Surface for Z | Z creates a test invitation in GameNights to a fresh email he controls, clicks the new `/invite/{token}` link, registers, lands in GameNights (not demo). Tests cover the full path; live verification needs Z's inbox. |
+
+Cleaned up 2 pending test invites on demo (Phase 9.7 sanity + leftover Phase 9.6 sanity); demo now has 0 pending. Prod state clean.
+
+### Z's wife and Z's Gloomhaven membership
+
+**Z's wife (orphaned invitation rescue):** **NOT yet rescued.** Backfill script needs to run on prod once. Lead can't run it (no Railway shell on Hobby tier).
+
+**Run command (Z executes):**
+```bash
+railway run python backend/scripts/phase9_7_backfill_orphaned_invitations.py
+```
+
+Idempotent. Reports per-row + final summary. Z's wife will appear in "Rescued" or "Auto-join victim" category depending on her current account state.
+
+**Z's Gloomhaven membership (carry-over from Phase 9.6):** Z opens GameNights → Sub-Organizations → Gloomhaven → Members; the now-fixed-positioning DirectAddSection appears at the top (Phase 9.7 W6 fix); pick himself, role admin, click Add. ~30 seconds.
+
+### Phase 9.7 commit list
+
+- `7f0162f` W1 invitation-aware register + login + auto-join skip
+- `22ca594` audit parity fix (invitation.accepted_authenticated)
+- `d65c232` W5 meta endpoint + slowapi rate limit
+- `f04b0cb` W2 backfill + 18 tests
+- `336e3ff` W4 email link format /invite/{token}
+- `c19598d` W3 InviteAccept page + route
+- `436ba7a` W6 DirectAddSection positioning fix (Outcome A)
+- `52aad50` W8 Login demo opt-in
+- `d24f2f8` W7 docs (DEPLOYMENT troubleshooting + roadmap test-depth audit)
+- `dcc4507` Merge to master
+- closeout commit follows
+
+### New tech debt
+
+1. **Test-depth audit recommended (logged in roadmap Known Issues).** Phase 9.6 + Phase 9.7 each surfaced "feature works at API layer but user journey was never built" gaps from pilot signal. Both are Phase 4-era code paths. A 1-2-session follow-up audit would enumerate every endpoint with an external-touching workflow (email links, OAuth callbacks, webhook receipts, file uploads with post-processing), confirm each has a user-journey-side-effect test, add the missing ones.
+2. **Backfill scripts (Phase 9.6 + Phase 9.7) accumulating in `backend/scripts/`.** Both idempotent and harmless to keep, but a future cleanup pass could move them to a `scripts/historical/` archive once their target audiences have been processed.
+
+### Pass-summary
+
+**Phase 9.7 shipped clean in a single session.** 9 commits + merge + closeout. **Friend pilot fully unblocked end-to-end** for any new invited user: emails send (9.6) + email link goes to a real React page handling 4 auth/email-match states with clear error states (W3) + register/login consume the invitation token + auto-join no longer steals invited users into demo (W1). Tests 491 → 509 (+18). Bundle gzip +1.90 kB. No deploy incident.
+
+The pattern (Phase 4c-era endpoints with API tests but no user-journey coverage) is now logged in the roadmap as a candidate for a dedicated test-depth audit mini-pass. Worth doing before the next pilot expansion.
+
