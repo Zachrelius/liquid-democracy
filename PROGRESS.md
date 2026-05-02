@@ -2585,3 +2585,62 @@ Either flips the cap immediately; no restart needed.
 
 Default platform stance: **open with friction, not approval-gated.** The four-layer friction model (kill switch → email verification → per-user cap → platform-wide rate limit) protects against spam without introducing user-hostile friction; the in-person pilot recruitment scenario continues to work end-to-end. Monitoring layer (anomaly detection, alerts, admin dashboard, auto-pause-with-override, invite tokens) deferred to Phase 9.7 / Phase 10 per spec.
 
+---
+
+## Phase 9.6 — Friend Pilot Unblockers — 2026-05-02
+
+**Single-session focused pass.** 7 commits on `phase-9-6/pilot-unblockers`, no-ff merged to master at `ed647b1`. **LIVE on prod**, bundle `index-B30BW95j.js`. Closes the four bugs Z surfaced in his friend-pilot dry run after Phase 9.5 unblocked org creation.
+
+### What shipped
+
+**W1 (highest priority — friend pilot fully blocked) — Invitation emails actually send.** Initial hypothesis was Resend regression after the Cloudflare DNS migration, but root cause was much simpler: `POST /api/orgs/{slug}/invitations` and `POST .../invitations/{id}/resend` in `routes/organizations.py` created `Invitation` DB rows and committed them but never called `email_service.send_invitation_email()`. Wiring was missing since Phase 4c — the function existed (the docstring still said "Stub for Phase 4c" misleadingly; the body is real), the call site didn't. Fixed via `BackgroundTasks` matching the `auth.py` registration-verification pattern.
+
+**W2 — Sub-org membership shortcuts.** Two backend changes in `routes/sub_organizations.py`:
+- **Auto-add creator**: `POST /sub-orgs` now creates a `SubOrgMembership` row for the creator with `role='admin'`, `status='active'` in the same transaction as the sub-org row. Matches the org-creation pattern.
+- **Direct-add endpoint**: new `POST /api/orgs/{parent_slug}/sub-orgs/{sub_slug}/members/add` body `{user_id, role?}` (role allowlist `member`/`moderator`/`admin`; `owner` deliberately excluded). Permission: parent-org admin OR sub-org admin. Validates target is an active parent-org member (400 with "must be added to the parent org first" if not) and isn't already a member (400 "Already a member"). Audited as `sub_org_member.added_directly`. Frontend `SubOrgMembers.jsx` gains a `DirectAddSection` above the existing `InviteSection`; success calls existing `load()` to refresh both members + parent-members; failure surfaces backend error via existing `toast.error`.
+
+**W3 — SubOrgList loading-state jitter.** Z reported the page jittered constantly with a flashing message. Root cause exactly as the spec hypothesized: `OrgContext.fetchSubOrgsFor` had `subOrgsByParent` in its `useCallback` deps. Every successful fetch updated state → callback identity changed → `SubOrgList.load`'s `useCallback([..., fetchSubOrgsFor])` recomputed → its `useEffect([load])` retriggered → infinite loop. The "flashing message" was the spinner mounting/unmounting in lockstep. Fix: moved cache to `useRef` so `fetchSubOrgsFor` has stable identity (`useCallback(..., [])`). General fix; SubOrgList was the only consumer affected, but any future consumer that listed `fetchSubOrgsFor` in effect deps would have suffered the same loop.
+
+**W4 — Sustained-majority UI demoted to collapsed-by-default.** OrgSettings.jsx replaces the always-expanded section with a single "Enable sustained-majority voting" toggle + verbatim spec helper text. Toggle OFF forces `sustained_majority_enabled_default: false` and hides the five controls; toggle ON expands them with previously-saved values (or sane defaults). Initial expanded state derives from loaded settings. **SubOrgSettings.jsx left alone** — its SM section uses a per-key inherit/override surface (Phase 8.5 Decision 9) which is a distinct UX pattern. **Backend `sustained_majority.py` deliberately untouched** — the floor-activation logic edge case (zero-votes + first-no-vote triggers floor) remains as known-issue tech debt.
+
+**Backfill script (`backend/scripts/phase9_6_backfill_sub_org_creator_memberships.py`).** Idempotent one-shot script that finds sub-orgs whose creator (per `sub_org.created` audit `actor_id`) doesn't have an active SubOrgMembership and inserts `(role='admin', status='active')` rows. Defensive branches: missing audit row → warn+skip; deleted creator → warn+skip; non-active existing membership → warn+skip (does NOT silently flip — conservative posture). 3 regression tests.
+
+**Backend tests: 481 → 491 (+10)** (+7 sub-org membership tests, +3 backfill regression tests). No PG smoke required (no schema changes).
+
+**Bundle: 1,200.70 → 1,235.38 kB JS / 324.71 → 332.35 kB gzipped (+7.64 kB).**
+
+### Production verification
+
+| Check | Result | Evidence |
+|---|---|---|
+| W1 invitation send queued | **PASS** | `POST /api/orgs/demo/invitations` body `{emails:[support@liquiddemocracy.us], role:member}` → 201 with `[{email, status:pending}]`. `BackgroundTasks` queues `send_invitation_email` post-commit. Actual Gmail arrival confirmable in Z's inbox (forwarded via Cloudflare Email Routing). |
+| W2 auto-add creator | **PASS** | Created sanity sub-org as alice → `GET .../members` → 1 member: alice with `role='admin'`, `status='active'`. |
+| W2 direct-add (parent-org admin) | **PASS** | Added carol to sanity sub-org as alice → 200 with `{role:'moderator', status:'active', username:'carol'}`. |
+| Cleanup | **PASS** | DELETE sanity sub-org → 204. Prod state clean. |
+| W3 SubOrgList no jitter | PASS-by-source | OrgContext `useRef` fix shipped in bundle; mechanically eliminates the dep-loop. |
+| W4 sustained-majority collapsed-by-default | PASS-by-source | OrgSettings.jsx ships in bundle; expanded-on-load only when `enabled_default=true` or any SM key non-default. |
+
+### Z's account: Gloomhaven membership
+
+Z (`ZacharyPetertam`, id `dab7a23a-1a46-4283-986a-49dbef2f2ea0`) created `GloomhavenCrew` (slug `gloomhaven`) under `GameNights` (slug `gamenights`) before Phase 9.6's auto-add wiring. He is **not yet** a member of Gloomhaven on prod. Two paths:
+
+1. **Self-serve (recommended — fastest):** Z logs into prod, navigates to GameNights → Sub-Organizations → Gloomhaven → Members. The new "Add member directly" section appears at the top. Pick himself from the dropdown, role `admin`, click Add. Done.
+2. **Backfill (catches all in one shot):** `railway run python backend/scripts/phase9_6_backfill_sub_org_creator_memberships.py` — idempotent; reports per-row + total count.
+
+Lead attempted to add Z directly via the platform `admin` user but the request returned 403 ("Sub-org admin (or parent-org admin) access required"). Decision 6's implicit power is scoped to parent-org-admin **within the same org family**, NOT platform-wide. Logged as new tech debt #4.
+
+### Phase 9.6 commit list
+
+`18abd06` (W1 email send) · `0175f39` (W2 backend) · `0d315dc` (backfill script) · `086883d` (W3 jitter) · `f655a4a` (W2 frontend) · `4e10e07` (W4 SM demotion) · `546ccb4` (W5 docs) · `ed647b1` (merge to master) · closeout commit follows.
+
+### New tech debt
+
+1. **Org invitation email-send had no end-to-end test.** Existing tests mocked at route-response level; the `send_invitation_email` call wasn't asserted. An httpx-mocked end-to-end send test would catch a similar regression at the suite level. Logged in `future_improvements_roadmap.md`.
+2. **Sustained-majority floor activation logic edge case.** Zero votes cast + first vote "no" → fires failure mode immediately. UI demoted in 9.6 to keep it from being a footgun; behavior fix deferred. Logged in `future_improvements_roadmap.md` Known Issues.
+3. **`email_service.send_invitation_email` docstring still says "(Stub for Phase 4c)"** even though the body is real and now actually called. Tiny copy fix; not blocking.
+4. **Platform admin (`is_admin=True`) doesn't have implicit sub-org-admin power outside org families they're a member of.** Surfaced when lead tried to add Z to Gloomhaven on his behalf. Correct security posture, but creates friction for backfill / on-behalf-of workflows. A future "platform-admin override mode" with explicit audit trail would be the right path if this becomes a frequent need.
+
+### Pass-summary
+
+**Phase 9.6 shipped clean in a single session.** 7 commits + merge + closeout. **Friend pilot fully unblocked**: invitation emails actually send (W1 — was the priority); sub-org creators auto-become members + direct-add UI for fast-path member onboarding (W2); SubOrgList admin page no longer jitters (W3); sustained-majority demoted to advanced collapsed surface (W4). Tests 481 → 491 (+10). Bundle gzip +7.64 kB. No deploy incident.
+
