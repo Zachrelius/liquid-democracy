@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -15,7 +15,9 @@ import models
 import schemas
 from audit_utils import log_audit_event
 from database import get_db
+from email_service import send_invitation_email
 from org_config import get_org_config
+from settings import settings as app_settings
 from org_middleware import (
     get_org_context,
     require_org_membership,
@@ -620,11 +622,20 @@ def deny_join_request(
 def create_invitations(
     org_slug: str,
     body: schemas.InvitationCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     admin_membership: models.OrgMembership = Depends(require_org_admin),
 ):
-    """Send invitations (admin). Body: {emails: string[], role: string}"""
+    """Send invitations (admin). Body: {emails: string[], role: string}
+
+    Phase 9.6 W1 fix: previously created the Invitation DB row but never
+    called send_invitation_email — invitations appeared in the admin list
+    but no email ever went out. Email send now fires via BackgroundTasks
+    (post-response, same pattern as registration verification in
+    routes/auth.py) so the API stays fast and a Resend outage doesn't
+    block invitation creation.
+    """
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
@@ -647,6 +658,14 @@ def create_invitations(
         invitations.append(inv)
 
     db.commit()
+
+    # Phase 9.6 W1: actually send the emails (was missing in Phase 4c).
+    for inv in invitations:
+        background_tasks.add_task(
+            send_invitation_email,
+            inv.email, inv.token, org.name, org.slug, app_settings.base_url,
+        )
+
     return [schemas.InvitationOut(
         id=inv.id,
         email=inv.email,
@@ -707,11 +726,14 @@ def revoke_invitation(
 def resend_invitation(
     org_slug: str,
     invitation_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     admin_membership: models.OrgMembership = Depends(require_org_admin),
 ):
-    """Resend invitation (admin) — generates a new token and extends expiry."""
+    """Resend invitation (admin) — generates a new token, extends expiry,
+    and actually sends the email (Phase 9.6 W1 fix — also previously
+    rotated the token without sending anything)."""
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
@@ -725,6 +747,10 @@ def resend_invitation(
     inv.expires_at = _now() + timedelta(days=7)
     inv.status = "pending"
     db.commit()
+    background_tasks.add_task(
+        send_invitation_email,
+        inv.email, inv.token, org.name, org.slug, app_settings.base_url,
+    )
     return {"message": "Invitation resent"}
 
 
