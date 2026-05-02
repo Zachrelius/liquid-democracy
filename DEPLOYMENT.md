@@ -562,6 +562,33 @@ To find a specific request:
 docker-compose logs backend | grep "request-id-here"
 ```
 
+### Org invitation links land on the homepage instead of an accept page (Phase 9.7 flow fix)
+
+**Symptoms:** invitation email arrives (Phase 9.6 wiring is intact); recipient clicks the link; they land on the marketing homepage with no indication of what happened. If they later register through the `/register` flow with the same email address, they end up in the demo org instead of the inviting org.
+
+**Cause:** Phase 4c shipped invitation creation/storage but never built the user-facing acceptance flow. The email link format was `/{org_slug}/join?token=` which had no matching React route — the catch-all redirected to `/`. Even if a user reached the registration page, the registration endpoint had no concept of pending invitations and Phase 6.5's `IS_PUBLIC_DEMO=true` auto-join silently routed every new account to the demo org.
+
+**Fix (already shipped in Phase 9.7):**
+- Email link format changed to `/invite/{token}` — now hits the new `InviteAccept` React page with four rendering states (unauth+new-email → register / unauth+existing-email → login / authenticated+match → accept button / authenticated+mismatch → clear error).
+- `POST /api/auth/register` and `POST /api/auth/login` accept an optional `invitation_token` field. When set, validates + consumes the invitation post-auth and creates the inviting-org membership.
+- `_auto_join_demo_org` (called from `verify_email`) now skips when the user is already an active member of any non-demo org. This is the load-bearing behavior change — without it, even a fixed invitation page would silently leak invited users to demo at email-verification time.
+- New public endpoint `GET /api/invitations/{token}/meta` returns invitation metadata (org_name, org_slug, invited_email, role, expires_at) for the InviteAccept page to render the right state. 404 covers all "not consumable" outcomes (unknown/expired/revoked/accepted) so it can't be used for state enumeration. Rate-limited 30/min/IP via slowapi.
+
+**Verification after any future change** that touches the invitation flow, the registration / login endpoints, or the auto-join logic:
+
+1. Create a test invitation in any org to a fresh email address you control. Confirm the email arrives with the new `/invite/{token}` format.
+2. Click the link from a logged-out browser session. Confirm you land on the InviteAccept page (not the homepage).
+3. Register through the page. Confirm the new account ends up in the inviting org and **not in demo** (this is the regression that bit Z's wife pre-9.7).
+4. Sign out, sign in as a different email-verified user, click a fresh invitation link to that user's email. Confirm the page renders the authenticated-accept card, not the registration form.
+5. As an authenticated user with a different email, click any invitation link. Confirm the email-mismatch error renders cleanly, not a silent reassignment.
+
+If anything diverges, check in this order:
+- Is `_auto_join_demo_org`'s "skip when user is in any non-demo org" guard intact? Direct query: `select * from org_memberships where user_id=<new user id>`. Should show inviting-org-only.
+- Is `_consume_invitation` being called from the right path? Check audit log for one of `invitation.accepted_via_registration`, `invitation.accepted_via_login`, `invitation.accepted_authenticated`.
+- Is the meta endpoint reachable? `curl https://www.liquiddemocracy.us/api/invitations/<token>/meta` should return JSON for valid tokens.
+
+**Backfill for existing orphaned invitations.** Phase 9.7 ships `backend/scripts/phase9_7_backfill_orphaned_invitations.py` — finds pending invitations whose target email has a registered user account, creates the missing membership, marks accepted. Idempotent. Run via `railway run python backend/scripts/phase9_7_backfill_orphaned_invitations.py` post-deploy. Reports per-row + summary (rescued / already-member / auto-join-victim observations).
+
 ### Org invitation emails created but never arrive (Phase 9.6 wiring fix)
 
 **Symptoms:** Admin sends invitations from the Members admin page; invitations appear in the admin's invitation list with "pending" status; recipient never receives the email in inbox or spam; Railway logs do not show any Resend API call attempt.

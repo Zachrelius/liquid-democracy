@@ -44,11 +44,33 @@ class RegisterRequest(BaseModel):
     display_name: str = Field(min_length=1, max_length=100)
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=8, max_length=128)
+    # Phase 9.7 W1 — when present, registration consumes the invitation
+    # (creates an OrgMembership in the inviting org, marks the invitation
+    # accepted, and skips the IS_PUBLIC_DEMO=true demo auto-join). Email on
+    # the request body must match the invitation's invited email
+    # (case-insensitive).
+    invitation_token: Optional[str] = Field(default=None, max_length=200)
 
 
 class LoginRequest(BaseModel):
     username: str = Field(min_length=1, max_length=50)
     password: str = Field(min_length=1, max_length=128)
+    # Phase 9.7 W1 — see RegisterRequest. After successful auth, if the
+    # invitation token resolves to a pending invitation for the user's
+    # email, an OrgMembership is created (or the existing one is left in
+    # place idempotently) and the invitation is marked accepted.
+    invitation_token: Optional[str] = Field(default=None, max_length=200)
+
+
+# Phase 9.7 W5 — public invitation metadata response. Surfaced via
+# `GET /api/invitations/{token}/meta` so the frontend InviteAccept page can
+# render the right state without consuming the token.
+class InvitationMetaOut(BaseModel):
+    org_name: str
+    org_slug: str
+    invited_email: str
+    role: str
+    expires_at: datetime
 
 
 class DemoLoginRequest(BaseModel):

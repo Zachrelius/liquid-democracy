@@ -1,8 +1,9 @@
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -34,6 +35,13 @@ def _auto_join_demo_org(db: Session, user: models.User) -> None:
     """When is_public_demo is enabled, add the verified user to the demo org as
     a regular member. Missing demo org is logged and tolerated — verification
     should never fail because the demo fixtures are absent.
+
+    Phase 9.7 W1: skip auto-join if the user is already an active member of any
+    non-demo org. This prevents the regression where a user invited to a
+    non-demo org via the new register-with-invitation flow gets silently
+    auto-joined to demo at email-verification time. The invitation flow
+    creates the inviting-org membership during registration, so by the time
+    verification runs the user already has a real target org.
     """
     if not settings.is_public_demo:
         return
@@ -46,6 +54,16 @@ def _auto_join_demo_org(db: Session, user: models.User) -> None:
             DEMO_ORG_SLUG,
             user.id,
         )
+        return
+    # Skip auto-join when the user is already an active member of a non-demo
+    # org — they came in through an invitation (or some other targeted path)
+    # and shouldn't be backfilled into demo.
+    other_membership = db.query(models.OrgMembership).filter(
+        models.OrgMembership.user_id == user.id,
+        models.OrgMembership.org_id != demo_org.id,
+        models.OrgMembership.status == "active",
+    ).first()
+    if other_membership is not None:
         return
     existing = db.query(models.OrgMembership).filter(
         models.OrgMembership.user_id == user.id,
@@ -61,6 +79,88 @@ def _auto_join_demo_org(db: Session, user: models.User) -> None:
     )
     db.add(membership)
     db.flush()
+
+
+def _consume_invitation(
+    db: Session,
+    *,
+    invitation_token: str,
+    user: models.User,
+    request_email: str,
+    via: str,
+    request: Request,
+) -> models.Invitation:
+    """Validate + consume an invitation token in the context of register/login.
+
+    Returns the Invitation row on success; raises HTTPException(400) on any
+    validation failure (token not found, expired/revoked/accepted, or email
+    mismatch). On success, this function:
+      - Creates an active OrgMembership for `user` in the inviting org
+        (skipped idempotently when one already exists active).
+      - Marks the invitation `accepted` with `accepted_at = now`.
+      - Logs an audit event with action `invitation.accepted_via_<via>`.
+
+    The caller is responsible for the surrounding `db.commit()`.
+    """
+    inv = db.query(models.Invitation).filter(
+        models.Invitation.token == invitation_token,
+        models.Invitation.status == "pending",
+    ).first()
+    now = _now()
+    if not inv or inv.expires_at < now:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired invitation token",
+        )
+
+    if inv.email.lower() != request_email.lower():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"This invitation is for {inv.email}, but you registered "
+                f"with {request_email}. Ask the inviter to resend to your address."
+            ),
+        )
+
+    # Idempotent OrgMembership: if the user is already active in the inviting
+    # org, leave it alone. If suspended/pending, reactivate to the invitation's
+    # role (matches the existing accept_invitation route's pattern).
+    existing = db.query(models.OrgMembership).filter(
+        models.OrgMembership.user_id == user.id,
+        models.OrgMembership.org_id == inv.org_id,
+    ).first()
+    if existing:
+        if existing.status != "active":
+            existing.status = "active"
+            existing.role = inv.role
+    else:
+        db.add(models.OrgMembership(
+            user_id=user.id,
+            org_id=inv.org_id,
+            role=inv.role,
+            status="active",
+        ))
+
+    inv.status = "accepted"
+    inv.accepted_at = now
+    db.flush()
+
+    log_audit_event(
+        db,
+        action=f"invitation.accepted_via_{via}",
+        target_type="invitation",
+        target_id=inv.id,
+        actor_id=user.id,
+        details={
+            "invitation_id": inv.id,
+            "org_id": inv.org_id,
+            "role": inv.role,
+            "invited_email": inv.email,
+            "accepting_user_id": user.id,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    return inv
 
 
 def _now() -> datetime:
@@ -114,6 +214,29 @@ async def register(
     if db.query(models.User).filter(models.User.email == body.email).first():
         raise HTTPException(status_code=400, detail="Email already in use")
 
+    # Phase 9.7 W1 — pre-validate the invitation token BEFORE creating the
+    # user account so a bad token returns 400 without leaving an orphaned user
+    # row behind. The full validation (including email match) happens again
+    # inside _consume_invitation after the user is created.
+    if body.invitation_token:
+        pre_check = db.query(models.Invitation).filter(
+            models.Invitation.token == body.invitation_token,
+            models.Invitation.status == "pending",
+        ).first()
+        if not pre_check or pre_check.expires_at < _now():
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired invitation token",
+            )
+        if pre_check.email.lower() != body.email.lower():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"This invitation is for {pre_check.email}, but you registered "
+                    f"with {body.email}. Ask the inviter to resend to your address."
+                ),
+            )
+
     # Check if this is the very first user (no users exist yet)
     is_first_user = db.query(models.User).count() == 0
 
@@ -150,6 +273,20 @@ async def register(
         ip_address=request.client.host if request.client else None,
     )
 
+    # Phase 9.7 W1 — consume the invitation in the same transaction as the
+    # user-create. This creates the OrgMembership in the inviting org and
+    # marks the invitation accepted; the resulting non-demo membership also
+    # gates _auto_join_demo_org out of demo at email-verification time.
+    if body.invitation_token:
+        _consume_invitation(
+            db,
+            invitation_token=body.invitation_token,
+            user=user,
+            request_email=body.email,
+            via="registration",
+            request=request,
+        )
+
     db.commit()
     db.refresh(user)
 
@@ -172,6 +309,7 @@ async def register(
 def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
+    invitation_token: Optional[str] = Form(default=None),
     db: Session = Depends(get_db),
 ):
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
@@ -190,6 +328,27 @@ def login(
         details={"username": user.username},
         ip_address=request.client.host if request.client else None,
     )
+
+    # Phase 9.7 W1 — optional invitation consumption. Mirrors register's
+    # behavior: validate token, validate email match (using the user's
+    # current email), then create-or-reuse OrgMembership and audit. If the
+    # user is already a member of the inviting org, the invitation is still
+    # marked accepted and a `invitation.accepted_via_login` event is logged
+    # (idempotent membership; auditable consumption).
+    if invitation_token:
+        if not user.email:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid or expired invitation token",
+            )
+        _consume_invitation(
+            db,
+            invitation_token=invitation_token,
+            user=user,
+            request_email=user.email,
+            via="login",
+            request=request,
+        )
 
     access_token = auth_utils.create_access_token(user.id)
     refresh_token = _create_refresh_token(db, user.id)

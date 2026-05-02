@@ -145,6 +145,16 @@ export default function SubOrgMembers() {
         </section>
       )}
 
+      {/* Direct add (Phase 9.6) — fast path for parent-org admins.
+          Phase 9.7 W6: positioned above Active members so it's visible without
+          scrolling on a sub-org with many members. Z reported in the friend
+          pilot that the section was hidden below the fold on Gloomhaven. */}
+      <DirectAddSection
+        parentMembers={parentMembers}
+        existingIds={new Set(members.map(m => m.user_id))}
+        onAdd={handleDirectAdd}
+      />
+
       {/* Active members */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
@@ -154,7 +164,7 @@ export default function SubOrgMembers() {
           <div className="py-8 text-center text-gray-400 text-sm">Loading…</div>
         ) : active.length === 0 ? (
           <div className="bg-white border border-gray-200 rounded-xl p-6 text-center text-sm text-gray-400">
-            No active members yet. Invite parent-org members below.
+            No active members yet. Add or invite parent-org members above.
           </div>
         ) : (
           <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -187,13 +197,6 @@ export default function SubOrgMembers() {
           </div>
         </section>
       )}
-
-      {/* Direct add (Phase 9.6) — fast path for parent-org admins */}
-      <DirectAddSection
-        parentMembers={parentMembers}
-        existingIds={new Set(members.map(m => m.user_id))}
-        onAdd={handleDirectAdd}
-      />
 
       {/* Invite */}
       <InviteSection

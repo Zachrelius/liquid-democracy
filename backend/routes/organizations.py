@@ -758,10 +758,17 @@ def resend_invitation(
 @router.post("/join/{token}", status_code=200)
 def accept_invitation(
     token: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: Optional[models.User] = Depends(auth_utils.get_optional_user),
 ):
-    """Accept invitation by token. Requires authenticated user."""
+    """Accept invitation by token. Requires authenticated user.
+
+    Phase 9.7 W1: emits an `invitation.accepted_authenticated` audit event
+    so all three invitation-consumption paths (registration, login, already-
+    authenticated accept) leave a per-path audit trail with the same
+    payload shape.
+    """
     inv = db.query(models.Invitation).filter(
         models.Invitation.token == token,
         models.Invitation.status == "pending",
@@ -799,6 +806,23 @@ def accept_invitation(
 
     inv.status = "accepted"
     inv.accepted_at = _now()
+
+    log_audit_event(
+        db,
+        action="invitation.accepted_authenticated",
+        target_type="invitation",
+        target_id=inv.id,
+        actor_id=current_user.id,
+        details={
+            "invitation_id": inv.id,
+            "org_id": inv.org_id,
+            "role": inv.role,
+            "invited_email": inv.email,
+            "accepting_user_id": current_user.id,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+
     db.commit()
 
     org = db.get(models.Organization, inv.org_id)

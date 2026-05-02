@@ -29,6 +29,13 @@ export default function Login() {
   // Demo quick-switch users
   const [demoUsers, setDemoUsers] = useState([]);
 
+  // Phase 9.7 W8 — demo affordances (quick-switch grid + load-scenario button)
+  // are hidden behind an opt-in toggle. First-time visitors (especially
+  // invitation recipients landing here from /invite/:token's "have an account?
+  // sign in" path, or anyone not specifically here for the demo) shouldn't see
+  // a wall of "log in as Alice/Bob/Carol" buttons.
+  const [showDemo, setShowDemo] = useState(false);
+
   useEffect(() => {
     // Try to fetch demo users (only works in debug mode)
     api.get('/api/auth/demo-users')
@@ -272,52 +279,72 @@ export default function Login() {
             </form>
           )}
 
-          {/* Demo quick-switch login */}
-          {demoUsers.length > 0 && (
-            <div className="mt-6 pt-5 border-t border-gray-100">
-              <p className="text-xs text-gray-400 text-center mb-3">
-                Quick Login (Demo Mode)
-              </p>
-              <div className="grid grid-cols-3 gap-2">
-                {demoUsers.map(u => (
-                  <button
-                    key={u.username}
-                    onClick={() => handleQuickLogin(u.username)}
-                    disabled={submitting}
-                    className="flex flex-col items-center gap-1 p-2 bg-gray-50 border border-gray-200 rounded-lg hover:border-[#2E75B6] hover:bg-blue-50 transition-colors disabled:opacity-50"
-                  >
-                    <div className="w-8 h-8 rounded-full bg-[#1B3A5C] text-white flex items-center justify-center text-xs font-bold">
-                      {u.display_name.charAt(0).toUpperCase()}
-                    </div>
-                    <span className="text-xs text-gray-700 font-medium truncate w-full text-center">{u.display_name}</span>
-                    <span className="text-[10px] text-gray-400">@{u.username}</span>
-                  </button>
-                ))}
+          {/* Phase 9.7 W8 — demo affordances are gated behind a deliberate
+              opt-in. The data still loads on mount (the useEffect above runs
+              regardless) so it's ready when the toggle flips. Once revealed,
+              the affordances stay visible for the rest of the session. */}
+          {showDemo && (
+            <>
+              {/* Demo quick-switch login */}
+              {demoUsers.length > 0 && (
+                <div className="mt-6 pt-5 border-t border-gray-100">
+                  <p className="text-xs text-gray-400 text-center mb-3">
+                    Quick Login (Demo Mode)
+                  </p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {demoUsers.map(u => (
+                      <button
+                        key={u.username}
+                        onClick={() => handleQuickLogin(u.username)}
+                        disabled={submitting}
+                        className="flex flex-col items-center gap-1 p-2 bg-gray-50 border border-gray-200 rounded-lg hover:border-[#2E75B6] hover:bg-blue-50 transition-colors disabled:opacity-50"
+                      >
+                        <div className="w-8 h-8 rounded-full bg-[#1B3A5C] text-white flex items-center justify-center text-xs font-bold">
+                          {u.display_name.charAt(0).toUpperCase()}
+                        </div>
+                        <span className="text-xs text-gray-700 font-medium truncate w-full text-center">{u.display_name}</span>
+                        <span className="text-[10px] text-gray-400">@{u.username}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Demo loader */}
+              <div className="mt-6 pt-5 border-t border-gray-100">
+                <p className="text-xs text-gray-400 text-center mb-2">
+                  First time? Load a demo scenario to explore the platform.
+                </p>
+                {demoMsg && (
+                  <div className="mb-2 p-2 bg-green-50 border border-green-200 text-green-700 text-xs rounded-lg text-center">
+                    {demoMsg}
+                  </div>
+                )}
+                <button
+                  onClick={handleDemo}
+                  disabled={demoLoading}
+                  className="w-full py-2 border border-[#2E75B6] text-[#2E75B6] text-sm font-medium rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
+                >
+                  {demoLoading ? 'Loading demo data...' : 'Load Demo Scenario'}
+                </button>
+                <p className="mt-1.5 text-xs text-gray-400 text-center">
+                  After loading, log in as <strong>alice</strong> with password <strong>demo1234</strong>
+                </p>
               </div>
-            </div>
+            </>
           )}
 
-          {/* Demo loader */}
-          <div className="mt-6 pt-5 border-t border-gray-100">
-            <p className="text-xs text-gray-400 text-center mb-2">
-              First time? Load a demo scenario to explore the platform.
-            </p>
-            {demoMsg && (
-              <div className="mb-2 p-2 bg-green-50 border border-green-200 text-green-700 text-xs rounded-lg text-center">
-                {demoMsg}
-              </div>
-            )}
-            <button
-              onClick={handleDemo}
-              disabled={demoLoading}
-              className="w-full py-2 border border-[#2E75B6] text-[#2E75B6] text-sm font-medium rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
-            >
-              {demoLoading ? 'Loading demo data...' : 'Load Demo Scenario'}
-            </button>
-            <p className="mt-1.5 text-xs text-gray-400 text-center">
-              After loading, log in as <strong>alice</strong> with password <strong>demo1234</strong>
-            </p>
-          </div>
+          {!showDemo && (
+            <div className="mt-6 pt-5 border-t border-gray-100 text-center">
+              <button
+                type="button"
+                onClick={() => setShowDemo(true)}
+                className="text-xs text-gray-500 hover:text-gray-700"
+              >
+                Just exploring? Try the demo →
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
