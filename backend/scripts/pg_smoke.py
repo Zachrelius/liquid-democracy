@@ -61,12 +61,12 @@ _BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
-# Default prior revision: Phase 9 Session 1 (e7b3f9a02c14). Session 2 ships
-# a single column-add (`polises.intended_seed_statements`) on top of Session
-# 1's data layer; the upgrade-from-prior path exercises ONLY that increment
-# rather than re-running Session 1's table-create from Phase 8.5. Bump again
-# in the next pass.
-_DEFAULT_PRIOR_REV = "e7b3f9a02c14"
+# Default prior revision: Phase 9 Session 2 (e72362fd7cd5). Phase 9.5 ships
+# the org-creation-gate migration (373e1f066cc1) on top of Session 2's
+# `intended_seed_statements` column; the upgrade-from-prior path exercises
+# ONLY that increment rather than re-running every prior chain step. Bump
+# again in the next pass.
+_DEFAULT_PRIOR_REV = "e72362fd7cd5"
 
 _DEFAULT_PG_IMAGE = "postgres:16-alpine"
 _DEFAULT_PG_PORT = 55433  # Distinct from Phase 8.5's 55432 to avoid clash.
@@ -265,6 +265,37 @@ def _smoke_spot_check(db_url: str, label: str) -> None:
             )).scalar()
             assert res, (
                 f"[{label}] polises.intended_seed_statements column missing"
+            )
+
+            # Phase 9.5's users.org_creation_limit column.
+            res = conn.execute(text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_schema='public' AND table_name='users' "
+                "AND column_name='org_creation_limit'"
+            )).scalar()
+            assert res, (
+                f"[{label}] users.org_creation_limit column missing"
+            )
+
+            # Phase 9.5's platform_settings table + seeded row.
+            res = conn.execute(text(
+                "SELECT to_regclass('public.platform_settings') IS NOT NULL"
+            )).scalar()
+            assert res, f"[{label}] platform_settings table missing"
+            count = conn.execute(text(
+                "SELECT COUNT(*) FROM platform_settings"
+            )).scalar()
+            assert count >= 1, (
+                f"[{label}] platform_settings table has no rows; "
+                f"expected at least the seeded org_creation_mode='open'"
+            )
+            seeded = conn.execute(text(
+                "SELECT 1 FROM platform_settings "
+                "WHERE key = 'org_creation_mode'"
+            )).scalar()
+            assert seeded, (
+                f"[{label}] platform_settings missing the seeded "
+                f"org_creation_mode row"
             )
 
             # alembic_version row matches head
