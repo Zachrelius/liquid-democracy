@@ -2464,3 +2464,124 @@ Per spec's "Out of Scope" section:
 - Email digest notifications (Phase 10 if it ships)
 - CompDemocracy admin-token flip from manual-fallback to programmatic (out-of-band; ships when token is provisioned in Railway env)
 
+---
+
+## Phase 9.5 — Org Creation Gap Fix — 2026-05-02
+
+**Single-session focused pass.** 7 commits on `phase-9-5/org-creation`, no-ff merged to master at `3b0e19a`. **LIVE on prod** at `https://www.liquiddemocracy.us` on bundle `index-B-qpoTOu.js`.
+
+The platform's `/orgs/create` page existed and worked, but no UI element linked to it; backend `POST /api/orgs` was gated only on authentication. Z's friend pilot was blocked. This pass closes both gaps: discovery surfaces giving authenticated users a UI path to org creation, plus a four-layer friction model on the create endpoint. **No approval gating** — the in-person pilot recruitment scenario depends on no admin bottleneck.
+
+### What shipped
+
+**Schema migration `373e1f066cc1` (down: `e72362fd7cd5`):**
+- `users.org_creation_limit` — nullable Integer (null = use platform default of 3; can be set per-user via admin endpoint)
+- `platform_settings` table (key String PK / value JSON / updated_at) seeded with `{key='org_creation_mode', value='open'}`
+- Idempotent (b1ab5db pattern), reversible
+- Mirror seed in `database._seed_platform_defaults()` from `create_tables()` so the fresh-deploy path (post-Phase 8.6 `start.sh` ordering fix) also gets the seeded row
+
+**Four ordered gates on `POST /api/orgs`:**
+
+| Order | Gate | Status | Detail |
+|---|---|---|---|
+| 1 | Platform mode (kill switch) | 403 | "Org creation is temporarily paused — please contact support@liquiddemocracy.us" |
+| 2 | Email verification | 403 | "Please verify your email before creating an organization" |
+| 3 | Per-user cap (default 3, override via column) | 403 | "You have created the maximum number of organizations (N). Contact support@liquiddemocracy.us if you need more." |
+| 4 | Platform-wide rate limit (20/hr via audit-log count) | **429** | "The platform is processing many organization-creation requests right now — please try again in a few minutes." |
+
+**Audit enrichment** on `org.created`:
+- `creator_email_verified_age_seconds` (from `EmailVerification.verified_at`; None for legacy accounts)
+- `platform_org_creation_hour_count` (the rate-limit count at moment of creation)
+- `creator_user_agent` (from request headers)
+- `ip_address` (existing capture via `request.client.host`)
+
+**Three admin endpoints** (`is_admin=True` gated):
+- `GET /api/admin/platform-settings` — returns dict of all rows
+- `PATCH /api/admin/platform-settings` body `{key, value}` — upsert; audited as `platform_settings.changed`
+- `PATCH /api/admin/users/{user_id}/org-creation-limit` body `{limit: int|null}` — audited as `user.org_creation_limit_changed`
+
+**Three frontend discovery surfaces:**
+- **OrgSwitcher dropdown (Nav.jsx, primary)** — divider + "+ Create new organization" entry below org list; visible to all authenticated users. Browser-verified.
+- **OrgSelector empty-state (OrgSelector.jsx, secondary)** — centered CTA "You're not in any organizations yet" + "Create Organization" button.
+- **User dropdown (Nav.jsx, tertiary)** — "Create Organization" link above "Sign out". Browser-verified.
+
+All three route to **`/orgs/create`** (existing route — spec said `/create-org` but the actual path is `/orgs/create`; agent kept existing flow bit-for-bit unchanged).
+
+**CreateOrg.jsx friendly error rendering** — `classifyError` helper pattern-matches status + detail-text to one of four scenarios:
+- Email-not-verified → amber banner + "Resend verification email" button reusing `EmailVerificationBanner.jsx`'s flow
+- Cap-reached → banner with N parsed from detail text + `support@liquiddemocracy.us` as plain text
+- Platform-paused → banner with support email
+- Rate-limited → banner explaining transient state
+
+**Backend tests: 465 → 481 passing (+16).** `test_org_creation_gates.py` (15 tests covering each gate + per-user cap override paths + audit-enrichment field presence) plus `test_phase9_5_migration_cycle.py` (1 test exercising upgrade → downgrade → upgrade on SQLite via subprocess alembic).
+
+**PG smoke: PASS both modes** via `pg_smoke.py --mode both --prior-revision e72362fd7cd5`. Spot-checks confirm `users.org_creation_limit` column, `platform_settings` table, seeded `org_creation_mode='open'` row.
+
+**`DEPLOYMENT.md`** gains an "Org Creation Friction Model" section: four gates, audit fields, admin endpoint usage, direct SQL fallbacks (with the `'"approval_required"'` JSON-quoting gotcha), recovery path for mass-spam scenarios (kill switch first, audit log second, surgical response third, restore open last), and deferred monitoring items for Phase 9.7.
+
+### Production verification (browser-driven on prod)
+
+| Gate / Surface | Result | Evidence |
+|---|---|---|
+| Per-user cap (default 3) | **PASS browser-verified** | alice created 3 orgs successfully (201, 201, 201); 4th attempt → **403** with exact spec message including the literal "(3)" limit value |
+| Kill switch | **PASS browser-verified** | `admin` user PATCH'd `org_creation_mode='approval_required'` → voter02's create attempt blocked with exact spec "Org creation is temporarily paused…" message → restored to `'open'` (prod NOT broken for visitors) |
+| Admin endpoints | **PASS browser-verified** | GET platform-settings 200 returns `{org_creation_mode: 'open'}`; PATCH lifted alice's `org_creation_limit` to 100 then back to null (200 both); PATCH platform-settings 200 both flips |
+| OrgSwitcher entry visible to non-admin auth user | **PASS browser-verified** | "Create new organization" text appears after org-switcher dropdown opened as alice |
+| User dropdown entry | **PASS browser-verified** | "Create Organization" text appears in user dropdown |
+| Email-verification gate | PASS-by-source | `test_org_creation_gates.py::test_email_not_verified_rejection` covers; would require an unverified prod account to live-trace |
+| Rate-limit gate | PASS-by-source | `test_org_creation_gates.py` covers via mocked audit count; would require 20+ creations/hr to live-trace, not feasible without polluting prod |
+| OrgSelector empty-state CTA | PASS-by-source | Would require a brand-new zero-org account; existing demo personas all have demo membership |
+| Demo auto-join regression (Phase 6.5) | PASS-by-source | No code touched in the demo auto-join path; the new gates apply to org creation only |
+
+Cleanup: 3 sanity test orgs (`phase-9-5-sanity-test-*`) DELETE'd 204 each; alice owned count back to 0; alice `org_creation_limit` restored to null; platform `org_creation_mode` confirmed `open` post-test. **Prod state is clean.**
+
+### Phase 9.5 commit list
+
+- `e861bc6` W1: schema migration + models + database.py seed
+- `08a1e80` W2: 4 ordered gates + audit enrichment + 15 tests
+- `4eb2695` W3: 3 admin endpoints + Pydantic schemas
+- `48836c6` pg_smoke spot-checks for new schema
+- `416975e` W4-W6: OrgSwitcher + OrgSelector empty-state + user dropdown discovery surfaces
+- `d3b2e23` W7: CreateOrg friendly error rendering
+- `c0968b9` W8: DEPLOYMENT.md "Org Creation Friction Model"
+- `3b0e19a` Merge to master
+
+### Z's cap-lift command (POST-DEPLOY ACTION)
+
+When Z's account hits the default cap of 3 orgs (he creates demo + test + friend org and wants more), bump his cap via either path:
+
+**Admin endpoint (preferred):**
+```
+PATCH /api/admin/users/{zachs_user_id}/org-creation-limit
+Authorization: Bearer <admin token>
+Content-Type: application/json
+
+{"limit": 100}
+```
+
+To get Z's user_id: `GET /api/admin/users` as the platform admin (or query the DB directly).
+
+**Direct SQL (emergency / no admin user):**
+```sql
+UPDATE users SET org_creation_limit = 100 WHERE username = 'zach';
+-- or, to set unlimited (no cap):
+UPDATE users SET org_creation_limit = 999999 WHERE username = 'zach';
+-- or, to restore default 3:
+UPDATE users SET org_creation_limit = NULL WHERE username = 'zach';
+```
+
+Either flips the cap immediately; no restart needed.
+
+### New tech debt
+
+1. **No `User.email_verified_at` column.** The audit-enrichment query falls back to `EmailVerification.verified_at`; legacy accounts predating the table get `None`. A dedicated User column would simplify the query and remove the edge case.
+2. **`audit_log` index gap.** Rate-limit query (`action='org.created' AND timestamp > now-1h`) has no composite index. Non-issue at current scale; revisit at millions of rows.
+3. **Fresh-deploy seed mirror in `database.create_tables()`** is a band-aid for the create_all+stamp-head asymmetry from Phase 8.6's `start.sh` ordering fix. Worth revisiting when the alembic chain gets squashed (so the migration's INSERT becomes the only source of the seeded `org_creation_mode='open'` row).
+4. **Spec route drift** — `phase9_5_org_creation_spec.md` says `/create-org`; actual route is `/orgs/create`. Frontend used the actual path; spec should be updated for any future reader.
+
+### Pass-summary
+
+**Phase 9.5 Org Creation Gap Fix shipped clean in a single session.** 7 commits + merge. Backend tests 465 → 481 (+16). Bundle gzip +0.94 kB. No deploy incident. All 3 browser-verified gates passed with exact spec messages. Prod state cleaned up post-test. **Z's friend pilot is unblocked.**
+
+Default platform stance: **open with friction, not approval-gated.** The four-layer friction model (kill switch → email verification → per-user cap → platform-wide rate limit) protects against spam without introducing user-hostile friction; the in-person pilot recruitment scenario continues to work end-to-end. Monitoring layer (anomaly detection, alerts, admin dashboard, auto-pause-with-override, invite tokens) deferred to Phase 9.7 / Phase 10 per spec.
+
