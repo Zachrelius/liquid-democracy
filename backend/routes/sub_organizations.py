@@ -199,6 +199,19 @@ def create_sub_org(
     db.add(sub_org)
     db.flush()
 
+    # Phase 9.6 Workstream 2 — auto-add the creating parent-org admin as a
+    # sub-org admin so the SubOrg admin pages they immediately land on are
+    # not gated against them. Mirrors the org-creation pattern where the
+    # creator is bootstrapped as owner. No separate audit event — the
+    # `sub_org.created` event with this actor implies the auto-add.
+    creator_membership = models.SubOrgMembership(
+        user_id=current_user.id,
+        sub_org_id=sub_org.id,
+        role="admin",
+        status="active",
+    )
+    db.add(creator_membership)
+
     log_audit_event(
         db,
         action="sub_org.created",
@@ -581,6 +594,95 @@ def invite_sub_org_member(
     )
     db.commit()
     return {"message": "Invite sent", "status": "pending_approval"}
+
+
+@router.post(
+    "/{org_slug}/sub-orgs/{sub_slug}/members/add",
+    status_code=200,
+    response_model=schemas.SubOrgMemberOut,
+)
+def add_sub_org_member_directly(
+    org_slug: str,
+    sub_slug: str,
+    body: schemas.SubOrgMemberDirectAdd,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 9.6 Workstream 2 — directly add an active parent-org member to a
+    sub-org, bypassing the invitation/approval flow.
+
+    Permission: parent-org admin OR sub-org admin (Decision 6 lite — sub-org
+    admins can also use this fast path).
+
+    Validation:
+      - target user must be an active parent-org member (otherwise 400)
+      - target user must NOT already have a SubOrgMembership row for this
+        sub-org (otherwise 400 — caller should use change-role / approve
+        instead)
+
+    Default role is 'member' if not provided. Audit event
+    `sub_org_member.added_directly` distinguishes this fast path from the
+    invitation flow (`sub_org.member_invited` + `sub_org.member_joined`).
+    """
+    parent = _parent_or_404(db, org_slug)
+    sub_org = _sub_org_or_404(db, parent, sub_slug)
+
+    if not is_sub_org_admin(db, current_user.id, sub_org):
+        raise HTTPException(
+            status_code=403,
+            detail="Sub-org admin (or parent-org admin) access required",
+        )
+
+    target = db.get(models.User, body.user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    parent_m = _require_parent_org_member(db, body.user_id, parent)
+    if parent_m is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Target user must be added to the parent org first via "
+                "invitation. Direct-add only works for existing active "
+                "parent-org members."
+            ),
+        )
+
+    existing = db.query(models.SubOrgMembership).filter(
+        models.SubOrgMembership.user_id == body.user_id,
+        models.SubOrgMembership.sub_org_id == sub_org.id,
+    ).first()
+    if existing is not None:
+        raise HTTPException(status_code=400, detail="Already a member")
+
+    sm = models.SubOrgMembership(
+        user_id=body.user_id,
+        sub_org_id=sub_org.id,
+        role=body.role,
+        status="active",
+    )
+    db.add(sm)
+    db.flush()
+
+    log_audit_event(
+        db,
+        action="sub_org_member.added_directly",
+        target_type="sub_org_membership",
+        target_id=sub_org.id,
+        actor_id=current_user.id,
+        details={
+            "sub_org_id": sub_org.id,
+            "target_user_id": body.user_id,
+            "role": body.role,
+            "by_actor": current_user.id,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+
+    db.commit()
+    db.refresh(sm)
+    return _sub_member_to_out(db, sm)
 
 
 @router.post(

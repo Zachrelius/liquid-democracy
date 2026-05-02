@@ -899,6 +899,192 @@ class TestParentOrgAdminImplicitPower:
 
 
 # ---------------------------------------------------------------------------
+# Phase 9.6 Workstream 2 — auto-add creator + direct-add member endpoint
+# ---------------------------------------------------------------------------
+
+class TestPhase96SubOrgMembership:
+    """Phase 9.6 Workstream 2 — sub-org membership unblockers.
+
+    Covers:
+      1. Auto-add: parent-org admin who creates a sub-org is auto-added as
+         an active sub-org admin.
+      2-3. Direct-add success paths (parent-org admin + sub-org admin).
+      4. Direct-add gating (non-admin sub-org member -> 403).
+      5. Direct-add validation: target not a parent-org member -> 400 with
+         "must be added to the parent org first" message.
+      6. Direct-add validation: already-a-member -> 400.
+      7. Audit event `sub_org_member.added_directly` payload shape.
+    """
+
+    def test_auto_add_creator_as_sub_org_admin(self, db, client):
+        """Decision: when a parent-org admin creates a sub-org, a
+        SubOrgMembership row is bootstrapped with role='admin', status='active'.
+        Mirrors the org-creation pattern (creator becomes owner).
+        """
+        admin = _user(db, "p96_admin")
+        parent = _org(db, "p96parent")
+        _membership(db, parent, admin, role="admin")
+        db.commit()
+
+        resp = client.post(
+            f"/api/orgs/{parent.slug}/sub-orgs",
+            json={"name": "Gloomhaven", "slug": "gloomhaven"},
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 201, resp.text
+        sub_id = resp.json()["id"]
+
+        sm = db.query(models.SubOrgMembership).filter(
+            models.SubOrgMembership.user_id == admin.id,
+            models.SubOrgMembership.sub_org_id == sub_id,
+        ).first()
+        assert sm is not None, "Creator should be auto-added as sub-org member"
+        assert sm.role == "admin"
+        assert sm.status == "active"
+
+    def test_direct_add_by_parent_org_admin(self, db, client):
+        """Parent-org admin can directly add another active parent-org member
+        to a sub-org without invitation/approval round-trip."""
+        admin = _user(db, "p96_admin2")
+        target = _user(db, "p96_target")
+        parent = _org(db, "p96parent2")
+        sub = _org(db, "p96sub2", parent_org_id=parent.id)
+        _membership(db, parent, admin, role="admin")
+        _membership(db, parent, target, role="member")
+        db.commit()
+
+        resp = client.post(
+            f"/api/orgs/{parent.slug}/sub-orgs/{sub.slug}/members/add",
+            json={"user_id": target.id, "role": "member"},
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["user_id"] == target.id
+        assert body["role"] == "member"
+        assert body["status"] == "active"
+
+        # And shows up in the member list
+        resp = client.get(
+            f"/api/orgs/{parent.slug}/sub-orgs/{sub.slug}/members",
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 200
+        assert any(m["user_id"] == target.id for m in resp.json())
+
+    def test_direct_add_by_sub_org_admin(self, db, client):
+        """Decision 6 lite: a sub-org admin who is NOT a parent-org admin can
+        also use the direct-add fast path."""
+        parent_admin = _user(db, "p96_padmin")
+        sub_admin = _user(db, "p96_sadmin")
+        target = _user(db, "p96_target3")
+        parent = _org(db, "p96parent3")
+        sub = _org(db, "p96sub3", parent_org_id=parent.id)
+        _membership(db, parent, parent_admin, role="admin")
+        # sub_admin is a plain parent-org member but a sub-org admin
+        _membership(db, parent, sub_admin, role="member")
+        _sub_membership(db, sub, sub_admin, role="admin")
+        # target is a parent-org member, not yet a sub-org member
+        _membership(db, parent, target, role="member")
+        db.commit()
+
+        resp = client.post(
+            f"/api/orgs/{parent.slug}/sub-orgs/{sub.slug}/members/add",
+            json={"user_id": target.id},  # default role
+            headers=_auth(sub_admin),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["role"] == "member"
+
+    def test_direct_add_by_non_admin_forbidden(self, db, client):
+        """A plain sub-org member (no admin role anywhere) cannot direct-add."""
+        regular = _user(db, "p96_regular")
+        target = _user(db, "p96_target4")
+        parent = _org(db, "p96parent4")
+        sub = _org(db, "p96sub4", parent_org_id=parent.id)
+        _membership(db, parent, regular, role="member")
+        _membership(db, parent, target, role="member")
+        # regular is a sub-org *member* but NOT admin
+        _sub_membership(db, sub, regular, role="member")
+        db.commit()
+
+        resp = client.post(
+            f"/api/orgs/{parent.slug}/sub-orgs/{sub.slug}/members/add",
+            json={"user_id": target.id},
+            headers=_auth(regular),
+        )
+        assert resp.status_code == 403
+
+    def test_direct_add_target_not_parent_member_400(self, db, client):
+        """If the target isn't a parent-org member, reject with the explicit
+        guidance that they need to be invited to the parent org first."""
+        admin = _user(db, "p96_admin5")
+        outsider = _user(db, "p96_outsider")
+        parent = _org(db, "p96parent5")
+        sub = _org(db, "p96sub5", parent_org_id=parent.id)
+        _membership(db, parent, admin, role="admin")
+        # outsider has NO parent-org membership
+        db.commit()
+
+        resp = client.post(
+            f"/api/orgs/{parent.slug}/sub-orgs/{sub.slug}/members/add",
+            json={"user_id": outsider.id},
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 400
+        assert "parent org first" in resp.json()["detail"]
+
+    def test_direct_add_already_a_member_400(self, db, client):
+        """Idempotency reject: existing SubOrgMembership for this sub-org
+        (any status) blocks direct-add."""
+        admin = _user(db, "p96_admin6")
+        target = _user(db, "p96_target6")
+        parent = _org(db, "p96parent6")
+        sub = _org(db, "p96sub6", parent_org_id=parent.id)
+        _membership(db, parent, admin, role="admin")
+        _membership(db, parent, target, role="member")
+        _sub_membership(db, sub, target, role="member")  # already a member
+        db.commit()
+
+        resp = client.post(
+            f"/api/orgs/{parent.slug}/sub-orgs/{sub.slug}/members/add",
+            json={"user_id": target.id},
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 400
+        assert "Already a member" in resp.json()["detail"]
+
+    def test_direct_add_audit_event_payload(self, db, client):
+        """Audit event `sub_org_member.added_directly` fires with the expected
+        payload (sub_org_id, target_user_id, role, by_actor)."""
+        admin = _user(db, "p96_admin7")
+        target = _user(db, "p96_target7")
+        parent = _org(db, "p96parent7")
+        sub = _org(db, "p96sub7", parent_org_id=parent.id)
+        _membership(db, parent, admin, role="admin")
+        _membership(db, parent, target, role="member")
+        db.commit()
+
+        resp = client.post(
+            f"/api/orgs/{parent.slug}/sub-orgs/{sub.slug}/members/add",
+            json={"user_id": target.id, "role": "moderator"},
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 200, resp.text
+
+        events = _audit_actions(db, "sub_org_member.added_directly")
+        assert len(events) == 1
+        e = events[0]
+        assert e.actor_id == admin.id
+        assert e.target_type == "sub_org_membership"
+        assert e.target_id == sub.id
+        assert e.details["sub_org_id"] == sub.id
+        assert e.details["target_user_id"] == target.id
+        assert e.details["role"] == "moderator"
+        assert e.details["by_actor"] == admin.id
+
+
+# ---------------------------------------------------------------------------
 # Phase 8.6 — Decision 3 carry-forward: topic visibility filter
 # ---------------------------------------------------------------------------
 
