@@ -144,6 +144,17 @@ function OrgSwitcher() {
               </div>
             );
           })}
+          {/* Phase 9.5 — discoverable entry to org creation. Visible to all
+              authenticated users, no role gating. */}
+          <div className="border-t border-gray-200 mt-1 pt-1">
+            <Link
+              to="/orgs/create"
+              onClick={() => setOpen(false)}
+              className="block px-4 py-1.5 text-sm text-[#2E75B6] hover:bg-gray-50 transition-colors"
+            >
+              + Create new organization
+            </Link>
+          </div>
         </div>
       )}
     </div>
@@ -301,6 +312,14 @@ export default function Nav() {
                       Switch Org
                     </Link>
                   )}
+                  {/* Phase 9.5 — tertiary entry to org creation. */}
+                  <Link
+                    to="/orgs/create"
+                    onClick={() => setMenuOpen(false)}
+                    className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100"
+                  >
+                    Create Organization
+                  </Link>
                   <button
                     onClick={() => { setMenuOpen(false); logout(); }}
                     className="block w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100"
