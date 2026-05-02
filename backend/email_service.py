@@ -153,8 +153,10 @@ async def send_password_reset_email(email: str, token: str, base_url: str) -> bo
 async def send_invitation_email(
     email: str, token: str, org_name: str, org_slug: str, base_url: str
 ) -> bool:
-    """Send an organization invitation email. (Stub for Phase 4c.)"""
-    link = f"{base_url}/{org_slug}/join?token={token}"
+    """Send an organization invitation email with a link to /invite/{token} —
+    fired via BackgroundTasks from create_invitations + resend_invitation in
+    routes/organizations.py."""
+    link = f"{base_url}/invite/{token}"
     subject = f"You're invited to join {org_name} — Liquid Democracy"
     html_body = f"""\
 <!DOCTYPE html>
