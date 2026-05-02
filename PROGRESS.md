@@ -2365,7 +2365,102 @@ No update from CompDemocracy as of Session 3 close. v1 ships against manual-fall
 
 1. **`is_polis_admin` not exposed on `PolisOut`.** FE uses heuristic (creator OR moderator/admin OR sub-org admin) to show/hide admin controls; backend remains source of truth via 403 on PATCH/export. Adding the field would clean up admin-control gating.
 2. **Linked-from indicator is N+1 client-side.** `PolisDetail.jsx` fetches the full proposal list per detail render. Not visible at demo scale; would matter at scale. Backend `linked_proposal_ids` field on `PolisOut` would fix.
-3. **Session 2 PATCH doesn't accept `polis_conversation_id`** (above) — blocks the cleanest manual-fallback UX shape. Session 4 should fix.
+3. **Session 2 PATCH doesn't accept `polis_conversation_id`** (above) — blocks the cleanest manual-fallback UX shape. **Resolved in Session 4** via `d9b66ed` extension.
 4. **PolisDetail's xid POST has no debounce on remount.** Idempotent server-side, but a fast tab-flicker fires multiple POSTs (each early-returns at the route helper). Cosmetic.
 5. **Lint warning on `PublicConfigContext.jsx`** (`react-refresh/only-export-components`) — matches pre-existing pattern on `AuthContext.jsx` / `OrgContext.jsx` / `ConfirmDialog.jsx` / `Toast.jsx`. Splitting `usePublicConfig` into a sibling hook file would clear them all in one cleanup pass.
+
+---
+
+## Phase 9 — Polis Integration — Session 4: Voter UX + Suite S + Prod Deploy — 2026-05-02
+
+**Branch closed: merged to master in commit `12ca189` (no-ff merge of 30 commits a3613d0..09f432f).** Phase 9 is **LIVE on prod** at `https://www.liquiddemocracy.us` on bundle `index-DeCwuXjM.js`.
+
+### What shipped (Session 4)
+
+**Backend gap fix (`d9b66ed`):** extended `PolisUpdate` schema to accept `Optional[polis_conversation_id]`. Route enforces one-shot connect (allowed only when current value is null; rejects 400 when already set or empty/whitespace). New `polis.connected` audit event. **8 polis.* audit event types total** now (7 from Sessions 1-2 + this). 3 tests in `TestPolisConnectConversationId`. Composite audit-coverage test extended. PG smoke `pg_smoke.py --mode both --prior-revision e72362fd7cd5` both modes PASS. Backend tests **462 → 465 passing (+3)**.
+
+**Voter UX components (Decision 4 — the load-bearing UX of Phase 9):**
+
+- `components/PolisEmbed.jsx` — shared embed component. Renders `<div className="polis" data-conversation_id data-xid>` + lazy-loads `<script async src="https://pol.is/embed.js">` once on first mount via module-level scriptLoaded flag. When conversation_id is null/empty (manual-fallback Polis pre-paste), renders friendly "Polis not yet connected" placeholder card.
+- `components/PolisDisclosureModal.jsx` + `hooks/useShouldShowDisclosure.js` — verbatim Decision 4 spec copy ("About this conversation… per-org pseudonym, not your name…"). Per-Polis localStorage isolation via key `polis_disclosed_<polis_id>` — dismissing one Polis does NOT prevent another's modal from firing (each Polis has its own privacy considerations).
+- `components/LinkedPolisCard.jsx` + `pages/ProposalDetail.jsx` integration — "Linked Deliberations" section with two trigger paths: (a) structured `proposal.linked_polises` array from server, (b) client-side URL detection (`detectPolisUrlsInBody` regex over markdown body). Detects raw `https://pol.is/<6-10 char>` and markdown link `[text](https://pol.is/<id>)`. Resolves against parent-org Polises list; visible Polises become cards; unresolved URLs fall back to plain links (silently passes through markdown renderer).
+- `components/LinkedPolisesPicker.jsx` + admin proposal-create form integration — multi-select dropdown of in-scope Polises + "Create new Polis" inline mini-create form. Form validation blocks submission without at least one link when `require_polis_for_new_proposals` is true.
+- `pages/Polis.jsx` (public voter Polis page at `/orgs/:slug/polises/:polis_id`) — header + privacy disclosure + PolisEmbed + "Linked from" indicator. Read-only treatment for sub-org non-members per Decision 7. Server-side `eligible_viewers_for_polis` returns 404/403 → friendly "Deliberation not available" / "Deliberation not found".
+- `pages/PolisHelp.jsx` (`/help/polis`) — public route (no `ProtectedRoute`) per Phase 8.6 Item 1 pattern. Covers what Polis is, when to use it, privacy framing, linked Polises, 10:1 voter-to-commenter ratio note.
+- `components/NotificationBadge.jsx` integration — per-parent-org poll of `/api/orgs/{slug}/polises` against `polis_last_seen_<slug>` localStorage timestamp. Single-shot per Polis. First-sign-in initializes timestamp without bumping (no historical noise). Click-through routes to `/orgs/{slug}/polises/{polis_id}` and updates last-seen.
+
+**Iframe swap on `pages/admin/PolisDetail.jsx`:** Session 3's placeholder div replaced with `<PolisEmbed conversationId xid />`. xid plumbing already wired in Session 3.
+
+**CreatePolis Save button wired** to the backend gap fix: success-panel `Save` button now calls `PATCH /api/orgs/{slug}/polises/{polis_id}` with `{polis_conversation_id}`. 200: refreshes success-panel state via new `onConnected` callback (input disappears once connected). 400: surfaces backend message ("already set" / "must be non-empty"). Removes Session 3's TODO toast.
+
+**SECURITY_REVIEW.md** gains a new "Polis Identity Model" section covering pseudonymization via per-org `polis_xid`, platform-side deanonymization for moderation via `?deanonymize=true` export with audit, the verbatim Decision 4 disclosure copy as the user-facing privacy boundary, a "What pol.is sees vs what platform sees" table, and the threat model summary (asymmetry made explicit by the disclosure).
+
+**Bundle:** 1,200.70 → 1,227.99 kB JS (+27.29 kB raw); 324.71 → **330.89 kB gzipped** (+6.18 kB).
+
+### Production deploy
+
+Merged `phase-9/data-layer` → `master` via `git merge --no-ff` at commit `12ca189`. Push triggered Railway auto-deploy. **Deploy applied cleanly with no 502 incident** (Phase 8.6's `start.sh` ordering fix held; the new `polises` and `polis_xids` tables came up via the migration's idempotent introspect-and-skip pattern with no collision). Backend healthy at 401 within ~6 minutes total. Bundle `index-DeCwuXjM.js` matches local build.
+
+### Multi-persona prod sanity
+
+Verified live as alice (parent admin, NOT Engineering member). Demo seed Polises propagated additively to prod:
+- Org-wide: `Demo Org — Annual Priorities for 2026` (id `6d426113-a931-453a-8af8-900fdc8e3012`, conversation_id `demo-polis-org-wide`)
+- Sub-org: `Engineering Team — Tooling Priorities` (id `ff22b1b9-dcca-44bf-aed3-8bd76ad66f97`, conversation_id `demo-polis-engineering`)
+
+alice exercised the load-bearing Decision 4 case: first-visit modal fires with verbatim spec copy → click "Got it" → modal dismisses, `polis_disclosed_<id>="true"` set in localStorage → navigate to second Polis → **modal RE-FIRES correctly** (per-Polis isolation), org-wide key persisted, Engineering key remained unset. PolisEmbed rendered with `data-conversation_id="demo-polis-org-wide"` and `data-xid="WJom1ncJdxUOW3bOry-Gsw"` (alice's `polis_xid` generated server-side via `POST .../xid`, audit `polis.xid_generated` fired on first call).
+
+dave / carol / voter02 source-reviewed against the same code paths — full multi-persona browser exercise deferred since alice's load-bearing test closed the highest-risk surface.
+
+### Suite S results
+
+**Aggregate: 3 PASS browser-verified + 9 PASS-by-source.**
+
+Browser-verified: S3 (PolisDetail renders embed with correct data-xid), **S4 (privacy disclosure + per-Polis isolation — the load-bearing test)**, S12 (`/help/polis` accessible without auth).
+
+PASS-by-source: S1, S2, S5-S11 — backend integration tests (`test_polis_routes.py` + `test_polis_eligibility.py` + `test_polis_admin.py` + `test_proposal_linked_polises.py` + `test_polis_xid.py` + `test_polis_service.py` + `test_polis_models.py`) cover the underlying behavior; live admin-create / proposal-edit on prod was deliberately not exercised to avoid mutating live demo state for visitors. Source review per the Phase 8.5 Session 4 / Phase 8.6 precedent.
+
+Full test-by-test status table in `test_results/phase9_screenshots/session4_prod_sanity.md`.
+
+### CompDemocracy contact status
+
+No update. v1 prod ships against manual-fallback path (`polis_token_configured: false` per `/api/public-config`). Programmatic create + archive light up automatically when `POLIS_AUTH_TOKEN` is provisioned in Railway env.
+
+### Phase 9 pass-summary
+
+**SHIPPED: Phase 9 Polis Integration is LIVE on https://www.liquiddemocracy.us.**
+
+| Metric | Phase 8.6 baseline | Phase 9 final |
+|---|---|---|
+| Backend tests | 378 | **465 (+87)** |
+| Frontend bundle (gzip) | 317.65 kB | **330.89 kB (+13.24 kB)** |
+| Backend endpoints | — | **+7 Polis routes (CRUD + xid + export + connect) + `/api/public-config`** |
+| Audit event types | — | **+8 polis.* events** |
+| Schema tables | — | **+2 (polises, polis_xids)** |
+| Schema columns | — | **+5 (sub_org_id mirror semantics on polises, intended_seed_statements, linked_polis_ids, polis_xid storage)** |
+
+**All 10 design decisions implemented and shipped:** Polis as first-class artifact (1); editorial-only linking (2); live during voting (3); per-org `polis_xid` pseudonymization with verbatim disclosure modal copy + per-Polis localStorage isolation (4 — verified browser-side); visibility mirrors topics/proposals via `eligible_viewers_for_polis` (5); same admin tier creates Polises as topics, Decision-6 implicit power (6); `require_polis_for_new_proposals` org config with sub-org override via `get_org_config` (7); independent active→archived lifecycle (8); moderation delegated to pol.is admin tools (9); in-app notification badge (10).
+
+**Dual-path create + archive** is the v1 production reality. With no `POLIS_AUTH_TOKEN`, every Polis on prod uses the manual-fallback flow: operator pastes a `polis_conversation_id` they created on pol.is, intended seed statements stored platform-side for "paste into pol.is admin UI" reference, archive shows "close on pol.is" reminder. The dispatch flagged this as the most user-impacting v1 piece; the verbatim spec copy + `polis_token_configured` boot signal + per-Polis disclosure isolation make the UX honest and consistent.
+
+**Single-org behavior bit-for-bit unchanged.** Existing single-org installs continue to work identically — no Polises until an admin creates one; proposal creation form's "Linked Deliberations" section is empty unless an org admin has created Polises and turned on `require_polis_for_new_proposals`; voter views unaffected for proposals without linked Polises.
+
+### Phase 9 commit list (final)
+
+On master:
+- `12ca189` — Merge `phase-9/data-layer` (no-ff, 30 commits)
+
+The 30-commit feature branch (Sessions 1-4) is preserved at `origin/phase-9/data-layer`.
+
+### Deferred items (for the roadmap)
+
+Per spec's "Out of Scope" section:
+- Self-hosted Polis (Tier 3.9 — interesting if a pilot needs data residency or features hosted doesn't expose)
+- AI-suggested seed statements (defer to AI delegation/advisor phase)
+- Auto-generating proposal text from Polis bridging statements (deliberately not)
+- Cross-Polis analytics or organizational dashboards
+- Public-with-link Polises beyond org membership ("open to non-members" comes later)
+- Auto-archive tied to proposal lifecycle (Polises stay independent)
+- Statement-level moderation through the platform (Polis admin tools handle)
+- Email digest notifications (Phase 10 if it ships)
+- CompDemocracy admin-token flip from manual-fallback to programmatic (out-of-band; ships when token is provisioned in Railway env)
 
