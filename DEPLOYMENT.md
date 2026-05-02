@@ -562,6 +562,23 @@ To find a specific request:
 docker-compose logs backend | grep "request-id-here"
 ```
 
+### Org invitation emails created but never arrive (Phase 9.6 wiring fix)
+
+**Symptoms:** Admin sends invitations from the Members admin page; invitations appear in the admin's invitation list with "pending" status; recipient never receives the email in inbox or spam; Railway logs do not show any Resend API call attempt.
+
+**Cause:** The `POST /api/orgs/{slug}/invitations` and `POST /api/orgs/{slug}/invitations/{id}/resend` endpoints were committing the `Invitation` DB row but never calling `email_service.send_invitation_email()`. Wiring was missing since Phase 4c — the function existed but the call site didn't. Surfaced by Z's friend-pilot dry run; misdiagnosed initially as a Resend / DNS regression after the Cloudflare migration but the cause was unrelated to email infrastructure.
+
+**Fix (already shipped in Phase 9.6):** both endpoints now accept `BackgroundTasks` and queue `send_invitation_email(...)` post-commit, matching the pattern used by `routes/auth.py`'s registration verification endpoint.
+
+**Verification after any future DNS / email-infra change** that might re-expose a similar regression: send a real invitation to a controlled address (e.g., `support@liquiddemocracy.us` which forwards to Z's Gmail post-Cloudflare migration). Inbox arrival within ~30 seconds confirms end-to-end. If absent, check in this order:
+
+1. **Is the route handler queuing the background task at all?** Grep `routes/organizations.py` for `send_invitation_email` — should appear in both `create_invitations` and `resend_invitation` as `background_tasks.add_task(send_invitation_email, ...)`.
+2. **Is `RESEND_API_KEY` still set in Railway env?** A missing key falls through to console-log mode silently — the endpoint succeeds, the row is created, the recipient gets nothing, and the log shows "EMAIL (console mode)" only inside the Railway service log (easy to miss).
+3. **Is `FROM_EMAIL` still pointing at a Resend-verified address?** A DNS migration that loses Resend's SPF / DKIM TXT records causes Resend to reject the send with HTTP 422. Backend logs will show "Resend API rejected send".
+4. **Resend dashboard delivery log.** If Resend accepts the send but the recipient's mailbox bounces, the dashboard shows the bounce reason.
+
+The Phase 4c wiring gap stayed undetected because the existing test suite mocked at the route-response level (asserted 201 + invitation row created); the email-send call wasn't asserted. Adding an end-to-end test would require mocking httpx; not added in this pass but flagged as tech debt.
+
 ### Verification emails not arriving on Railway (SMTP blocked)
 
 **Symptoms:** Railway deploy logs show `SMTPConnectTimeoutError: Timed out connecting to smtp.gmail.com on port 587` (or 465). Registration succeeds (201), but no email arrives.
