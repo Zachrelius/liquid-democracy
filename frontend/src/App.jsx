@@ -18,6 +18,7 @@ import Settings from './pages/Settings';
 import VerifyEmail from './pages/VerifyEmail';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
+import InviteAccept from './pages/InviteAccept';
 import OrgSelector from './pages/OrgSelector';
 import CreateOrg from './pages/CreateOrg';
 import SetupWizard from './pages/SetupWizard';
@@ -377,6 +378,11 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
+        {/* Phase 9.7 W3 — public invitation acceptance page. The email link
+            (Phase 9.7 W4) lands here. The page itself dispatches on auth
+            state + email match, so it must NOT be wrapped in ProtectedRoute. */}
+        <Route path="/invite/:token" element={<InviteAccept />} />
 
         {/* Public — help pages are purely informational and may be linked from
             external surfaces (Security & Trust, etc.) where the visitor is not
