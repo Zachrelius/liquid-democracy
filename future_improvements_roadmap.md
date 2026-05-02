@@ -586,6 +586,13 @@ Add Polis's Docker components to the platform's docker-compose configuration for
 
 ---
 
+## Known Issues / Tech Debt
+
+- **Sustained-majority floor activation logic fires on the first negative vote when zero yes votes have been cast** (zero/one-vote edge case). The intent of the design was "must maintain durable support throughout the window" but `is_above_floor` reads "no votes yet" + "first vote no" as "support has dropped below the floor" and immediately fires the configured failure mode (fail / extend / escalate). UI demoted to collapsed-by-default in Phase 9.6 to keep the feature from being a footgun in the friend-pilot timeframe; underlying logic fix deferred to a future pass with proper test coverage. See `backend/sustained_majority.py::is_above_floor` and the discussion in `phase9_6_pilot_unblockers_spec.md`.
+- **Org invitation email-send wiring (resolved in Phase 9.6)** — pre-9.6 the create + resend invitation endpoints committed the `Invitation` DB row but never called `send_invitation_email`. Wiring was missing since Phase 4c. Fixed in 9.6 via BackgroundTasks. Worth adding an httpx-mocked end-to-end send test so a similar regression would be caught at the suite level rather than via real-pilot signal.
+
+---
+
 ## Contributing
 
 If you're interested in implementing any item on this roadmap:

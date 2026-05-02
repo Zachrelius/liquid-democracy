@@ -1232,6 +1232,30 @@ class SubOrgMemberRoleUpdate(BaseModel):
         return v
 
 
+class SubOrgMemberDirectAdd(BaseModel):
+    """Phase 9.6 Workstream 2 — body for
+    `POST /api/orgs/{slug}/sub-orgs/{sub_slug}/members/add`.
+
+    Used by parent-org admins (or sub-org admins) to add a parent-org member
+    to a sub-org directly, skipping the invitation/approval flow. Default
+    role is `member`.
+    """
+    user_id: str
+    role: str = "member"
+
+    @field_validator("user_id")
+    @classmethod
+    def validate_user_id(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        if v not in ("member", "moderator", "admin"):
+            raise ValueError("role must be member, moderator, or admin")
+        return v
+
+
 class SubOrgMemberOut(BaseModel):
     user_id: str
     username: str

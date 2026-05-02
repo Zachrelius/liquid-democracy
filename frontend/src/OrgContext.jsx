@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from './AuthContext';
 import api from './api';
 
@@ -63,9 +63,20 @@ export function OrgProvider({ children }) {
   // Phase 8.5 — fetch the list of sub-orgs visible to the current user
   // under a given parent slug. Caches the result by parent slug. Backend
   // privacy filter (Decision 7) handles which sub-orgs are returned.
+  //
+  // Phase 9.6 — `subOrgsByParent` was previously in the dep array, which
+  // produced a new function identity on every cache write. Consumers that
+  // listed `fetchSubOrgsFor` in their effect deps (e.g. SubOrgList) ended
+  // up in an infinite render loop: fetch → setState → new identity →
+  // re-run effect → fetch again. Switched to a ref for the cache-read
+  // shortcut so the callback identity is stable across renders.
+  const subOrgsCacheRef = useRef({});
+  useEffect(() => { subOrgsCacheRef.current = subOrgsByParent; }, [subOrgsByParent]);
+
   const fetchSubOrgsFor = useCallback(async (parentSlug, force = false) => {
     if (!parentSlug) return [];
-    if (!force && subOrgsByParent[parentSlug]) return subOrgsByParent[parentSlug];
+    const cached = subOrgsCacheRef.current[parentSlug];
+    if (!force && cached) return cached;
     try {
       const list = await api.get(`/api/orgs/${parentSlug}/sub-orgs`);
       setSubOrgsByParent(prev => ({ ...prev, [parentSlug]: list }));
@@ -74,7 +85,7 @@ export function OrgProvider({ children }) {
       setSubOrgsByParent(prev => ({ ...prev, [parentSlug]: [] }));
       return [];
     }
-  }, [subOrgsByParent]);
+  }, []);
 
   // Convenience: drop cached sub-org list for a parent (call after CRUD).
   const invalidateSubOrgs = useCallback((parentSlug) => {
