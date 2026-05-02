@@ -3,6 +3,30 @@ import { useOrg } from '../../OrgContext';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
 
+// Phase 9.6 — sustained-majority demotion. Defaults that mirror what the
+// backend uses when keys are absent. Used both for the "expand from
+// nothing" path and for deciding whether the section is currently
+// "customized" (any key present + non-default).
+const SM_DEFAULTS = {
+  sustained_majority_enabled_default: false,
+  sustained_majority_per_proposal_override: true,
+  sustained_majority_threshold: 0.5,
+  sustained_majority_floor: 0.45,
+  sustained_majority_failure_mode: 'fail',
+};
+const SM_KEYS = Object.keys(SM_DEFAULTS);
+
+// True if any SM key is present in settings AND differs from its default.
+// Used to derive the section-expanded state from existing settings —
+// avoids needing a new backend schema field.
+function smIsCustomized(settings) {
+  if (!settings) return false;
+  return SM_KEYS.some(k => {
+    if (!Object.prototype.hasOwnProperty.call(settings, k)) return false;
+    return settings[k] !== SM_DEFAULTS[k];
+  });
+}
+
 export default function OrgSettings() {
   const { currentOrg, refreshOrgs, isOwner } = useOrg();
   const toast = useToast();
@@ -15,12 +39,21 @@ export default function OrgSettings() {
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [showDelete, setShowDelete] = useState(false);
 
+  // Phase 9.6 — sustained-majority section is collapsed by default.
+  // Local toggle state, derived from loaded settings: expanded if the
+  // org has explicitly enabled SM or customized any of the keys.
+  const [smExpanded, setSmExpanded] = useState(false);
+
   useEffect(() => {
     if (currentOrg) {
       setName(currentOrg.name);
       setDescription(currentOrg.description || '');
       setJoinPolicy(currentOrg.join_policy);
-      setSettings(currentOrg.settings || {});
+      const s = currentOrg.settings || {};
+      setSettings(s);
+      // Expand the SM section if the org currently has it on, or if any
+      // SM key is customized away from the default.
+      setSmExpanded(!!s.sustained_majority_enabled_default || smIsCustomized(s));
     }
   }, [currentOrg]);
 
@@ -223,11 +256,11 @@ export default function OrgSettings() {
         </div>
       </section>
 
-      {/* Sustained-Majority Voting (Phase 8) */}
+      {/* Sustained-Majority Voting (Phase 8 — demoted to collapsed-by-default in 9.6) */}
       <section className="space-y-3">
         <div className="flex items-baseline justify-between">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            Sustained-Majority Voting
+            Sustained-majority voting (advanced)
           </h2>
           <a
             href="/help/sustained-majority"
@@ -239,102 +272,140 @@ export default function OrgSettings() {
           </a>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-          <p className="text-xs text-gray-500">
-            Optional governance feature: a proposal must <em>maintain</em> support
-            throughout the voting window rather than just pass at a single moment.
-            Useful for binding decisions; overkill for routine matters.
-          </p>
-
           <label className="flex items-start gap-3 cursor-pointer">
             <input
               type="checkbox"
-              checked={settings.sustained_majority_enabled_default ?? false}
-              onChange={e => updateSetting('sustained_majority_enabled_default', e.target.checked)}
+              checked={smExpanded}
+              onChange={e => {
+                const on = e.target.checked;
+                setSmExpanded(on);
+                if (!on) {
+                  // Toggling OFF forces sustained_majority_enabled_default
+                  // to false org-wide regardless of any previous value.
+                  // Other SM keys are left in the settings object so that
+                  // re-enabling restores the previously-saved values.
+                  updateSetting('sustained_majority_enabled_default', false);
+                } else {
+                  // Toggling ON: seed any missing keys with defaults so
+                  // the controls render with sane values.
+                  setSettings(prev => {
+                    const next = { ...prev };
+                    SM_KEYS.forEach(k => {
+                      if (next[k] === undefined || next[k] === null) {
+                        next[k] = SM_DEFAULTS[k];
+                      }
+                    });
+                    return next;
+                  });
+                }
+              }}
               className="mt-0.5 accent-[#2E75B6]"
             />
             <div>
-              <p className="text-sm text-gray-700">Default on for new proposals</p>
+              <p className="text-sm text-gray-700">Enable sustained-majority voting</p>
               <p className="text-xs text-gray-400">
-                When enabled, new proposals use sustained-majority unless the author opts out.
+                Off by default. Enable only if your organization makes binding
+                decisions that require durable consensus protection. Most groups
+                don't need this — the standard pass-threshold check at voting
+                close handles routine decisions correctly.
               </p>
             </div>
           </label>
 
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={settings.sustained_majority_per_proposal_override ?? true}
-              onChange={e => updateSetting('sustained_majority_per_proposal_override', e.target.checked)}
-              className="mt-0.5 accent-[#2E75B6]"
-            />
-            <div>
-              <p className="text-sm text-gray-700">Allow proposal authors to override per-proposal</p>
-              <p className="text-xs text-gray-400">
-                Authors can opt a single proposal in or out, overriding the org default above.
-              </p>
-            </div>
-          </label>
+          {smExpanded && (
+            <div className="space-y-4 pt-2 border-t border-gray-100">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.sustained_majority_enabled_default ?? false}
+                  onChange={e => updateSetting('sustained_majority_enabled_default', e.target.checked)}
+                  className="mt-0.5 accent-[#2E75B6]"
+                />
+                <div>
+                  <p className="text-sm text-gray-700">Default on for new proposals</p>
+                  <p className="text-xs text-gray-400">
+                    When enabled, new proposals use sustained-majority unless the author opts out.
+                  </p>
+                </div>
+              </label>
 
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">
-              Required support level: {Math.round((settings.sustained_majority_threshold ?? 0.5) * 100)}%
-            </label>
-            <p className="text-xs text-gray-400 mb-1">The headline support level the proposal must reach to pass.</p>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={Math.round((settings.sustained_majority_threshold ?? 0.5) * 100)}
-              onChange={e => updateSetting('sustained_majority_threshold', parseInt(e.target.value) / 100)}
-              className="w-full accent-[#2E75B6]"
-            />
-          </div>
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.sustained_majority_per_proposal_override ?? true}
+                  onChange={e => updateSetting('sustained_majority_per_proposal_override', e.target.checked)}
+                  className="mt-0.5 accent-[#2E75B6]"
+                />
+                <div>
+                  <p className="text-sm text-gray-700">Allow proposal authors to override per-proposal</p>
+                  <p className="text-xs text-gray-400">
+                    Authors can opt a single proposal in or out, overriding the org default above.
+                  </p>
+                </div>
+              </label>
 
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">
-              Drop-below floor: {Math.round((settings.sustained_majority_floor ?? 0.45) * 100)}%
-            </label>
-            <p className="text-xs text-gray-400 mb-1">
-              If support drops below this level during voting, the configured failure mode triggers.
-            </p>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              value={Math.round((settings.sustained_majority_floor ?? 0.45) * 100)}
-              onChange={e => updateSetting('sustained_majority_floor', parseInt(e.target.value) / 100)}
-              className="w-full accent-[#2E75B6]"
-            />
-          </div>
-
-          <div>
-            <p className="text-xs text-gray-500 mb-2">When the floor is breached:</p>
-            <div className="space-y-2">
-              {[
-                { value: 'fail', label: 'Fail immediately',
-                  desc: 'The proposal moves to "failed" the moment support dips below the floor.' },
-                { value: 'extend', label: 'Extend the voting window once',
-                  desc: 'Push voting_end forward to give voters time to recover support. A second breach fails.' },
-                { value: 'escalate', label: 'Escalate to admin review',
-                  desc: 'The proposal moves to "unresolved" and an admin chooses how to resolve.' },
-              ].map(opt => (
-                <label key={opt.value} className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="sustainedMajorityFailureMode"
-                    value={opt.value}
-                    checked={(settings.sustained_majority_failure_mode ?? 'fail') === opt.value}
-                    onChange={() => updateSetting('sustained_majority_failure_mode', opt.value)}
-                    className="mt-0.5 accent-[#2E75B6]"
-                  />
-                  <div>
-                    <p className="text-sm text-gray-700">{opt.label}</p>
-                    <p className="text-xs text-gray-400">{opt.desc}</p>
-                  </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">
+                  Required support level: {Math.round((settings.sustained_majority_threshold ?? 0.5) * 100)}%
                 </label>
-              ))}
+                <p className="text-xs text-gray-400 mb-1">The headline support level the proposal must reach to pass.</p>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={Math.round((settings.sustained_majority_threshold ?? 0.5) * 100)}
+                  onChange={e => updateSetting('sustained_majority_threshold', parseInt(e.target.value) / 100)}
+                  className="w-full accent-[#2E75B6]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">
+                  Drop-below floor: {Math.round((settings.sustained_majority_floor ?? 0.45) * 100)}%
+                </label>
+                <p className="text-xs text-gray-400 mb-1">
+                  If support drops below this level during voting, the configured failure mode triggers.
+                </p>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={Math.round((settings.sustained_majority_floor ?? 0.45) * 100)}
+                  onChange={e => updateSetting('sustained_majority_floor', parseInt(e.target.value) / 100)}
+                  className="w-full accent-[#2E75B6]"
+                />
+              </div>
+
+              <div>
+                <p className="text-xs text-gray-500 mb-2">When the floor is breached:</p>
+                <div className="space-y-2">
+                  {[
+                    { value: 'fail', label: 'Fail immediately',
+                      desc: 'The proposal moves to "failed" the moment support dips below the floor.' },
+                    { value: 'extend', label: 'Extend the voting window once',
+                      desc: 'Push voting_end forward to give voters time to recover support. A second breach fails.' },
+                    { value: 'escalate', label: 'Escalate to admin review',
+                      desc: 'The proposal moves to "unresolved" and an admin chooses how to resolve.' },
+                  ].map(opt => (
+                    <label key={opt.value} className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="sustainedMajorityFailureMode"
+                        value={opt.value}
+                        checked={(settings.sustained_majority_failure_mode ?? 'fail') === opt.value}
+                        onChange={() => updateSetting('sustained_majority_failure_mode', opt.value)}
+                        className="mt-0.5 accent-[#2E75B6]"
+                      />
+                      <div>
+                        <p className="text-sm text-gray-700">{opt.label}</p>
+                        <p className="text-xs text-gray-400">{opt.desc}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </section>
 
