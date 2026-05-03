@@ -327,8 +327,16 @@ def search_users_compat(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
+    # Phase 10.2 W-FIX-A: explicitly pass topic_id=None so the inner
+    # `search_users` (called as a plain Python function, bypassing FastAPI
+    # dependency resolution) doesn't receive its `Query(None)` default
+    # object as the value for topic_id. The Query placeholder is truthy in
+    # boolean context, which would cause the route to attempt a join on
+    # `DelegateProfile.topic_id == <Query object>` and explode at the
+    # SQLite driver. Surfaced by the new compat-endpoint coverage tests.
     return search_users(
         q=q,
+        topic_id=None,
         org_slug=org_slug,
         limit=limit,
         db=db,

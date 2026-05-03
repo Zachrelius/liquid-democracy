@@ -252,3 +252,45 @@ def test_search_excludes_inactive_members(client, test_db):
     ids = {u["id"] for u in resp.json()}
     assert active_member.id in ids
     assert suspended_member.id not in ids
+
+
+def test_compat_search_endpoint_inherits_org_filter(client, test_db):
+    """Phase 10.2 audit: Class B, GET /api/users (compat) — the
+    backward-compat endpoint inherits search_users' org_slug semantics.
+    Calling with org_slug=org-a returns only members of org-a even on the
+    legacy URL shape."""
+    caller = _make_user(test_db, "compat_caller")
+    a_member = _make_user(test_db, "compat_a_member")
+    b_member = _make_user(test_db, "compat_b_member")
+    org_a = _make_org(test_db, "Org A Compat", "org-a-compat")
+    org_b = _make_org(test_db, "Org B Compat", "org-b-compat")
+    _join(test_db, caller, org_a)
+    _join(test_db, a_member, org_a)
+    _join(test_db, b_member, org_b)
+    test_db.commit()
+
+    # Hit the compat URL (no /search suffix).
+    resp = client.get(
+        "/api/users?org_slug=org-a-compat", headers=_auth(caller),
+    )
+    assert resp.status_code == 200, resp.text
+    ids = {u["id"] for u in resp.json()}
+    assert a_member.id in ids
+    assert b_member.id not in ids
+    assert caller.id not in ids
+
+
+def test_compat_search_endpoint_unauthorized_org_returns_403(client, test_db):
+    """Phase 10.2 audit: Class B, GET /api/users (compat) — the compat
+    endpoint also enforces the membership check on org_slug, returning 403
+    for callers who aren't active members of the requested org."""
+    outsider = _make_user(test_db, "compat_outsider")
+    insider = _make_user(test_db, "compat_insider")
+    org_b = _make_org(test_db, "Org B Compat 2", "org-b-compat-2")
+    _join(test_db, insider, org_b)
+    test_db.commit()
+
+    resp = client.get(
+        "/api/users?org_slug=org-b-compat-2", headers=_auth(outsider),
+    )
+    assert resp.status_code == 403, resp.text
