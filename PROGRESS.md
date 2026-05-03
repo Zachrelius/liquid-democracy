@@ -851,3 +851,85 @@ railway ssh "cd /app && python scripts/phase10_2_diagnose_pre_fix_vote_leak.py"
 **Phase 10.2 shipped clean in a single session** — 9 commits + closeout, no Railway incident, manifest MIME hot-fix bundled in. Audit doc lives in `docs/` as a permanent reference (377 lines covering 75 patterns); fix workstream landed 45 new pytest tests + 2 BUG fixes + 1 latent-bug fix; smoke directory + auto-poll script close the proxy-boundary blind spot that caused 9.8 / 9.9 / 10's hot-fix sequence. Tests 568 → 613 (+45). Bundle unchanged (no JS source touched). PG smoke not required (no schema). Smoke 5/5 PASS on prod post-MIME-fix. Multi-agent staging discipline held for the second pass running. The unifying principle the audit was built around — "assert side-effects, not just API contracts" — is now backed by enumerated coverage of every endpoint / entity / boundary in the system, not just by exhortation in CLAUDE.md.
 
 W-DIAG awaiting Z's `railway run` for prod numbers; if leak is >1 row or affects a binding decision, that becomes Phase 10.3.
+
+---
+
+## Phase 11 — URL Routing Refactor — 2026-05-03
+
+**Single-session pass.** 7 commits on `phase-11/url-routing` no-ff merged to master at `53cb08a` + closeout. **LIVE on prod**, bundle `index-B-Y_0e8o.js`. Path-based org URLs across the frontend; the originally-spec'd shape that Phase 4c deferred. **NO migration**, smoke not required (logic-layer only). **NO design ambiguity** — five conceptual decisions locked with Z up front (D1 path shape flat-under-slug, D2 sub-orgs nested under parent, D3 voter Polis drops `/orgs/`, D4 marketing/auth/onboarding stay top-level, D5 wider scope + no redirect grace period).
+
+### What shipped
+
+**urlFor helper + R1 + R2 + R3 + L3 (frontend dev)** in `frontend/src/utils/urls.js` (new, ~110 lines): `urlFor(orgOrSlug, kind, ...args)` accepts org object or bare slug + route kind string + extra args, returns full path. Throws on unknown kind for fail-loud safety. Covers every org-scoped + sub-org-scoped route kind in the R1 table. **R1**: App.jsx Routes block reshaped to spec verbatim — public marketing top-level (D4), auth flows top-level, onboarding top-level (`/orgs`, `/orgs/create`, `/setup`), `/settings` top-level (user-scoped not org-scoped), org-scoped under `/:org_slug/...` (proposals, proposals/:id, delegations, users/:id, polises/:polis_id — D3 drops `/orgs/` prefix), org-scoped admin under `/:org_slug/admin/...`, sub-org admin under `/:org_slug/admin/sub-orgs/:sub_slug/...` (D2), catch-all `*` → `Navigate to "/"`. New `LandingOrRedirect` component at `/` sends authenticated visitors to `/orgs`, renders public Landing for anonymous (per spec line 198 — small addition not in spec table but required for the auth-aware "/" UX). **R2**: OrgContext URL-derives `currentOrg` via `useParams().org_slug` looked up in `userOrgs` (sub-org routes use `useParams().sub_slug` against cached `subOrgsByParent`, auto-fetches parent's sub-org list if not cached, falls back to parent until sub-org resolves to avoid blank renders). localStorage **demoted** to "last-used hint at sign-in" only — writes `currentOrgSlug` whenever URL-derived parent changes; no longer read during normal navigation; OrgSelector consults at sign-in for single-org auto-redirect. `setCurrentOrg` setter retained as thin "remember + caller-navigates" wrapper (OrgSelector / CreateOrg use it). Auto-select-only-org useEffect on mount removed. OrgSwitcher.click → `navigate(...)` instead of `setCurrentOrg(...)`. New `OrgScopedLayout` wrapper renders inline "You don't have access to this organization / This organization either doesn't exist or you're not a member. Pick an organization you belong to from the list. / [Back to your organizations] (→ /orgs)" when `OrgContext.accessDenied=true` — **NOT a silent redirect** per spec line 200. **R3**: 28 frontend files touched, ~50 call sites converted (every `<Link to=>`, `<NavLink to=>`, `navigate(...)`, `window.location.assign(...)` targeting an org-scoped path). Tricky cases: sub-org currentOrg → parent for parent-org-rooted links via `currentOrg.parent_org_id` lookup against `userOrgs` (Proposals, ProposalDetail, UserProfile, DelegateModal, all 3 graph components, UserLink); NotificationBadge lacks org context for follow-request / unresolved-vote notifications, picks first parent org as default landing (coarse but workable for v1); help pages "Back to" → `/orgs` rather than guessing org context; Demo.jsx post-demo-login → `/orgs` because demo-login response doesn't expose auto-joined slug; InviteAccept post-acceptance → `/${meta.org_slug}/proposals` (verified `meta.org_slug` present in `InvitationMetaOut`); Polis.jsx voter page reads `useParams().org_slug` (was `useParams().slug` when route was `/orgs/:slug/polises/:polis_id`). **L3** explicit deep-link generators each verified: NotificationBadge, LinkedPolisCard, Polis, InviteAccept, OrgSelector (→ `urlFor(org, 'proposals')`), CreateOrg (→ `urlFor(org, 'admin-settings')`).
+
+**Backend (B1+B2+L1+L2)**: **B1** new `backend/reserved_slugs.py` with the 33-word `RESERVED_SLUGS` set per spec lines 266-272; checks added to `routes/organizations.py::create_organization` and `routes/sub_organizations.py::create_sub_org` with `HTTPException(400, "The slug '<slug>' is reserved and cannot be used. Please pick a different one.")` on collision. **67 new parameterized tests** in `test_reserved_slugs.py` (32 reserved-slug entries × 2 routes + 3 regression/ordering checks; `o` slug excluded because the schema validator rejects 1-char slugs before the gate fires). **B2** new `backend/scripts/phase11_check_slug_collisions.py` — read-only one-shot, scans `Organization` rows where `parent_org_id IS NULL` (orgs) and `IS NOT NULL` (sub-orgs), checks `slug.lower()` against `RESERVED_SLUGS`. Pattern matches Phase 10.2 W-DIAG. Verified locally with seeded fixture (correctly detected 2 collisions). **L1** confirmed via grep: `email_service.py` send_verification (`/verify-email`), send_password_reset (`/reset-password`), send_invitation (`/invite/{token}`) all non-org-scoped per D4. **No template changes needed.** **L2** backend grep across `'/proposals'`, `'/admin/'`, `'/orgs/'`, `'/delegations'`, `'/polises'`, `'/settings'`, `liquiddemocracy.us`: 0 files touched. All `/api/...` strings are FastAPI route prefixes / OpenAPI docstrings / test client invocations (define the JSON API surface, unchanged by Phase 11). pol.is embed URLs (`_embed_url_for`, `polis_service.create_conversation` `embed_url`/`manage_url`) target external pol.is service. Audit log `details` fields throughout the codebase store IDs/slugs/names/structured config — never user-facing paths. Avatar `/uploads/...` paths are non-org-scoped static.
+
+**L4 docs**: DEPLOYMENT.md sign-in landing example updated to reflect `/orgs` → `/{slug}/proposals` shape. browser_testing_playbook.md gains header note: "Phase 11 changed URL shape from flat to path-based; old test PASS results NOT retroactively rewritten because they document what was true at the time." future_improvements_roadmap.md Phase 11 marked complete in sequence index + body collapsed (subdomain non-goal preserved). SECURITY_REVIEW.md, CLAUDE.md, TECHNICAL_SUMMARY.md left alone — only contained backend `/api/` paths which are unchanged.
+
+**Backend tests: 613 → 680 (+67).** Full suite green. **No migration, smoke not required.**
+**Bundle: 339.23 → 340.71 kB gzipped (+1.48 kB)** — under spec's 2 kB target.
+
+### Production verification
+
+| Check | Result | Evidence |
+|---|---|---|
+| Smoke suite (post-deploy auto-run via `poll_deploy.py`) | **5/5 PASS** | `index-B-Y_0e8o.js` bundle flipped at 41s; smoke ran in 1.46s, all 5 boundaries clean. **First wild-spotting of W-FIX-D end-to-end** (W-FIX-D from Phase 10.2 just dogfooded successfully on its first JS-source-changing deploy). |
+| **R4 #1 Sign-in landing** | **PASS browser-verified** | Demo-login as alice → URL becomes `/demo/proposals` via single-org auto-redirect. Page renders proposals list. |
+| **R4 #2 OrgSelector pick** | PASS-by-source | Alice is single-org; auto-redirect fired implicitly (covered by #1). |
+| **R4 #3 OrgSwitcher switch** | PASS-by-source | Alice single-org so multi-org switch can't be browser-exercised in demo. OrgSwitcher.click → navigate logic mirrors OrgSelector (per spec line 195). |
+| **R4 #4 Sub-org URL shape** | **PASS browser-verified** | `/demo/admin/sub-orgs/demo-engineering/members` — both slugs visible in URL, Engineering Team Members page renders, breadcrumb shows "Demo Organization / Engineering Team", DirectAddSection rendering. |
+| **R4 #5 Two-tab independence** | PASS-by-source | Architecture proves it — `useParams()` is per-tab; navigate(...) doesn't touch other tabs. URL is per-tab source of truth (vs. pre-Phase-11 global localStorage). |
+| **R4 #6 Deep link member-org proposal** | **PASS browser-verified** | `/demo/proposals/bdf01dad-...` (real proposal id) loaded directly without OrgSelector detour. Full ProposalDetail content + nav + org context render. |
+| **R4 #7 Deep link non-member org** | **PASS browser-verified** | Alice navigates to `/gamenights/proposals` (not a GameNights member): URL stays at `/gamenights/proposals` (NOT silent redirect), inline message "You don't have access to this organization / Pick an organization you belong to from the list. / [Back to your organizations]" renders. |
+| **R4 #8 Old flat URL → catch-all** | **PASS browser-verified** | `/proposals` (old flat URL) → catch-all → `/` (public Landing for anonymous user). Confirms old org-scoped paths are gone. |
+| **B2 lint against prod** (via `railway ssh`) | **1 collision** | `slug=demo org_id=835bc570-... name=Demo Organization` collides with reserved `/demo` marketing route. **Functionally a non-issue** (see Z-decision item below). |
+
+**Bonus first-wild-spotting**: Phase 10.1 W4 stale-bundle toast fired correctly during R4 — the test tab held the prior bundle (`index-DyaIsLQN.js`), the new SW activated on revisit, `controllerchange` listener dispatched `app:bundle-updated`, BundleUpdateNotifier showed "A new version is available. Refresh" toast. First production confirmation that the Phase 10.1 W4 wiring works end-to-end.
+
+### Z's-decision item: 1 slug collision
+
+```
+Phase 11 slug-collision lint
+Run timestamp: 2026-05-03T22:11:16Z
+Total orgs scanned: 2
+Total sub-orgs scanned: 2
+Colliding slugs found: 1
+
+slug=demo org_id=835bc570-e3ae-4e05-a8b8-ed4b1b22ebdf name=Demo Organization created_at=2026-04-24T21:28:00Z created_by=<unknown> kind=org
+```
+
+**Functional analysis**: the `demo` slug is in `RESERVED_SLUGS`, but the seeded Demo Organization was created pre-Phase-11 when the reservation didn't exist. React Router's specificity puts the marketing route's exact `/demo` match first, so the bare URL `/demo` shows the marketing page (correct behavior). But the demo org dashboard IS reachable at `/demo/proposals`, `/demo/admin/...`, etc. — those URLs don't collide with marketing routes (which only match at depth 1). **Browser-verified during R4 #1**: alice's demo-login flow successfully landed at `/demo/proposals` via single-org auto-redirect.
+
+**Recommendation: leave as-is.** The "collision" is functionally harmless. The bare `/demo` showing the marketing page is exactly what visitors should see; the demo org dashboard never had a meaningful bare-slug landing anyway. The B1 reserved-words check now PREVENTS new orgs from being created with `slug=demo`, which is the future-facing protection that matters.
+
+**Alternative if Z prefers stricter alignment**: rename the prod demo org slug via direct DB update (e.g., `UPDATE organizations SET slug='demo-org' WHERE slug='demo';`). Breaks any pre-Phase-11 bookmarks to `/demo/proposals` (probably none beyond the team), and Demo.jsx's post-demo-login flow would route through OrgSelector → `urlFor(demo-org, 'proposals')` → `/demo-org/proposals` cleanly.
+
+### Phase 11 commit list
+
+- `53859aa` urlFor helper introduced
+- `229de1d` B1 reserved-words check on slug creation
+- `a2d13dc` B2 one-shot slug-collision lint script
+- `72e7093` R1+R2: App.jsx route table + OrgContext URL-derives currentOrg
+- `a6dbc81` R3: internal link audit — 28 files, ~50 call sites slug-prefixed via urlFor
+- `20660fd` L4: documentation path updates
+- `53cb08a` Merge to master
+- closeout commit follows
+
+### Process notes
+
+1. **Multi-agent staging discipline held cleanly for the third pass running.** Per-agent file-ownership boundaries + "stage and commit ONLY your files" warning. End state: all 7 workstream commits clean, no rewrites needed.
+2. **Test count baseline drift caught at agent runtime.** Backend agent flagged that the dispatch's stated baseline of 568 was stale — Phase 10.2 added 45 tests bringing it to 613 pre-Phase-11. Agent reported 613 → 680 (+67). Future dispatches should pull the latest test count from PROGRESS.md instead of restating from spec.
+3. **`poll_deploy.py` (W-FIX-D from Phase 10.2) succeeded on its first wild test.** This pass changed JS source so the bundle hash flipped and the auto-smoke fired. The Phase 10.2 closeout's tech-debt note about poll_deploy missing nginx-only deploys remains accurate (still a known gap), but for typical frontend/JS deploys the poll-then-smoke flow now works end-to-end without manual intervention.
+4. **Demo-org slug collision predicted by frontend dev mid-pass + confirmed by B2 prod-snapshot run.** Tight loop: prediction → tooling-built-this-pass detection → categorization → Z-decision recommendation. The B2 lint script is now a permanent capability available for any future slug-related concern.
+
+### New tech debt
+
+1. **Demo-org slug=`demo` is collision-flagged but functionally harmless** — Z-decision item above. Document either way: if Z renames, update Demo.jsx hardcoded slug references (likely none beyond the seed file); if Z leaves, document the "bare /demo shows marketing, not demo org dashboard — this is correct" intent in DEPLOYMENT.md.
+2. **NotificationBadge default-org coarse routing.** Follow-request and unresolved-vote notifications use the first parent org's slug as a landing because the notification rows don't carry an org_slug field. Multi-org users may land in the "wrong" org from a notification. A future tightening would attach `org_slug` to each notification at production time. Out of Phase 11 scope.
+3. **Help page back-links → `/orgs`.** PolisHelp / VotingMethodsHelp / SustainedMajorityHelp previously linked back to `/proposals` (org context-free). Phase 11 sends them to `/orgs` (also context-free). If Z wants smarter back-navigation (`history.back()`), small follow-up.
+4. **Old flat URLs land at `/`.** Per D5 "no redirect grace period." If Z later wants a smarter fallback ("you tried `/proposals` — pick an org and we'll take you there"), that's a one-line tweak post-deploy.
+5. **Backend test count baseline pattern.** Two passes in a row have had spec-stated baselines that were stale by ~45 tests because the spec was written before the prior pass closed. Worth a process note: dispatch templates should pull from PROGRESS.md ("current test count: ?") not restate from memory.
+
+### Pass-summary
+
+**Phase 11 shipped clean in a single session** — 7 commits + closeout, no hot-fixes, no Railway incident. The originally-spec'd path-based URL shape that Phase 4c deferred is now restored end-to-end: every authenticated org-scoped route lives under `/{org-slug}/...`, sub-orgs nest naturally as `/{org-slug}/admin/sub-orgs/{sub-slug}/...`, voter Polis URLs drop the legacy `/orgs/` prefix, marketing/auth/onboarding stay top-level, no redirect grace period because no live links to break. URL is the source of truth for active org; localStorage demoted to a last-used-hint at sign-in only. urlFor helper centralizes URL construction across 28 frontend files. Backend slug-creation gates against 33 reserved words; one-shot lint script catches existing collisions and surfaced exactly one (the seeded demo org, functionally harmless). Tests 613 → 680 (+67). Bundle gzip +1.48 kB. Smoke 5/5 PASS via auto-poll. Multi-agent staging discipline held for the third pass running. The friend pilot now has deep-linkable, tab-independent, unambiguous URLs for every org context — what the original architecture brief always called for.
