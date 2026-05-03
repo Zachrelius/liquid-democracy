@@ -1,8 +1,9 @@
 import { Navigate } from 'react-router-dom';
 import { useOrg } from './OrgContext';
+import { urlFor } from './utils/urls';
 
 export default function AdminRoute({ children }) {
-  const { isModeratorOrAdmin, loading, currentOrg } = useOrg();
+  const { isModeratorOrAdmin, loading, currentOrg, accessDenied } = useOrg();
 
   if (loading) {
     return (
@@ -12,12 +13,19 @@ export default function AdminRoute({ children }) {
     );
   }
 
+  // Phase 11 — accessDenied is handled by OrgScopedLayout's inline message;
+  // let the wrapper render so the user sees the explanation rather than a
+  // silent /orgs redirect.
+  if (accessDenied) {
+    return children;
+  }
+
   if (!currentOrg) {
     return <Navigate to="/orgs" replace />;
   }
 
   if (!isModeratorOrAdmin) {
-    return <Navigate to="/proposals" replace />;
+    return <Navigate to={urlFor(currentOrg, 'proposals')} replace />;
   }
 
   return children;

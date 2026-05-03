@@ -1,6 +1,6 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider } from './AuthContext';
-import { OrgProvider } from './OrgContext';
+import { Routes, Route, Navigate, Link } from 'react-router-dom';
+import { AuthProvider, useAuth } from './AuthContext';
+import { OrgProvider, useOrg } from './OrgContext';
 import { PublicConfigProvider } from './PublicConfigContext';
 import { ToastProvider } from './components/Toast';
 import { ConfirmProvider } from './components/ConfirmDialog';
@@ -68,6 +68,66 @@ function Layout({ children }) {
   );
 }
 
+/**
+ * Phase 11 — wrapper for org-scoped route trees.
+ *
+ * Sits between ProtectedRoute and the page so it can read the URL-derived
+ * currentOrg out of OrgContext. When the URL slug points at an org the
+ * authenticated user isn't a member of, render an inline "no access" surface
+ * with a link back to /orgs (per spec line 200 — NOT a silent redirect).
+ *
+ * The OrgContext sets `accessDenied=true` only after `loading=false`, so
+ * the no-access pane never flashes during the initial /api/orgs fetch.
+ */
+function OrgScopedLayout({ children }) {
+  const { accessDenied, loading } = useOrg();
+  if (loading) {
+    return (
+      <Layout>
+        <div className="flex items-center justify-center py-20">
+          <div className="text-gray-500 text-sm">Loading…</div>
+        </div>
+      </Layout>
+    );
+  }
+  if (accessDenied) {
+    return (
+      <Layout>
+        <div className="max-w-xl mx-auto px-4 py-20 text-center space-y-3">
+          <h1 className="text-xl font-semibold text-[#1B3A5C]">
+            You don&apos;t have access to this organization
+          </h1>
+          <p className="text-sm text-gray-600">
+            This organization either doesn&apos;t exist or you&apos;re not a
+            member. Pick an organization you belong to from the list.
+          </p>
+          <Link
+            to="/orgs"
+            className="inline-block mt-2 px-5 py-2 bg-[#1B3A5C] text-white text-sm rounded-lg hover:bg-[#2E75B6] transition-colors"
+          >
+            Back to your organizations
+          </Link>
+        </div>
+      </Layout>
+    );
+  }
+  return <Layout>{children}</Layout>;
+}
+
+/**
+ * Phase 11 — authenticated landing redirect for `/`.
+ *
+ * If the visitor is logged in, send them to /orgs (which then optionally
+ * auto-redirects single-org users to /{slug}/proposals). If unauthenticated,
+ * render the Landing page as before.
+ */
+function LandingOrRedirect() {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (user) return <Navigate to="/orgs" replace />;
+  return <Landing />;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -83,61 +143,35 @@ export default function App() {
           a toast with a Refresh action when a new bundle takes control. */}
       <BundleUpdateNotifier />
       <Routes>
+        {/* ------------------------------------------------------------- */}
+        {/* Public marketing — no auth, no Nav, top-level (Phase 11 D4)   */}
+        {/* ------------------------------------------------------------- */}
+        <Route path="/" element={<LandingOrRedirect />} />
+        <Route path="/about" element={<About />} />
+        <Route path="/why" element={<Why />} />
+        <Route path="/security" element={<Security />} />
+        <Route path="/demo" element={<Demo />} />
+        <Route path="/privacy" element={<Privacy />} />
+        <Route path="/terms" element={<Terms />} />
+        <Route path="/help/voting-methods" element={<VotingMethodsHelp />} />
+        <Route path="/help/sustained-majority" element={<SustainedMajorityHelp />} />
+        <Route path="/help/polis" element={<PolisHelp />} />
+
+        {/* ------------------------------------------------------------- */}
+        {/* Auth flows — no auth required, no org context                 */}
+        {/* ------------------------------------------------------------- */}
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Login />} />
         <Route path="/verify-email" element={<VerifyEmail />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
-        <Route
-          path="/proposals"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><Proposals /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/proposals/:id"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><ProposalDetail /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/delegations"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><Delegations /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/users/:id"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><UserProfile /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/settings"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><Settings /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
+        {/* Phase 9.7 W3 — public invitation acceptance. Page self-dispatches
+            on auth state, so it must NOT be wrapped in ProtectedRoute. */}
+        <Route path="/invite/:token" element={<InviteAccept />} />
+
+        {/* ------------------------------------------------------------- */}
+        {/* Onboarding — auth required, no org slug yet                   */}
+        {/* ------------------------------------------------------------- */}
         <Route
           path="/orgs"
           element={
@@ -169,253 +203,281 @@ export default function App() {
           }
         />
 
-        {/* Admin routes */}
+        {/* ------------------------------------------------------------- */}
+        {/* User-scoped — /settings is account settings (not org settings) */}
+        {/* ------------------------------------------------------------- */}
         <Route
-          path="/admin/settings"
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><Settings /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* ------------------------------------------------------------- */}
+        {/* Org-scoped app routes (Phase 11 D1)                           */}
+        {/* ------------------------------------------------------------- */}
+        <Route
+          path="/:org_slug/proposals"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><Proposals /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/proposals/:id"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><ProposalDetail /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/delegations"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><Delegations /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/users/:id"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><UserProfile /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 11 D3 — voter-facing Polis page. Was /orgs/:slug/polises/...
+            pre-refactor; drops the /orgs/ prefix to match D1. */}
+        <Route
+          path="/:org_slug/polises/:polis_id"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><Polis /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* ------------------------------------------------------------- */}
+        {/* Org-scoped admin routes (parent-org admin/moderator gated)    */}
+        {/* ------------------------------------------------------------- */}
+        <Route
+          path="/:org_slug/admin/settings"
           element={
             <ProtectedRoute>
               <OrgProvider>
                 <AdminOnlyRoute>
-                  <Layout><OrgSettings /></Layout>
+                  <OrgScopedLayout><OrgSettings /></OrgScopedLayout>
                 </AdminOnlyRoute>
               </OrgProvider>
             </ProtectedRoute>
           }
         />
         <Route
-          path="/admin/members"
+          path="/:org_slug/admin/members"
           element={
             <ProtectedRoute>
               <OrgProvider>
                 <AdminRoute>
-                  <Layout><Members /></Layout>
+                  <OrgScopedLayout><Members /></OrgScopedLayout>
                 </AdminRoute>
               </OrgProvider>
             </ProtectedRoute>
           }
         />
         <Route
-          path="/admin/proposals"
+          path="/:org_slug/admin/proposals"
           element={
             <ProtectedRoute>
               <OrgProvider>
                 <AdminRoute>
-                  <Layout><ProposalManagement /></Layout>
+                  <OrgScopedLayout><ProposalManagement /></OrgScopedLayout>
                 </AdminRoute>
               </OrgProvider>
             </ProtectedRoute>
           }
         />
         <Route
-          path="/admin/topics"
+          path="/:org_slug/admin/topics"
           element={
             <ProtectedRoute>
               <OrgProvider>
                 <AdminRoute>
-                  <Layout><Topics /></Layout>
+                  <OrgScopedLayout><Topics /></OrgScopedLayout>
                 </AdminRoute>
               </OrgProvider>
             </ProtectedRoute>
           }
         />
         <Route
-          path="/admin/delegates"
+          path="/:org_slug/admin/delegates"
           element={
             <ProtectedRoute>
               <OrgProvider>
                 <AdminOnlyRoute>
-                  <Layout><DelegateApplications /></Layout>
+                  <OrgScopedLayout><DelegateApplications /></OrgScopedLayout>
                 </AdminOnlyRoute>
               </OrgProvider>
             </ProtectedRoute>
           }
         />
-        {/* Phase 9 — Polis admin routes (parent-org scope). Polis create
-            is gated AdminRoute (moderator+ matches the topic-create tier);
-            list/detail also AdminRoute so backend permission rules are the
-            source of truth (admin controls hide on non-polis-admin viewers). */}
         <Route
-          path="/admin/polises"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <AdminRoute>
-                  <Layout><Polises /></Layout>
-                </AdminRoute>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/polises/create"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <AdminRoute>
-                  <Layout><CreatePolis /></Layout>
-                </AdminRoute>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/polises/:polis_id"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <AdminRoute>
-                  <Layout><PolisDetail /></Layout>
-                </AdminRoute>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/analytics"
+          path="/:org_slug/admin/analytics"
           element={
             <ProtectedRoute>
               <OrgProvider>
                 <AdminOnlyRoute>
-                  <Layout><Analytics /></Layout>
+                  <OrgScopedLayout><Analytics /></OrgScopedLayout>
+                </AdminOnlyRoute>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/admin/polises"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <AdminRoute>
+                  <OrgScopedLayout><Polises /></OrgScopedLayout>
+                </AdminRoute>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/admin/polises/create"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <AdminRoute>
+                  <OrgScopedLayout><CreatePolis /></OrgScopedLayout>
+                </AdminRoute>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/admin/polises/:polis_id"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <AdminRoute>
+                  <OrgScopedLayout><PolisDetail /></OrgScopedLayout>
+                </AdminRoute>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/admin/sub-orgs"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <AdminOnlyRoute>
+                  <OrgScopedLayout><SubOrgList /></OrgScopedLayout>
                 </AdminOnlyRoute>
               </OrgProvider>
             </ProtectedRoute>
           }
         />
 
-        {/* Phase 8.5 — Sub-Organization admin routes.
-            Permission gating: server-side `is_sub_org_admin` (Decision 6
-            implicit power) is the source of truth. Each page surfaces 403/404
-            inline via SubOrgErrorState rather than redirecting from a wrapper. */}
+        {/* ------------------------------------------------------------- */}
+        {/* Sub-org admin routes — gated server-side via                  */}
+        {/* `is_sub_org_admin` (Decision 6 implicit power).               */}
+        {/* SubOrgErrorState surfaces 403/404 inline.                     */}
+        {/* ------------------------------------------------------------- */}
         <Route
-          path="/admin/sub-orgs"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <AdminOnlyRoute>
-                  <Layout><SubOrgList /></Layout>
-                </AdminOnlyRoute>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/sub-orgs/:sub_slug/settings"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><SubOrgSettings /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/sub-orgs/:sub_slug/members"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><SubOrgMembers /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/sub-orgs/:sub_slug/proposals"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><SubOrgProposals /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/sub-orgs/:sub_slug/topics"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><SubOrgTopics /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        {/* Phase 9 — sub-org Polis admin routes. Pattern mirrors topics/
-            proposals: no AdminRoute wrapper because SubOrgErrorState
-            surfaces 403/404 inline rather than redirecting (Decision-6
-            implicit power makes a wrapper-time check awkward). */}
-        <Route
-          path="/admin/sub-orgs/:sub_slug/polises"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><SubOrgPolises /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/sub-orgs/:sub_slug/polises/create"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><CreatePolis /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/sub-orgs/:sub_slug/polises/:polis_id"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <Layout><PolisDetail /></Layout>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin/sub-orgs/:sub_slug"
+          path="/:org_slug/admin/sub-orgs/:sub_slug"
           element={<Navigate to="settings" replace />}
         />
-
-        {/* Phase 9 — voter-facing Polis page (Decision 4 + 5 surface). Gated
-            ProtectedRoute > OrgProvider > Layout. No AdminRoute — voters
-            access this. Server-side `eligible_viewers_for_polis` returns
-            403/404 if out-of-scope; the page surfaces those as friendly
-            errors (read-only banner for sub-org non-members per Decision 7). */}
         <Route
-          path="/orgs/:slug/polises/:polis_id"
+          path="/:org_slug/admin/sub-orgs/:sub_slug/settings"
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <Layout><Polis /></Layout>
+                <OrgScopedLayout><SubOrgSettings /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/admin/sub-orgs/:sub_slug/members"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><SubOrgMembers /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/admin/sub-orgs/:sub_slug/proposals"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><SubOrgProposals /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/admin/sub-orgs/:sub_slug/topics"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><SubOrgTopics /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/admin/sub-orgs/:sub_slug/polises"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><SubOrgPolises /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/admin/sub-orgs/:sub_slug/polises/create"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><CreatePolis /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/admin/sub-orgs/:sub_slug/polises/:polis_id"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><PolisDetail /></OrgScopedLayout>
               </OrgProvider>
             </ProtectedRoute>
           }
         />
 
-        {/* Phase 9.7 W3 — public invitation acceptance page. The email link
-            (Phase 9.7 W4) lands here. The page itself dispatches on auth
-            state + email match, so it must NOT be wrapped in ProtectedRoute. */}
-        <Route path="/invite/:token" element={<InviteAccept />} />
-
-        {/* Public — help pages are purely informational and may be linked from
-            external surfaces (Security & Trust, etc.) where the visitor is not
-            logged in. Don't gate them on auth. */}
-        <Route path="/help/voting-methods" element={<VotingMethodsHelp />} />
-        <Route path="/help/sustained-majority" element={<SustainedMajorityHelp />} />
-        <Route path="/help/polis" element={<PolisHelp />} />
-
-        <Route path="/privacy" element={<Privacy />} />
-        <Route path="/terms" element={<Terms />} />
-
-        {/* Public marketing routes — no auth required, no Nav/EmailVerificationBanner */}
-        <Route path="/" element={<Landing />} />
-        <Route path="/about" element={<About />} />
-        <Route path="/why" element={<Why />} />
-        <Route path="/security" element={<Security />} />
-        <Route path="/demo" element={<Demo />} />
-
+        {/* Catch-all (Phase 11 D5: no redirect grace period for old URLs) */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       </ConfirmProvider>
