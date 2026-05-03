@@ -804,8 +804,10 @@ A fixture-based smoke test (cleaned up post-run) constructed a known leaked vote
 Run the diagnostic against prod to get the real numbers:
 
 ```bash
-railway run python backend/scripts/phase10_2_diagnose_pre_fix_vote_leak.py
+railway ssh "cd /app && python scripts/phase10_2_diagnose_pre_fix_vote_leak.py"
 ```
+
+> [Corrected post-pass: container path is `scripts/`, not `backend/scripts/`, because Railway's backend service uses `Root directory: backend` and collapses the prefix during build. Documented in DEPLOYMENT.md.]
 
 **If the report shows exactly one leaked vote (Z's wife's), great** — confirms the bug had narrow blast radius and no further action needed.
 

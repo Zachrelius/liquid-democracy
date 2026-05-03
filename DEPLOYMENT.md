@@ -80,6 +80,8 @@ This section is a start-to-finish walkthrough for deploying the public EA demo t
 5. Once deployed, open the service → **Settings** → **Networking** → **Generate Domain** so Railway assigns a public `*.up.railway.app` URL. This is your temporary backend URL for testing before DNS is live. Note it down.
 6. Check **Logs** for a successful startup. On a brand-new database you should see `Fresh database detected — bootstrapping via create_all + stamp head.` then `Starting application…`. On a redeploy of an existing DB you should see `Alembic-stamped DB detected — applying pending migrations…` instead. If you see a traceback, paste it into `docker compose logs backend` locally to compare — most startup errors are env-var-related.
 
+> **⚠ Container path convention (read before running `railway ssh` / `railway run`).** Because the backend service is configured with `Root directory: backend`, Railway treats `backend/` as the Docker build context root. The Dockerfile's `COPY . .` then copies `backend/*` (relative to that root) into `/app/`. Net effect: the in-repo path `backend/scripts/foo.py` becomes the container path `/app/scripts/foo.py` — the `backend/` prefix is **collapsed**. In `railway ssh` and `railway run` commands, use container paths (e.g., `python scripts/foo.py`), NOT in-repo paths (`python backend/scripts/foo.py` will fail with `No such file or directory`). Past closeouts that document `railway run python backend/scripts/...` are wrong — use `scripts/...` from `/app`.
+
 #### Step 4 — Deploy the frontend
 
 1. In the same project, click **New** → **GitHub Repo** and pick the same `liquid-democracy` repo. This is a second service pointing at the same repo.
