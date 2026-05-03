@@ -18,6 +18,7 @@ from database import get_db
 from email_service import send_invitation_email
 from org_config import get_org_config
 from reserved_slugs import RESERVED_SLUGS
+from role_seed import seed_default_roles_for_org
 from settings import settings as app_settings
 from org_middleware import (
     get_org_context,
@@ -176,15 +177,23 @@ def create_organization(
         )
 
     # Gate 3 — per-user cap
+    # Phase 12 Stage 1: ``OrgMembership.role`` is now an FK to ``roles.id``;
+    # we identify "owner-equivalent" memberships by joining to the role row
+    # whose ``system_key`` is ``'steward'`` (the renamed-from-"owner" preset).
     effective_limit = (
         current_user.org_creation_limit
         if current_user.org_creation_limit is not None
         else DEFAULT_PER_USER_ORG_LIMIT
     )
-    owned_count = db.query(models.OrgMembership).filter(
-        models.OrgMembership.user_id == current_user.id,
-        models.OrgMembership.role == "owner",
-    ).count()
+    owned_count = (
+        db.query(models.OrgMembership)
+        .join(models.Role, models.Role.id == models.OrgMembership.role_id)
+        .filter(
+            models.OrgMembership.user_id == current_user.id,
+            models.Role.system_key == "steward",
+        )
+        .count()
+    )
     if owned_count >= effective_limit:
         raise HTTPException(
             status_code=403,
@@ -251,11 +260,16 @@ def create_organization(
     db.add(org)
     db.flush()
 
-    # Creator becomes owner
+    # Phase 12 Stage 1: seed the four preset Role rows + their default
+    # RolePermission grants for this brand-new org BEFORE creating the
+    # creator's OrgMembership (so we have a Steward role to point role_id at).
+    roles_by_key = seed_default_roles_for_org(db, org.id)
+
+    # Creator becomes Steward (the renamed-from-"owner" top-tier role).
     membership = models.OrgMembership(
         user_id=current_user.id,
         org_id=org.id,
-        role="owner",
+        role_id=roles_by_key["steward"].id,
         status="active",
     )
     db.add(membership)
