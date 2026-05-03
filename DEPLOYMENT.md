@@ -801,3 +801,45 @@ curl -I https://www.liquiddemocracy.us/uploads/avatars/{user_id}/128.jpg
 ```
 
 If the URL returns the SPA index.html instead of the image, the nginx ordering is wrong (the `/uploads/` block must come before the static-asset cache rule). Check `frontend/nginx.conf`.
+
+---
+
+## Service worker and PWA (Phase 10)
+
+Phase 10 added a service worker (Workbox via `vite-plugin-pwa`) for app-shell caching, home-screen install, and an offline fallback page.
+
+### What gets shipped on every build
+
+- `dist/manifest.webmanifest` — PWA manifest. Theme color `#1B3A5C` (brand navy), display `standalone`, three icons (192, 512, 512-maskable).
+- `dist/sw.js` — generated service worker (Workbox runtime).
+- `dist/workbox-*.js` — Workbox library file referenced by `sw.js`.
+- `dist/registerSW.js` — small auto-injected registration shim (per `injectRegister: 'auto'`).
+- `dist/icons/icon-{192,512,maskable-512}.png` — placeholder "LD" mark on brand color (no platform logo asset exists yet; see Phase 10 closeout note).
+- `dist/offline.html` — minimal static fallback page served when navigation requests fail and nothing useful is cached.
+
+### Cache rules
+
+- API responses (`/api/*`) and uploads (`/uploads/*`) are NEVER cached by the SW — `navigateFallbackDenylist` excludes them, and there's no runtime caching rule for either path. Live data always goes to network.
+- App shell (JS, CSS, HTML, PNG, SVG, ICO, WebP) is precached on SW install via Workbox's `globPatterns`. Clients pick up new builds automatically because `registerType: 'autoUpdate'` re-registers on each navigation.
+- Navigation requests use `NetworkFirst` with a 5s timeout, falling back to the precached `/offline.html` when network and cache both fail.
+
+### Cloudflare and Railway notes
+
+Default Cloudflare handling of `service-worker.js`, `sw.js`, and `manifest.webmanifest` is correct in most cases — they're served as static assets via nginx with the right MIME types out of the box. If a future audit shows the SW being stale-cached at the edge for too long, set Cloudflare cache rules for `*.js` to "Bypass" or shorten the edge TTL specifically for `sw.js`. Vite's content-hashed bundle filenames already prevent stale-asset issues; only the SW file itself (with its fixed `sw.js` name) is at risk.
+
+### Verifying the SW landed
+
+```bash
+curl -I https://www.liquiddemocracy.us/sw.js
+# expect 200 + application/javascript
+
+curl -I https://www.liquiddemocracy.us/manifest.webmanifest
+# expect 200 + application/manifest+json (or application/json — both acceptable)
+
+curl https://www.liquiddemocracy.us/offline.html | head
+# expect HTML starting with <!DOCTYPE html> + "Liquid Democracy" + "You're offline."
+```
+
+### Updating the placeholder icons
+
+The `frontend/scripts/generate_pwa_icons.py` Pillow script regenerates the three icons on demand. Run from repo root: `backend/.venv/Scripts/python frontend/scripts/generate_pwa_icons.py`. When a real platform brand mark exists, replace the PIL-generated PNGs in `frontend/public/icons/` and remove the script (or keep it for the maskable-padding math).

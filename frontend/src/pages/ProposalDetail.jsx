@@ -18,7 +18,9 @@ import RCVResultsPanel from '../components/RCVResultsPanel';
 import RCVSankeyChart from '../components/RCVSankeyChart';
 import SustainedMajorityPanel from '../components/SustainedMajorityPanel';
 import LinkedPolisCard from '../components/LinkedPolisCard';
+import CommentThread from '../components/CommentThread';
 import { colorForOption } from '../components/voteFlowGraphUtils';
+import renderMarkdown from '../utils/renderMarkdown';
 
 /**
  * Phase 9 Session 4 — pol.is URL detection in proposal bodies.
@@ -58,23 +60,6 @@ function detectPolisUrlsInBody(body) {
     found.push({ conversationId: id, originalUrl: m[0] });
   }
   return found;
-}
-
-// Simple markdown renderer (no external dep needed for basics)
-function renderMarkdown(text) {
-  if (!text) return '';
-  return text
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code>$1</code>')
-    .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/^(?!<[hul])(.+)$/gm, (m) => m.startsWith('<') ? m : m);
 }
 
 const VOTE_COLORS = {
@@ -1289,6 +1274,13 @@ export default function ProposalDetail() {
           )}
         </div>
       </div>
+
+      {/* Phase 10 W3 — Comment thread.
+          Position per spec: LinkedDeliberations → VotePanel → CommentThread.
+          Renders below the entire 2-column grid so the conversation has the
+          full content width and isn't cramped into the sidebar. Collapsed by
+          default (chevron toggle); first expand triggers the GET. */}
+      <CommentThread proposalId={proposal.id} />
     </div>
   );
 }

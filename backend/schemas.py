@@ -1418,3 +1418,77 @@ class PolisXidResponse(BaseModel):
     embed via `data-xid`. Lazily generated on first call per (user, org).
     """
     polis_xid: str
+
+
+# ---------------------------------------------------------------------------
+# Phase 10 — Comments
+# ---------------------------------------------------------------------------
+
+class CommentCreate(BaseModel):
+    """Body for `POST /api/proposals/{proposal_id}/comments`.
+
+    `body` is sanitized via the same nh3 pipeline as proposal bodies — see
+    ``_sanitize_markdown``. Length is enforced at the route layer because we
+    want the post-sanitize, post-trim length (rather than the raw Pydantic
+    pre-validator length).
+    """
+    body: str = Field(min_length=1, max_length=5000)
+    parent_comment_id: Optional[str] = None
+
+    @field_validator("body")
+    @classmethod
+    def sanitize_body(cls, v: str) -> str:
+        return _sanitize_markdown(v)
+
+    @field_validator("parent_comment_id")
+    @classmethod
+    def validate_parent(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return _validate_uuid(v)
+        return v
+
+
+class CommentUpdate(BaseModel):
+    """Body for `PATCH /api/comments/{id}`. Only the body is editable."""
+    body: str = Field(min_length=1, max_length=5000)
+
+    @field_validator("body")
+    @classmethod
+    def sanitize_body(cls, v: str) -> str:
+        return _sanitize_markdown(v)
+
+
+class CommentAuthorOut(BaseModel):
+    """Nested user shape on CommentOut. Lighter than full UserOut so the
+    list payload stays small; mirrors the UserSearchResult fields the
+    frontend already knows how to render via the Avatar component."""
+    id: str
+    username: str
+    display_name: str
+    avatar_url: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class CommentOut(BaseModel):
+    """Phase 10 — comment representation returned to the frontend.
+
+    Soft-delete handling: when ``deleted_at`` is set, the route blanks
+    ``body`` to an empty string and sets ``body_deleted=True`` so the
+    frontend can render the ``[deleted]`` placeholder consistently without
+    needing to second-guess the field. Keeping the boolean explicit (rather
+    than overloading body content) makes the wire format honest and avoids
+    the corner case where a real comment legitimately reads "[deleted]".
+    """
+    id: str
+    proposal_id: str
+    author_id: str
+    author: CommentAuthorOut
+    parent_comment_id: Optional[str] = None
+    body: str
+    body_deleted: bool = False
+    created_at: datetime
+    updated_at: datetime
+    deleted_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)

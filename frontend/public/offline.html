@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Offline — Liquid Democracy</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #F8F9FA;
+      color: #2C3E50;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 1rem;
+      text-align: center;
+    }
+    h1 {
+      color: #1B3A5C;
+      font-size: 1.5rem;
+      margin: 0 0 0.5rem;
+    }
+    p {
+      margin: 0 0 1.5rem;
+      max-width: 28rem;
+      line-height: 1.5;
+    }
+    button {
+      background: #1B3A5C;
+      color: white;
+      border: 0;
+      padding: 0.6rem 1.4rem;
+      border-radius: 6px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button:hover { background: #2C4F7A; }
+  </style>
+</head>
+<body>
+  <h1>Liquid Democracy</h1>
+  <p>You're offline. Reconnect to use the platform.</p>
+  <button onclick="location.reload()">Try again</button>
+</body>
+</html>

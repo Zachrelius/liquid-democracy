@@ -23,7 +23,7 @@ The passes are listed in the order they should be built. Each has a short ration
 7. **Phase 7.5 — Privacy and Access Hardening.** Inserted 2026-04-26 after a Security & Trust page audit found that platform admin access is broader than the page's "private by default, access requires consent" framing implies. The `/api/admin/audit` endpoint returns full vote-by-vote attribution; `/api/admin/delegation-graph` returns the system-wide delegation graph; both are gated only by the global `is_admin` flag. This pass narrows that access, adds operator audit visibility, and gives users a way to see who has accessed their data. Real institutional-privacy work that should land before any pilot org signs up — until it does, the page can't honestly claim consent-gated access.
 8. **Phase 8 — Sustained-Majority Voting Windows.** The "stable result" semantics for multi-option need multi-option to exist, and it's governance-critical to have in place before any org runs binding decisions. Also validates our snapshot/tally infrastructure.
 9. **Phase 9 — Polis Integration (Embedded).** Biggest single feature gap. Does meaningful work only with real deliberation content, so it benefits from the platform being otherwise feature-complete before we start.
-10. **Phase 10 — Engagement Layer.** Proposal comments, profile pictures, PWA configuration. Small, loosely-related, low-risk. Good multi-agent dispatch material.
+10. **Phase 10 — Engagement Layer.** ✅ Complete (2026-05-03). Proposal comments (markdown, one-level reply threading, 15-min edit window, soft-delete) + PWA configuration (manifest, service worker, offline fallback, home-screen install via vite-plugin-pwa). Profile pictures shipped earlier in Phase 9.8 and were dropped from this pass.
 11. **Phase 11 — URL Routing Refactor.** Path-based org URLs (`/{org-slug}/proposals` etc.) as originally spec'd. Done after feature passes so we route a mature feature set once instead of reshuffling URLs repeatedly.
 12. **Phase 12 — Configurable Role Permissions (Stage 1).** Replaces the hardcoded moderator-permissions scaffolding from Phase 4 Cleanup with a proper data-model-driven permission system. Save for near the end because the hardcoded version is functional and this is really about extensibility.
 
@@ -404,25 +404,9 @@ Biggest single feature gap — the platform can tally but can't deliberate. Done
 
 ---
 
-## Phase 10 — Engagement Layer
+## Phase 10 — Engagement Layer ✅ Complete
 
-### Rationale
-
-Small, loosely-related polish items. Good multi-agent dispatch material — each component is independent and low-risk. Internal testing naturally drives prioritization within this phase if we hit gaps during earlier passes.
-
-### Scope
-
-**Proposal comments:** Threaded discussion on proposal detail pages. Markdown support. One level of reply threading. No real-time updates.
-
-**Profile pictures:** `avatar_url` field on users, upload endpoint with image validation and resizing (128x128 and 48x48). Default generated avatar (initials-based) when none uploaded. Displayed in delegation graph nodes, delegate selection modal, proposal author, follow requests, notification dropdown, nav bar.
-
-**PWA configuration:** `manifest.json`, minimal service worker caching the app shell, offline fallback page. Vite PWA plugin integration.
-
-### Non-goals
-
-- WebSocket real-time comments (comments refresh on page load)
-- S3-compatible object storage for avatars (local filesystem sufficient for pilot-stage)
-- Native push notifications (PWA adds home-screen install, nothing more)
+Shipped 2026-05-03. Comments + PWA. Profile pictures landed earlier in Phase 9.8. Comment notifications and WebSocket real-time updates remain explicitly deferred — see Known Issues / Tech Debt below for the deferral rationale.
 
 ---
 

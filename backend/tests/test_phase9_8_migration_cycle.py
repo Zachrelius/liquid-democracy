@@ -86,20 +86,23 @@ def test_upgrade_downgrade_upgrade_cycle():
         engine.dispose()
         _run_alembic(db_url, "stamp", "373e1f066cc1")
 
-        # 1. Upgrade head -> avatar_url present
-        _run_alembic(db_url, "upgrade", "head")
+        # 1. Upgrade to the Phase 9.8 head -> avatar_url present.
+        # Pin to the specific revision (rather than `head`) so this test
+        # stays focused on the Phase 9.8 cycle even as later migrations
+        # land on top (Phase 10 added b2d5f1a3c7e4 above this revision).
+        _run_alembic(db_url, "upgrade", "a1c4e9d2f8b3")
         engine = sa.create_engine(db_url)
         assert _column_exists(engine, "users", "avatar_url")
         engine.dispose()
 
-        # 2. Downgrade -1 -> avatar_url gone
+        # 2. Downgrade -1 from this revision -> avatar_url gone
         _run_alembic(db_url, "downgrade", "-1")
         engine = sa.create_engine(db_url)
         assert not _column_exists(engine, "users", "avatar_url")
         engine.dispose()
 
-        # 3. Re-upgrade head -> idempotent re-application
-        _run_alembic(db_url, "upgrade", "head")
+        # 3. Re-upgrade to this revision -> idempotent re-application
+        _run_alembic(db_url, "upgrade", "a1c4e9d2f8b3")
         engine = sa.create_engine(db_url)
         assert _column_exists(engine, "users", "avatar_url")
         engine.dispose()
