@@ -256,11 +256,13 @@ export default function OrgSettings() {
         </div>
       </section>
 
-      {/* Sustained-Majority Voting (Phase 8 — demoted to collapsed-by-default in 9.6) */}
+      {/* Sustained-Majority Voting (Phase 8 — demoted to collapsed-by-default in 9.6;
+          Phase 9.8 W C2 — dropped the "(advanced)" suffix and refreshed the
+          helper copy now that the floor-activation logic is fixed in C1). */}
       <section className="space-y-3">
         <div className="flex items-baseline justify-between">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            Sustained-majority voting (advanced)
+            Sustained-majority voting
           </h2>
           <a
             href="/help/sustained-majority"
@@ -304,10 +306,7 @@ export default function OrgSettings() {
             <div>
               <p className="text-sm text-gray-700">Enable sustained-majority voting</p>
               <p className="text-xs text-gray-400">
-                Off by default. Enable only if your organization makes binding
-                decisions that require durable consensus protection. Most groups
-                don't need this — the standard pass-threshold check at voting
-                close handles routine decisions correctly.
+                Off by default. Enable when your organization makes binding decisions that benefit from durable-consensus protection — proposals must maintain support throughout the voting window, not just at close.
               </p>
             </div>
           </label>
