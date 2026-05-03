@@ -187,25 +187,79 @@ def my_access_log(
 def search_users(
     q: str = Query("", description="Search by display name or username"),
     topic_id: Optional[str] = Query(None, description="Filter to public delegates for topic"),
+    org_slug: Optional[str] = Query(
+        None,
+        description=(
+            "Restrict results to active members of the org with this slug. "
+            "Caller must themselves be an active member."
+        ),
+    ),
     limit: int = Query(20, le=100),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
-    """Search users by name/username with follow/delegate context."""
+    """Search users by name/username with follow/delegate context.
+
+    When ``org_slug`` is provided, results are restricted to active members of
+    that org. The caller must themselves be an active member of the org or
+    the request is rejected with 403 (defense in depth: prevents using this
+    endpoint to enumerate other orgs' membership).
+
+    Known limitation: when ``org_slug`` is omitted, results span the entire
+    user base (legacy/backward-compat behavior). Most callers are expected
+    to pass ``org_slug``; the unscoped path is preserved for admin/legacy
+    usage and may be tightened in a follow-up.
+    """
     query = db.query(models.User).filter(models.User.id != current_user.id)
     if q:
         like = f"%{q}%"
         query = query.filter(
             models.User.display_name.ilike(like) | models.User.username.ilike(like)
         )
+    if org_slug:
+        org = db.query(models.Organization).filter(
+            models.Organization.slug == org_slug,
+        ).first()
+        if not org:
+            # Treat unknown slug as not-a-member (don't leak org existence).
+            raise HTTPException(
+                status_code=403,
+                detail="You are not a member of this organization",
+            )
+        # Caller must themselves be an active member of the org.
+        caller_membership = db.query(models.OrgMembership).filter(
+            models.OrgMembership.user_id == current_user.id,
+            models.OrgMembership.org_id == org.id,
+            models.OrgMembership.status == "active",
+        ).first()
+        if not caller_membership:
+            raise HTTPException(
+                status_code=403,
+                detail="You are not a member of this organization",
+            )
+        query = query.join(
+            models.OrgMembership,
+            models.OrgMembership.user_id == models.User.id,
+        ).filter(
+            models.OrgMembership.org_id == org.id,
+            models.OrgMembership.status == "active",
+        )
     if topic_id:
+        # DelegateProfile.org_id is already org-scoped, so when both org_slug
+        # and topic_id are present this composes cleanly: results are users
+        # who are active members of the org AND have an active delegate
+        # profile for the topic in that same org.
+        dp_filters = [
+            models.DelegateProfile.topic_id == topic_id,
+            models.DelegateProfile.is_active.is_(True),
+        ]
+        if org_slug:
+            # `org` is bound above when org_slug is truthy.
+            dp_filters.append(models.DelegateProfile.org_id == org.id)
         query = query.join(
             models.DelegateProfile,
             models.DelegateProfile.user_id == models.User.id,
-        ).filter(
-            models.DelegateProfile.topic_id == topic_id,
-            models.DelegateProfile.is_active.is_(True),
-        )
+        ).filter(*dp_filters)
     users = query.order_by(models.User.display_name).limit(limit).all()
     return [_enrich_user_result(db, u, current_user.id) for u in users]
 
@@ -262,11 +316,24 @@ def _enrich_user_result(db: Session, user: models.User, viewer_id: str):
 @router.get("", response_model=list[schemas.UserSearchResultWithContext])
 def search_users_compat(
     q: str = Query("", description="Search by display name or username"),
+    org_slug: Optional[str] = Query(
+        None,
+        description=(
+            "Restrict results to active members of the org with this slug. "
+            "Caller must themselves be an active member."
+        ),
+    ),
     limit: int = Query(20, le=100),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
-    return search_users(q=q, limit=limit, db=db, current_user=current_user)
+    return search_users(
+        q=q,
+        org_slug=org_slug,
+        limit=limit,
+        db=db,
+        current_user=current_user,
+    )
 
 
 @router.get("/{user_id}/profile", response_model=schemas.PublicProfileOut)
