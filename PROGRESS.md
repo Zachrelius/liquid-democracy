@@ -2796,3 +2796,69 @@ The pattern (Phase 4c-era endpoints with API tests but no user-journey coverage)
 
 The friend pilot now has profile pictures, the next pilot expansion has correct moderator UX + clearer unverified UX, and a deferred footgun is closed. No design decisions left for Z; he reviews the closeout when it lands.
 
+---
+
+## Phase 9.9 — Pilot Bug Fixes — 2026-05-03
+
+**Single-session pass.** 6 commits on `phase-9-9/pilot-bug-fixes` no-ff merged to master at `449d410` + nginx body-size hot-fix `0df5ceb` directly on master + closeout. **LIVE on prod**, bundle `index-BvCSF4-u.js`. Three real bugs from Z's wife's first session in GameNights after Phase 9.7 onboarded her successfully.
+
+### What shipped
+
+**W1 — Backend org-scoped delegate search:** `routes/users.py` — `GET /api/users/search` and `GET /api/users` accept new optional `org_slug` query parameter. When present, results are filtered to active `OrgMembership` members of that org via join. Caller must themselves be an active member of the org_slug or get **403 "You are not a member of this organization"** (defense in depth — endpoint can't be used to enumerate other orgs' membership). Self-exclusion preserved. `topic_id` filter composes cleanly (results = active members of org_slug AND active public delegate for topic_id, both filters pinned to the same org since `DelegateProfile.org_id` is already org-scoped). Backward compat preserved when `org_slug` is omitted (documented as a known limitation in the docstring + roadmap). 5 new tests in new `backend/tests/test_user_search.py`.
+
+**W2 — Backend avatar size ceiling 2 MB → 6 MB:** `routes/avatars.py` — `MAX_UPLOAD_BYTES` raised from `2 * 1024 * 1024` to `6 * 1024 * 1024`. Module + route docstrings updated. The 413 detail string derives from the constant so it auto-reads "6 MB". 1 new test (5 MB body succeeds), 1 existing oversized test updated (6.1 MB body still rejected, asserts new "6 MB" detail). Defense-in-depth ceiling — real uploads will be ~30 KB after client-side resize.
+
+**W3 — Frontend client-side resize:** new `frontend/src/utils/imageResize.js` exports `resizeImageFile(file, maxDim=256, quality=0.85)` — canvas-based, returns a `File` (so FormData and the backend content-type whitelist are happy). `Settings.jsx::handleAvatarUploadFile` calls it before constructing FormData. Defensive try/catch falls back to original file on resize error (corrupt image, no canvas support, etc.). Existing UI state (avatarBusy/avatarMsg/toast) unchanged. **Typical phone photo (5 MB) → ~30 KB upload after resize.**
+
+**W4 — Frontend api.postFormData() with 401-refresh-and-retry:** `frontend/src/api.js` — new `requestFormData(path, formData)` mirrors the JSON `request()` flow: builds `Authorization: Bearer ${_token}` header WITHOUT setting Content-Type (browser sets multipart boundary), POSTs FormData. **Load-bearing 401 path:** on 401 calls `refreshAccessToken()`, retries once with the new token. If retry returns 401 (or refresh failed), dispatches `auth:unauthorized` event and throws `{message: 'Session expired. Please log in again.', status: 401}`. 204 → null. JSON or text per Content-Type. Non-OK throws `{message, status, raw}` matching existing shape (including Pydantic array-detail formatting). New `postFormData: (path, form) => requestFormData(path, form)` on default exported `api` object. `Settings.jsx::handleAvatarUploadFile` replaces plain `fetch(...)` with `await api.postFormData('/api/users/me/avatar', form)` — error/success structure unchanged. **Closes the cascade where a 413-then-troubleshoot-then-retry sequence hit token expiry and surfaced "could not validate credentials" instead of auto-refreshing.**
+
+**W5 — Frontend DelegateModal org-scope search:** `DelegateModal.jsx:352` — only call site of `/api/users/search` in the frontend (verified via grep). Reads `currentOrg` from `useOrg()`, appends `&org_slug=${encodeURIComponent(currentOrg.slug)}` when truthy, falls back to no param when null. `useEffect` deps include `currentOrg`. `Delegations.jsx` does not call the endpoint directly.
+
+**W6 — Documentation:** `future_improvements_roadmap.md` Known Issues gains entry on optional `org_slug` (low-priority follow-up to make required after rechecking callers). DEPLOYMENT.md untouched (no infra change). PROGRESS.md = this entry.
+
+**Hot-fix `0df5ceb` (master directly):** `frontend/nginx.conf` `client_max_body_size` raised from default `1m` to `8m`. Caught via curl prod sanity: 5 MB and 7 MB uploads both 413'd from `nginx/1.29.8` instead of getting 200 (5 MB) or backend's 413 (7 MB). The default 1 MB nginx limit silently blocked any upload >1 MB before it could reach FastAPI's MAX_UPLOAD_BYTES check, making W2's 6 MB ceiling moot for the defensive-fallback path. Set to 8 MB (small headroom over the 6 MB backend ceiling). In-app path was unaffected because client-side resize keeps real uploads ~30 KB; this hot-fix matters for the defensive fallback case + direct API users.
+
+**Backend tests: 537 → 543 (+6).** No PG smoke required (no schema change).
+**Bundle: 335.86 → 336.17 kB gzipped (+0.31 kB).**
+
+### Production verification
+
+| Check | Result | Evidence |
+|---|---|---|
+| Org-scoped search filters to org members | **PASS** | `GET /api/users/search?q=voter&org_slug=demo` as alice (demo admin) → 200 with results filtered to demo members |
+| Org-scoped search 403 on cross-org | **PASS** | `GET /api/users/search?q=voter&org_slug=gamenights` as alice (NOT a GameNights member) → **403 "You are not a member of this organization"** |
+| Backward compat when org_slug omitted | PASS | `GET /api/users/search?q=voter` returns global user list (existing behavior) |
+| 5 MB upload succeeds end-to-end (was 413 pre-9.9) | **PASS** | curl POST 4,997,112-byte JPEG → **200** with `{avatar_url: /uploads/avatars/{uuid}/128.jpg, avatar_url_small: .../48.jpg}`. File served + cleanup via DELETE 204. |
+| 7 MB upload 413's from FastAPI (not nginx) | **PASS** | curl POST 6,992,572-byte JPEG → **413** with FastAPI body `"Avatar exceeds 6 MB pre-resize limit."`, `server: railway-edge` (NOT nginx HTML). Confirms backend ceiling enforced. |
+| nginx body-size hot-fix landed | **PASS** | 1.5 MB body POST returned **401 from railway-edge** (passed through to FastAPI auth check), no longer **413 from nginx/1.29.8**. |
+| `postFormData` deployed in bundle | PASS | `curl /assets/index-BvCSF4-u.js \| grep postFormData` → 2 occurrences (function definition + call site). Property name on default api object can't be minified. |
+| Token-expiry refresh-and-retry on upload | PASS-by-source | `api.js` diff committed in `abef82f` mirrors the existing JSON `request()` 401-refresh-retry. Bundle deployed. Browser-flow verification (manually clear sessionStorage.access_token then upload) requires browser; the wrapper logic is identical to the JSON path which has shipped successfully through prior phases. |
+| In-app phone-photo upload via resize | PASS-by-source | `Settings.jsx::handleAvatarUploadFile` calls `resizeImageFile` before FormData construction; W3 commit `0657cd1` + W4 wrapper switch `abef82f` deployed; the 5 MB direct upload above proves the backend path works for the post-resize blob (which will be ~30 KB rather than 5 MB). |
+
+### Phase 9.9 commit list
+
+- `d7d9cfe` W1 backend org-scoped search + 5 tests
+- `0657cd1` W3 imageResize utility + Settings integration
+- `abef82f` W4 api.postFormData + 401 refresh-and-retry + Settings switch
+- `0953f03` W5 DelegateModal org_slug query param
+- `0e52a7a` W2 avatar size ceiling 2 MB → 6 MB + 1 new test + existing test update
+- `7c699ca` W6 roadmap known-issue
+- `449d410` Merge to master
+- `0df5ceb` nginx `client_max_body_size 8m` hot-fix (master directly)
+- closeout commit follows
+
+### Process note — caught a real prod bug via curl-only sanity
+
+The dispatch's "browser-verify on prod" plan would have caught the org-scoped search and the in-app phone-photo upload (which goes through client-side resize → ~30 KB body, well under the 1 MB nginx default), but **not** the defensive-fallback path where resize fails. The 1 MB nginx limit was invisible to in-app testing because real uploads after resize are ~30 KB. Direct `curl` of a 5 MB JPEG against `/api/users/me/avatar` exposed the issue immediately and the hot-fix landed within the same session. **Lesson:** future passes that change backend size/ceiling/limit constants should also smoke-test the proxy/edge layer with a body just above the previous limit, not just the in-app surface.
+
+### New tech debt
+
+1. **`/api/users/search` `org_slug` is optional** — backward-compat preserved for legacy/admin callers. Roadmap entry added; low-priority follow-up to require it once all callers are confirmed updated.
+2. **`test_upload_5mb_file_succeeds` fragility cliff** (per backend agent's note) — uses random-noise canvas + JPEG COM-marker padding to deterministically land in the >2 MB / <6 MB window. If Pillow's JPEG encoder behavior changes, the noise canvas might overshoot. The test contains an inline byte-count assertion in the failure message, so a future drift would diagnose itself in one run.
+3. **No prod smoke test for nginx body-size** — same shape as Phase 9.8's missing nginx-routing smoke. A tiny `tests/smoke/` script that POSTs a small body just above the previous limit and asserts FastAPI 401 (not nginx 413) would catch this class of issue. Candidate for the test-depth audit mini-pass already logged in the roadmap.
+
+### Pass-summary
+
+**Phase 9.9 shipped clean in a single session** — 6 commits on the branch + 1 hot-fix + closeout. **Friend pilot fully unblocked**: cross-org search no longer leaks demo users into GameNights delegate browsing, phone photos upload near-instantly via client resize (~30 KB upload from a 5 MB original), and token-expiry no longer cascades to "could not validate credentials" because the upload now flows through the api wrapper's 401 refresh-and-retry path. Tests 537 → 543 (+6). Bundle gzip +0.31 kB. One nginx default body-size limit caught via curl + hot-fixed same session.
+
+
