@@ -85,7 +85,7 @@ async function request(method, path, body) {
       try {
         res = await fetch(path, retryOpts);
       } catch (err) {
-        throw { message: 'Network error — is the server running?', status: 0 };
+        throw { message: "Couldn't reach the server. Check your connection and try again.", status: 0 };
       }
       // If still 401 after refresh, give up
       if (res.status === 401) {
@@ -153,7 +153,7 @@ async function requestFormData(path, formData) {
       try {
         res = await fetch(path, { method: 'POST', headers: retryHeaders, body: formData });
       } catch {
-        throw { message: 'Network error — is the server running?', status: 0 };
+        throw { message: "Couldn't reach the server. Check your connection and try again.", status: 0 };
       }
       if (res.status === 401) {
         window.dispatchEvent(new Event('auth:unauthorized'));
@@ -210,7 +210,7 @@ const api = {
         body: form.toString(),
       });
     } catch {
-      throw { message: 'Network error — is the server running?', status: 0 };
+      throw { message: "Couldn't reach the server. Check your connection and try again.", status: 0 };
     }
     const data = await res.json();
     if (!res.ok) {
