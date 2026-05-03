@@ -6,7 +6,7 @@ import models
 import schemas
 from audit_utils import log_audit_event
 from database import get_db
-from delegation_engine import engine as delegation_engine
+from delegation_engine import engine as delegation_engine, eligible_voter_ids_for_proposal
 from websocket import manager as ws_manager
 
 router = APIRouter(prefix="/api/proposals", tags=["votes"])
@@ -39,6 +39,18 @@ async def cast_vote(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Please verify your email before voting.",
+        )
+
+    # Phase 10.1: eligibility check. Pre-fix, parent-org members could vote on
+    # sub-org proposals they weren't members of, and cross-org users could
+    # vote on any proposal whose ID they knew. The new gate uses the same
+    # eligible_voter_ids_for_proposal helper that compute_tally and
+    # get_vote_graph use, so the three call sites stay in lockstep.
+    eligible_ids = eligible_voter_ids_for_proposal(db, proposal)
+    if current_user.id not in eligible_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not eligible to vote on this proposal.",
         )
 
     # -- Method-specific validation --
@@ -166,6 +178,16 @@ async def retract_vote(
 ):
     proposal = _proposal_or_404(proposal_id, db)
     _require_voting_open(proposal)
+
+    # Phase 10.1: same eligibility gate as cast_vote — a non-eligible user
+    # shouldn't be able to retract a vote they shouldn't have been able to
+    # cast. See cast_vote for the bug history.
+    eligible_ids = eligible_voter_ids_for_proposal(db, proposal)
+    if current_user.id not in eligible_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not eligible to vote on this proposal.",
+        )
 
     vote = (
         db.query(models.Vote)
