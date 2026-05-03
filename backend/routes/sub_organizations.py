@@ -25,6 +25,7 @@ from org_middleware import (
     require_org_membership,
 )
 from permissions import is_sub_org_admin
+from reserved_slugs import RESERVED_SLUGS
 
 router = APIRouter(prefix="/api/orgs", tags=["sub-organizations"])
 
@@ -181,6 +182,20 @@ def create_sub_org(
     # Now enforce parent-org admin permission inline.
     if not _is_parent_org_admin(db, current_user.id, parent):
         raise HTTPException(status_code=403, detail="Admin access required")
+
+    # Phase 11 B1: reserved-words check. Sub-slugs only ever appear as the
+    # second slug position (/{org-slug}/admin/sub-orgs/{sub-slug}/...) so
+    # they don't collide with frontend top-level routes — but we apply the
+    # same check for consistency, to avoid surprising errors elsewhere, and
+    # to keep the rule "all org-like slugs follow the same allowlist" true.
+    if body.slug.lower() in RESERVED_SLUGS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The slug '{body.slug}' is reserved and cannot be used. "
+                "Please pick a different one."
+            ),
+        )
 
     if db.query(models.Organization).filter(
         models.Organization.slug == body.slug

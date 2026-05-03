@@ -1,6 +1,8 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import * as d3 from 'd3';
+import { useOrg } from '../OrgContext';
+import { urlFor } from '../utils/urls';
 import {
   VOTE_COLORS,
   nodeRadius,
@@ -144,6 +146,15 @@ function optionAnchorForce(strength) {
 }
 
 export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
+  // Phase 11 — user-profile is org-scoped.
+  const { currentOrg, userOrgs } = useOrg();
+  const profileLinkOrg = (() => {
+    if (!currentOrg) return null;
+    if (currentOrg.parent_org_id) {
+      return userOrgs.find(o => o.id === currentOrg.parent_org_id) || null;
+    }
+    return currentOrg;
+  })();
   const svgRef = useRef(null);
   const containerRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
@@ -1038,9 +1049,9 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
             {selectedNode.is_current_user && (
               <p className="text-[#2E75B6] font-medium text-xs mt-2">This is you.</p>
             )}
-            {selectedNode.label && !selectedNode.isAnonymous && (
+            {selectedNode.label && !selectedNode.isAnonymous && profileLinkOrg && (
               <Link
-                to={`/users/${selectedNode.id}`}
+                to={urlFor(profileLinkOrg, 'user-profile', selectedNode.id)}
                 className="inline-block mt-2 text-xs text-[#2E75B6] hover:underline"
               >
                 View Profile

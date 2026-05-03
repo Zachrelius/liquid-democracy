@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import useSubOrg from '../../useSubOrg';
+import { urlFor } from '../../utils/urls';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
@@ -102,9 +103,9 @@ export default function SubOrgTopics() {
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
       <div>
         <p className="text-xs text-gray-400 mb-1">
-          <Link to="/admin/sub-orgs" className="hover:underline">Sub-organizations</Link>
+          <Link to={urlFor(parentSlug, 'admin-sub-orgs')} className="hover:underline">Sub-organizations</Link>
           {' / '}
-          <Link to={`/admin/sub-orgs/${subSlug}/settings`} className="hover:underline">{subOrg.name}</Link>
+          <Link to={urlFor(parentSlug, 'admin-sub-org-settings', subSlug)} className="hover:underline">{subOrg.name}</Link>
         </p>
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-[#1B3A5C]">{subOrg.name} — Topics</h1>

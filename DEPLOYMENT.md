@@ -117,7 +117,7 @@ One-time operation after first deploy. See "Demo Data Management" below for the 
 From a fresh browser (incognito so no stored tokens):
 1. Visit `https://liquiddemocracy.us` — landing page renders.
 2. Click **Try the Demo** → persona picker renders.
-3. Click "Sign in as alice" → lands on `/proposals` with seeded content visible.
+3. Click "Sign in as alice" → lands on `/orgs`, picks demo, navigates to `/{demo-slug}/proposals` with seeded content visible. (Phase 11: path-based org URLs.)
 4. Log out. Click **Register your own demo account** → fill in an email you control.
 5. Check the inbox — a verification email from `Liquid Democracy <…>` should arrive within 30 seconds.
 6. Click the verification link → browser lands on the verified state, auto-joined to the demo org.

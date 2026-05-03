@@ -6,6 +6,8 @@ This document defines browser-based integration tests for the liquid democracy p
 
 These tests complement (not replace) the automated code tests. Code tests verify logic in isolation. Browser tests verify that the full stack — frontend, API, database, auth — works together as a user would experience it.
 
+> **⚠ URL shape note (Phase 11, 2026-05-03).** Frontend URL shape changed in Phase 11 from flat (`/proposals`, `/admin/members`) to path-based (`/{org-slug}/proposals`, `/{org-slug}/admin/members`, `/{org-slug}/admin/sub-orgs/{sub-slug}/members`). Test cases below from Phase 5 onward were authored against the old flat shape and reference paths like `/admin/settings`, `/proposals`, etc. The PASS results recorded under those tests are valid AS OF the date stamp on each — they document what was true at the time. New tests should use the path-based shape; old tests are not retroactively rewritten because doing so would falsify the historical record.
+
 ## Prerequisites
 
 Before running browser tests:

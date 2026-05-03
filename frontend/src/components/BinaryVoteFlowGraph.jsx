@@ -1,6 +1,8 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import * as d3 from 'd3';
+import { useOrg } from '../OrgContext';
+import { urlFor } from '../utils/urls';
 import {
   VOTE_COLORS,
   ZONE_COLORS,
@@ -39,6 +41,16 @@ function lookupDelegateName(node, data) {
   return delegate && delegate.label ? delegate.label : null;
 }
 export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
+  // Phase 11 — user-profile is org-scoped. Resolve parent slug for the
+  // "View Profile" link inside the selected-node tooltip.
+  const { currentOrg, userOrgs } = useOrg();
+  const profileLinkOrg = (() => {
+    if (!currentOrg) return null;
+    if (currentOrg.parent_org_id) {
+      return userOrgs.find(o => o.id === currentOrg.parent_org_id) || null;
+    }
+    return currentOrg;
+  })();
   const svgRef = useRef(null);
   const containerRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
@@ -604,9 +616,9 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
             {selectedNode.is_current_user && (
               <p className="text-[#2E75B6] font-medium text-xs mt-2">This is you.</p>
             )}
-            {selectedNode.label && !selectedNode.isAnonymous && (
+            {selectedNode.label && !selectedNode.isAnonymous && profileLinkOrg && (
               <Link
-                to={`/users/${selectedNode.id}`}
+                to={urlFor(profileLinkOrg, 'user-profile', selectedNode.id)}
                 className="inline-block mt-2 text-xs text-[#2E75B6] hover:underline"
               >
                 View Profile

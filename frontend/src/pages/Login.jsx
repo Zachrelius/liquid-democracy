@@ -1,7 +1,22 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
+import { urlFor } from '../utils/urls';
 import api from '../api';
+
+// Phase 11 — pick the best post-login landing path. Multiple orgs → /orgs
+// (the picker auto-redirects single-org users so /orgs is also fine for
+// that case). Zero orgs → /orgs (which renders the empty-state CTA).
+function landingForOrgs(orgs) {
+  if (!orgs || orgs.length === 0) return '/orgs';
+  if (orgs.length === 1) return urlFor(orgs[0], 'proposals');
+  // Pick the most-recent localStorage hint if it's still valid; otherwise
+  // surface the picker.
+  let hint = null;
+  try { hint = localStorage.getItem('currentOrgSlug'); } catch { /* ignore */ }
+  const hinted = hint ? orgs.find(o => o.slug === hint) : null;
+  return hinted ? urlFor(hinted, 'proposals') : '/orgs';
+}
 
 export default function Login() {
   const { login, register } = useAuth();
@@ -62,10 +77,12 @@ export default function Login() {
           navigate('/orgs');
           return;
         }
+        navigate(landingForOrgs(orgs));
+        return;
       } catch {
-        // ignore -- fall through to proposals
+        // ignore -- fall through to /orgs (safe fallback)
       }
-      navigate('/proposals');
+      navigate('/orgs');
     } catch (err) {
       setError(err.message || 'Login failed');
     } finally {
@@ -82,7 +99,15 @@ export default function Login() {
       if (result.is_first_user) {
         navigate('/setup');
       } else {
-        navigate('/proposals');
+        // Phase 11 — fetch orgs and pick a slug-prefixed landing path. New
+        // users typically have either zero orgs (→ /orgs empty-state) or
+        // one auto-joined demo org (→ /{slug}/proposals).
+        try {
+          const orgs = await api.get('/api/orgs');
+          navigate(landingForOrgs(orgs));
+        } catch {
+          navigate('/orgs');
+        }
       }
     } catch (err) {
       setError(err.message || 'Registration failed');
@@ -126,8 +151,10 @@ export default function Login() {
           navigate('/orgs');
           return;
         }
+        navigate(landingForOrgs(orgs));
+        return;
       } catch { /* ignore */ }
-      navigate('/proposals');
+      navigate('/orgs');
     } catch (err) {
       setError(err.message || 'Quick login failed');
     } finally {

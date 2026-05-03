@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
+import { urlFor } from '../utils/urls';
 import api from '../api';
 import PolisEmbed from '../components/PolisEmbed';
 import PolisDisclosureModal from '../components/PolisDisclosureModal';
@@ -31,7 +32,10 @@ import useShouldShowDisclosure from '../hooks/useShouldShowDisclosure';
  */
 export default function Polis() {
   const params = useParams();
-  const orgSlug = params.slug;
+  // Phase 11 — route param is `org_slug` post-refactor (was `slug` when the
+  // route lived under /orgs/:slug/polises/...). The variable name stays
+  // `orgSlug` for downstream readability.
+  const orgSlug = params.org_slug;
   const polisId = params.polis_id;
 
   const { user } = useAuth();
@@ -134,7 +138,7 @@ export default function Polis() {
       <div className="max-w-2xl mx-auto px-4 py-16 text-center space-y-3">
         <h1 className="text-xl font-semibold text-[#1B3A5C]">Deliberation not available</h1>
         <p className="text-sm text-gray-600">{readOnlyReason}</p>
-        <Link to="/proposals" className="text-sm text-[#2E75B6] hover:underline">
+        <Link to={parentSlug ? urlFor(parentSlug, 'proposals') : '/orgs'} className="text-sm text-[#2E75B6] hover:underline">
           Back to proposals
         </Link>
       </div>
@@ -148,7 +152,7 @@ export default function Polis() {
         <p className="text-sm text-gray-600">
           {error?.message || 'This Polis does not exist or is not visible to you.'}
         </p>
-        <Link to="/proposals" className="text-sm text-[#2E75B6] hover:underline">
+        <Link to={parentSlug ? urlFor(parentSlug, 'proposals') : '/orgs'} className="text-sm text-[#2E75B6] hover:underline">
           Back to proposals
         </Link>
       </div>
@@ -195,7 +199,7 @@ export default function Polis() {
 
       {/* Header — no admin controls; voter view */}
       <section className="space-y-3">
-        <Link to="/proposals" className="text-sm text-[#2E75B6] hover:underline">
+        <Link to={parentSlug ? urlFor(parentSlug, 'proposals') : '/orgs'} className="text-sm text-[#2E75B6] hover:underline">
           ← Back to proposals
         </Link>
         <div className="flex items-center gap-3 flex-wrap">
@@ -297,7 +301,7 @@ export default function Polis() {
             {linkedProposals.map(p => (
               <Link
                 key={p.id}
-                to={`/proposals/${p.id}`}
+                to={urlFor(parentSlug, 'proposal-detail', p.id)}
                 className="flex items-center justify-between px-4 py-3 text-sm hover:bg-gray-50 transition-colors"
               >
                 <span className="font-medium text-gray-800 truncate flex-1">{p.title}</span>

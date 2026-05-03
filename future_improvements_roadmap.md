@@ -24,7 +24,7 @@ The passes are listed in the order they should be built. Each has a short ration
 8. **Phase 8 — Sustained-Majority Voting Windows.** The "stable result" semantics for multi-option need multi-option to exist, and it's governance-critical to have in place before any org runs binding decisions. Also validates our snapshot/tally infrastructure.
 9. **Phase 9 — Polis Integration (Embedded).** Biggest single feature gap. Does meaningful work only with real deliberation content, so it benefits from the platform being otherwise feature-complete before we start.
 10. **Phase 10 — Engagement Layer.** ✅ Complete (2026-05-03). Proposal comments (markdown, one-level reply threading, 15-min edit window, soft-delete) + PWA configuration (manifest, service worker, offline fallback, home-screen install via vite-plugin-pwa). Profile pictures shipped earlier in Phase 9.8 and were dropped from this pass.
-11. **Phase 11 — URL Routing Refactor.** Path-based org URLs (`/{org-slug}/proposals` etc.) as originally spec'd. Done after feature passes so we route a mature feature set once instead of reshuffling URLs repeatedly.
+11. **Phase 11 — URL Routing Refactor.** ✅ Complete (2026-05-03). Path-based org URLs (`/{org-slug}/proposals`, `/{org-slug}/admin/sub-orgs/{sub-slug}/members`, etc.) — the originally-spec'd shape that Phase 4c deferred. OrgContext URL-derives `currentOrg`; localStorage demoted to "last-used hint at sign-in" only. Reserved-words slug validation added; lint script catches collisions. urlFor helper centralizes URL construction across the frontend. No redirect grace period — old flat paths fall through to catch-all per Z's call.
 12. **Phase 12 — Configurable Role Permissions (Stage 1).** Replaces the hardcoded moderator-permissions scaffolding from Phase 4 Cleanup with a proper data-model-driven permission system. Save for near the end because the hardcoded version is functional and this is really about extensibility.
 
 **Items deferred past this sequence:** alternative delegation strategies (2.1), AI delegation agents (2.3), delegate report cards (2.4), accessibility audit (2.5), i18n (2.6), advanced analytics (2.7), notification system (2.8), and all Tier 3 items. These remain valuable and are documented below, but they are not in the path to pilot-ideal.
@@ -410,23 +410,11 @@ Shipped 2026-05-03. Comments + PWA. Profile pictures landed earlier in Phase 9.8
 
 ---
 
-## Phase 11 — URL Routing Refactor
+## Phase 11 — URL Routing Refactor ✅ Complete
 
-### Rationale
+Shipped 2026-05-03. Path-based org URLs across the frontend (`/{org-slug}/...`, sub-orgs nested as `/{org-slug}/admin/sub-orgs/{sub-slug}/...`). OrgContext URL-derives `currentOrg` from `useParams()`; localStorage demoted to "last-used hint at sign-in" only. urlFor helper added at `frontend/src/utils/urls.js` centralizes URL construction. Backend slug-creation gates against a 33-word RESERVED_SLUGS set; one-shot lint script `phase11_check_slug_collisions.py` scans existing slugs. No redirect grace period — old flat URLs fall through to catch-all per Z's decision.
 
-Original architecture called for path-based org URLs (`/{org-slug}/proposals`). Current frontend uses flat URLs with org context in React state/localStorage. This is a cosmetic/UX deviation from spec that shipped in Phase 4c. Fixing it after feature passes means we route a mature feature set once, rather than churning URLs as features are added.
-
-### Scope
-
-- React Router configuration updated to path-based org routes
-- All admin pages, proposal pages, delegation pages, user profiles re-routed
-- Legacy flat URLs redirect to new path-based equivalents for a grace period
-- `OrgContext` refactored to derive current org from URL rather than localStorage
-- Deep links (email invitation links, notification links) updated to use new URLs
-
-### Non-goals
-
-- Subdomain-based multi-tenancy (path-based is sufficient and was the original choice)
+Subdomain-based multi-tenancy (`gamenights.liquiddemocracy.us`) remains explicitly out of scope per the original Phase 11 non-goal — Tier 3 deferred item.
 
 ---
 

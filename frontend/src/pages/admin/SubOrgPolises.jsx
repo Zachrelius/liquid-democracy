@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import useSubOrg from '../../useSubOrg';
+import { urlFor } from '../../utils/urls';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
 
 /**
@@ -64,14 +65,14 @@ export default function SubOrgPolises() {
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div>
         <p className="text-xs text-gray-400 mb-1">
-          <Link to="/admin/sub-orgs" className="hover:underline">Sub-organizations</Link>
+          <Link to={urlFor(parentSlug, 'admin-sub-orgs')} className="hover:underline">Sub-organizations</Link>
           {' / '}
-          <Link to={`/admin/sub-orgs/${subSlug}/settings`} className="hover:underline">{subOrg.name}</Link>
+          <Link to={urlFor(parentSlug, 'admin-sub-org-settings', subSlug)} className="hover:underline">{subOrg.name}</Link>
         </p>
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-[#1B3A5C]">{subOrg.name} — Polises</h1>
           <Link
-            to={`/admin/sub-orgs/${subSlug}/polises/create`}
+            to={urlFor(parentSlug, 'admin-sub-org-polises-create', subSlug)}
             className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
           >
             Create Polis
@@ -114,7 +115,7 @@ export default function SubOrgPolises() {
             return (
               <Link
                 key={p.id}
-                to={`/admin/sub-orgs/${subSlug}/polises/${p.id}`}
+                to={urlFor(parentSlug, 'admin-sub-org-polis-detail', subSlug, p.id)}
                 className="grid grid-cols-12 gap-3 px-4 py-3 text-sm border-t border-gray-100 hover:bg-gray-50 transition-colors items-center"
               >
                 <span className="col-span-6 font-medium text-gray-800 truncate">{p.title}</span>

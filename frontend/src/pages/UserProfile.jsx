@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
+import { useOrg } from '../OrgContext';
+import { urlFor } from '../utils/urls';
 import api from '../api';
 import Avatar from '../components/Avatar';
 import TopicBadge from '../components/TopicBadge';
@@ -77,6 +79,15 @@ function VoteRecordCell({ vote }) {
 export default function UserProfile() {
   const { id } = useParams();
   const { user: currentUser } = useAuth();
+  const { currentOrg, userOrgs } = useOrg();
+  // Phase 11 — proposal-detail is parent-org-rooted.
+  const proposalLinkOrg = (() => {
+    if (!currentOrg) return null;
+    if (currentOrg.parent_org_id) {
+      return userOrgs.find(o => o.id === currentOrg.parent_org_id) || null;
+    }
+    return currentOrg;
+  })();
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -233,7 +244,7 @@ export default function UserProfile() {
                   <tr key={v.id} className="border-b border-gray-100 last:border-0">
                     <td className="px-4 py-3">
                       <Link
-                        to={`/proposals/${v.proposal_id}`}
+                        to={proposalLinkOrg ? urlFor(proposalLinkOrg, 'proposal-detail', v.proposal_id) : '#'}
                         className="text-sm text-[#2E75B6] hover:underline"
                       >
                         {v.proposal_title || v.proposal_id}

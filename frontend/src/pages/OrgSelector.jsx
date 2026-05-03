@@ -1,13 +1,34 @@
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useOrg } from '../OrgContext';
+import { urlFor } from '../utils/urls';
 
 export default function OrgSelector() {
-  const { userOrgs, setCurrentOrg } = useOrg();
+  const { userOrgs, setCurrentOrg, loading } = useOrg();
   const navigate = useNavigate();
+
+  // Phase 11 — UX nicety: a user with exactly one org and a matching
+  // localStorage `currentOrgSlug` hint auto-lands in their app rather than
+  // staring at a one-button "pick" page. Single-org users without a hint
+  // also auto-land — there's no meaningful pick to make. Multi-org users
+  // see the picker.
+  useEffect(() => {
+    if (loading) return;
+    if (userOrgs.length !== 1) return;
+    const only = userOrgs[0];
+    let hint = null;
+    try { hint = localStorage.getItem('currentOrgSlug'); } catch { /* ignore */ }
+    if (hint && hint !== only.slug) {
+      // localStorage points at a different (now-stale) slug — still auto-land
+      // since the user only has one org, but write the up-to-date slug.
+    }
+    setCurrentOrg(only);
+    navigate(urlFor(only, 'proposals'), { replace: true });
+  }, [loading, userOrgs, navigate, setCurrentOrg]);
 
   function selectOrg(org) {
     setCurrentOrg(org);
-    navigate('/proposals');
+    navigate(urlFor(org, 'proposals'));
   }
 
   // Phase 9.5 — empty-state CTA when the user is in zero orgs.

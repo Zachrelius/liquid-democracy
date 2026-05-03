@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
+import { urlFor } from '../../utils/urls';
 import api from '../../api';
 
 /**
@@ -112,7 +113,7 @@ export default function Polises() {
         </div>
         {isModeratorOrAdmin && (
           <Link
-            to="/admin/polises/create"
+            to={urlFor(parentSlug, 'admin-polises-create')}
             className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
           >
             Create Polis
@@ -173,7 +174,7 @@ export default function Polises() {
             return (
               <button
                 key={p.id}
-                onClick={() => navigate(`/admin/polises/${p.id}`)}
+                onClick={() => navigate(urlFor(parentSlug, 'admin-polis-detail', p.id))}
                 className="w-full text-left grid grid-cols-12 gap-3 px-4 py-3 text-sm border-t border-gray-100 hover:bg-gray-50 transition-colors items-center"
               >
                 <span className="col-span-4 font-medium text-gray-800 truncate">{p.title}</span>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useOrg } from '../OrgContext';
 import { useAuth } from '../AuthContext';
+import { urlFor } from '../utils/urls';
 import api from '../api';
 
 const SUPPORT_EMAIL = 'support@liquiddemocracy.us';
@@ -101,7 +102,8 @@ export default function CreateOrg() {
       });
       await refreshOrgs();
       setCurrentOrg(org);
-      navigate('/admin/settings');
+      // Phase 11 — slug-prefixed admin settings path.
+      navigate(urlFor(org, 'admin-settings'));
     } catch (err) {
       setErrorInfo(classifyError(err));
     } finally {
@@ -217,7 +219,7 @@ export default function CreateOrg() {
             Slug (URL-friendly identifier)
           </label>
           <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-400">/orgs/</span>
+            <span className="text-sm text-gray-400">/</span>
             <input
               type="text"
               value={slug}

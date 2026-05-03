@@ -1,6 +1,8 @@
 import { useRef, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as d3 from 'd3';
+import { useOrg } from '../OrgContext';
+import { urlFor } from '../utils/urls';
 
 function nodeRadius(d) {
   if (d._isCenter) return 22;
@@ -8,6 +10,15 @@ function nodeRadius(d) {
 }
 
 export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemoveDelegate }) {
+  // Phase 11 — user-profile is org-scoped.
+  const { currentOrg, userOrgs } = useOrg();
+  const profileLinkOrg = (() => {
+    if (!currentOrg) return null;
+    if (currentOrg.parent_org_id) {
+      return userOrgs.find(o => o.id === currentOrg.parent_org_id) || null;
+    }
+    return currentOrg;
+  })();
   const svgRef = useRef(null);
   const containerRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
@@ -371,12 +382,14 @@ export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemov
           {selectedNode.relationship === 'delegator' && (
             <p className="text-xs text-gray-400 italic">You cannot change someone else's delegation.</p>
           )}
-          <Link
-            to={`/users/${selectedNode.id}`}
-            className="inline-block mt-2 text-xs text-[#2E75B6] hover:underline"
-          >
-            View Profile
-          </Link>
+          {profileLinkOrg && (
+            <Link
+              to={urlFor(profileLinkOrg, 'user-profile', selectedNode.id)}
+              className="inline-block mt-2 text-xs text-[#2E75B6] hover:underline"
+            >
+              View Profile
+            </Link>
+          )}
         </div>
       )}
     </div>

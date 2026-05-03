@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useOrg } from '../OrgContext';
+import { urlFor } from '../utils/urls';
 import api from '../api';
 
 const SUGGESTED_TOPICS = [
@@ -197,7 +198,7 @@ export default function SetupWizard() {
           <div>
             <label className="block text-xs text-gray-500 mb-1">Slug (URL identifier)</label>
             <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-400">/orgs/</span>
+              <span className="text-sm text-gray-400">/</span>
               <input
                 type="text"
                 value={orgSlug}
@@ -388,21 +389,21 @@ export default function SetupWizard() {
 
           <div className="grid gap-3 max-w-sm mx-auto">
             <button
-              onClick={() => navigate('/admin/topics')}
+              onClick={() => navigate(urlFor(createdOrg, 'admin-topics'))}
               className="w-full text-sm px-4 py-3 border border-gray-200 rounded-lg hover:border-[#2E75B6] hover:bg-blue-50/30 transition-all text-left"
             >
               <span className="font-medium text-[#1B3A5C]">Manage Topics</span>
               <span className="block text-xs text-gray-400 mt-0.5">Add or edit topic categories</span>
             </button>
             <button
-              onClick={() => navigate('/admin/settings')}
+              onClick={() => navigate(urlFor(createdOrg, 'admin-settings'))}
               className="w-full text-sm px-4 py-3 border border-gray-200 rounded-lg hover:border-[#2E75B6] hover:bg-blue-50/30 transition-all text-left"
             >
               <span className="font-medium text-[#1B3A5C]">Admin Settings</span>
               <span className="block text-xs text-gray-400 mt-0.5">Configure voting rules, thresholds, and more</span>
             </button>
             <button
-              onClick={() => navigate('/proposals')}
+              onClick={() => navigate(urlFor(createdOrg, 'proposals'))}
               className="w-full text-sm px-4 py-3 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
             >
               Go to Proposals

@@ -17,6 +17,7 @@ from audit_utils import log_audit_event
 from database import get_db
 from email_service import send_invitation_email
 from org_config import get_org_config
+from reserved_slugs import RESERVED_SLUGS
 from settings import settings as app_settings
 from org_middleware import (
     get_org_context,
@@ -206,6 +207,19 @@ def create_organization(
             detail=(
                 "The platform is processing many organization-creation "
                 "requests right now — please try again in a few minutes."
+            ),
+        )
+
+    # Phase 11 B1: reserved-words check. Slugs at /{slug}/... cannot
+    # collide with the frontend's top-level routes (marketing, auth,
+    # onboarding, user-scoped pages). Run before the uniqueness check so
+    # the validation message is specific even if no row exists yet.
+    if body.slug.lower() in RESERVED_SLUGS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"The slug '{body.slug}' is reserved and cannot be used. "
+                "Please pick a different one."
             ),
         )
 

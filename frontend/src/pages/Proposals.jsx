@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
 import { useOrg } from '../OrgContext';
+import { urlFor } from '../utils/urls';
 import StatusBadge from '../components/StatusBadge';
 import TopicBadge from '../components/TopicBadge';
 import VoteBar from '../components/VoteBar';
@@ -115,7 +116,7 @@ function yourVoteLine(proposal, myVote) {
   return 'Your vote: Not cast';
 }
 
-function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly }) {
+function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly, linkOrg }) {
   const subOrg = proposal.sub_org_id ? subOrgsById?.[proposal.sub_org_id] : null;
   const method = proposal.voting_method;
   const isClosed = proposal.status === 'passed' || proposal.status === 'failed';
@@ -173,7 +174,7 @@ function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly }) {
 
   return (
     <Link
-      to={`/proposals/${proposal.id}`}
+      to={linkOrg ? urlFor(linkOrg, 'proposal-detail', proposal.id) : '#'}
       className="block bg-white border border-gray-200 rounded-xl p-5 hover:border-[#2E75B6] hover:shadow-sm transition-all"
     >
       <div className="flex items-start justify-between gap-3 mb-3">
@@ -237,6 +238,15 @@ function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly }) {
 
 export default function Proposals() {
   const { currentOrg, userOrgs } = useOrg();
+  // Phase 11 — proposal-detail routes are parent-org-rooted. If currentOrg
+  // is itself a sub-org, walk up to the parent for link construction.
+  const linkOrg = (() => {
+    if (!currentOrg) return null;
+    if (currentOrg.parent_org_id) {
+      return userOrgs.find(o => o.id === currentOrg.parent_org_id) || null;
+    }
+    return currentOrg;
+  })();
   const [proposals, setProposals] = useState([]);
   const [topics, setTopics] = useState([]);
   const [tallies, setTallies] = useState({});
@@ -441,6 +451,7 @@ export default function Proposals() {
                   myVote={myVotes[p.id]}
                   subOrgsById={subOrgsById}
                   isReadOnly={isReadOnly}
+                  linkOrg={linkOrg}
                 />
               );
             })}

@@ -4,6 +4,7 @@ import api from '../api';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 import useScopeCoverage from '../hooks/useScopeCoverage';
+import { urlFor } from '../utils/urls';
 import Avatar from './Avatar';
 import VerifyEmailInlineNote from './VerifyEmailInlineNote';
 
@@ -38,6 +39,16 @@ function ResultCard({
 }) {
   const [acting, setActing] = useState(false);
   const [feedback, setFeedback] = useState('');
+  // Phase 11 — user-profile is org-scoped now. Resolve the parent slug for
+  // the View Profile link.
+  const { currentOrg, userOrgs } = useOrg();
+  const profileLinkOrg = (() => {
+    if (!currentOrg) return null;
+    if (currentOrg.parent_org_id) {
+      return userOrgs.find(o => o.id === currentOrg.parent_org_id) || null;
+    }
+    return currentOrg;
+  })();
 
   const profiles = user.delegate_profiles || [];
   const isPublicForTopic = topicId && profiles.some(p => p.topic_id === topicId);
@@ -150,7 +161,7 @@ function ResultCard({
             <span className="font-medium text-sm text-[#1B3A5C]">{user.display_name}</span>
             <span className="text-xs text-gray-400">@{user.username}</span>
             <Link
-              to={`/users/${user.id}`}
+              to={profileLinkOrg ? urlFor(profileLinkOrg, 'user-profile', user.id) : '#'}
               target="_blank"
               rel="noopener noreferrer"
               className="text-[#2E75B6] hover:text-[#1B3A5C] ml-0.5"
