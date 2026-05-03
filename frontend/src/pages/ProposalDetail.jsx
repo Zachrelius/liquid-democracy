@@ -19,6 +19,7 @@ import RCVSankeyChart from '../components/RCVSankeyChart';
 import SustainedMajorityPanel from '../components/SustainedMajorityPanel';
 import LinkedPolisCard from '../components/LinkedPolisCard';
 import { colorForOption } from '../components/voteFlowGraphUtils';
+import renderMarkdown from '../utils/renderMarkdown';
 
 /**
  * Phase 9 Session 4 — pol.is URL detection in proposal bodies.
@@ -58,23 +59,6 @@ function detectPolisUrlsInBody(body) {
     found.push({ conversationId: id, originalUrl: m[0] });
   }
   return found;
-}
-
-// Simple markdown renderer (no external dep needed for basics)
-function renderMarkdown(text) {
-  if (!text) return '';
-  return text
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/`(.+?)`/g, '<code>$1</code>')
-    .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/^(?!<[hul])(.+)$/gm, (m) => m.startsWith('<') ? m : m);
 }
 
 const VOTE_COLORS = {
