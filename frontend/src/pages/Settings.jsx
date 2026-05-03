@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 import api from '../api';
+import { resizeImageFile } from '../utils/imageResize';
 import Avatar from '../components/Avatar';
 import TopicBadge from '../components/TopicBadge';
 import { useToast } from '../components/Toast';
@@ -246,24 +247,23 @@ export default function Settings() {
     setAvatarMsg('');
     setAvatarBusy(true);
     try {
-      // Plain fetch — the api wrapper assumes JSON. Multipart needs the
-      // browser to set the Content-Type (with boundary), so we don't pass it.
-      const token = sessionStorage.getItem('token');
-      const form = new FormData();
-      form.append('file', file);
-      const res = await fetch('/api/users/me/avatar', {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: form,
-      });
-      if (!res.ok) {
-        let msg = `Upload failed (${res.status})`;
-        try {
-          const data = await res.json();
-          if (typeof data?.detail === 'string') msg = data.detail;
-        } catch { /* ignore */ }
-        throw new Error(msg);
+      // Phase 9.9 W3 — client-side resize before upload. Brings phone
+      // photos (5+ MB) down to ~30 KB so the upload succeeds quickly and
+      // stays well under the backend ceiling. If the resize fails for any
+      // reason (corrupt image, browser without canvas support), fall
+      // through to upload the original file.
+      let toUpload = file;
+      try {
+        toUpload = await resizeImageFile(file);
+      } catch (resizeErr) {
+        console.warn('Avatar resize failed; uploading original file', resizeErr);
+        toUpload = file;
       }
+      const form = new FormData();
+      form.append('file', toUpload);
+      // Phase 9.9 W4 — route through api wrapper so the auth refresh-and-
+      // retry path covers expired access tokens during multipart upload.
+      await api.postFormData('/api/users/me/avatar', form);
       toast.success('Avatar updated');
       await refreshUser();
       // Re-load the local user copy too so the Settings header avatar updates.
@@ -357,7 +357,7 @@ export default function Settings() {
           <Avatar user={user} size="lg" />
           <div className="flex-1 min-w-0 space-y-2">
             <p className="text-xs text-gray-500">
-              JPEG, PNG, or WebP. Max 2 MB. Resized to 128 and 48 pixels.
+              JPEG, PNG, or WebP. Max 6 MB. Resized in your browser before upload.
             </p>
             <div className="flex gap-2 flex-wrap">
               <input

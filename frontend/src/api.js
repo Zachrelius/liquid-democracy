@@ -125,12 +125,79 @@ async function request(method, path, body) {
   return data;
 }
 
+/**
+ * Multipart POST helper — Phase 9.9 W4.
+ *
+ * Mirrors request() but for FormData bodies. Critically, we do NOT set
+ * Content-Type ourselves — the browser sets it (with the multipart
+ * boundary) when the body is a FormData. On 401 we run the same
+ * refresh-and-retry dance as request() so an expired access token doesn't
+ * cascade into a "could not validate credentials" failure for the user.
+ */
+async function requestFormData(path, formData) {
+  const headers = {};
+  if (_token) headers['Authorization'] = `Bearer ${_token}`;
+
+  let res;
+  try {
+    res = await fetch(path, { method: 'POST', headers, body: formData });
+  } catch {
+    throw { message: 'Network error — is the server running?', status: 0 };
+  }
+
+  if (res.status === 401) {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      const retryHeaders = {};
+      if (_token) retryHeaders['Authorization'] = `Bearer ${_token}`;
+      try {
+        res = await fetch(path, { method: 'POST', headers: retryHeaders, body: formData });
+      } catch {
+        throw { message: 'Network error — is the server running?', status: 0 };
+      }
+      if (res.status === 401) {
+        window.dispatchEvent(new Event('auth:unauthorized'));
+        throw { message: 'Session expired. Please log in again.', status: 401 };
+      }
+    } else {
+      window.dispatchEvent(new Event('auth:unauthorized'));
+      throw { message: 'Session expired. Please log in again.', status: 401 };
+    }
+  }
+
+  if (res.status === 204) return null;
+
+  let data;
+  const ct = res.headers.get('Content-Type') || '';
+  if (ct.includes('application/json')) {
+    data = await res.json();
+  } else {
+    data = await res.text();
+  }
+
+  if (!res.ok) {
+    const detail = data?.detail;
+    let message;
+    if (Array.isArray(detail)) {
+      message = detail.map(e => `${e.loc?.slice(1).join('.')} — ${e.msg}`).join('; ');
+    } else if (typeof detail === 'string') {
+      message = detail;
+    } else {
+      message = `Server error ${res.status}`;
+    }
+    throw { message, status: res.status, raw: data };
+  }
+
+  return data;
+}
+
 const api = {
   get: (path) => request('GET', path),
   post: (path, body) => request('POST', path, body),
   put: (path, body) => request('PUT', path, body),
   patch: (path, body) => request('PATCH', path, body),
   delete: (path) => request('DELETE', path),
+  postFormData: (path, form) => requestFormData(path, form),
 
   // Auth endpoints (no JSON body — uses form encoding for /login)
   async login(username, password) {
