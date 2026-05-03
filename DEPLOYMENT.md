@@ -888,7 +888,20 @@ Until the fix ships, the failing check is the desired-state codification — run
 
 ### Timing
 
-Total wall-clock runtime against prod: ~1.8 seconds (5 HTTP round trips, no fixtures, no setup). Well under the ~10-second threshold spec'd for the W-FIX-D deploy-poll auto-wiring decision. Safe to wire into `backend/scripts/poll_deploy.py` as a post-deploy gate if desired.
+Total wall-clock runtime against prod: ~1.8 seconds (5 HTTP round trips, no fixtures, no setup). Well under the ~10-second threshold spec'd for the W-FIX-D deploy-poll auto-wiring decision.
+
+### Auto-runs on every deploy via `poll_deploy.py`
+
+`backend/scripts/poll_deploy.py` (Phase 10.2 W-FIX-D) is the canonical post-push poll script. It waits for the bundle hash to flip + `/api/health` to return 200, then runs `pytest tests/smoke/ --target=<url>` automatically. Pass `--no-smoke` to skip the smoke step:
+
+```bash
+backend/.venv/Scripts/python backend/scripts/poll_deploy.py
+backend/.venv/Scripts/python backend/scripts/poll_deploy.py --no-smoke
+backend/.venv/Scripts/python backend/scripts/poll_deploy.py --start-bundle=index-foo.js  # pin pre-deploy hash
+backend/.venv/Scripts/python backend/scripts/poll_deploy.py --target=http://localhost:8000  # local stack
+```
+
+A failing smoke check after a successful deploy returns the pytest exit code, so the script's overall exit status reflects whether the deploy is healthy AT THE BOUNDARY LAYER, not just whether the bundle flipped. The `test_manifest_mime_type` known-failing check above will count as a smoke failure — bundle the nginx fix or pass `--no-smoke` until it ships.
 
 ### Adding a new smoke check
 
