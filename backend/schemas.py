@@ -94,6 +94,9 @@ class UserOut(BaseModel):
     user_type: str
     delegation_strategy: str
     default_follow_policy: str
+    # Phase 9.8 — relative path under /uploads when set; null for users
+    # who haven't uploaded an avatar (frontend renders an initials fallback).
+    avatar_url: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -110,6 +113,8 @@ class RegisterResponse(BaseModel):
     user_type: str
     delegation_strategy: str
     default_follow_policy: str
+    # Phase 9.8 — see UserOut.avatar_url.
+    avatar_url: Optional[str] = None
     created_at: datetime
     is_first_user: bool = False
 
@@ -169,6 +174,8 @@ class UserSearchResult(BaseModel):
     id: str
     username: str
     display_name: str
+    # Phase 9.8 — see UserOut.avatar_url.
+    avatar_url: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -178,6 +185,8 @@ class UserSearchResultWithContext(BaseModel):
     id: str
     username: str
     display_name: str
+    # Phase 9.8 — see UserOut.avatar_url.
+    avatar_url: Optional[str] = None
     # Delegate profiles (active)
     delegate_profiles: list["DelegateProfileOut"] = []
     # Relationship with the viewer
@@ -696,6 +705,8 @@ class GraphNode(BaseModel):
     display_name: str
     username: str
     weight: int  # total voting weight delegated to this node
+    # Phase 9.8 — see UserOut.avatar_url.
+    avatar_url: Optional[str] = None
 
 
 class GraphEdge(BaseModel):
@@ -749,6 +760,9 @@ class VoteFlowNode(BaseModel):
     is_current_user: bool = False
     delegator_count: int = 0
     total_vote_weight: int = 1
+    # Phase 9.8 — see UserOut.avatar_url. Null when the viewer can't see the
+    # node's identity (label gated by privacy rules) or the user has no avatar.
+    avatar_url: Optional[str] = None
     # Ballot content is populated for every voter who has a ballot, regardless of
     # identity visibility. Privacy boundary: identity (label) is gated by follow/
     # public-delegate status; ballot content is part of the aggregate population
@@ -823,6 +837,8 @@ class PersonalNetworkCenter(BaseModel):
     label: str
     delegating_to: int
     delegated_from: int
+    # Phase 9.8 — see UserOut.avatar_url.
+    avatar_url: Optional[str] = None
 
 
 class PersonalNetworkNode(BaseModel):
@@ -832,6 +848,8 @@ class PersonalNetworkNode(BaseModel):
     topics: list[str]
     is_public_delegate: bool = False
     total_delegators: int = 0
+    # Phase 9.8 — see UserOut.avatar_url.
+    avatar_url: Optional[str] = None
 
 
 class PersonalNetworkEdgeTopic(BaseModel):
@@ -1109,6 +1127,8 @@ class OrgMemberOut(BaseModel):
     username: str
     display_name: str
     email: Optional[str] = None
+    # Phase 9.8 — see UserOut.avatar_url.
+    avatar_url: Optional[str] = None
     role: str
     status: str
     joined_at: datetime
@@ -1152,6 +1172,8 @@ class DelegateApplicationOut(BaseModel):
     user_id: str
     username: str = ""
     display_name: str = ""
+    # Phase 9.8 — see UserOut.avatar_url.
+    avatar_url: Optional[str] = None
     topic_id: str
     topic_name: str = ""
     bio: str
@@ -1283,6 +1305,8 @@ class SubOrgMemberOut(BaseModel):
     username: str
     display_name: str
     email: Optional[str] = None
+    # Phase 9.8 — see UserOut.avatar_url.
+    avatar_url: Optional[str] = None
     role: str
     status: str
     joined_at: datetime

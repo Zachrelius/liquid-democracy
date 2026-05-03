@@ -248,6 +248,7 @@ def _enrich_user_result(db: Session, user: models.User, viewer_id: str):
         id=user.id,
         username=user.username,
         display_name=user.display_name,
+        avatar_url=user.avatar_url,
         delegate_profiles=[schemas.DelegateProfileOut.model_validate(p) for p in profiles],
         follow_status=follow_status,
         follow_permission=follow_permission,
@@ -332,7 +333,10 @@ def get_user_profile(
 
     return schemas.PublicProfileOut(
         user=schemas.UserSearchResult(
-            id=user.id, username=user.username, display_name=user.display_name
+            id=user.id,
+            username=user.username,
+            display_name=user.display_name,
+            avatar_url=user.avatar_url,
         ),
         delegate_profiles=[schemas.DelegateProfileOut.model_validate(p) for p in active_profiles],
         votes=votes_out,
@@ -364,6 +368,7 @@ def delegation_tree(user_id: str, db: Session = Depends(get_db)):
                 display_name=u.display_name,
                 username=u.username,
                 weight=graph_store.compute_voting_weight(uid),
+                avatar_url=u.avatar_url,
             ))
 
     graph_edges = []

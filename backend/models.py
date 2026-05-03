@@ -191,6 +191,11 @@ class User(Base):
     org_creation_limit: Mapped[Optional[int]] = mapped_column(
         Integer, nullable=True,
     )
+    # Phase 9.8 — avatar URL (relative path under the static-files mount,
+    # e.g. ``/uploads/avatars/{user_id}/128.jpg``). NULL = no uploaded avatar
+    # (frontend renders the initials-on-colored-background fallback). Set by
+    # POST /api/users/me/avatar; cleared by DELETE.
+    avatar_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
     proposals: Mapped[list["Proposal"]] = relationship("Proposal", back_populates="author")

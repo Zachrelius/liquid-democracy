@@ -167,6 +167,7 @@ def system_delegation_graph(
                     display_name=user.display_name,
                     username=user.username,
                     weight=graph_store.compute_voting_weight(uid),
+                    avatar_url=user.avatar_url,
                 )
             )
 

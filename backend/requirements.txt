@@ -19,6 +19,9 @@ nh3==0.2.18
 slowapi==0.1.9
 psycopg2-binary==2.9.9
 aiosmtplib==3.0.1
+# Pillow: avatar resize (Phase 9.8). 10.4.0 is the active LTS line; supports
+# JPEG/PNG/WebP decode + JPEG encode quality 85 used by /api/users/me/avatar.
+Pillow==10.4.0
 pytest==8.3.4
 pytest-asyncio==0.24.0
 httpx==0.28.1

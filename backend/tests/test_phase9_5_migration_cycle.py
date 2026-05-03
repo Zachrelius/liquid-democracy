@@ -70,7 +70,13 @@ def _column_exists(engine, table: str, column: str) -> bool:
 
 
 def test_upgrade_downgrade_upgrade_cycle():
-    """Migration is reversible and idempotent on SQLite."""
+    """Migration is reversible and idempotent on SQLite.
+
+    Phase 9.8 note: this test was written when 373e1f066cc1 was head.
+    Since then Phase 9.8's a1c4e9d2f8b3 sits on top, so we pin upgrade
+    targets to 373e1f066cc1 explicitly rather than using `head` so the
+    revision under test stays Phase 9.5 regardless of what comes after.
+    """
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     db_url = f"sqlite:///{path}"
@@ -90,8 +96,8 @@ def test_upgrade_downgrade_upgrade_cycle():
         engine.dispose()
         _run_alembic(db_url, "stamp", "e72362fd7cd5")
 
-        # 1. Upgrade head -> column + table + seeded row present
-        _run_alembic(db_url, "upgrade", "head")
+        # 1. Upgrade to 373e1f066cc1 -> column + table + seeded row present
+        _run_alembic(db_url, "upgrade", "373e1f066cc1")
         engine = sa.create_engine(db_url)
         assert _column_exists(engine, "users", "org_creation_limit")
         assert _table_exists(engine, "platform_settings")
@@ -114,8 +120,8 @@ def test_upgrade_downgrade_upgrade_cycle():
         assert not _column_exists(engine, "users", "org_creation_limit")
         engine.dispose()
 
-        # 3. Re-upgrade head -> idempotent re-application
-        _run_alembic(db_url, "upgrade", "head")
+        # 3. Re-upgrade to 373e1f066cc1 -> idempotent re-application
+        _run_alembic(db_url, "upgrade", "373e1f066cc1")
         engine = sa.create_engine(db_url)
         assert _column_exists(engine, "users", "org_creation_limit")
         assert _table_exists(engine, "platform_settings")
