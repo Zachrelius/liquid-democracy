@@ -9,6 +9,9 @@ import AdminRoute from './AdminRoute';
 import AdminOnlyRoute from './AdminOnlyRoute';
 import Nav from './components/Nav';
 import EmailVerificationBanner from './components/EmailVerificationBanner';
+// Phase 10.1 W3 — gentle, mobile-only PWA install affordance. Mounted once
+// at the App root so it renders regardless of auth state or current route.
+import InstallPWABanner from './components/InstallPWABanner';
 import Login from './pages/Login';
 import Proposals from './pages/Proposals';
 import ProposalDetail from './pages/ProposalDetail';
@@ -67,6 +70,10 @@ export default function App() {
       <PublicConfigProvider>
       <ToastProvider>
       <ConfirmProvider>
+      {/* Phase 10.1 W3 — PWA install banner. Renders regardless of auth state
+          or current route; component itself self-gates on viewport, install
+          state, and prior dismissal. */}
+      <InstallPWABanner />
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Login />} />
