@@ -5,6 +5,7 @@ import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
+import VerifyEmailInlineNote from '../components/VerifyEmailInlineNote';
 import StatusBadge from '../components/StatusBadge';
 import TopicBadge from '../components/TopicBadge';
 import VoteBar from '../components/VoteBar';
@@ -175,9 +176,9 @@ function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerif
       <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Your Ballot</h3>
 
       {unverified && (
-        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          Verify your email to vote.
-        </p>
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <VerifyEmailInlineNote action="vote" />
+        </div>
       )}
 
       {hasVote && !showBallot ? (
@@ -479,9 +480,9 @@ function VoteStatusBox({ myVote, proposalId, onVoteChange, emailVerified }) {
       <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Your Vote</h3>
 
       {unverified && (
-        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          Verify your email to vote.
-        </p>
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <VerifyEmailInlineNote action="vote" />
+        </div>
       )}
 
       {hasVote ? (

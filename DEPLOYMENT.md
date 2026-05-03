@@ -765,3 +765,39 @@ This pass deliberately ships only the manual kill switch + the audit enrichment 
 - "Create your own org" invite tokens for in-person recruitment scenarios where the prospect would be over their per-user cap.
 
 Without this layer, the kill switch is a **recovery tool, not a defense.** Layer 4 (the rate limit) is the only automatic protection. Build the monitoring layer when there's evidence it's needed.
+
+---
+
+## Avatars and uploaded files (Phase 9.8)
+
+Phase 9.8 added user profile pictures. Uploaded avatars are stored on the backend container's local filesystem and served by FastAPI's `StaticFiles` mount.
+
+### Storage layout
+
+- **Disk path:** `backend/uploads/avatars/{user_id}/128.jpg` and `backend/uploads/avatars/{user_id}/48.jpg`. Two sizes are written per upload — 128×128 for graph nodes / profile cards, 48×48 for nav and inline use. Both are JPEG quality 85 regardless of upload format (Pillow handles the resize + format conversion).
+- **DB column:** `users.avatar_url` (nullable). When null, the frontend renders the deterministic-color initials fallback. When set, it's the relative path under `/uploads/...` for the 128 size.
+- **HTTP mount:** FastAPI mounts `backend/uploads/` at `/uploads/...` (no auth — these are public-readable by design, like any other profile picture). The frontend nginx config and Vite dev proxy both forward `/uploads/...` to the backend; the nginx block is intentionally placed BEFORE the static-asset cache rule so `.jpg` URLs route to the backend rather than 404 from the SPA build directory.
+
+### Upload contract
+
+- `POST /api/users/me/avatar` — multipart, content-type whitelist (`image/jpeg`, `image/png`, `image/webp`), max 2 MB pre-resize. Returns `{avatar_url, avatar_url_small}`. Audited as `user.avatar_uploaded`.
+- `DELETE /api/users/me/avatar` — removes both files, nulls `avatar_url`, returns 204. Audited as `user.avatar_removed`.
+
+### ⚠ Railway-ephemeral filesystem caveat
+
+**Railway's container filesystem is ephemeral.** Uploaded avatars persist within a deploy but are **wiped on container restart** (which happens on every redeploy and occasionally for routine reasons). For the friend-pilot scale (5–15 users), this is acceptable — affected users re-upload via Settings, and the deterministic-color initials fallback remains in place for everyone who hasn't re-uploaded yet.
+
+**Before scaling beyond friend-pilot,** migrate avatar storage to one of:
+- **Railway Volume** (simplest — mount a persistent volume at `/app/backend/uploads/`)
+- **S3 / R2 / DigitalOcean Spaces** (more durable, also enables CDN + backups; requires changing the upload code path to write to object storage and serving signed URLs)
+
+The DB column already stores a path string, so the migration only needs to touch the upload/serve layer — not the schema.
+
+### Verifying the mount in production
+
+```bash
+curl -I https://www.liquiddemocracy.us/uploads/avatars/{user_id}/128.jpg
+# expect 200 + image/jpeg, OR 404 if no avatar uploaded for that user (correct — endpoint serves real files only)
+```
+
+If the URL returns the SPA index.html instead of the image, the nginx ordering is wrong (the `/uploads/` block must come before the static-asset cache rule). Check `frontend/nginx.conf`.

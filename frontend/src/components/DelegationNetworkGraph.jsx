@@ -36,6 +36,7 @@ export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemov
     const centerNode = {
       id: data.center.id,
       label: data.center.label,
+      avatar_url: data.center.avatar_url,
       _isCenter: true,
       relationship: 'self',
       topics: [],
@@ -72,6 +73,28 @@ export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemov
         .attr('d', 'M0,-5L10,0L0,5')
         .attr('fill', color)
         .attr('opacity', 0.6);
+    });
+
+    // Phase 9.8 W A2 — register an avatar pattern per node that has an
+    // avatar_url. The center node ALSO uses its avatar, replacing the dark
+    // navy background fill with the user's photo. Initials fallback (label
+    // below) stays unchanged for non-avatar nodes.
+    nodes.forEach((n) => {
+      if (n.avatar_url) {
+        const r = nodeRadius(n);
+        defs.append('pattern')
+          .attr('id', `net-avatar-${n.id}`)
+          .attr('patternUnits', 'userSpaceOnUse')
+          .attr('width', r * 2)
+          .attr('height', r * 2)
+          .attr('x', -r)
+          .attr('y', -r)
+          .append('image')
+          .attr('href', n.avatar_url)
+          .attr('width', r * 2)
+          .attr('height', r * 2)
+          .attr('preserveAspectRatio', 'xMidYMid slice');
+      }
     });
 
     // Flatten edges into individual lines per topic
@@ -150,6 +173,8 @@ export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemov
     node.append('circle')
       .attr('r', d => nodeRadius(d))
       .attr('fill', d => {
+        // Phase 9.8 W A2 — avatar pattern wins when present.
+        if (d.avatar_url) return `url(#net-avatar-${d.id})`;
         if (d._isCenter) return '#1B3A5C';
         if (d.relationship === 'delegate') return '#EBF5FB';
         return '#FEF9E7';
@@ -187,8 +212,9 @@ export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemov
       .attr('fill', d => d._isCenter ? '#1B3A5C' : '#2C3E50')
       .attr('pointer-events', 'none');
 
-    // Center label inside the node
-    node.filter(d => d._isCenter)
+    // Center label inside the node — only show "You" text when there's no
+    // avatar to fill the circle; otherwise the photo speaks for itself.
+    node.filter(d => d._isCenter && !d.avatar_url)
       .append('text')
       .text('You')
       .attr('text-anchor', 'middle')

@@ -1049,6 +1049,10 @@ def get_vote_graph(
             delegator_count=delegator_counts.get(uid, 0),
             total_vote_weight=weight,
             ballot=ballot_obj,
+            # Phase 9.8 — only surface the avatar when the viewer can see
+            # the identity (label). For redacted nodes, return None so the
+            # frontend renders the anonymous-circle treatment.
+            avatar_url=user.avatar_url if can_see_identity else None,
         ))
 
     # ------------------------------------------------------------------

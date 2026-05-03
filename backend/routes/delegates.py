@@ -27,7 +27,10 @@ def _build_public_delegate(db: Session, user: models.User) -> schemas.PublicDele
     counts = {p.topic_id: _delegation_count(db, user.id, p.topic_id) for p in profiles}
     return schemas.PublicDelegateOut(
         user=schemas.UserSearchResult(
-            id=user.id, username=user.username, display_name=user.display_name
+            id=user.id,
+            username=user.username,
+            display_name=user.display_name,
+            avatar_url=user.avatar_url,
         ),
         profiles=[schemas.DelegateProfileOut.model_validate(p) for p in profiles],
         delegation_counts=counts,

@@ -120,6 +120,42 @@ def _cast_binary(db: Session, user: models.User, proposal: models.Proposal, valu
     db.flush()
 
 
+def _seed_establishing_snapshot(
+    db: Session,
+    proposal: models.Proposal,
+    *,
+    yes: int = 60,
+    no: int = 40,
+    abstain: int = 0,
+    total_eligible: int = 100,
+    seconds_ago: int = 3600,
+) -> models.VoteSnapshot:
+    """Insert a synthetic VoteSnapshot row representing prior establishment.
+
+    Phase 9.8 C1: the floor only activates AFTER support has crossed the
+    threshold at least once during the window. Worker tests that drive
+    breach scenarios need a prior snapshot in the snapshot history showing
+    support >= threshold so the breach is allowed to fire. We seed one
+    directly rather than re-running `evaluate_proposal` against an
+    established-then-mutated vote set, which would require swapping vote
+    values mid-test and add fixture noise unrelated to what's being tested.
+    """
+    when = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=seconds_ago)
+    snap = models.VoteSnapshot(
+        proposal_id=proposal.id,
+        simulated_time=when,
+        yes_count=yes,
+        no_count=no,
+        abstain_count=abstain,
+        not_cast_count=max(0, total_eligible - yes - no - abstain),
+        total_eligible=total_eligible,
+        multi_option_winners=None,
+    )
+    db.add(snap)
+    db.flush()
+    return snap
+
+
 # ---------------------------------------------------------------------------
 # Multi-instance guard
 # ---------------------------------------------------------------------------
@@ -181,6 +217,12 @@ class TestEvaluateProposalBinary:
         assert snap_count == 1
 
     def test_below_floor_fail_mode_moves_to_failed(self, db):
+        """Phase 9.8 C1: requires a prior establishing snapshot. The original
+        version of this test cast 1 yes / 9 no and expected immediate fail —
+        which was the bug. After C1, breach only fires once support has been
+        established (crossed threshold), so we seed an establishing snapshot
+        first and assert the breach detection still works correctly.
+        """
         author = _user(db, "alice")
         org = _voting_org(db, settings={
             "sustained_majority_enabled_default": True,
@@ -188,7 +230,9 @@ class TestEvaluateProposalBinary:
             "sustained_majority_failure_mode": "fail",
         })
         proposal = _voting_proposal(db, org=org, author=author)
-        # 1 yes / 9 no → support 0.10, well below 0.45 floor
+        # Seed prior establishment (60 yes / 40 no in history).
+        _seed_establishing_snapshot(db, proposal, yes=60, no=40)
+        # Now drop to 1 yes / 9 no → support 0.10, well below 0.45 floor.
         _cast_binary(db, author, proposal, "yes")
         for i in range(9):
             u = _user(db, f"no{i}")
@@ -209,6 +253,7 @@ class TestEvaluateProposalBinary:
         assert evt.details["breach_sample"]["yes"] == 1
 
     def test_extend_mode_extends_window_first_time(self, db):
+        """Phase 9.8 C1: seed establishment, then drop to no-vote → extend."""
         author = _user(db, "alice")
         org = _voting_org(db, settings={
             "sustained_majority_enabled_default": True,
@@ -218,6 +263,7 @@ class TestEvaluateProposalBinary:
         proposal = _voting_proposal(db, org=org, author=author)
         original_end = proposal.voting_end
 
+        _seed_establishing_snapshot(db, proposal, yes=60, no=40)
         _cast_binary(db, author, proposal, "no")
         db.commit()
 
@@ -232,6 +278,8 @@ class TestEvaluateProposalBinary:
         assert ext_count == 1
 
     def test_extend_promotes_to_fail_on_second_breach(self, db):
+        """Phase 9.8 C1: seed establishment so the extend → fail promotion
+        path can be exercised."""
         author = _user(db, "alice")
         org = _voting_org(db, settings={
             "sustained_majority_enabled_default": True,
@@ -239,6 +287,7 @@ class TestEvaluateProposalBinary:
             "sustained_majority_failure_mode": "extend",
         })
         proposal = _voting_proposal(db, org=org, author=author)
+        _seed_establishing_snapshot(db, proposal, yes=60, no=40)
         _cast_binary(db, author, proposal, "no")
         db.commit()
 
@@ -254,6 +303,7 @@ class TestEvaluateProposalBinary:
         assert proposal.status == "failed"
 
     def test_escalate_mode_moves_to_unresolved(self, db):
+        """Phase 9.8 C1: seed establishment so escalate can fire on drop."""
         author = _user(db, "alice")
         org = _voting_org(db, settings={
             "sustained_majority_enabled_default": True,
@@ -261,6 +311,7 @@ class TestEvaluateProposalBinary:
             "sustained_majority_failure_mode": "escalate",
         })
         proposal = _voting_proposal(db, org=org, author=author)
+        _seed_establishing_snapshot(db, proposal, yes=60, no=40)
         _cast_binary(db, author, proposal, "no")
         db.commit()
 
@@ -274,6 +325,41 @@ class TestEvaluateProposalBinary:
             models.AuditLog.target_id == proposal.id,
         ).first()
         assert evt is not None
+
+    def test_single_no_vote_without_establishment_does_not_fail(self, db):
+        """Phase 9.8 C1 worker-level regression: a brand-new proposal with a
+        single early no-vote and no prior support must NOT fail. This was
+        the bug Z surfaced — under the old logic the proposal failed on the
+        first vote, before anyone could vote yes.
+        """
+        author = _user(db, "alice")
+        org = _voting_org(db, settings={
+            "sustained_majority_enabled_default": True,
+            "sustained_majority_floor": 0.45,
+            "sustained_majority_failure_mode": "fail",
+        })
+        proposal = _voting_proposal(db, org=org, author=author)
+        # No prior snapshot — establishment has never occurred.
+        _cast_binary(db, author, proposal, "no")
+        db.commit()
+
+        result = worker.evaluate_proposal(db, proposal)
+        db.commit()
+
+        # Under the old logic this would return "failed". After C1: None.
+        assert result is None
+        assert proposal.status == "voting"
+        # The snapshot was still captured (so the worker observes the state).
+        snap_count = db.query(models.VoteSnapshot).filter(
+            models.VoteSnapshot.proposal_id == proposal.id,
+        ).count()
+        assert snap_count == 1
+        # No failure audit event.
+        evt = db.query(models.AuditLog).filter(
+            models.AuditLog.action == "proposal.failed_sustained_majority",
+            models.AuditLog.target_id == proposal.id,
+        ).first()
+        assert evt is None
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +437,12 @@ class TestRunOneTick:
         assert processed == 2  # both processed (orphan early-returns)
 
     def test_restart_safe_no_double_extension(self, db):
-        """Re-running the worker tick should not extend the same proposal twice."""
+        """Re-running the worker tick should not extend the same proposal twice.
+
+        Phase 9.8 C1: seeds an establishing snapshot so the breach is allowed
+        to fire (the original test's single no-vote no longer triggers the
+        floor without prior establishment).
+        """
         author = _user(db, "alice")
         org = _voting_org(db, settings={
             "sustained_majority_enabled_default": True,
@@ -359,6 +450,7 @@ class TestRunOneTick:
             "sustained_majority_failure_mode": "extend",
         })
         proposal = _voting_proposal(db, org=org, author=author)
+        _seed_establishing_snapshot(db, proposal, yes=60, no=40)
         _cast_binary(db, author, proposal, "no")
         db.commit()
 

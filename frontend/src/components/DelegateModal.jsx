@@ -4,6 +4,8 @@ import api from '../api';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 import useScopeCoverage from '../hooks/useScopeCoverage';
+import Avatar from './Avatar';
+import VerifyEmailInlineNote from './VerifyEmailInlineNote';
 
 function timeAgo(dateStr) {
   if (!dateStr) return '';
@@ -144,6 +146,7 @@ function ResultCard({
       <div className="flex items-start justify-between">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
+            <Avatar user={user} size="sm" />
             <span className="font-medium text-sm text-[#1B3A5C]">{user.display_name}</span>
             <span className="text-xs text-gray-400">@{user.username}</span>
             <Link
@@ -203,10 +206,8 @@ function ResultCard({
       )}
 
       {/* Action buttons */}
-      <div className="flex gap-2 flex-wrap">
-        {unverified && (
-          <span className="text-xs text-amber-700">Verify your email to delegate</span>
-        )}
+      <div className="flex gap-2 flex-wrap items-center">
+        {unverified && <VerifyEmailInlineNote action="delegate" />}
         {canDelegate && (
           <button
             onClick={doDelegate}

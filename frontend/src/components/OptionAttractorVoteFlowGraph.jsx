@@ -338,6 +338,29 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
       .attr('fill', VOTER_OPTION_ARROW_COLOR)
       .attr('opacity', 0.7);
 
+    // Phase 9.8 W A2 — register an SVG pattern per voter node that has an
+    // avatar. Used as the circle's fill so the photo replaces the white
+    // background within the existing circle. Initials fallback (label below)
+    // stays unchanged for non-avatar users.
+    voterNodes.forEach((n) => {
+      if (n.avatar_url && n.type !== 'non_voter' && !n.isAnonymous && !n.isAbstainer) {
+        const r = nodeRadius(n);
+        defs
+          .append('pattern')
+          .attr('id', `avatar-${n.id}`)
+          .attr('patternUnits', 'userSpaceOnUse')
+          .attr('width', r * 2)
+          .attr('height', r * 2)
+          .attr('x', -r)
+          .attr('y', -r)
+          .append('image')
+          .attr('href', n.avatar_url)
+          .attr('width', r * 2)
+          .attr('height', r * 2)
+          .attr('preserveAspectRatio', 'xMidYMid slice');
+      }
+    });
+
     // Item 2: build voter-to-option arrow data. Approval = full opacity to
     // every approved option. RCV = full opacity to rank 1, 30% to rank 2,
     // nothing for rank 3+. Anonymous voters (ballot=null) get nothing since
@@ -513,6 +536,8 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
       .attr('fill', (d) => {
         if (d.isAnonymous && !d.isAbstainer) return ANON_FILL;
         if (d.type === 'non_voter' || d.isAbstainer) return '#ECF0F1';
+        // Phase 9.8 W A2 — avatar pattern fill when present.
+        if (d.avatar_url) return `url(#avatar-${d.id})`;
         return 'white';
       })
       .attr('stroke', (d) => {

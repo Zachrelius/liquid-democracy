@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
+import Avatar from '../../components/Avatar';
 import ErrorMessage from '../../components/ErrorMessage';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
@@ -18,7 +19,10 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, is
         onClick={() => !isOwner && setExpanded(!expanded)}
         className={`flex items-center gap-4 px-4 py-3 text-sm ${isOwner ? '' : 'cursor-pointer hover:bg-gray-50'} transition-colors`}
       >
-        <span className="flex-1 font-medium text-gray-800">{member.display_name}</span>
+        <span className="flex-1 font-medium text-gray-800 flex items-center gap-2">
+          <Avatar user={{ id: member.user_id, display_name: member.display_name, avatar_url: member.avatar_url, avatar_url_small: member.avatar_url_small }} size="sm" />
+          {member.display_name}
+        </span>
         <span className="w-32 text-gray-500">@{member.username}</span>
         <span className="w-24">
           <span className={`text-xs px-2 py-0.5 rounded font-medium ${
@@ -79,7 +83,8 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, is
             >
               Suspend
             </button>
-          ) : member.status === 'suspended' ? (
+          ) : member.status === 'suspended' && isAdmin ? (
+            // Reactivate is admin-only on the backend (require_org_admin) — gate the button to match.
             <button
               onClick={() => onReactivate(member.user_id)}
               className="text-xs px-3 py-1.5 border border-green-400 text-green-700 rounded-lg hover:bg-green-50"
@@ -120,24 +125,40 @@ export default function Members() {
   const [inviteEmails, setInviteEmails] = useState('');
   const [inviteRole, setInviteRole] = useState('member');
   const [inviteMsg, setInviteMsg] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   const slug = currentOrg?.slug;
 
   const load = useCallback(async () => {
     if (!slug) return;
+    setLoadError('');
     try {
+      // Members fetch — required. Moderators have access to this endpoint
+      // (require_org_membership), but if it fails for any reason (network
+      // hiccup, auth refresh edge case, transient backend error) we surface
+      // the error instead of silently rendering an empty list. Phase 9.8 W B1
+      // restores this behavior — a previous refactor swallowed the error and
+      // left moderators staring at an empty members table.
       const mems = await api.get(`/api/orgs/${slug}/members`);
       const active = mems.filter(m => m.status !== 'pending_approval');
       const pending = mems.filter(m => m.status === 'pending_approval');
       setMembers(active);
       setPendingRequests(pending);
-    } catch { /* ignore */ }
-    try {
-      const invs = await api.get(`/api/orgs/${slug}/invitations`);
-      setInvitations(invs);
-    } catch { /* moderators don't have invitation access */ }
+    } catch (e) {
+      setLoadError(e.message || 'Failed to load members');
+    }
+    // Invitations are admin-only on the backend — only fetch when the viewer
+    // is an admin so moderators don't trigger a known-403 in the network log.
+    if (isAdmin) {
+      try {
+        const invs = await api.get(`/api/orgs/${slug}/invitations`);
+        setInvitations(invs);
+      } catch { /* invitations are admin-only — fall through */ }
+    } else {
+      setInvitations([]);
+    }
     setLoading(false);
-  }, [slug]);
+  }, [slug, isAdmin]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -250,6 +271,12 @@ export default function Members() {
     </div>
   );
 
+  if (loadError) return (
+    <div className="max-w-4xl mx-auto px-4 py-8">
+      <ErrorMessage error={loadError} onRetry={load} />
+    </div>
+  );
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-10">
       <h1 className="text-2xl font-semibold text-[#1B3A5C]">Member Management</h1>
@@ -263,10 +290,13 @@ export default function Members() {
           <div className="grid gap-3 sm:grid-cols-2">
             {pendingRequests.map(m => (
               <div key={m.user_id} className="bg-white border border-yellow-200 rounded-xl p-4 flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-800">{m.display_name}</p>
-                  <p className="text-xs text-gray-400">@{m.username} {m.email && `- ${m.email}`}</p>
-                  <p className="text-xs text-gray-400">Requested {new Date(m.joined_at).toLocaleDateString()}</p>
+                <div className="flex items-center gap-3">
+                  <Avatar user={{ id: m.user_id, display_name: m.display_name, avatar_url: m.avatar_url, avatar_url_small: m.avatar_url_small }} size="sm" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">{m.display_name}</p>
+                    <p className="text-xs text-gray-400">@{m.username} {m.email && `- ${m.email}`}</p>
+                    <p className="text-xs text-gray-400">Requested {new Date(m.joined_at).toLocaleDateString()}</p>
+                  </div>
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -275,12 +305,15 @@ export default function Members() {
                   >
                     Approve
                   </button>
-                  <button
-                    onClick={() => handleDeny(m.user_id)}
-                    className="text-xs px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
-                  >
-                    Deny
-                  </button>
+                  {/* Deny is admin-only on the backend (require_org_admin) — gate to match. */}
+                  {isAdmin && (
+                    <button
+                      onClick={() => handleDeny(m.user_id)}
+                      className="text-xs px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
+                    >
+                      Deny
+                    </button>
+                  )}
                 </div>
               </div>
             ))}

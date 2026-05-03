@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import useSubOrg from '../../useSubOrg';
+import Avatar from '../../components/Avatar';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
@@ -126,10 +127,13 @@ export default function SubOrgMembers() {
           <div className="grid gap-3 sm:grid-cols-2">
             {pending.map(m => (
               <div key={m.user_id} className="bg-white border border-yellow-200 rounded-xl p-4 flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-800">{m.display_name}</p>
-                  <p className="text-xs text-gray-400">@{m.username}</p>
-                  <p className="text-xs text-gray-400">Requested {new Date(m.joined_at).toLocaleDateString()}</p>
+                <div className="flex items-center gap-3">
+                  <Avatar user={{ id: m.user_id, display_name: m.display_name, avatar_url: m.avatar_url, avatar_url_small: m.avatar_url_small }} size="sm" />
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">{m.display_name}</p>
+                    <p className="text-xs text-gray-400">@{m.username}</p>
+                    <p className="text-xs text-gray-400">Requested {new Date(m.joined_at).toLocaleDateString()}</p>
+                  </div>
                 </div>
                 <div className="flex gap-2">
                   <button onClick={() => handleApprove(m.user_id)} className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700">
@@ -283,7 +287,10 @@ function ActiveRow({ member, onRoleChange, onRemove }) {
   const isOwner = member.role === 'owner';
   return (
     <div className="flex items-center gap-4 px-4 py-3 text-sm border-t border-gray-100 first:border-0">
-      <span className="flex-1 font-medium text-gray-800">{member.display_name}</span>
+      <span className="flex-1 font-medium text-gray-800 flex items-center gap-2">
+        <Avatar user={{ id: member.user_id, display_name: member.display_name, avatar_url: member.avatar_url, avatar_url_small: member.avatar_url_small }} size="sm" />
+        {member.display_name}
+      </span>
       <span className="w-32 text-gray-500">@{member.username}</span>
       <span className="w-32">
         {isOwner ? (
@@ -373,9 +380,12 @@ function InviteSection({ parentMembers, existingIds, onInvite }) {
             </p>
           ) : candidates.map(p => (
             <div key={p.user_id} className="flex items-center justify-between px-3 py-2 text-sm border-b border-gray-100 last:border-0">
-              <div>
-                <p className="font-medium text-gray-800">{p.display_name}</p>
-                <p className="text-xs text-gray-400">@{p.username}{p.email ? ` · ${p.email}` : ''}</p>
+              <div className="flex items-center gap-2">
+                <Avatar user={{ id: p.user_id, display_name: p.display_name, avatar_url: p.avatar_url, avatar_url_small: p.avatar_url_small }} size="sm" />
+                <div>
+                  <p className="font-medium text-gray-800">{p.display_name}</p>
+                  <p className="text-xs text-gray-400">@{p.username}{p.email ? ` · ${p.email}` : ''}</p>
+                </div>
               </div>
               <button
                 onClick={() => onInvite(p.user_id, role)}

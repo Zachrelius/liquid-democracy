@@ -132,6 +132,7 @@ def _sub_member_to_out(
         username=user.username if user else "",
         display_name=user.display_name if user else "",
         email=user.email if user else None,
+        avatar_url=user.avatar_url if user else None,
         role=sm.role,
         status=sm.status,
         joined_at=sm.joined_at,

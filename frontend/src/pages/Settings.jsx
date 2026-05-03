@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 import api from '../api';
+import Avatar from '../components/Avatar';
 import TopicBadge from '../components/TopicBadge';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
@@ -147,10 +148,11 @@ function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown, confirm 
 }
 
 export default function Settings() {
-  const { user: authUser, logout } = useAuth();
+  const { user: authUser, refreshUser, logout } = useAuth();
   const { currentOrg } = useOrg();
   const toast = useToast();
   const confirm = useConfirm();
+  const fileInputRef = useRef(null);
   const [user, setUser] = useState(null);
   const [topics, setTopics] = useState([]);
   const [profiles, setProfiles] = useState([]);
@@ -164,6 +166,8 @@ export default function Settings() {
   const [pwConfirm, setPwConfirm] = useState('');
   const [pwMsg, setPwMsg] = useState('');
   const [logoutAllMsg, setLogoutAllMsg] = useState('');
+  const [avatarMsg, setAvatarMsg] = useState('');
+  const [avatarBusy, setAvatarBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -237,6 +241,66 @@ export default function Settings() {
     }
   }
 
+  async function handleAvatarUploadFile(file) {
+    if (!file) return;
+    setAvatarMsg('');
+    setAvatarBusy(true);
+    try {
+      // Plain fetch — the api wrapper assumes JSON. Multipart needs the
+      // browser to set the Content-Type (with boundary), so we don't pass it.
+      const token = sessionStorage.getItem('token');
+      const form = new FormData();
+      form.append('file', file);
+      const res = await fetch('/api/users/me/avatar', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+      if (!res.ok) {
+        let msg = `Upload failed (${res.status})`;
+        try {
+          const data = await res.json();
+          if (typeof data?.detail === 'string') msg = data.detail;
+        } catch { /* ignore */ }
+        throw new Error(msg);
+      }
+      toast.success('Avatar updated');
+      await refreshUser();
+      // Re-load the local user copy too so the Settings header avatar updates.
+      const me = await api.get('/api/auth/me');
+      setUser(me);
+    } catch (e) {
+      setAvatarMsg(e.message || 'Upload failed');
+      toast.error(e.message || 'Upload failed');
+    } finally {
+      setAvatarBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  async function handleAvatarRemove() {
+    const ok = await confirm({
+      title: 'Remove avatar?',
+      message: 'Your profile will fall back to your initials. You can upload a new one any time.',
+      destructive: true,
+    });
+    if (!ok) return;
+    setAvatarMsg('');
+    setAvatarBusy(true);
+    try {
+      await api.delete('/api/users/me/avatar');
+      toast.success('Avatar removed');
+      await refreshUser();
+      const me = await api.get('/api/auth/me');
+      setUser(me);
+    } catch (e) {
+      setAvatarMsg(e.message || 'Failed to remove avatar');
+      toast.error(e.message || 'Failed to remove avatar');
+    } finally {
+      setAvatarBusy(false);
+    }
+  }
+
   async function handleChangePassword() {
     setPwMsg('');
     if (pwNew !== pwConfirm) { setPwMsg('Passwords do not match'); return; }
@@ -285,6 +349,45 @@ export default function Settings() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-10">
       <h1 className="text-2xl font-semibold text-[#1B3A5C]">Settings</h1>
+
+      {/* Section: Profile picture (Phase 9.8 W A2) */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Profile Picture</h2>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 flex items-center gap-5 flex-wrap">
+          <Avatar user={user} size="lg" />
+          <div className="flex-1 min-w-0 space-y-2">
+            <p className="text-xs text-gray-500">
+              JPEG, PNG, or WebP. Max 2 MB. Resized to 128 and 48 pixels.
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={e => handleAvatarUploadFile(e.target.files?.[0])}
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={avatarBusy}
+                className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+              >
+                {avatarBusy ? 'Working…' : (user?.avatar_url ? 'Replace' : 'Upload')}
+              </button>
+              {user?.avatar_url && (
+                <button
+                  onClick={handleAvatarRemove}
+                  disabled={avatarBusy}
+                  className="text-sm px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            {avatarMsg && <p className="text-xs text-red-600">{avatarMsg}</p>}
+          </div>
+        </div>
+      </section>
 
       {/* Section: Profile */}
       <section className="space-y-3">

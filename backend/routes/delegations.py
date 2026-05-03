@@ -194,6 +194,7 @@ def delegation_graph(
                     display_name=user.display_name,
                     username=user.username,
                     weight=graph_store.compute_voting_weight(uid),
+                    avatar_url=user.avatar_url,
                 )
             )
 
@@ -283,6 +284,7 @@ def personal_delegation_network(
                 topics=topic_names,
                 is_public_delegate=delegate_id in pub_delegate_ids,
                 total_delegators=delegator_counts.get(delegate_id, 0),
+                avatar_url=user.avatar_url,
             ))
             seen_nodes.add(delegate_id)
 
@@ -321,6 +323,7 @@ def personal_delegation_network(
                 topics=topic_names,
                 is_public_delegate=delegator_id in pub_delegate_ids,
                 total_delegators=delegator_counts.get(delegator_id, 0),
+                avatar_url=user.avatar_url,
             ))
             seen_nodes.add(delegator_id)
 
@@ -337,6 +340,7 @@ def personal_delegation_network(
             label=current_user.display_name,
             delegating_to=len(outgoing_by_delegate),
             delegated_from=len(incoming_by_delegator),
+            avatar_url=current_user.avatar_url,
         ),
         nodes=nodes,
         edges=edges,

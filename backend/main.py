@@ -7,6 +7,7 @@ import uuid
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -17,7 +18,7 @@ from database import create_tables, get_db, SessionLocal
 from delegation_engine import graph_store
 from settings import settings
 from websocket import manager as ws_manager
-from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations
+from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +188,21 @@ app.include_router(organizations.router)
 app.include_router(sub_organizations.router)
 app.include_router(polises.router)
 app.include_router(invitations.router)
+app.include_router(avatars.router)
+
+
+# ---------------------------------------------------------------------------
+# Static files — uploaded avatars (Phase 9.8 W A1)
+# ---------------------------------------------------------------------------
+# Files written by routes/avatars.py to ``backend/uploads/avatars/{user_id}/...``.
+# Mounted via FastAPI's StaticFiles so the avatar URLs returned in user-shape
+# responses (``users.avatar_url``) resolve through the same uvicorn process.
+# Railway's filesystem is ephemeral — the deployment notes call this out as
+# tech debt; for friend-pilot scale (5-15 users) it's acceptable.
+import os as _os  # local alias to avoid shadowing higher-level imports
+_UPLOADS_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "uploads")
+_os.makedirs(_os.path.join(_UPLOADS_DIR, "avatars"), exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=_UPLOADS_DIR), name="uploads")
 
 
 # ---------------------------------------------------------------------------
