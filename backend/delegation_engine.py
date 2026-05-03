@@ -765,7 +765,11 @@ class DelegationService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _build_context(proposal: models.Proposal, db: Session) -> ProposalContext:
+    def _build_context(
+        proposal: models.Proposal,
+        db: Session,
+        eligible_ids: Optional[set[str]] = None,
+    ) -> ProposalContext:
         """
         Fetch everything needed to resolve all votes on a proposal and pack it
         into a ProposalContext.
@@ -777,6 +781,15 @@ class DelegationService:
         own sub-org's topics; a parent-org-wide proposal may only attach
         parent-org-wide topics. The pure resolver doesn't need to re-check
         scope because the topics are already filtered upstream.
+
+        Phase 10.1 (cross-scope vote leak fix): when ``eligible_ids`` is
+        provided, the direct-vote/direct-ballot query is filtered to that set.
+        This prevents a non-eligible user's pre-fix Vote row from leaking
+        through delegation chain resolution — when the resolver looks up the
+        delegate's direct ballot, it finds None and the existing
+        ``chain_behavior`` logic (``accept_sub`` / ``revert_direct`` /
+        ``abstain``) fires correctly. ``eligible_ids=None`` keeps legacy
+        behavior for any call site not yet updated.
         """
         proposal_topics = [pt.topic_id for pt in proposal.proposal_topics]
         voting_method = getattr(proposal, "voting_method", "binary") or "binary"
@@ -797,13 +810,18 @@ class DelegationService:
         for row in db.query(models.TopicPrecedence).all():
             all_precedences.setdefault(row.user_id, {})[row.topic_id] = row.priority
 
-        # Direct votes/ballots for this proposal only
+        # Direct votes/ballots for this proposal only.
+        # Phase 10.1: filter to eligible voters when provided so non-eligible
+        # users' rows never enter the resolver's direct_ballots map.
         direct_votes: dict[str, str] = {}
         direct_ballots: dict[str, Ballot] = {}
-        for row in db.query(models.Vote).filter(
+        vote_query = db.query(models.Vote).filter(
             models.Vote.proposal_id == proposal.id,
             models.Vote.is_direct.is_(True),
-        ).all():
+        )
+        if eligible_ids is not None:
+            vote_query = vote_query.filter(models.Vote.user_id.in_(eligible_ids))
+        for row in vote_query.all():
             if voting_method == "approval":
                 ballot_data = row.ballot or {}
                 approvals = ballot_data.get("approvals", [])
@@ -875,37 +893,40 @@ class DelegationService:
     ) -> Optional[VoteResult]:
         """
         Build a ProposalContext from the DB and call the pure resolver.
+
+        Phase 10.1: pass the eligible-voter set through to ``_build_context`` so
+        a delegation chain that lands on a non-eligible direct ballot doesn't
+        leak that ballot back through resolution.
         """
         proposal = db.get(models.Proposal, proposal_id)
         if proposal is None:
             return None
-        ctx = self._build_context(proposal, db)
+        eligible_ids = eligible_voter_ids_for_proposal(db, proposal)
+        ctx = self._build_context(proposal, db, eligible_ids=eligible_ids)
         return resolve_vote_pure(user_id, ctx, _visited)
 
     def compute_tally(
         self, proposal: models.Proposal, db: Session
     ) -> ProposalTally | ApprovalTally | RCVTally:
         """
-        Build context once, resolve all users, return aggregate tally.
+        Build context once, resolve all eligible users, return aggregate tally.
 
-        Phase 8.5: eligibility dispatches on proposal scope —
-          - sub-org-scoped proposals tally only sub-org members
-          - everything else (parent-org-scoped or no-org) tallies every user,
-            matching the existing single-org behavior bit-for-bit.
-
-        For non-sub-org proposals we keep the original "all users in DB-order"
-        query so RCV/STV ballot insertion order is preserved exactly (the pure
-        layer is order-stable but tie-break ordering across runs benefits from
-        deterministic insertion). Only sub-org-scoped proposals take the new
-        membership-filtered path.
+        Phase 10.1 (cross-scope vote leak fix): single helper covers all three
+        scope cases (sub-org / parent-org / no-org legacy). Pre-fix, the
+        ``else`` branch iterated every user in the platform — that leaked
+        votes from cross-org users into any org-scoped tally. ``sorted(...)``
+        gives the same deterministic RCV/STV ballot insertion order the old
+        ``db.query(User.id).all()`` path was rationalized for, without the
+        leak. The eligibility filter is also propagated into ``_build_context``
+        so a non-eligible user's pre-fix Vote row can't leak through delegation
+        chain resolution either.
         """
-        ctx = self._build_context(proposal, db)
-        sub_org_id = getattr(proposal, "sub_org_id", None)
-        if sub_org_id:
-            eligible_ids = eligible_voter_ids_for_proposal(db, proposal)
-            user_ids = sorted(eligible_ids)
-        else:
-            user_ids = [u.id for u in db.query(models.User.id).all()]
+        eligible_ids = eligible_voter_ids_for_proposal(db, proposal)
+        ctx = self._build_context(proposal, db, eligible_ids=eligible_ids)
+        # Sort by User.id for deterministic RCV/STV ballot insertion order.
+        # eligible_voter_ids_for_proposal already dispatches on sub_org_id vs
+        # org_id vs no-org, so the same call covers all three scope cases.
+        user_ids = sorted(eligible_ids)
         option_ids: list[str] = []
         num_winners = getattr(proposal, "num_winners", 1) or 1
         if ctx.voting_method == "ranked_choice":

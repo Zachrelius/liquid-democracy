@@ -14,11 +14,13 @@ import CommentComposer from './CommentComposer';
  * single header line with a chevron + count, expand-on-click, no shared
  * Collapsible component. Each consumer manages its own expand state.
  *
- * Lifecycle:
- *   - Collapsed by default. Header shows ``▸ Comments (N)`` if known,
- *     else ``▸ Comments``. The first expand triggers GET; subsequent
- *     toggles re-render the cached list. Posting / editing / deleting
- *     re-fetches.
+ * Lifecycle (Phase 10.1 W2):
+ *   - Eager fetch on mount so we know the comment count up front.
+ *   - Default expanded when count > 0, collapsed when count == 0. Header
+ *     reads ``N Comments`` (number-first, plural-correct) when N >= 1,
+ *     or just ``Comments`` when N == 0. Once the user toggles, their
+ *     explicit choice persists for the session. Posting / editing /
+ *     deleting re-fetches.
  *
  * Permissions:
  *   - GET is server-gated by ``eligible_viewers_for_proposal``; we
@@ -35,7 +37,10 @@ import CommentComposer from './CommentComposer';
 export default function CommentThread({ proposalId }) {
   const { user } = useAuth();
   const { currentOrg } = useOrg();
-  const [expanded, setExpanded] = useState(false);
+  // Phase 10.1 W2: default expanded based on count once loaded.
+  // null = not yet known (waiting on count), true/false = current state.
+  // Once the user toggles, their explicit choice persists for the session.
+  const [expanded, setExpanded] = useState(null);
   const [comments, setComments] = useState(null); // null = not yet fetched
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -58,16 +63,28 @@ export default function CommentThread({ proposalId }) {
     }
   }, [proposalId]);
 
-  // Fetch on first expand. Subsequent expands keep the cached list;
-  // post/edit/delete will explicitly call load() to refresh.
+  // Phase 10.1 W2: eager fetch on mount so we know the count for default
+  // expand decision. Cost is one extra GET per proposal-detail visit; the
+  // discoverability win is worth it. Refetched on proposal change.
   useEffect(() => {
-    if (expanded && comments === null && !loading && !error) {
-      load();
+    load();
+  }, [load]);
+
+  // After comments load, default expanded based on count if user hasn't
+  // explicitly toggled. Subsequent toggles override (expanded becomes
+  // boolean and this effect's guard short-circuits).
+  useEffect(() => {
+    if (expanded === null && comments !== null) {
+      setExpanded(comments.length > 0);
     }
-  }, [expanded, comments, loading, error, load]);
+  }, [comments, expanded]);
 
   const count = comments?.length ?? null;
-  const headerLabel = count == null || count === 0 ? 'Comments' : `Comments (${count})`;
+  const headerLabel = count == null || count === 0
+    ? 'Comments'
+    : count === 1
+    ? '1 Comment'
+    : `${count} Comments`;
 
   // Group comments: top-level items in chronological order, each with its
   // chronological replies immediately below. Backend returns them in a
@@ -100,11 +117,11 @@ export default function CommentThread({ proposalId }) {
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center justify-between px-5 py-3 text-sm font-semibold text-gray-700 uppercase tracking-wide hover:bg-gray-50 transition-colors"
-        aria-expanded={expanded}
+        className="w-full flex items-center justify-between px-5 py-3 text-sm font-semibold text-gray-800 bg-gray-50 hover:bg-gray-100 transition-colors"
+        aria-expanded={!!expanded}
       >
         <span className="flex items-center gap-2">
-          <span className="text-gray-400">{expanded ? '▾' : '▸'}</span>
+          <span className="text-gray-500">{expanded ? '▾' : '▸'}</span>
           {headerLabel}
         </span>
       </button>

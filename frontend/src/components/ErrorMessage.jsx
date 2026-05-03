@@ -6,8 +6,8 @@ export default function ErrorMessage({ error, onRetry }) {
   let message = 'Something went wrong. Please try again.';
 
   if (error) {
-    if (error.status === 0 || error.message?.includes('Network')) {
-      message = 'Unable to connect. Check your connection and try again.';
+    if (error.status === 0 || error.message?.includes('Network') || error.message?.includes("Couldn't reach")) {
+      message = "Couldn't reach the server. Check your connection and try again.";
     } else if (error.status === 403) {
       message = "You don't have permission to do this.";
     } else if (error.status === 404) {

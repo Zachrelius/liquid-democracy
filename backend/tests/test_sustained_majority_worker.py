@@ -66,6 +66,18 @@ def _user(db: Session, username: str) -> models.User:
     return u
 
 
+def _member(db: Session, org: models.Organization, user: models.User) -> None:
+    """Phase 10.1: scope-aware tally requires voters to be active org members.
+    Pre-fix the worker tally iterated all users in the DB; post-fix only
+    OrgMembership rows count. Helper added so the existing tests stay
+    minimally changed.
+    """
+    db.add(models.OrgMembership(
+        user_id=user.id, org_id=org.id, role="member", status="active",
+    ))
+    db.flush()
+
+
 def _voting_org(db: Session, settings: dict | None = None) -> models.Organization:
     org = models.Organization(
         name="Org",
@@ -230,12 +242,14 @@ class TestEvaluateProposalBinary:
             "sustained_majority_failure_mode": "fail",
         })
         proposal = _voting_proposal(db, org=org, author=author)
+        _member(db, org, author)  # Phase 10.1 eligibility
         # Seed prior establishment (60 yes / 40 no in history).
         _seed_establishing_snapshot(db, proposal, yes=60, no=40)
         # Now drop to 1 yes / 9 no → support 0.10, well below 0.45 floor.
         _cast_binary(db, author, proposal, "yes")
         for i in range(9):
             u = _user(db, f"no{i}")
+            _member(db, org, u)  # Phase 10.1 eligibility
             _cast_binary(db, u, proposal, "no")
         db.commit()
 
@@ -261,6 +275,7 @@ class TestEvaluateProposalBinary:
             "sustained_majority_failure_mode": "extend",
         })
         proposal = _voting_proposal(db, org=org, author=author)
+        _member(db, org, author)  # Phase 10.1 eligibility
         original_end = proposal.voting_end
 
         _seed_establishing_snapshot(db, proposal, yes=60, no=40)
@@ -287,6 +302,7 @@ class TestEvaluateProposalBinary:
             "sustained_majority_failure_mode": "extend",
         })
         proposal = _voting_proposal(db, org=org, author=author)
+        _member(db, org, author)  # Phase 10.1 eligibility
         _seed_establishing_snapshot(db, proposal, yes=60, no=40)
         _cast_binary(db, author, proposal, "no")
         db.commit()
@@ -311,6 +327,7 @@ class TestEvaluateProposalBinary:
             "sustained_majority_failure_mode": "escalate",
         })
         proposal = _voting_proposal(db, org=org, author=author)
+        _member(db, org, author)  # Phase 10.1 eligibility
         _seed_establishing_snapshot(db, proposal, yes=60, no=40)
         _cast_binary(db, author, proposal, "no")
         db.commit()
@@ -450,6 +467,7 @@ class TestRunOneTick:
             "sustained_majority_failure_mode": "extend",
         })
         proposal = _voting_proposal(db, org=org, author=author)
+        _member(db, org, author)  # Phase 10.1 eligibility
         _seed_establishing_snapshot(db, proposal, yes=60, no=40)
         _cast_binary(db, author, proposal, "no")
         db.commit()

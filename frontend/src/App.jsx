@@ -9,6 +9,13 @@ import AdminRoute from './AdminRoute';
 import AdminOnlyRoute from './AdminOnlyRoute';
 import Nav from './components/Nav';
 import EmailVerificationBanner from './components/EmailVerificationBanner';
+// Phase 10.1 W3 — gentle, mobile-only PWA install affordance. Mounted once
+// at the App root so it renders regardless of auth state or current route.
+import InstallPWABanner from './components/InstallPWABanner';
+// Phase 10.1 W4 — listens for app:bundle-updated (dispatched in main.jsx
+// from the SW controllerchange event) and shows a "new version available"
+// toast with a Refresh action.
+import BundleUpdateNotifier from './components/BundleUpdateNotifier';
 import Login from './pages/Login';
 import Proposals from './pages/Proposals';
 import ProposalDetail from './pages/ProposalDetail';
@@ -67,6 +74,14 @@ export default function App() {
       <PublicConfigProvider>
       <ToastProvider>
       <ConfirmProvider>
+      {/* Phase 10.1 W3 — PWA install banner. Renders regardless of auth state
+          or current route; component itself self-gates on viewport, install
+          state, and prior dismissal. */}
+      <InstallPWABanner />
+      {/* Phase 10.1 W4 — stale-bundle update notifier. Renders nothing; just
+          listens for the SW controllerchange-driven custom event and surfaces
+          a toast with a Refresh action when a new bundle takes control. */}
+      <BundleUpdateNotifier />
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Login />} />
