@@ -83,6 +83,62 @@ class Organization(Base):
     )
 
 
+class Role(Base):
+    """Phase 12 Stage 1 — per-org role.
+
+    Each org gets four preset rows seeded on creation (steward, admin,
+    moderator, member). Custom roles will be created later (Stage 2/3) on
+    this same table; ``is_system_preset=True`` distinguishes the built-ins.
+
+    ``system_key`` is the stable identifier used in code; ``name`` is the
+    UI-displayed label (renaming "Steward" later is a one-row update).
+    """
+    __tablename__ = "roles"
+    __table_args__ = (
+        UniqueConstraint("org_id", "system_key", name="uq_roles_org_system_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    system_key: Mapped[str] = mapped_column(String, nullable=False)
+    is_system_preset: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+
+    permissions: Mapped[list["RolePermission"]] = relationship(
+        "RolePermission", back_populates="role", cascade="all, delete-orphan",
+    )
+
+
+class RolePermission(Base):
+    """Phase 12 Stage 1 — per-role permission grant.
+
+    One row per (role_id, permission_key) pair when the permission is
+    explicitly recorded. Rows are seeded from the ``DEFAULT_GRANTS`` table
+    (see ``backend/permission_registry.py`` / ``backend/role_seed.py``);
+    Stage 2 will add UI for toggling ``enabled`` per cell.
+    """
+    __tablename__ = "role_permissions"
+    __table_args__ = (
+        UniqueConstraint("role_id", "permission_key", name="uq_role_permissions_role_key"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    role_id: Mapped[str] = mapped_column(
+        String, ForeignKey("roles.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    permission_key: Mapped[str] = mapped_column(String, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+
+    role: Mapped["Role"] = relationship("Role", back_populates="permissions")
+
+
 class OrgMembership(Base):
     __tablename__ = "org_memberships"
     __table_args__ = (UniqueConstraint("user_id", "org_id", name="uq_org_membership_user_org"),)
@@ -90,12 +146,21 @@ class OrgMembership(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     org_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id"), nullable=False, index=True)
-    role: Mapped[str] = mapped_column(String, default="member")  # member, moderator, admin, owner
+    # Phase 12 Stage 1: replaced the string ``role`` column with an FK to
+    # ``roles.id``. The legacy string column is dropped by the
+    # phase_12_role_permissions migration; code must reference the role's
+    # ``system_key`` (via the ``role`` relationship) rather than this FK
+    # directly. Nullable in the model temporarily so the migration can
+    # backfill before flipping NOT NULL — production schema is NOT NULL.
+    role_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("roles.id"), nullable=True, index=True,
+    )
     status: Mapped[str] = mapped_column(String, default="active")  # active, suspended, pending_approval
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     user: Mapped["User"] = relationship("User", back_populates="org_memberships")
     organization: Mapped["Organization"] = relationship("Organization", back_populates="memberships")
+    role: Mapped[Optional["Role"]] = relationship("Role", foreign_keys=[role_id])
 
 
 class SubOrgMembership(Base):
