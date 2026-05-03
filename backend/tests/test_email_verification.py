@@ -138,3 +138,23 @@ def test_verify_email_already_verified(client, test_db):
     resp = client.post("/api/auth/verify-email", json={"token": "used-token"})
     assert resp.status_code == 400
     assert "Invalid or expired" in resp.json()["detail"]
+
+
+def test_verify_email_emits_audit(client, test_db):
+    """Phase 10.2 audit: Class A, POST /api/auth/verify-email, audit
+    polish — verify-email must emit `user.email_verified` with
+    {email: <verified email>}."""
+    user = _create_user(test_db, "verifyaudit")
+    _create_verification(test_db, user, token="audit-token")
+    test_db.commit()
+
+    resp = client.post("/api/auth/verify-email", json={"token": "audit-token"})
+    assert resp.status_code == 200, resp.text
+
+    audit = test_db.query(models.AuditLog).filter(
+        models.AuditLog.action == "user.email_verified",
+        models.AuditLog.target_id == user.id,
+    ).first()
+    assert audit is not None
+    assert audit.actor_id == user.id
+    assert audit.details["email"] == user.email
