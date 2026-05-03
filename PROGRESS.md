@@ -709,3 +709,143 @@ The friend pilot now has a place to discuss proposals beyond the static body tex
 ### Pass-summary
 
 **Phase 10.1 shipped clean in a single session** — 7 commits + closeout, no hot-fixes. Cross-scope vote leak closed at all three surfaces (cast endpoint + tally + vote-graph + delegation-chain resolver) with 8 new targeted tests + 11 existing-test updates documenting that the prior tests were relying on the bug. Friend pilot is now correctness-correct: a non-eligible voter cannot cast, an existing non-eligible vote cannot leak through delegation chain resolution, and `total_eligible` matches the actual eligible set on every proposal. Polish items (W2 comment discoverability, W3 PWA install banner, W4 stale-bundle toast, W5 offline copy honesty) ship alongside. Tests 560 → 568 (+8). Bundle gzip +1.02 kB. No migration. No deploy incident. Multi-agent staging discipline held cleanly for the first pass since the issue surfaced in 9.8.
+
+---
+
+## Phase 10.2 — Test-Depth Audit + Pre-Fix Vote Leak Diagnostic — 2026-05-03
+
+**Single-session audit + fix pass.** 9 commits on `phase-10-2/test-depth-audit` no-ff merged to master at `077c652` + closeout. Bundled the manifest MIME hot-fix (one-line nginx config) so the new smoke check that codifies the desired state passes on first run rather than yellow-with-exception. **No new bundle hash on prod** because no JS source changed (Vite content-hash deterministic) — nginx-only deploy verified directly via curl. **NO migration, smoke not required**.
+
+### Why this pass exists
+
+A pattern surfaced 5 times in 6 phases: feature works at API layer but the user-journey side-effect / cross-scope invariant / infrastructure-boundary behavior was never tested, and a real user (or curl) caught the bug instead. 9.6 missing email send, 9.7 missing user journey, 9.8 hot-fix nginx routing, 9.9 hot-fix nginx body size, 10.1 cross-scope vote leak. CLAUDE.md already named the principle ("Assert side-effects, not just API contracts") since 9.6/9.7 closeouts; the principle alone wasn't enough. This pass enumerates where the principle has and hasn't been applied, then closes the gaps.
+
+### What shipped
+
+**W-AUDIT — `docs/test_depth_audit_2026-05.md`** (377 lines, 36 KB). Walks every endpoint in `backend/routes/` (15 modules / ~60 endpoints), every multi-tenant entity (12), every infra boundary (6 components). Per-row classification PASS / GAP / BUG with existing test path + what it asserts + side-effect coverage gap + recommended test name + file path + assertion shape. Auditor's posture: generous interpretation of "covered" — bar is "does this test fail when the side-effect breaks?", not "does this test name the side-effect explicitly?" Real bugs flagged BUG (not GAP), fix deferred to W-FIX-A.
+
+**~75 patterns audited:** PASS ~40 (Class A 18, Class B 13, Class C 1) / GAP ~28 (Class A 16, Class B 6, Class C 5) / **BUG 2** (both LOW-severity unauth'd data exposure on `routes/users.py`):
+1. `GET /api/users/{id}` — no auth dependency, returns full UserOut (email, email_verified, default_follow_policy) to any caller. UUID guessing is the only barrier. Not user-visible. Not caught by any user.
+2. `GET /api/users/{id}/delegation-tree` — no auth dependency, returns full delegation neighborhood for any user, bypassing the privacy-redaction logic the auth-gated `/api/delegations/graph` endpoint applies. LOW-MEDIUM severity. Not user-visible. Not caught by any user.
+
+**W-FIX-A — 45 new pytest tests + 2 BUG fixes + 1 latent-bug fix in passing.** Both BUGs fixed by adding `Depends(get_current_user)` + identity-redaction parity for BUG 2 (delegation-tree now returns `display_name="Anonymous user"`, `username="anonymous"`, `avatar_url=None` for nodes the viewer can't see — not self / not followed / not a public delegate). Self-view returns real identities since the caller is by definition party to those relationships. Verified: unauth → 401, auth + self → real names, auth + third-party → redacted unless visible. Latent fix in passing: `routes/users.py::search_users_compat` was passing `Query(None)` through to `search_users` for `topic_id`, which crashed at the SQLite driver (truthy `Query` object); fixed by passing explicit `None`.
+
+**Heaviest GAP concentration was the auth module** — 7 endpoints with zero email-send-mock or audit-emission test coverage (forgot-password, reset-password, change-password, resend-verification chain). The Phase 9.6 "invitation 201 fires but no email" regression was NOT currently latent (route correctly schedules the BackgroundTask) but had no regression test guarding it. New tests added across 10 new files:
+- `test_user_endpoint_auth.py` (7 tests, BUG fixes)
+- `test_auth_register.py` (3), `test_auth_login.py` (1), `test_auth_tokens.py` (5), `test_auth_resend_verification.py` (3 with autouse `slowapi.limiter.reset()` fixture), `test_auth_password_reset.py` (4), `test_auth_change_password.py` (2)
+- `test_invitations_lifecycle.py` (4 — Phase 9.6 W1 regression guards: create + resend email-send mocks, revoke, accept-authenticated audit)
+- `test_admin_endpoints.py` (5), `test_delegation_network_isolation.py` (1), `test_delegate_applications.py` (4), `test_delegates_public_visibility.py` (1)
+- Plus polish on `test_email_verification.py` (+1), `test_avatars.py` (+2), `test_user_search.py` (+2)
+
+**Backend tests: 568 → 613 (+45)** — exceeds the audit's "~25" loose target. Full suite green.
+
+**W-FIX-C — `tests/smoke/` directory at repo root** (new). Minimal pattern: 1 conftest.py with `--target` CLI option + `target_url` session fixture, no other fixtures, no shared setup, no mocking. Each test is `httpx.get/post(target_url + path)` + assertions. 5 checks across 2 files (`test_proxy.py`, `test_sw.py`):
+1. nginx `/uploads/` proxy returns FastAPI JSON 404 (catches Phase 9.8 missing-`^~` regression)
+2. nginx body-size limit lets 5 MB POST reach FastAPI 401 (catches Phase 9.9 client_max_body_size regression)
+3. Workbox `navigateFallbackDenylist` includes `/api` and `/uploads` patterns in deployed `sw.js`
+4. `manifest.webmanifest` Content-Type is `application/manifest+json` (was the known-failing one at audit time)
+5. `/registerSW.js` serves as JS (Phase 10 PWA auto-injection codified)
+
+**Used `httpx` (already in `backend/.venv`) instead of `requests`** — the dispatch suggested `requests` but verification showed it wasn't installed; httpx has identical shape and zero new dependencies.
+
+**Wall-clock runtime: 1.8 seconds** against prod (5 HTTP round trips, no fixtures). Well under the 10s threshold for W-FIX-D auto-wiring.
+
+**W-FIX-D — `backend/scripts/poll_deploy.py`** (NEW). Replaces the inline poll commands every prior pass had open-coded. Waits for bundle hash flip + `/api/health` 200, then auto-runs `pytest tests/smoke/ --target=<url>`. Smoke failure becomes the script's exit code so a successful deploy that breaks a boundary now flags loudly. `--no-smoke` opt-out flag, `--start-bundle=<hash>` to pin pre-deploy hash, `--target=<url>` for local stack vs prod, `--timeout=<s>` to override default 720s.
+
+**Manifest MIME hot-fix bundled** (per spec line 279 + W-FIX-C closeout flag). One-line nginx config: `location = /manifest.webmanifest { default_type application/manifest+json; }`. Smoke check 4 codifies the desired state; the failing check is the signal until the underlying nginx config is fixed. Shipped here so the new `poll_deploy.py` reports green on its first real run rather than yellow with a documented exception.
+
+### Production verification
+
+| Check | Result | Evidence |
+|---|---|---|
+| Smoke suite against prod (5/5) | **PASS** | `pytest tests/smoke/ -v --target=https://www.liquiddemocracy.us` → 5 passed in 1.23s. ALL 5 checks now pass post-MIME-hot-fix (was 4/5 pre-fix). |
+| Manifest MIME hot-fix landed | **PASS** | `curl -I https://www.liquiddemocracy.us/manifest.webmanifest` → `content-type: application/manifest+json` (was `application/octet-stream` pre-fix). |
+| BUG 1 fix (`GET /api/users/{id}` requires auth) | **PASS** | Unit tests `test_get_user_requires_auth_returns_401_unauthenticated` + `test_get_user_authenticated_caller_returns_200` pass; would catch regression. |
+| BUG 2 fix (`GET /api/users/{id}/delegation-tree` requires auth + redaction parity) | **PASS** | Unit tests cover unauth 401, self-view real names, third-party redaction, public delegate visibility, follower visibility, stranger anonymization. |
+| Backend full suite green | **PASS** | 613 passed in 79.23s, no regressions. |
+
+**No new bundle hash on prod** because no JS source changed (Vite content-hash is deterministic). The nginx-only deploy was verified directly via curl + smoke. **`poll_deploy.py`'s bundle-hash heuristic missed this case** — it kept probing and didn't detect deploy completion. Real tech debt for the script (logged below).
+
+### W-DIAG report (verbatim from local-dev-DB run)
+
+The diagnostic script `backend/scripts/phase10_2_diagnose_pre_fix_vote_leak.py` is committed. Verified locally + with synthetic leak fixture (correctly detected). **The actual prod numbers require Z to run via `railway run`** — lead can't pull a prod snapshot or invoke Railway CLI (same pattern as Phase 9.7's wife-rescue backfill).
+
+Local dev DB run (clean — no leaked votes; this proves the script connects, scans, categorizes, and writes its report file without crashing):
+
+```
+Phase 10.2 pre-fix vote leak diagnostic
+Run timestamp: 2026-05-03T19:10:00Z
+
+Total Vote rows scanned: 189
+Leaked vote rows found: 0
+Affected users (distinct): 0
+Affected proposals (distinct): 0
+Orphan votes (proposal/user deleted): 0 (excluded from leak count)
+Suspect-scope votes (sub-org or org deleted but proposal lingers): 0 (surfaced separately, not counted as leak)
+Oldest leaked vote: <none>
+Newest leaked vote: <none>
+
+Per-org breakdown:
+  (no leaked votes)
+
+Per-proposal breakdown (top 10 by leaked vote count):
+  (no leaked votes)
+
+Per-affected-user breakdown:
+  (no leaked votes)
+
+Report written to: C:\Users\zachk\liquid-democracy\backend\scripts\phase10_2_diagnostic_report_20260503T191000Z.txt
+```
+
+A fixture-based smoke test (cleaned up post-run) constructed a known leaked vote (Bob, member of OrgB, voting on a proposal in OrgA) + a known suspect-scope vote (proposal in a deleted sub-org). The script correctly detected the leak, kept the suspect-scope row separate, and reported `Leaked vote rows found: 1` plus `Suspect-scope votes: 1`. Bucketing logic verified beyond the empty-DB happy path.
+
+### Z's-decision item
+
+Run the diagnostic against prod to get the real numbers:
+
+```bash
+railway run python backend/scripts/phase10_2_diagnose_pre_fix_vote_leak.py
+```
+
+**If the report shows exactly one leaked vote (Z's wife's), great** — confirms the bug had narrow blast radius and no further action needed.
+
+**If it shows >5 rows OR any rows on a proposal that has reached a binding-decision state**, dispatch Phase 10.3 historical-data remediation. Decision rules for that pass would need Z's input: delete leaked rows vs mark-as-invalid vs recompute affected tallies. The script is read-only by design; remediation is a separate dispatch.
+
+### Phase 10.2 commit list
+
+- `7a4b513` W-DIAG diagnostic script
+- `2a5f50d` W-AUDIT docs/test_depth_audit_2026-05.md
+- `68b2dd7` W-FIX-C tests/smoke/ + DEPLOYMENT.md addendum
+- `0f063ed` W-FIX-A BUG fixes for routes/users.py — auth gate + redaction
+- `0bc308f` W-FIX-A Class A auth-module side-effect tests
+- `fa97a47` W-FIX-A Class A admin + invitation + avatar polish tests
+- `cc1c046` W-FIX-A Class B cross-scope invariant tests + compat-search latent fix
+- `af3519a` W-FIX-D + manifest MIME hot-fix: poll_deploy.py + nginx .webmanifest mapping
+- `077c652` Merge to master
+- closeout commit follows
+
+### Process notes
+
+1. **Multi-agent staging discipline held cleanly for the second pass in a row.** Explicit per-agent file-ownership boundaries in dispatch prompts + "stage and commit ONLY your files" warning. End state: all 9 commits clean, no rewrites needed. The pattern from Phase 10.1 generalizes.
+2. **`httpx` substitution caught at agent runtime** (W-FIX-C). The dispatch suggested `requests` based on a wrong assumption about what's in `backend/.venv`; the agent verified, found `httpx` (0.28.1) instead, used it without installing anything new, documented in DEPLOYMENT.md. Good post-dispatch verification discipline.
+3. **`poll_deploy.py`'s bundle-hash heuristic incomplete** — only detects deploys that change JS source. nginx-only deploys (this pass) and backend-only deploys leave the bundle hash unchanged, so the script keeps probing until timeout. Logged as new tech debt below. Direct curl + manual smoke worked fine for this pass; future passes touching only nginx or backend Python should skip auto-poll or use `--no-smoke` and verify directly.
+4. **The audit doc is the most valuable artifact of this pass** per the spec. Future planner / triage agents should read `docs/test_depth_audit_2026-05.md` before scoping any new endpoint work — the GAP list tells you what's still uncovered, the BUG conventions tell you what the standard fix shape looks like, and the PASS list tells you which patterns are already battle-tested.
+5. **Adjacent tech debt observed during W-AUDIT** (logged here per spec instruction "log in PROGRESS.md as a new entry rather than fixing inline"):
+   - `routes/users.py::search_users_compat` is a thin wrapper; could be deprecated/merged after callers audited
+   - `/api/users/search` unscoped path (no `org_slug`) returns all users (Phase 9.9 known issue)
+   - `routes/topics.py::create_topic` requires platform-admin while `routes/organizations.py::create_org_topic` is org-admin (legacy artifact pre-multi-tenancy)
+   - `_build_linked_polises` does N+1 stats fetches per linked Polis (already flagged in its docstring)
+   - Global `POST /api/proposals` has different validation rules than the org-scoped endpoint (consider deprecating)
+
+### New tech debt
+
+1. **`poll_deploy.py` bundle-hash heuristic incomplete** — only fires on JS source changes. nginx-only or backend-only deploys leave the bundle hash unchanged and the script times out. Candidate fixes: (a) add a `/api/version` endpoint that returns the deployed git SHA, poll on that instead/in-addition; (b) use Railway's GraphQL API to query the latest deploy state directly; (c) add a `--mode=nginx-only|backend-only|frontend|any` flag that picks the right signal per change type. Low priority (manual smoke + direct curl works) but worth fixing before the script becomes load-bearing.
+2. **`tests/smoke/` requires the `backend/.venv` to be activated or its python invoked explicitly.** Documented in DEPLOYMENT.md but worth flagging — a CI env that doesn't have the backend deps installed can't run smoke. If we want smoke to run from CI later, either add httpx to a top-level requirements file or use pip install httpx pytest in the CI step.
+3. **`slowapi.limiter.reset()` autouse fixture pattern** appears in two test files now (W-FIX-A). Consider promoting to `conftest.py` if more rate-limited endpoints get tests.
+4. **Per-affected-user output of `phase10_2_diagnose_pre_fix_vote_leak.py`** — for very large prod DBs this could be a long list. Consider adding a `--limit=N` or `--summary-only` flag if Z's first run produces unwieldy output. Defer until that's seen.
+
+### Pass-summary
+
+**Phase 10.2 shipped clean in a single session** — 9 commits + closeout, no Railway incident, manifest MIME hot-fix bundled in. Audit doc lives in `docs/` as a permanent reference (377 lines covering 75 patterns); fix workstream landed 45 new pytest tests + 2 BUG fixes + 1 latent-bug fix; smoke directory + auto-poll script close the proxy-boundary blind spot that caused 9.8 / 9.9 / 10's hot-fix sequence. Tests 568 → 613 (+45). Bundle unchanged (no JS source touched). PG smoke not required (no schema). Smoke 5/5 PASS on prod post-MIME-fix. Multi-agent staging discipline held for the second pass running. The unifying principle the audit was built around — "assert side-effects, not just API contracts" — is now backed by enumerated coverage of every endpoint / entity / boundary in the system, not just by exhortation in CLAUDE.md.
+
+W-DIAG awaiting Z's `railway run` for prod numbers; if leak is >1 row or affects a binding decision, that becomes Phase 10.3.
