@@ -10,7 +10,7 @@ from typing import Optional
 import pytest
 
 import models
-from tests.conftest import make_user
+from tests.conftest import make_user, make_org_membership
 
 
 def _org(db, name="Acme", slug="acme", *, parent_id=None):
@@ -20,9 +20,9 @@ def _org(db, name="Acme", slug="acme", *, parent_id=None):
 
 
 def _membership(db, user, org, *, role="member"):
-    m = models.OrgMembership(user_id=user.id, org_id=org.id, role=role, status="active")
-    db.add(m); db.flush()
-    return m
+    return make_org_membership(
+        db, user_id=user.id, org_id=org.id, role=role, status="active",
+    )
 
 
 def _polis(db, org, sub_org, creator, *, status="active") -> models.Polis:

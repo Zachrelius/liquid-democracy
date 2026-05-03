@@ -22,7 +22,7 @@ import pytest
 
 import models
 from permissions import can_create_proposal_in_sub_org, is_sub_org_admin
-from tests.conftest import make_user
+from tests.conftest import make_user, make_org_membership
 
 
 def _make_org(db, slug: str, parent_org_id: str | None = None) -> models.Organization:
@@ -36,11 +36,10 @@ def _make_org(db, slug: str, parent_org_id: str | None = None) -> models.Organiz
 
 
 def _add_membership(db, user, org, role: str = "member", status: str = "active"):
-    m = models.OrgMembership(
+    m = make_org_membership(
+        db,
         user_id=user.id, org_id=org.id, role=role, status=status,
     )
-    db.add(m)
-    db.flush()
     return m
 
 

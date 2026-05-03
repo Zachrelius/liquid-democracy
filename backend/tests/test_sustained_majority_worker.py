@@ -31,6 +31,7 @@ from sustained_majority_service import (
     count_extensions,
 )
 from audit_utils import log_audit_event
+from tests.conftest import make_org_membership
 
 
 _DUMMY_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewrwKJuRxm5pJmJi"
@@ -72,9 +73,10 @@ def _member(db: Session, org: models.Organization, user: models.User) -> None:
     OrgMembership rows count. Helper added so the existing tests stay
     minimally changed.
     """
-    db.add(models.OrgMembership(
+    make_org_membership(
+        db,
         user_id=user.id, org_id=org.id, role="member", status="active",
-    ))
+    )
     db.flush()
 
 

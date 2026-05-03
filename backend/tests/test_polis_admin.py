@@ -6,7 +6,7 @@ topic creation.
 """
 import models
 from permissions import is_polis_admin
-from tests.conftest import make_user
+from tests.conftest import make_user, make_org_membership
 
 
 def _org(db, name, slug, *, parent_id=None):
@@ -16,9 +16,9 @@ def _org(db, name, slug, *, parent_id=None):
 
 
 def _membership(db, user, org, *, role="member"):
-    m = models.OrgMembership(user_id=user.id, org_id=org.id, role=role, status="active")
-    db.add(m); db.flush()
-    return m
+    return make_org_membership(
+        db, user_id=user.id, org_id=org.id, role=role, status="active",
+    )
 
 
 def _sub_membership(db, user, sub, *, role="member"):

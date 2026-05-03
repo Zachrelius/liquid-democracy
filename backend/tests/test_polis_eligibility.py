@@ -7,7 +7,7 @@ admins always retaining implicit power per Decision 6.
 """
 import models
 from polis_engine import eligible_viewers_for_polis, eligible_polis_admin_ids
-from tests.conftest import make_user
+from tests.conftest import make_user, make_org_membership
 
 
 def _org(db, name: str, slug: str, *, parent_id=None, settings=None):
@@ -21,11 +21,10 @@ def _org(db, name: str, slug: str, *, parent_id=None, settings=None):
 
 
 def _membership(db, user, org, *, role="member", status="active"):
-    m = models.OrgMembership(
+    m = make_org_membership(
+        db,
         user_id=user.id, org_id=org.id, role=role, status=status,
     )
-    db.add(m)
-    db.flush()
     return m
 
 

@@ -22,6 +22,7 @@ from sqlalchemy.pool import StaticPool
 import models
 from database import Base
 from scripts.phase9_7_backfill_orphaned_invitations import backfill
+from tests.conftest import make_org_membership
 
 
 _DUMMY_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewrwKJuRxm5pJmJi"
@@ -124,9 +125,10 @@ def test_backfill_already_member_marks_accepted_no_dup(db, capsys):
     inviter = _user(db, "z", "z@test.example")
     wife = _user(db, "wife", "wife@test.example")
     gamenights = _org(db, "GameNights", "gamenights")
-    db.add(models.OrgMembership(
+    make_org_membership(
+        db,
         user_id=wife.id, org_id=gamenights.id, role="member", status="active",
-    ))
+    )
     inv = _invitation(db, gamenights, "wife@test.example", inviter)
     db.commit()
 
@@ -157,9 +159,10 @@ def test_backfill_auto_join_victim_signal_does_not_remove_demo(db, capsys):
 
     # Wife was caught by the auto-join bug: she's in demo and not in
     # gamenights. The invitation is for gamenights.
-    db.add(models.OrgMembership(
+    make_org_membership(
+        db,
         user_id=wife.id, org_id=demo.id, role="member", status="active",
-    ))
+    )
     inv = _invitation(db, gamenights, "wife@test.example", inviter)
     db.commit()
 

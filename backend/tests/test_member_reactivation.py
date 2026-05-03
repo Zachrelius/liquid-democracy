@@ -10,6 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 
 from database import Base
+from tests.conftest import make_org_membership
 import models  # noqa: F401 — registers ORM classes
 
 
@@ -60,14 +61,13 @@ def _make_user(db: Session, username: str) -> models.User:
 def _make_membership(
     db: Session, org: models.Organization, user: models.User, role: str = "member", status: str = "active"
 ) -> models.OrgMembership:
-    m = models.OrgMembership(
+    m = make_org_membership(
+        db,
         user_id=user.id,
         org_id=org.id,
         role=role,
         status=status,
     )
-    db.add(m)
-    db.flush()
     return m
 
 

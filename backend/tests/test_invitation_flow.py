@@ -34,6 +34,7 @@ import models
 from database import Base, get_db
 from main import app
 from settings import settings
+from tests.conftest import make_org_membership
 
 
 _DUMMY_HASH = auth_utils.hash_password("demo1234")
@@ -426,9 +427,10 @@ def test_login_with_invitation_token_already_member_is_idempotent(client, test_d
     user = _create_user(test_db, "alice", email="alice@test.example")
     user.password_hash = auth_utils.hash_password("p@ssword!")
     # Pre-existing active membership.
-    test_db.add(models.OrgMembership(
+    make_org_membership(
+        test_db,
         user_id=user.id, org_id=org.id, role="member", status="active",
-    ))
+    )
     inv = _create_invitation(test_db, org, "alice@test.example", role="admin")
     test_db.commit()
 
