@@ -349,7 +349,15 @@ export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
     const timer = setTimeout(async () => {
       setSearching(true);
       try {
-        const res = await api.get(`/api/users/search?q=${encodeURIComponent(query)}&limit=10`);
+        // Phase 9.9 W5 — scope delegate search to the active org so users
+        // don't see members of other orgs in the result list. If there's
+        // no current org (rare on this surface), omit the param and rely
+        // on the backend's backward-compat path.
+        let url = `/api/users/search?q=${encodeURIComponent(query)}&limit=10`;
+        if (currentOrg?.slug) {
+          url += `&org_slug=${encodeURIComponent(currentOrg.slug)}`;
+        }
+        const res = await api.get(url);
         setResults(res);
       } catch {
         setResults([]);
@@ -358,7 +366,7 @@ export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, currentOrg]);
 
   const showApplyToRadio = topicId === undefined && viewerSubOrgs.length > 0;
 
