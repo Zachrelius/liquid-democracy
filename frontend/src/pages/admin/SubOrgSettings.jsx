@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../../api';
 import useSubOrg from '../../useSubOrg';
 import { useOrg } from '../../OrgContext';
+import { urlFor } from '../../utils/urls';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
@@ -232,7 +233,7 @@ export default function SubOrgSettings() {
         localStorage.removeItem('currentOrgSlug');
         await refreshOrgs();
       }
-      navigate('/admin/sub-orgs');
+      navigate(urlFor(parentSlug, 'admin-sub-orgs'));
     } catch (e) {
       // 409 = topic/proposal still exists (race)
       toast.error(e.message || 'Failed to delete');
@@ -245,7 +246,7 @@ export default function SubOrgSettings() {
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-10">
       <div>
         <p className="text-xs text-gray-400 mb-1">
-          <Link to="/admin/sub-orgs" className="hover:underline">Sub-organizations</Link>
+          <Link to={urlFor(parentSlug, 'admin-sub-orgs')} className="hover:underline">Sub-organizations</Link>
           {' / '}
           <span>{subOrg.name}</span>
         </p>

@@ -4,8 +4,11 @@ export default function VotingMethodsHelp() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
       <div>
-        <Link to="/proposals" className="text-sm text-[#2E75B6] hover:underline mb-4 inline-block">
-          ← Back to Proposals
+        {/* Phase 11 — help pages are public/non-org-scoped; back-link
+            routes to /orgs (the picker) since we don't know which org the
+            visitor came from. */}
+        <Link to="/orgs" className="text-sm text-[#2E75B6] hover:underline mb-4 inline-block">
+          ← Back
         </Link>
         <h1 className="text-2xl font-bold text-[#1B3A5C]">Voting Methods</h1>
         <p className="text-sm text-gray-500 mt-1">

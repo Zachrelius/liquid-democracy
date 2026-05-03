@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import useSubOrg from '../../useSubOrg';
+import { urlFor } from '../../utils/urls';
 import { useToast } from '../../components/Toast';
 import StatusBadge from '../../components/StatusBadge';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
@@ -69,9 +70,9 @@ export default function SubOrgProposals() {
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div>
         <p className="text-xs text-gray-400 mb-1">
-          <Link to="/admin/sub-orgs" className="hover:underline">Sub-organizations</Link>
+          <Link to={urlFor(parentSlug, 'admin-sub-orgs')} className="hover:underline">Sub-organizations</Link>
           {' / '}
-          <Link to={`/admin/sub-orgs/${subSlug}/settings`} className="hover:underline">{subOrg.name}</Link>
+          <Link to={urlFor(parentSlug, 'admin-sub-org-settings', subSlug)} className="hover:underline">{subOrg.name}</Link>
         </p>
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-[#1B3A5C]">{subOrg.name} — Proposals</h1>
@@ -115,7 +116,7 @@ export default function SubOrgProposals() {
             <div key={p.id} className="border-t border-gray-100">
               <div className="flex items-center gap-4 px-4 py-3 text-sm">
                 <span className="flex-1 font-medium text-gray-800">
-                  <Link to={`/proposals/${p.id}`} className="hover:underline">{p.title}</Link>
+                  <Link to={urlFor(parentSlug, 'proposal-detail', p.id)} className="hover:underline">{p.title}</Link>
                 </span>
                 <span className="w-24"><StatusBadge status={p.status} /></span>
                 <span className="w-28 text-xs text-gray-400">{new Date(p.created_at).toLocaleDateString()}</span>

@@ -68,7 +68,9 @@ export default function Demo() {
       if (data.refresh_token) {
         sessionStorage.setItem('refreshToken', data.refresh_token);
       }
-      window.location.assign('/proposals');
+      // Phase 11 — / is no longer a valid org-scoped landing; /orgs lets
+      // OrgSelector auto-redirect single-org demo personas to /{slug}/proposals.
+      window.location.assign('/orgs');
     } catch (err) {
       if (err?.status === 404) {
         toast.error('Demo login not available.');

@@ -21,6 +21,7 @@ import LinkedPolisCard from '../components/LinkedPolisCard';
 import CommentThread from '../components/CommentThread';
 import { colorForOption } from '../components/voteFlowGraphUtils';
 import renderMarkdown from '../utils/renderMarkdown';
+import { urlFor } from '../utils/urls';
 
 /**
  * Phase 9 Session 4 — pol.is URL detection in proposal bodies.
@@ -686,6 +687,15 @@ export default function ProposalDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const { currentOrg, userOrgs } = useOrg();
+  // Phase 11 — proposals/delegations routes are parent-org-rooted. If
+  // currentOrg is itself a sub-org, walk up for link construction.
+  const linkOrg = (() => {
+    if (!currentOrg) return null;
+    if (currentOrg.parent_org_id) {
+      return userOrgs.find(o => o.id === currentOrg.parent_org_id) || null;
+    }
+    return currentOrg;
+  })();
   const [proposal, setProposal] = useState(null);
   const [tally, setTally] = useState(null);
   const [myVote, setMyVote] = useState(null);
@@ -965,7 +975,7 @@ export default function ProposalDetail() {
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       {/* Back link */}
-      <Link to="/proposals" className="text-sm text-[#2E75B6] hover:underline mb-4 inline-block">
+      <Link to={linkOrg ? urlFor(linkOrg, 'proposals') : '/orgs'} className="text-sm text-[#2E75B6] hover:underline mb-4 inline-block">
         ← Back to Proposals
       </Link>
 
@@ -1177,7 +1187,7 @@ export default function ProposalDetail() {
               </p>
               <div className="flex gap-3 text-xs">
                 <Link
-                  to="/delegations"
+                  to={linkOrg ? urlFor(linkOrg, 'delegations') : '/orgs'}
                   className="text-[#2E75B6] hover:underline"
                 >
                   Set a specific delegate

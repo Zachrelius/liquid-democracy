@@ -190,7 +190,15 @@ export default function InviteAccept() {
             setSubmitError('');
             try {
               await api.post(`/api/orgs/join/${token}`);
-              navigate('/proposals');
+              // Phase 11 — meta carries the inviting org's slug; route the
+              // newly-joined user straight into that org's proposals.
+              const slug = meta?.org_slug;
+              if (slug) {
+                navigate(`/${slug}/proposals`);
+              } else {
+                // Fallback if meta is missing slug (shouldn't happen post-9.7).
+                navigate('/orgs');
+              }
             } catch (err) {
               setSubmitError(err?.message || 'Failed to accept invitation.');
             } finally {
@@ -235,7 +243,9 @@ export default function InviteAccept() {
       }
       // Hard navigation so AuthProvider re-mounts and OrgContext picks up
       // the freshly-created membership without stale state.
-      window.location.assign('/proposals');
+      // Phase 11 — slug-prefixed landing per the inviting org.
+      const slug = meta?.org_slug;
+      window.location.assign(slug ? `/${slug}/proposals` : '/orgs');
     } catch (err) {
       const detail = err?.message || '';
       // Resilient client-side dispatch: if the email already has an account,
@@ -279,7 +289,9 @@ export default function InviteAccept() {
       if (data.refresh_token) {
         sessionStorage.setItem('refreshToken', data.refresh_token);
       }
-      window.location.assign('/proposals');
+      // Phase 11 — slug-prefixed landing per the inviting org.
+      const slug = meta?.org_slug;
+      window.location.assign(slug ? `/${slug}/proposals` : '/orgs');
     } catch (err) {
       setSubmitError(err?.message || 'Sign-in failed.');
     } finally {

@@ -13,7 +13,7 @@ import { Link } from 'react-router-dom';
  *     accepts the resolved-shape returned by `_build_linked_polises`
  *     (`{id, title, prompt, status, participation_count}`).
  *   - orgSlug: parent-org slug for routing — used to construct the
- *     /orgs/<slug>/polises/<id> link.
+ *     /<slug>/polises/<id> link (Phase 11 D3 dropped the /orgs/ prefix).
  *   - missing: optional flag for the "Polis no longer available" state
  *     (URL-detected pol.is link that didn't resolve to any Polis the
  *     viewer can see).
@@ -66,7 +66,7 @@ export default function LinkedPolisCard({
   })();
 
   const detailHref = orgSlug && polis.id
-    ? `/orgs/${orgSlug}/polises/${polis.id}`
+    ? `/${orgSlug}/polises/${polis.id}`
     : null;
 
   function formatParticipants() {

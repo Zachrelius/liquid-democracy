@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
+import { urlFor } from '../utils/urls';
 import Avatar from './Avatar';
 import NotificationBadge from './NotificationBadge';
 
@@ -15,7 +16,7 @@ import NotificationBadge from './NotificationBadge';
  */
 function OrgSwitcher() {
   const navigate = useNavigate();
-  const { currentOrg, userOrgs, setCurrentOrg, fetchSubOrgsFor, subOrgsByParent } = useOrg();
+  const { currentOrg, userOrgs, fetchSubOrgsFor, subOrgsByParent } = useOrg();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -47,8 +48,10 @@ function OrgSwitcher() {
 
   // Breadcrumb display: parent → sub-org if currentOrg is a sub-org.
   let labelNode;
+  let parentSlug = currentOrg.slug;
   if (currentOrg.parent_org_id) {
     const parent = userOrgs.find(o => o.id === currentOrg.parent_org_id);
+    parentSlug = parent?.slug || currentOrg.slug;
     labelNode = (
       <span className="flex items-center gap-1">
         {parent ? <span className="text-blue-300">{parent.name}</span> : null}
@@ -60,10 +63,19 @@ function OrgSwitcher() {
     labelNode = <span>{currentOrg.name}</span>;
   }
 
+  // Phase 11 — picking an org now navigates rather than mutating localStorage.
+  // The URL is the source of truth for currentOrg, so navigation IS the switch.
+  // Default landing per spec line 193: simple-and-safe → /{slug}/proposals.
   function pickOrg(org) {
-    setCurrentOrg(org);
     setOpen(false);
-    navigate('/proposals');
+    if (org.parent_org_id) {
+      // Sub-org pick: per spec line 194, land at the sub-org's settings.
+      const parent = userOrgs.find(o => o.id === org.parent_org_id);
+      const pSlug = parent?.slug || parentSlug;
+      navigate(urlFor(pSlug, 'admin-sub-org-settings', org.slug));
+    } else {
+      navigate(urlFor(org, 'proposals'));
+    }
   }
 
   return (
@@ -120,7 +132,7 @@ function OrgSwitcher() {
                           </button>
                           {(subAdmin || isParentAdmin) && (
                             <Link
-                              to={`/admin/sub-orgs/${sub.slug}/settings`}
+                              to={urlFor(parent, 'admin-sub-org-settings', sub.slug)}
                               onClick={() => setOpen(false)}
                               className="text-[10px] text-[#2E75B6] hover:underline shrink-0"
                               title="Manage this sub-org"
@@ -135,7 +147,7 @@ function OrgSwitcher() {
                 )}
                 {isParentAdmin && (
                   <Link
-                    to="/admin/sub-orgs"
+                    to={urlFor(parent, 'admin-sub-orgs')}
                     onClick={() => setOpen(false)}
                     className="block px-4 py-1.5 text-xs text-[#2E75B6] hover:underline pl-8"
                   >
@@ -178,6 +190,18 @@ export default function Nav() {
   const isSubOrgScope = !!currentOrg?.parent_org_id;
   const showLegacyAdminDropdown = isModeratorOrAdmin && !isSubOrgScope;
 
+  // Phase 11 — resolve parent slug for org-scoped link construction. When
+  // the user is scoped to a sub-org, walk up to the parent for parent-org
+  // admin links; otherwise currentOrg.slug IS the parent.
+  const parentSlugForLinks = (() => {
+    if (!currentOrg) return null;
+    if (currentOrg.parent_org_id) {
+      const parent = userOrgs.find(o => o.id === currentOrg.parent_org_id);
+      return parent?.slug || null;
+    }
+    return currentOrg.slug;
+  })();
+
   useEffect(() => {
     function handleClick(e) {
       if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
@@ -191,7 +215,10 @@ export default function Nav() {
     <nav className="bg-[#1B3A5C] text-white">
       <div className="max-w-6xl mx-auto px-4 flex items-center justify-between h-14">
         <div className="flex items-center gap-6">
-          <Link to="/proposals" className="font-semibold text-sm tracking-wide hover:text-blue-100 transition-colors">
+          <Link
+            to={currentOrg ? urlFor(currentOrg, 'proposals') : '/orgs'}
+            className="font-semibold text-sm tracking-wide hover:text-blue-100 transition-colors"
+          >
             Liquid Democracy
           </Link>
 
@@ -199,78 +226,81 @@ export default function Nav() {
           <OrgSwitcher />
 
           {/* Desktop nav links */}
-          <div className="hidden md:flex items-center gap-6">
-            <NavLink
-              to="/proposals"
-              className={({ isActive }) =>
-                `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
-              }
-            >
-              Proposals
-            </NavLink>
-            <NavLink
-              to="/delegations"
-              className={({ isActive }) =>
-                `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
-              }
-            >
-              My Delegations
-            </NavLink>
-
-            {/* Admin dropdown — visible to moderators, admins, owners on parent-org scope */}
-            {showLegacyAdminDropdown && (
-              <div ref={adminRef} className="relative">
-                <button
-                  onClick={() => setAdminOpen(!adminOpen)}
-                  className={`text-sm transition-colors flex items-center gap-1 ${
-                    adminOpen ? 'text-white font-medium' : 'text-blue-200 hover:text-white'
-                  }`}
-                >
-                  Admin
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </button>
-                {adminOpen && (
-                  <div className="absolute left-0 top-full mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden">
-                    {[
-                      isAdmin && { to: '/admin/settings', label: 'Org Settings' },
-                      { to: '/admin/members', label: 'Members' },
-                      { to: '/admin/proposals', label: 'Proposals' },
-                      { to: '/admin/topics', label: 'Topics' },
-                      { to: '/admin/polises', label: 'Polises' },
-                      isAdmin && { to: '/admin/delegates', label: 'Delegate Applications' },
-                      isAdmin && { to: '/admin/analytics', label: 'Analytics' },
-                      isAdmin && { to: '/admin/sub-orgs', label: 'Sub-Organizations' },
-                    ].filter(Boolean).map((item, i) => (
-                      <Link
-                        key={item.to}
-                        to={item.to}
-                        onClick={() => setAdminOpen(false)}
-                        className={`block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors ${
-                          i > 0 ? 'border-t border-gray-100' : ''
-                        }`}
-                      >
-                        {item.label}
-                      </Link>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Sub-org scope shortcut — link back to managing this sub-org if user has admin power */}
-            {isSubOrgScope && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'owner') && (
+          {currentOrg && (
+            <div className="hidden md:flex items-center gap-6">
               <NavLink
-                to={`/admin/sub-orgs/${currentOrg.slug}/settings`}
+                to={urlFor(currentOrg, 'proposals')}
+                end
                 className={({ isActive }) =>
                   `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
                 }
               >
-                Manage Sub-Org
+                Proposals
               </NavLink>
-            )}
-          </div>
+              <NavLink
+                to={urlFor(currentOrg, 'delegations')}
+                className={({ isActive }) =>
+                  `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                }
+              >
+                My Delegations
+              </NavLink>
+
+              {/* Admin dropdown — visible to moderators, admins, owners on parent-org scope */}
+              {showLegacyAdminDropdown && parentSlugForLinks && (
+                <div ref={adminRef} className="relative">
+                  <button
+                    onClick={() => setAdminOpen(!adminOpen)}
+                    className={`text-sm transition-colors flex items-center gap-1 ${
+                      adminOpen ? 'text-white font-medium' : 'text-blue-200 hover:text-white'
+                    }`}
+                  >
+                    Admin
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                  {adminOpen && (
+                    <div className="absolute left-0 top-full mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden">
+                      {[
+                        isAdmin && { to: urlFor(parentSlugForLinks, 'admin-settings'), label: 'Org Settings' },
+                        { to: urlFor(parentSlugForLinks, 'admin-members'), label: 'Members' },
+                        { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
+                        { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
+                        { to: urlFor(parentSlugForLinks, 'admin-polises'), label: 'Polises' },
+                        isAdmin && { to: urlFor(parentSlugForLinks, 'admin-delegates'), label: 'Delegate Applications' },
+                        isAdmin && { to: urlFor(parentSlugForLinks, 'admin-analytics'), label: 'Analytics' },
+                        isAdmin && { to: urlFor(parentSlugForLinks, 'admin-sub-orgs'), label: 'Sub-Organizations' },
+                      ].filter(Boolean).map((item, i) => (
+                        <Link
+                          key={item.to}
+                          to={item.to}
+                          onClick={() => setAdminOpen(false)}
+                          className={`block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors ${
+                            i > 0 ? 'border-t border-gray-100' : ''
+                          }`}
+                        >
+                          {item.label}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Sub-org scope shortcut — link back to managing this sub-org if user has admin power */}
+              {isSubOrgScope && parentSlugForLinks && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'owner') && (
+                <NavLink
+                  to={urlFor(parentSlugForLinks, 'admin-sub-org-settings', currentOrg.slug)}
+                  className={({ isActive }) =>
+                    `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                  }
+                >
+                  Manage Sub-Org
+                </NavLink>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -291,19 +321,24 @@ export default function Nav() {
 
               {menuOpen && (
                 <div className="absolute right-0 top-full mt-2 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden">
-                  <Link
-                    to={`/users/${user.id}`}
-                    onClick={() => setMenuOpen(false)}
-                    className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
-                  >
-                    My Profile
-                  </Link>
+                  {/* My Profile is org-scoped post-Phase 11. Hide when no
+                      currentOrg (user is on /settings, /orgs, etc.) — they
+                      can reach their profile from any org page. */}
+                  {currentOrg && (
+                    <Link
+                      to={urlFor(currentOrg, 'user-profile', user.id)}
+                      onClick={() => setMenuOpen(false)}
+                      className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
+                      My Profile
+                    </Link>
+                  )}
                   <Link
                     to="/settings"
                     onClick={() => setMenuOpen(false)}
-                    className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100"
+                    className={`block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors ${currentOrg ? 'border-t border-gray-100' : ''}`}
                   >
-                    Settings
+                    Account Settings
                   </Link>
                   {userOrgs.length > 1 && (
                     <Link
@@ -362,34 +397,38 @@ export default function Nav() {
                 : currentOrg.name}
             </p>
           )}
-          <Link
-            to="/proposals"
-            onClick={() => setMobileOpen(false)}
-            className="block py-2 text-sm text-blue-200 hover:text-white"
-          >
-            Proposals
-          </Link>
-          <Link
-            to="/delegations"
-            onClick={() => setMobileOpen(false)}
-            className="block py-2 text-sm text-blue-200 hover:text-white"
-          >
-            My Delegations
-          </Link>
-          {showLegacyAdminDropdown && (
+          {currentOrg && (
+            <>
+              <Link
+                to={urlFor(currentOrg, 'proposals')}
+                onClick={() => setMobileOpen(false)}
+                className="block py-2 text-sm text-blue-200 hover:text-white"
+              >
+                Proposals
+              </Link>
+              <Link
+                to={urlFor(currentOrg, 'delegations')}
+                onClick={() => setMobileOpen(false)}
+                className="block py-2 text-sm text-blue-200 hover:text-white"
+              >
+                My Delegations
+              </Link>
+            </>
+          )}
+          {showLegacyAdminDropdown && parentSlugForLinks && (
             <>
               <div className="pt-2 mt-2 border-t border-blue-900">
                 <p className="text-xs text-blue-300 mb-1">Admin</p>
               </div>
               {[
-                isAdmin && { to: '/admin/settings', label: 'Org Settings' },
-                { to: '/admin/members', label: 'Members' },
-                { to: '/admin/proposals', label: 'Proposals' },
-                { to: '/admin/topics', label: 'Topics' },
-                { to: '/admin/polises', label: 'Polises' },
-                isAdmin && { to: '/admin/delegates', label: 'Delegate Apps' },
-                isAdmin && { to: '/admin/analytics', label: 'Analytics' },
-                isAdmin && { to: '/admin/sub-orgs', label: 'Sub-Orgs' },
+                isAdmin && { to: urlFor(parentSlugForLinks, 'admin-settings'), label: 'Org Settings' },
+                { to: urlFor(parentSlugForLinks, 'admin-members'), label: 'Members' },
+                { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
+                { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
+                { to: urlFor(parentSlugForLinks, 'admin-polises'), label: 'Polises' },
+                isAdmin && { to: urlFor(parentSlugForLinks, 'admin-delegates'), label: 'Delegate Apps' },
+                isAdmin && { to: urlFor(parentSlugForLinks, 'admin-analytics'), label: 'Analytics' },
+                isAdmin && { to: urlFor(parentSlugForLinks, 'admin-sub-orgs'), label: 'Sub-Orgs' },
               ].filter(Boolean).map(item => (
                 <Link
                   key={item.to}
@@ -402,9 +441,9 @@ export default function Nav() {
               ))}
             </>
           )}
-          {isSubOrgScope && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'owner') && (
+          {isSubOrgScope && parentSlugForLinks && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'owner') && (
             <Link
-              to={`/admin/sub-orgs/${currentOrg.slug}/settings`}
+              to={urlFor(parentSlugForLinks, 'admin-sub-org-settings', currentOrg.slug)}
               onClick={() => setMobileOpen(false)}
               className="block py-2 text-sm text-blue-200 hover:text-white"
             >
@@ -417,19 +456,21 @@ export default function Nav() {
                 <Avatar user={user} size="sm" />
                 <p className="text-xs text-blue-300">{user.display_name}</p>
               </div>
-              <Link
-                to={`/users/${user.id}`}
-                onClick={() => setMobileOpen(false)}
-                className="block py-2 text-sm text-blue-200 hover:text-white"
-              >
-                My Profile
-              </Link>
+              {currentOrg && (
+                <Link
+                  to={urlFor(currentOrg, 'user-profile', user.id)}
+                  onClick={() => setMobileOpen(false)}
+                  className="block py-2 text-sm text-blue-200 hover:text-white"
+                >
+                  My Profile
+                </Link>
+              )}
               <Link
                 to="/settings"
                 onClick={() => setMobileOpen(false)}
                 className="block py-2 text-sm text-blue-200 hover:text-white"
               >
-                Settings
+                Account Settings
               </Link>
               {userOrgs.length > 1 && (
                 <Link

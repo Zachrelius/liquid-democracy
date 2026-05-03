@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
+import { urlFor } from '../../utils/urls';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
 
@@ -191,19 +192,19 @@ export default function SubOrgList() {
                 )}
               </div>
               <div className="flex gap-3 text-xs">
-                <Link to={`/admin/sub-orgs/${s.slug}/settings`} className="text-[#2E75B6] hover:underline">
+                <Link to={urlFor(parentSlug, 'admin-sub-org-settings', s.slug)} className="text-[#2E75B6] hover:underline">
                   Settings
                 </Link>
-                <Link to={`/admin/sub-orgs/${s.slug}/members`} className="text-[#2E75B6] hover:underline">
+                <Link to={urlFor(parentSlug, 'admin-sub-org-members', s.slug)} className="text-[#2E75B6] hover:underline">
                   Members
                 </Link>
-                <Link to={`/admin/sub-orgs/${s.slug}/proposals`} className="text-[#2E75B6] hover:underline">
+                <Link to={urlFor(parentSlug, 'admin-sub-org-proposals', s.slug)} className="text-[#2E75B6] hover:underline">
                   Proposals
                 </Link>
-                <Link to={`/admin/sub-orgs/${s.slug}/topics`} className="text-[#2E75B6] hover:underline">
+                <Link to={urlFor(parentSlug, 'admin-sub-org-topics', s.slug)} className="text-[#2E75B6] hover:underline">
                   Topics
                 </Link>
-                <Link to={`/admin/sub-orgs/${s.slug}/polises`} className="text-[#2E75B6] hover:underline">
+                <Link to={urlFor(parentSlug, 'admin-sub-org-polises', s.slug)} className="text-[#2E75B6] hover:underline">
                   Polises
                 </Link>
               </div>

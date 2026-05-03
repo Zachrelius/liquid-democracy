@@ -3,6 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
 import { useAuth } from '../../AuthContext';
 import { usePublicConfig } from '../../PublicConfigContext';
+import { urlFor } from '../../utils/urls';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
@@ -276,14 +277,14 @@ export default function PolisDetail() {
         <p className="text-xs text-gray-400 mb-1">
           {isSubOrgRoute ? (
             <>
-              <Link to="/admin/sub-orgs" className="hover:underline">Sub-organizations</Link>
+              <Link to={urlFor(parentSlug, 'admin-sub-orgs')} className="hover:underline">Sub-organizations</Link>
               {' / '}
-              <Link to={`/admin/sub-orgs/${params.sub_slug}/settings`} className="hover:underline">{subOrgCtx.subOrg?.name}</Link>
+              <Link to={urlFor(parentSlug, 'admin-sub-org-settings', params.sub_slug)} className="hover:underline">{subOrgCtx.subOrg?.name}</Link>
               {' / '}
-              <Link to={`/admin/sub-orgs/${params.sub_slug}/polises`} className="hover:underline">Polises</Link>
+              <Link to={urlFor(parentSlug, 'admin-sub-org-polises', params.sub_slug)} className="hover:underline">Polises</Link>
             </>
           ) : (
-            <Link to="/admin/polises" className="hover:underline">Polises</Link>
+            <Link to={urlFor(parentSlug, 'admin-polises')} className="hover:underline">Polises</Link>
           )}
           {' / '}<span>{polis.title}</span>
         </p>
@@ -469,7 +470,7 @@ export default function PolisDetail() {
             {linkedProposals.map(p => (
               <button
                 key={p.id}
-                onClick={() => navigate(`/proposals/${p.id}`)}
+                onClick={() => navigate(urlFor(parentSlug, 'proposal-detail', p.id))}
                 className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors flex items-center justify-between"
               >
                 <span className="text-sm font-medium text-gray-800 truncate flex-1">{p.title}</span>

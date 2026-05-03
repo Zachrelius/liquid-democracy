@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
 import { usePublicConfig } from '../../PublicConfigContext';
+import { urlFor } from '../../utils/urls';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
 import useSubOrg from '../../useSubOrg';
@@ -105,7 +106,7 @@ export default function CreatePolis() {
         <p className="text-sm text-gray-600 mb-4">
           You need to be a moderator or admin of this org to create a Polis.
         </p>
-        <Link to="/admin/polises" className="text-sm text-[#2E75B6] hover:underline">Back to Polises</Link>
+        <Link to={parentSlug ? urlFor(parentSlug, 'admin-polises') : '/orgs'} className="text-sm text-[#2E75B6] hover:underline">Back to Polises</Link>
       </div>
     );
   }
@@ -124,9 +125,9 @@ export default function CreatePolis() {
         onGoToDetail={() => {
           const id = result.polis.id;
           if (isSubOrgRoute) {
-            navigate(`/admin/sub-orgs/${params.sub_slug}/polises/${id}`);
+            navigate(urlFor(parentSlug, 'admin-sub-org-polis-detail', params.sub_slug, id));
           } else {
-            navigate(`/admin/polises/${id}`);
+            navigate(urlFor(parentSlug, 'admin-polis-detail', id));
           }
         }}
       />
@@ -200,14 +201,14 @@ export default function CreatePolis() {
         <p className="text-xs text-gray-400 mb-1">
           {isSubOrgRoute ? (
             <>
-              <Link to="/admin/sub-orgs" className="hover:underline">Sub-organizations</Link>
+              <Link to={urlFor(parentSlug, 'admin-sub-orgs')} className="hover:underline">Sub-organizations</Link>
               {' / '}
-              <Link to={`/admin/sub-orgs/${params.sub_slug}/settings`} className="hover:underline">{subOrgCtx.subOrg?.name}</Link>
+              <Link to={urlFor(parentSlug, 'admin-sub-org-settings', params.sub_slug)} className="hover:underline">{subOrgCtx.subOrg?.name}</Link>
               {' / '}
-              <Link to={`/admin/sub-orgs/${params.sub_slug}/polises`} className="hover:underline">Polises</Link>
+              <Link to={urlFor(parentSlug, 'admin-sub-org-polises', params.sub_slug)} className="hover:underline">Polises</Link>
             </>
           ) : (
-            <Link to="/admin/polises" className="hover:underline">Polises</Link>
+            <Link to={urlFor(parentSlug, 'admin-polises')} className="hover:underline">Polises</Link>
           )}
           {' / '}<span>Create</span>
         </p>
@@ -348,7 +349,9 @@ export default function CreatePolis() {
             {submitting ? 'Creating…' : 'Create Polis'}
           </button>
           <Link
-            to={isSubOrgRoute ? `/admin/sub-orgs/${params.sub_slug}/polises` : '/admin/polises'}
+            to={isSubOrgRoute
+              ? urlFor(parentSlug, 'admin-sub-org-polises', params.sub_slug)
+              : urlFor(parentSlug, 'admin-polises')}
             className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50"
           >
             Cancel

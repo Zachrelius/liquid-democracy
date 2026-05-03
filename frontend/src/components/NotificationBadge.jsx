@@ -54,10 +54,19 @@ export default function NotificationBadge() {
         ]);
 
         const notifs = [];
+        // Phase 11 — these notifications need an org slug to land on the
+        // right page. Pick a default parent-org slug from the user's orgs
+        // (first one, or null if zero orgs); for the polis-specific notifs
+        // below we use the polis's org slug directly. For the follow/vote
+        // notifs we route to the first org's pages — these are coarse
+        // notifications and a user with multiple orgs can switch from there.
+        const parentOrgs = (orgs || []).filter(o => !o.parent_org_id);
+        const defaultOrgSlug = parentOrgs[0]?.slug || null;
+        const linkOr = (path) => defaultOrgSlug ? `/${defaultOrgSlug}${path}` : '/orgs';
         if (incoming.length > 0) {
           notifs.push({
             text: `${incoming.length} follow request${incoming.length > 1 ? 's' : ''} pending`,
-            link: '/delegations',
+            link: linkOr('/delegations'),
           });
         }
 
@@ -71,7 +80,7 @@ export default function NotificationBadge() {
         if (unresolved > 0) {
           notifs.push({
             text: `${unresolved} proposal${unresolved > 1 ? 's' : ''} need your vote`,
-            link: '/proposals',
+            link: linkOr('/proposals'),
           });
         }
 
@@ -81,7 +90,6 @@ export default function NotificationBadge() {
         // polises endpoint (the backend visibility filter handles which
         // ones the viewer sees). To avoid noise on first sign-in, treat a
         // missing last-seen as "now" (no historical bump).
-        const parentOrgs = (orgs || []).filter(o => !o.parent_org_id);
         const polisCalls = await Promise.allSettled(
           parentOrgs.slice(0, 10).map(o =>
             api.get(`/api/orgs/${o.slug}/polises`).then(list => ({ org: o, list }))
@@ -104,7 +112,8 @@ export default function NotificationBadge() {
           fresh.forEach(p => {
             notifs.push({
               text: `New deliberation: ${p.title}`,
-              link: `/orgs/${org.slug}/polises/${p.id}`,
+              // Phase 11 D3 — drop the /orgs/ prefix.
+              link: `/${org.slug}/polises/${p.id}`,
               // Used when the dropdown is opened to clear this notif.
               _polisOrgSlug: org.slug,
             });
