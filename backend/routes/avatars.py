@@ -2,8 +2,11 @@
 
 POST /api/users/me/avatar
     Multipart upload. Whitelisted content types: image/jpeg, image/png,
-    image/webp. Max 2 MB pre-resize. Pillow resizes to 128x128 and 48x48,
-    saved as JPEG quality 85 to ``backend/uploads/avatars/{user_id}/{128|48}.jpg``.
+    image/webp. Max 6 MB pre-resize (relaxed from 2 MB in Phase 9.9 W2 to
+    accommodate typical phone-photo sizes when client-side resize is
+    bypassed; real uploads from a modern browser arrive at ~30 KB after
+    canvas downsample). Pillow resizes to 128x128 and 48x48, saved as JPEG
+    quality 85 to ``backend/uploads/avatars/{user_id}/{128|48}.jpg``.
     Updates ``users.avatar_url`` to the canonical 128 path. Audited as
     ``user.avatar_uploaded`` with input size info. Replacing an existing
     avatar removes the old files first.
@@ -56,7 +59,7 @@ ALLOWED_CONTENT_TYPES: frozenset[str] = frozenset({
     "image/webp",
 })
 
-MAX_UPLOAD_BYTES: int = 2 * 1024 * 1024  # 2 MB pre-resize
+MAX_UPLOAD_BYTES: int = 6 * 1024 * 1024  # 6 MB pre-resize (Phase 9.9 W2)
 
 JPEG_QUALITY: int = 85
 SIZES: tuple[int, ...] = (128, 48)
@@ -87,6 +90,13 @@ async def upload_avatar(
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
     """Upload + resize the calling user's avatar.
+
+    Pre-resize body limit is 6 MB (Phase 9.9 W2). The frontend now does a
+    client-side canvas downsample before POSTing, so real-world bodies
+    arrive at ~30 KB; the 6 MB ceiling is defense-in-depth for the case
+    where the client-side resize is bypassed (very old browser, JS error,
+    direct API call) without forcing real users to compress phone photos
+    themselves.
 
     Returns ``{avatar_url, avatar_url_small}``. The 128 URL is what gets
     stored on ``User.avatar_url`` and surfaced in user-shape responses; the
