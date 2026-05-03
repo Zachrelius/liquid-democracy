@@ -18,6 +18,7 @@ import RCVResultsPanel from '../components/RCVResultsPanel';
 import RCVSankeyChart from '../components/RCVSankeyChart';
 import SustainedMajorityPanel from '../components/SustainedMajorityPanel';
 import LinkedPolisCard from '../components/LinkedPolisCard';
+import CommentThread from '../components/CommentThread';
 import { colorForOption } from '../components/voteFlowGraphUtils';
 import renderMarkdown from '../utils/renderMarkdown';
 
@@ -1273,6 +1274,13 @@ export default function ProposalDetail() {
           )}
         </div>
       </div>
+
+      {/* Phase 10 W3 — Comment thread.
+          Position per spec: LinkedDeliberations → VotePanel → CommentThread.
+          Renders below the entire 2-column grid so the conversation has the
+          full content width and isn't cramped into the sidebar. Collapsed by
+          default (chevron toggle); first expand triggers the GET. */}
+      <CommentThread proposalId={proposal.id} />
     </div>
   );
 }
