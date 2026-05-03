@@ -414,3 +414,52 @@ def test_endpoint_only_touches_current_user(client, test_db, tmp_avatars_dir):
     # A now also has its own avatar
     test_db.refresh(a)
     assert a.avatar_url == f"/uploads/avatars/{a.id}/128.jpg"
+
+
+def test_upload_emits_user_avatar_uploaded_audit(
+    client, test_db, tmp_avatars_dir,
+):
+    """Phase 10.2 audit: Class A, POST /api/users/me/avatar, audit polish.
+    Successful upload must emit ``user.avatar_uploaded`` keyed to the
+    uploader."""
+    user = _make_user(test_db, "audit_avatar_upload")
+    test_db.commit()
+
+    payload = _make_image_bytes("JPEG")
+    resp = client.post(
+        "/api/users/me/avatar",
+        files={"file": ("a.jpg", payload, "image/jpeg")},
+        headers=_auth(user),
+    )
+    assert resp.status_code == 200, resp.text
+
+    audit = test_db.query(models.AuditLog).filter(
+        models.AuditLog.action == "user.avatar_uploaded",
+        models.AuditLog.target_id == user.id,
+    ).first()
+    assert audit is not None
+    assert audit.actor_id == user.id
+
+
+def test_delete_idempotent_when_no_avatar_no_audit_emitted(
+    client, test_db, tmp_avatars_dir,
+):
+    """Phase 10.2 audit: Class A, DELETE /api/users/me/avatar, audit
+    polish. Calling DELETE on a user with no avatar returns 204 (idempotent)
+    AND does NOT emit a ``user.avatar_removed`` row — the route's
+    ``had_avatar`` check guards against log noise."""
+    user = _make_user(test_db, "audit_avatar_noop")
+    # No avatar_url set, no files written.
+    test_db.commit()
+
+    resp = client.delete(
+        "/api/users/me/avatar",
+        headers=_auth(user),
+    )
+    assert resp.status_code == 204, resp.text
+
+    audit_count = test_db.query(models.AuditLog).filter(
+        models.AuditLog.action == "user.avatar_removed",
+        models.AuditLog.target_id == user.id,
+    ).count()
+    assert audit_count == 0
