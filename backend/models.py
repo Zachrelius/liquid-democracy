@@ -730,6 +730,50 @@ class Polis(Base):
     creator: Mapped["User"] = relationship("User", foreign_keys=[created_by])
 
 
+class Comment(Base):
+    """Phase 10 — proposal comments.
+
+    Lightweight discussion thread attached to a proposal. Supports one level
+    of reply threading (``parent_comment_id`` non-null = reply, must point at
+    a top-level comment; enforced at the route layer). Soft-delete via
+    ``deleted_at``: when set, the row stays so reply children still render
+    correctly but the body is replaced with ``[deleted]`` in the UI.
+
+    Hard-delete cascade on ``proposal_id`` and ``author_id`` matches existing
+    patterns: a deleted user's comments go away; a deleted proposal's
+    comments go away. The CASCADE on ``parent_comment_id`` means hard-deleting
+    a top-level comment also hard-deletes its replies — separate from the
+    soft-delete affordance the *author* exercises via DELETE.
+    """
+    __tablename__ = "comments"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    proposal_id: Mapped[str] = mapped_column(
+        String, ForeignKey("proposals.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    author_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    parent_comment_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("comments.id", ondelete="CASCADE"),
+        nullable=True, index=True,
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, onupdate=_now, nullable=False,
+    )
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    proposal: Mapped["Proposal"] = relationship("Proposal", foreign_keys=[proposal_id])
+    author: Mapped["User"] = relationship("User", foreign_keys=[author_id])
+    parent: Mapped[Optional["Comment"]] = relationship(
+        "Comment", remote_side="Comment.id",
+    )
+
+
 class PolisXid(Base):
     """Per-user-per-org pseudonymous ID for pol.is participation.
 
