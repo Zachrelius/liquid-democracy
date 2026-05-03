@@ -10,6 +10,7 @@ import DelegationNetworkGraph from '../components/DelegationNetworkGraph';
 import UserLink from '../components/UserLink';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
+import VerifyEmailInlineNote from '../components/VerifyEmailInlineNote';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 
@@ -220,9 +221,9 @@ export default function Delegations() {
       <h1 className="text-2xl font-semibold text-[#1B3A5C]">My Delegations</h1>
 
       {unverified && (
-        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-          Verify your email to manage delegations.
-        </p>
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          <VerifyEmailInlineNote action="delegate" />
+        </div>
       )}
 
       {/* ── Section 1: Global default ── */}
