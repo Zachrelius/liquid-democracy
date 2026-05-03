@@ -411,7 +411,20 @@ def get_user_profile(
 
 
 @router.get("/{user_id}", response_model=schemas.UserOut)
-def get_user(user_id: str, db: Session = Depends(get_db)):
+def get_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 10.2 W-FIX-A BUG-1: gated behind ``Depends(get_current_user)``.
+
+    Previously this endpoint was unauthenticated and returned the full
+    ``UserOut`` schema (including ``email`` and ``email_verified``) for any
+    user ID a caller could guess. UUID enumeration is impractical but the
+    leak was a latent PII exposure surfaced by the Phase 10.2 test-depth
+    audit (see ``docs/test_depth_audit_2026-05.md`` Class B BUG row for
+    ``GET /api/users/{id}``).
+    """
     user = db.get(models.User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -419,23 +432,84 @@ def get_user(user_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{user_id}/delegation-tree", response_model=schemas.DelegationGraph)
-def delegation_tree(user_id: str, db: Session = Depends(get_db)):
+def delegation_tree(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 10.2 W-FIX-A BUG-2: gated behind ``Depends(get_current_user)``
+    and applies identity-redaction parity with ``/api/delegations/graph``.
+
+    Previously this endpoint was unauthenticated and returned the full
+    delegation neighborhood (display names, usernames, avatar URLs) for any
+    user ID a caller could guess, bypassing the per-relationship privacy
+    rules. Per the Phase 10.2 test-depth audit (Class B BUG row for
+    ``GET /api/users/{id}/delegation-tree``), the fix:
+      - requires authentication
+      - anonymizes nodes the viewer cannot see by the same rules used for
+        ``can_see_votes`` (self / follower / public delegate). Nodes that
+        fail the check are returned with a generic display name + ``None``
+        username and avatar so the graph topology remains useful for the
+        target's self-view but third-party identities don't leak.
+    """
     user = db.get(models.User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     node_ids, edges = graph_store.get_neighborhood(user_id)
 
+    # Pre-compute viewer's follow set and the set of public-delegate user
+    # IDs across all topics. Both sets are used inline in the per-node
+    # redaction check below.
+    viewer_is_target = current_user.id == user_id
+    viewer_follows: set[str] = {
+        rel.followed_id
+        for rel in db.query(models.FollowRelationship).filter(
+            models.FollowRelationship.follower_id == current_user.id,
+        ).all()
+    }
+    public_delegate_user_ids: set[str] = {
+        row.user_id
+        for row in db.query(models.DelegateProfile.user_id).filter(
+            models.DelegateProfile.is_active.is_(True),
+        ).all()
+    }
+
+    def _viewer_may_see(uid: str) -> bool:
+        # When the viewer IS the target, every node in their own
+        # neighborhood is by definition a relationship they're already
+        # party to (delegations they made or that were made to them) —
+        # no redaction needed for the self-view path.
+        if viewer_is_target:
+            return True
+        if uid == current_user.id:
+            return True
+        if uid in public_delegate_user_ids:
+            return True
+        if uid in viewer_follows:
+            return True
+        return False
+
     nodes = []
     for uid in node_ids:
         u = db.get(models.User, uid)
-        if u:
+        if not u:
+            continue
+        if _viewer_may_see(uid):
             nodes.append(schemas.GraphNode(
                 id=uid,
                 display_name=u.display_name,
                 username=u.username,
                 weight=graph_store.compute_voting_weight(uid),
                 avatar_url=u.avatar_url,
+            ))
+        else:
+            nodes.append(schemas.GraphNode(
+                id=uid,
+                display_name="Anonymous user",
+                username="anonymous",
+                weight=graph_store.compute_voting_weight(uid),
+                avatar_url=None,
             ))
 
     graph_edges = []
