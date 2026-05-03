@@ -843,3 +843,53 @@ curl https://www.liquiddemocracy.us/offline.html | head
 ### Updating the placeholder icons
 
 The `frontend/scripts/generate_pwa_icons.py` Pillow script regenerates the three icons on demand. Run from repo root: `backend/.venv/Scripts/python frontend/scripts/generate_pwa_icons.py`. When a real platform brand mark exists, replace the PIL-generated PNGs in `frontend/public/icons/` and remove the script (or keep it for the maskable-padding math).
+
+---
+
+## Smoke checks (Phase 10.2)
+
+The `tests/smoke/` directory at the repo root contains five lightweight HTTP checks that exercise infrastructure boundaries pytest cannot reach (nginx, the deployed service worker, the manifest MIME mapping). They were added in Phase 10.2 (W-FIX-C) after an audit found that every Phase 9.8 / 9.9 / 10 nginx-and-PWA regression had shipped because no automated test exercised the proxy layer.
+
+The checks are intentionally minimal: one fixture (`target_url`), no shared setup, no mocking — each test is just `httpx.get(...)` / `httpx.post(...)` plus assertions. They use `httpx` (already in `backend/.venv`) so no new dependency is required.
+
+### Running against prod
+
+```bash
+backend/.venv/Scripts/python -m pytest tests/smoke/ -v --target=https://www.liquiddemocracy.us
+```
+
+Expected: 4 passed, 1 failed. The failing one (`test_manifest_mime_type`) is documented below.
+
+### Running against a local docker-compose stack
+
+```bash
+backend/.venv/Scripts/python -m pytest tests/smoke/ -v --target=http://localhost:8000
+```
+
+(Replace the URL with whatever port the local stack exposes — the default is whatever `--target` is set to without a trailing slash.)
+
+### What each check covers
+
+| Test | Boundary | Catches |
+|---|---|---|
+| `test_proxy.py::test_uploads_proxies_to_backend` | nginx `/uploads/` proxy | Phase 9.8 missing-`^~`-modifier regression. Asserts FastAPI JSON 404, not nginx HTML 404 or SPA HTML 200. |
+| `test_proxy.py::test_body_size_limit_passes_through_to_backend` | nginx `client_max_body_size` | Phase 9.9 1-MB-default regression. POSTs 5 MB with no auth → must be FastAPI 401, not nginx 413. |
+| `test_proxy.py::test_manifest_mime_type` | nginx MIME map for `.webmanifest` | Phase 10 closeout open issue. Asserts `Content-Type: application/manifest+json` (currently fails — see below). |
+| `test_proxy.py::test_register_sw_js_served` | vite-plugin-pwa auto-injection | Codifies Phase 10 PWA install affordance: `/registerSW.js` must serve as JS. |
+| `test_sw.py::test_navigate_fallback_denylist_includes_api_and_uploads` | Workbox `navigateFallbackDenylist` | A future live-data path being silently SW-cached because someone added it without updating the denylist in `frontend/vite.config.js`. String-search the deployed `sw.js` for `/^\/api/` and `/^\/uploads/`. |
+
+### Known-failing check: `test_manifest_mime_type`
+
+The Phase 10 closeout flagged that `manifest.webmanifest` is served with `Content-Type: application/octet-stream` instead of `application/manifest+json` because nginx has no MIME mapping for the `.webmanifest` extension. This degrades Lighthouse PWA scoring and triggers a Chrome DevTools warning on the install affordance.
+
+The fix is one line in `frontend/nginx.conf`: add a `types { application/manifest+json webmanifest; }` block (or an entry in the existing `types` block). Once that ships, this smoke check should pass — and a future regression that loses the mapping would re-fail the check immediately.
+
+Until the fix ships, the failing check is the desired-state codification — running the smoke suite is expected to produce 4 passed, 1 failed, and that one failure is the open issue, not a flake.
+
+### Timing
+
+Total wall-clock runtime against prod: ~1.8 seconds (5 HTTP round trips, no fixtures, no setup). Well under the ~10-second threshold spec'd for the W-FIX-D deploy-poll auto-wiring decision. Safe to wire into `backend/scripts/poll_deploy.py` as a post-deploy gate if desired.
+
+### Adding a new smoke check
+
+Add a new test function to either `test_proxy.py` (nginx / proxy layer) or `test_sw.py` (service worker / PWA), or create a new `test_<boundary>.py` file. Each test takes the `target_url` fixture, hits the URL with `httpx`, and asserts on the response. Keep them independent — no shared state, no fixtures beyond `target_url`.
