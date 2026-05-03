@@ -6,14 +6,14 @@ Called from:
   - The phase_12_role_permissions migration for every existing org during
     the upgrade.
 
-The DEFAULT_GRANTS / PRESET_ROLES tables defined below are duplicated by
-intent: this module needs them at import time during the migration where
-``backend/permission_registry.py`` (the canonical home, written by the
-parallel Cluster H workstream) may not be importable from inside the
-Alembic env. **Once H lands**, this module's ``DEFAULT_GRANTS`` and
-``PRESET_ROLES`` should be removed and replaced with a re-export from
-``permission_registry``. See the "DEFAULT_GRANTS coordination" note in
-the closeout report.
+DEFAULT_GRANTS coordination note: the canonical home for the grant table
+is ``backend/permission_registry.py`` (Cluster H). This module re-exports
+it via ``from permission_registry import DEFAULT_GRANTS`` so the seed
+helper and the registry stay in sync. The Alembic migration intentionally
+duplicates the table inline because the Alembic env's import path is not
+guaranteed to include the application's ``permission_registry`` module
+during a production migration run; that duplication is the only place
+DEFAULT_GRANTS is restated outside this re-export.
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from typing import Dict
 from sqlalchemy.orm import Session
 
 import models
+from permission_registry import DEFAULT_GRANTS as _REGISTRY_DEFAULT_GRANTS
 
 
 # ---------------------------------------------------------------------------
@@ -37,66 +38,12 @@ PRESET_ROLES: list[tuple[str, str, int]] = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Default permission grants per preset role
-# ---------------------------------------------------------------------------
-# Source of truth: phase12_configurable_role_permissions_stage1_spec.md
-# §"Permission registry" (lines 99-145). 23 permission keys total.
-# Steward and Admin currently get all 23; Moderator gets the 8 keys
-# explicitly listing "moderator" in the default column; Member gets none.
-
-_ALL_PERMISSIONS: tuple[str, ...] = (
-    # Proposals
-    "proposal.create",
-    "proposal.delete",
-    "proposal.advance_phase",
-    "proposal.resolve_tie",
-    # Topics
-    "topic.create",
-    "topic.edit",
-    "topic.delete",
-    # Members
-    "member.approve_join",
-    "member.remove",
-    "member.suspend",
-    "member.change_role",
-    "member.invite",
-    # Sub-organizations
-    "sub_org.create",
-    "sub_org.delete",
-    "sub_org.edit_settings",
-    # Delegate applications
-    "delegate_application.approve",
-    # Polis
-    "polis.create",
-    "polis.manage",
-    # Comments
-    "comment.moderate",
-    # Organization
-    "org.edit_settings",
-    "org.edit_branding",
-    # Audit & analytics
-    "audit.view_org",
-    "analytics.view",
-)
-
-# Moderator-tier grants per spec (8 keys; the dispatch's "10" is stale).
-_MODERATOR_GRANTS: frozenset[str] = frozenset({
-    "proposal.create",
-    "proposal.advance_phase",
-    "topic.create",
-    "topic.edit",
-    "member.approve_join",
-    "member.invite",
-    "polis.create",
-    "comment.moderate",
-})
-
+# Re-export the registry's DEFAULT_GRANTS keyed by Role.system_key so the
+# rest of this module (and the test suite asserting on it) can use one
+# canonical name. Per-set entries are coerced to frozenset for hashability.
 DEFAULT_GRANTS: Dict[str, frozenset[str]] = {
-    "steward": frozenset(_ALL_PERMISSIONS),
-    "admin": frozenset(_ALL_PERMISSIONS),
-    "moderator": _MODERATOR_GRANTS,
-    "member": frozenset(),
+    system_key: frozenset(grant_set)
+    for system_key, grant_set in _REGISTRY_DEFAULT_GRANTS.items()
 }
 
 
