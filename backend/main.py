@@ -18,7 +18,7 @@ from database import create_tables, get_db, SessionLocal
 from delegation_engine import graph_store
 from settings import settings
 from websocket import manager as ws_manager
-from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars
+from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars, comments
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +189,8 @@ app.include_router(sub_organizations.router)
 app.include_router(polises.router)
 app.include_router(invitations.router)
 app.include_router(avatars.router)
+app.include_router(comments.proposal_router)
+app.include_router(comments.comment_router)
 
 
 # ---------------------------------------------------------------------------
