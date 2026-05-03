@@ -398,6 +398,10 @@ def test_08_cast_ranked_ballot_partial(client, test_db):
     oids = get_option_ids(test_db, p)
 
     voter = _create_user(test_db, "voter")
+    # Phase 10.1: voter must be an org member to cast a ballot. Pre-fix the
+    # cast endpoint accepted votes from non-members; the eligibility gate
+    # closes that leak.
+    _create_membership(test_db, org, voter, role="member")
     test_db.commit()
 
     resp = client.post(
@@ -415,6 +419,7 @@ def test_09_cast_ranked_ballot_empty_accepted(client, test_db):
     """Empty ranking [] is accepted (abstain)."""
     org, admin, _, p = _setup_voting_rcv(test_db)
     voter = _create_user(test_db, "voter")
+    _create_membership(test_db, org, voter, role="member")  # Phase 10.1 eligibility
     test_db.commit()
 
     resp = client.post(
@@ -446,6 +451,7 @@ def test_11_cast_ranked_ballot_unknown_option_rejected(client, test_db):
     org, admin, _, p = _setup_voting_rcv(test_db)
     oids = get_option_ids(test_db, p)
     voter = _create_user(test_db, "voter")
+    _create_membership(test_db, org, voter, role="member")  # Phase 10.1 eligibility
     test_db.commit()
 
     fake_oid = "00000000-0000-0000-0000-000000000000"
@@ -473,6 +479,7 @@ def test_12_cast_ranked_ballot_too_long_rejected(client, test_db):
     extra_oid = get_option_ids(test_db, p2)[0]
 
     voter = _create_user(test_db, "voter")
+    _create_membership(test_db, org, voter, role="member")  # Phase 10.1 eligibility
     test_db.commit()
 
     resp = client.post(
@@ -489,6 +496,7 @@ def test_13_cast_ranked_ballot_order_preserved(client, test_db):
     org, admin, _, p = _setup_voting_rcv(test_db)
     oids = get_option_ids(test_db, p)
     voter = _create_user(test_db, "voter")
+    _create_membership(test_db, org, voter, role="member")  # Phase 10.1 eligibility
     test_db.commit()
 
     submitted = [oids[3], oids[1], oids[2], oids[0]]
@@ -952,6 +960,11 @@ def _setup_passed_tied_rcv(db):
     # Create 4 voters with a 2-2 tie between A and B
     oids = get_option_ids(db, p)
     voters = [_create_user(db, f"v{i}") for i in range(4)]
+    # Phase 10.1: voters must be org members for compute_tally to count their
+    # ballots. The pre-fix tally iterated all users in the DB; the scope-aware
+    # path only counts active OrgMembership rows.
+    for v in voters:
+        _create_membership(db, org, v, role="member")
     for i, v in enumerate(voters):
         cast_ranked_vote(db, v, p, [oids[0] if i < 2 else oids[1]])
     db.commit()
@@ -1090,6 +1103,9 @@ def test_39_results_endpoint_returns_rcv_payload(client, test_db):
     org, admin, _, p = _setup_voting_rcv(test_db)
     oids = get_option_ids(test_db, p)
     voters = [_create_user(test_db, f"v{i}") for i in range(3)]
+    # Phase 10.1: voters must be org members to cast ballots (eligibility gate).
+    for v in voters:
+        _create_membership(test_db, org, v, role="member")
     test_db.commit()
 
     for v, ranking in zip(voters, [
@@ -1120,6 +1136,7 @@ def test_40_voting_method_rejects_wrong_payload(client, test_db):
     org, admin, _, p = _setup_voting_rcv(test_db)
     oids = get_option_ids(test_db, p)
     voter = _create_user(test_db, "voter")
+    _create_membership(test_db, org, voter, role="member")  # Phase 10.1 eligibility
     test_db.commit()
 
     resp = client.post(
@@ -1188,6 +1205,7 @@ def test_43_my_vote_status_for_rcv(client, test_db):
     org, admin, _, p = _setup_voting_rcv(test_db)
     oids = get_option_ids(test_db, p)
     voter = _create_user(test_db, "voter")
+    _create_membership(test_db, org, voter, role="member")  # Phase 10.1 eligibility
     test_db.commit()
 
     client.post(

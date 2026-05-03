@@ -9,7 +9,13 @@ import models
 import schemas
 from audit_utils import log_audit_event
 from database import get_db
-from delegation_engine import engine as delegation_engine, resolve_vote_pure, ApprovalTally, RCVTally
+from delegation_engine import (
+    engine as delegation_engine,
+    resolve_vote_pure,
+    ApprovalTally,
+    RCVTally,
+    eligible_voter_ids_for_proposal,
+)
 from org_config import get_org_config
 from permissions import can_see_votes
 from polis_engine import eligible_viewers_for_polis
@@ -835,9 +841,14 @@ def get_vote_graph(
 
     voting_method = proposal.voting_method or "binary"
 
-    # Build context for vote resolution
-    ctx = delegation_engine._build_context(proposal, db)
-    all_users = db.query(models.User).all()
+    # Build context for vote resolution.
+    # Phase 10.1 (cross-scope vote leak fix): scope the user set to the
+    # proposal's eligible voters. Pre-fix, all_users iterated every user in
+    # the platform, which leaked cross-org and cross-sub-org votes into the
+    # graph and inflated total_eligible.
+    eligible_ids = eligible_voter_ids_for_proposal(db, proposal)
+    ctx = delegation_engine._build_context(proposal, db, eligible_ids=eligible_ids)
+    all_users = db.query(models.User).filter(models.User.id.in_(eligible_ids)).all()
     user_map = {u.id: u for u in all_users}
     proposal_topic_ids = [pt.topic_id for pt in proposal.proposal_topics]
 
@@ -1126,7 +1137,7 @@ def get_vote_graph(
         abstain=legacy["abstain"],
         not_cast=legacy["not_cast"],
         voting_method=voting_method,
-        total_eligible=len(all_users),
+        total_eligible=len(eligible_ids),
         total_cast=total_cast,
         total_abstain=total_abstain,
         binary=binary_block,
@@ -1138,7 +1149,7 @@ def get_vote_graph(
         proposal_id=proposal.id,
         proposal_title=proposal.title,
         voting_method=voting_method,
-        total_eligible=len(all_users),
+        total_eligible=len(eligible_ids),
         nodes=nodes,
         edges=edges,
         options=options_out,
