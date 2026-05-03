@@ -2726,3 +2726,73 @@ Idempotent. Reports per-row + final summary. Z's wife will appear in "Rescued" o
 
 The pattern (Phase 4c-era endpoints with API tests but no user-journey coverage) is now logged in the roadmap as a candidate for a dedicated test-depth audit mini-pass. Worth doing before the next pilot expansion.
 
+---
+
+## Phase 9.8 — Tech Hygiene Bundle — 2026-05-02
+
+**Single-session pass.** 8 commits on `phase-9-8/tech-hygiene` no-ff merged to master at `5c1ec64` + nginx hot-fix `61f74b4` directly on master. **LIVE on prod**, bundle `index-bC8vS3BN.js`. Three independent improvement clusters bundled because each is small, design-decision-free, and parallelizable: (A) profile pictures, (B) permission alignment trio, (C) sustained-majority floor activation logic.
+
+### What shipped
+
+**Cluster A — Profile pictures:**
+- **A1 (backend):** new `users.avatar_url` nullable column + Alembic migration `a1c4e9d2f8b3` (idempotent introspect-and-skip), new `routes/avatars.py` with `POST /api/users/me/avatar` (multipart, content-type whitelist `image/jpeg|png|webp`, max 2 MB, Pillow resize to 128×128 + 48×48 both JPEG q=85) and `DELETE` (204 + on-disk cleanup). Audited as `user.avatar_uploaded` / `user.avatar_removed`. `Pillow==10.4.0` added. `StaticFiles` mount at `/uploads/...` in `main.py`. `avatar_url: Optional[str]` exposed on **11 user-shaped Pydantic schemas** (UserOut, RegisterResponse, UserSearchResult/WithContext, GraphNode, VoteFlowNode, PersonalNetworkCenter/Node, OrgMemberOut, SubOrgMemberOut, DelegateApplicationOut). 8 new tests (avatars + migration cycle).
+- **A2 (frontend):** new `components/Avatar.jsx` (`sm`/`md`/`lg` = 24/48/96 px) with deterministic-color initials fallback (`hue = (hash(id) * 137) % 360; bg = hsl(hue, 65%, 55%)`), `onError` defensive fallback, helper `resolveAvatarUrl` for the root-relative `/uploads/...` paths. **Settings.jsx Profile Picture section** above Profile Information with Upload/Replace/Remove buttons. Integrated into **7 sites**: Nav (sm), VoteFlowGraph + OptionAttractorVoteFlowGraph (SVG `<pattern>` per node, fill swap on existing main circle — minimal-touch, no DOM restructure), DelegationNetworkGraph (same pattern + center-"You" text suppression when avatar present), UserProfile header (lg), Members + SubOrgMembers admin pages (sm), DelegateModal search results (sm), FollowRequests cards (sm).
+- **Tricky bit:** the frontend agent's nginx config block had `location /uploads/` without `^~`, which let the regex `~* \.(jpg|...)$` cache rule match first and serve the .jpg from the SPA build directory (frontend nginx 404). Hot-fix `61f74b4` added the `^~` prefix-precedence modifier directly on master after first deploy. **Declaration order does not determine nginx location precedence — only `=`, `^~`, regex, and prefix selectivity do.** Documented in the comment for future maintainers.
+
+**Cluster B — Permission alignment trio:**
+- **B1 (Members admin moderator visibility):** root cause was NOT a frontend filter — `Members.jsx` was unconditionally calling `/api/orgs/{slug}/invitations` which returns 403 for non-admins; the error was swallowed silently and any concurrent transient `/members` failure left the page rendered with `members=[]`. Fixed by gating the `/invitations` call behind `isAdmin`, surfacing members-fetch failures via `ErrorMessage` with retry, plus `isAdmin` gating audit on Reactivate + Deny-join-request buttons (both backend `require_org_admin`).
+- **B2 (unverified vote/delegate buttons):** new `components/VerifyEmailInlineNote.jsx` (small inline note next to disabled controls, calls `/api/auth/resend-verification` + `AuthContext.refreshUser()` on success, "Verification email sent." confirmation). Replaced static "Verify your email to vote/delegate." text in ProposalDetail (BinaryBallot + ApprovalBallot panels), Delegations (page-level banner), and DelegateModal. Backend 403 stays as defense-in-depth.
+- **B3:** documentation included in this entry + the standard CLAUDE.md closeout pattern.
+
+**Cluster C — Sustained-majority floor activation logic:**
+- **C1 (backend):** closes the deferred footgun where a single early no-vote (votes_cast=1, support_fraction=0.0 < floor=0.45) immediately fired the configured failure mode, before anyone could vote yes. New pure helper `support_ever_established(snapshots, config) -> bool` returns True iff any snapshot reached `support_fraction >= config.threshold`. `is_above_floor` takes a new `support_was_established: bool` argument; when False, returns True unconditionally. `evaluate_binary` and `should_trigger_failure` updated to compute establishment from the snapshot list and pass it down. **20 net new tests** (TestSupportEverEstablished helper coverage, TestFloorActivation gate covering the seven scenarios from the spec plus a long-stretch edge case, worker-level regression for the canonical bug, and parameterized failure-modes-after-establishment). **Existing-test review:** every test that exercised the bug (~10 tests across `test_sustained_majority.py` + `test_sustained_majority_worker.py`) was updated to seed an establishing snapshot first via the new `_seed_establishing_snapshot` helper, preserving original intent without relying on the buggy behavior. Tests that were testing legitimate intended behavior (multi-option dispatch, empty-list invariant, audit-log filter, multi-instance guard) kept unchanged with signature-only updates where needed.
+- **C2 (frontend):** OrgSettings.jsx — dropped "(advanced)" suffix from header; replaced helper text with spec-mandated copy ("Off by default. Enable when your organization makes binding decisions that benefit from durable-consensus protection — proposals must maintain support throughout the voting window, not just at close."). Collapsed-by-default behavior + 5 inner controls unchanged.
+
+**Backend tests: 517 → 537 (+20)** (from a 509 baseline before A1's +8 + C1's +20-ish, net +20 because the existing-test review consolidated some). Full backend suite green pre-merge. PG smoke PASS for both `fresh` and `upgrade` modes via `pg_smoke.py --mode both --prior-revision 373e1f066cc1`.
+
+**Bundle: 1,245.90 → 1,252.51 kB JS / 334.25 → 335.86 kB gzipped (+1.61 kB).** Well under the spec's 10–15 kB budget — Avatar component is small and the SVG `<pattern>` integration approach added almost no per-file weight.
+
+### Production verification
+
+| Check | Result | Evidence |
+|---|---|---|
+| Avatar upload end-to-end | **PASS browser-verified** | Logged in as alice, generated 200×200 PNG via canvas, POSTed to `/api/users/me/avatar` → 200 with `{avatar_url: /uploads/avatars/{uuid}/128.jpg, avatar_url_small: .../48.jpg}`. `/api/auth/me` returned the new `avatar_url`. Re-fetched `/uploads/.../128.jpg` → 200 + `image/jpeg` + 1593 bytes (Pillow correctly resized + converted PNG → JPEG). |
+| Avatar in nav after upload | **PASS browser-verified** | Page reload showed `<img src=".../48.jpg" alt="Alice Voter" width=48 height=48>` in nav (Avatar component picked the small URL for sm size). |
+| Avatar in delegation graph | **PASS browser-verified** | DelegationNetworkGraph SVG registered `<pattern id="net-avatar-{uuid}">` with `<image href="/uploads/.../128.jpg">` (visual swap inside the existing center-"You" circle). |
+| Avatar delete | **PASS browser-verified** | DELETE 204, `/api/auth/me.avatar_url` flipped to null, `/uploads/.../128.jpg` 404'd. Prod state clean post-test. |
+| `/uploads/` proxies to backend (after nginx hot-fix) | **PASS** | `curl /uploads/avatars/{nonexistent}/128.jpg` → `404 application/json` (FastAPI shape) instead of pre-fix `404 text/html` (frontend nginx shape). |
+| Moderator member list visibility | PASS-by-source | Root cause was the silent 403 from `/invitations` for non-admins, fixed in `Members.jsx::load()`. Backend route already permits moderators. |
+| Unverified buttons disabled + resend note | PASS-by-source | `VerifyEmailInlineNote` imported in 3 components, replacing static text. Disabled state (`disabled={unverified \|\| casting}`) was already wired pre-9.8. |
+| Sustained-majority floor activation (single early no-vote does NOT fail proposal) | PASS via test suite | `test_single_no_vote_without_establishment_does_not_fail` worker-level regression test in `test_sustained_majority_worker.py` exercises the canonical bug scenario; passes. Plus 12 supporting unit tests in `TestFloorActivation`. |
+
+### Phase 9.8 commit list
+
+- `acbddfd` A1 backend avatar storage + endpoints + 8 tests
+- `38cb791` A2 Avatar component + Settings + 7 integration sites
+- `17581ad` B1 Members moderator visibility (root cause: silent 403 on /invitations)
+- `0621901` B2 vote/delegate inline-note + resend
+- `36f8016` C2 OrgSettings sustained-majority wording
+- `0e4100b` C1 floor activates only after support established (+20 tests)
+- `0a484bf` A3+C3 docs (DEPLOYMENT avatars + roadmap entries)
+- `6c8690f` A3 DEPLOYMENT avatars section (recovered from stash after C1 agent's mid-task `git stash`)
+- `5c1ec64` Merge to master
+- `61f74b4` nginx `^~ /uploads/` hot-fix (master directly; bug was prefix-vs-regex precedence)
+- closeout commit follows
+
+### Process notes — two agent flakes worth remembering
+
+1. **Backend agent for C1 lost their work mid-session** because their bash got sandbox-restricted and they hallucinated a "system reverted my work" framing. Lead verified the actual file state (no commits, file unchanged from pre-9.8), then dispatched a fresh C1 agent who completed the work cleanly. Lesson: when an agent reports work-loss, verify against `git log` and `git diff` before accepting their framing.
+2. **Frontend agent's nginx ordering comment was wrong** — they correctly placed `location /uploads/` BEFORE the regex `location ~* \.(jpg|...)$` block, but added a comment claiming declaration order matters. It doesn't — only the `^~` modifier promotes a prefix location to win against a competing regex. The bug surfaced via `curl` only after deploy (the test suite couldn't catch it because tests don't exercise nginx), so it's a candidate for a tiny prod-smoke test that verifies `/uploads/{nonexistent}` returns FastAPI's JSON 404 rather than nginx's HTML 404.
+
+### New tech debt
+
+1. **Avatar storage on Railway-ephemeral filesystem** (logged in roadmap Known Issues). Files persist within a deploy but are wiped on container restart. Acceptable for friend-pilot scale (5–15 users); migrate to Railway Volume or object storage (S3/R2) before broader pilot. The DB column already stores a path string, so the migration only touches the upload/serve layer.
+2. **`sustained_majority_service.build_status` UI banner inconsistency** — the `floor_breached` flag the UI consumes for the banner is computed independently of `support_ever_established`, so the banner could claim "floor breached" pre-establishment even though the worker won't fire. One-line fix using the new helper; deferred to a follow-up because C1's spec scope was the worker logic.
+3. **No prod smoke test for nginx `/uploads/` proxy** — the missing `^~` modifier deployed cleanly because no test exercises nginx routing. A tiny `tests/smoke/` script that hits known prod URLs after deploy and asserts content-type would catch this class of issue. Candidate for the test-depth audit mini-pass already logged in 9.7.
+
+### Pass-summary
+
+**Phase 9.8 shipped clean in a single session** — 8 commits on the branch + 1 hot-fix + closeout. Three independent clusters all landed. **Avatar upload works end-to-end on prod** (browser-verified, including delete cleanup). **Moderator + unverified-user UX gaps resolved** (PASS-by-source). **Sustained-majority footgun closed** (20 new tests + existing-test review covering 10 bug-encoding tests). Tests 517 → 537 (+20). Bundle gzip +1.61 kB. PG smoke PASS both modes. One nginx ordering bug caught + hot-fixed within the same session.
+
+The friend pilot now has profile pictures, the next pilot expansion has correct moderator UX + clearer unverified UX, and a deferred footgun is closed. No design decisions left for Z; he reviews the closeout when it lands.
+
