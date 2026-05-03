@@ -213,17 +213,49 @@ class MultiOptionSnapshotPoint:
 # Pure evaluation primitives
 # ---------------------------------------------------------------------------
 
-def is_above_floor(
-    snapshot: BinarySnapshotPoint,
+def support_ever_established(
+    snapshots: Iterable[BinarySnapshotPoint],
     config: SustainedMajorityConfig,
 ) -> bool:
     """
-    True iff the snapshot's support level is at or above the configured floor.
+    True iff any snapshot in the window has reached `support_fraction >=
+    config.threshold`.
 
-    Edge case: zero ballots cast counts as ABOVE the floor — the floor is a
-    drop-detector, not a participation gate. Quorum is enforced separately at
-    proposal-close time.
+    The floor is a drop-detector for support that has been established at
+    least once. Until the proposal's support has crossed the threshold for
+    the first time, the floor cannot meaningfully be "breached" — no
+    consensus has yet been formed to lose. This helper lets callers gate
+    floor checks on whether such a consensus has ever existed in the window.
+
+    Pure function — operates on the snapshot list alone, no DB / I/O.
     """
+    for snap in snapshots:
+        if snap.votes_cast == 0:
+            continue
+        if snap.support_fraction >= config.threshold:
+            return True
+    return False
+
+
+def is_above_floor(
+    snapshot: BinarySnapshotPoint,
+    config: SustainedMajorityConfig,
+    support_was_established: bool,
+) -> bool:
+    """
+    True iff the snapshot's support level is at or above the configured floor,
+    given whether support has ever been established in the window.
+
+    The floor only activates AFTER support has crossed `threshold` at least
+    once during the window. Until that crossing, no breach is possible — the
+    floor is a drop-detector, not an early-window participation gate. So when
+    `support_was_established` is False this returns True unconditionally.
+
+    Edge case: zero ballots cast counts as ABOVE the floor — same rationale.
+    Quorum is enforced separately at proposal-close time.
+    """
+    if not support_was_established:
+        return True
     if snapshot.votes_cast == 0:
         return True
     return snapshot.support_fraction >= config.floor
@@ -284,11 +316,22 @@ class FailureDecision:
 
 
 def evaluate_binary(
-    latest: BinarySnapshotPoint,
+    snapshots: list,
     config: SustainedMajorityConfig,
 ) -> FailureDecision:
-    """Evaluate one binary snapshot against the floor. Pure."""
-    if is_above_floor(latest, config):
+    """Evaluate the latest binary snapshot against the floor. Pure.
+
+    Computes `support_was_established` from the snapshot history so the floor
+    only fires after support has crossed `threshold` at least once. Otherwise
+    a single early no-vote would breach immediately, before the proposal has
+    had any chance to gather support — see `support_ever_established` for the
+    rationale.
+    """
+    if not snapshots:
+        return FailureDecision(should_fire=False)
+    latest = snapshots[-1]
+    established = support_ever_established(snapshots, config)
+    if is_above_floor(latest, config, established):
         return FailureDecision(should_fire=False)
     return FailureDecision(
         should_fire=True,
@@ -370,7 +413,8 @@ def should_trigger_failure(
     latest = snapshots[-1]
 
     if voting_method == "binary":
-        decision = evaluate_binary(latest, config)
+        # evaluate_binary computes support_was_established from the full list.
+        decision = evaluate_binary(snapshots, config)
     else:
         previous = snapshots[-2] if len(snapshots) >= 2 else None
         decision = evaluate_multi_option(
