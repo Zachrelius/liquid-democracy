@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import UserLink from './UserLink';
+import Avatar from './Avatar';
 
 function timeAgo(dateStr) {
   if (!dateStr) return '';
@@ -34,10 +35,11 @@ function IncomingCard({ req, onResponded }) {
 
   return (
     <div className="border border-gray-200 rounded-xl p-4 space-y-2">
-      <div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <Avatar user={req.requester} size="sm" />
         <UserLink user={req.requester} className="text-sm" />
-        <span className="ml-1.5 text-xs text-gray-400">@{req.requester.username}</span>
-        <span className="ml-2 text-xs text-gray-400">{timeAgo(req.requested_at)}</span>
+        <span className="text-xs text-gray-400">@{req.requester.username}</span>
+        <span className="text-xs text-gray-400">{timeAgo(req.requested_at)}</span>
       </div>
       <p className="text-xs text-gray-500">
         Wants to follow you
@@ -97,9 +99,10 @@ function OutgoingCard({ req, intent, onCancelled }) {
   return (
     <div className="border border-gray-200 rounded-xl p-4 space-y-1">
       <div className="flex items-center justify-between">
-        <div>
+        <div className="flex items-center gap-2">
+          <Avatar user={req.target} size="sm" />
           <UserLink user={req.target} className="text-sm" />
-          <span className="ml-1.5 text-xs text-gray-400">@{req.target.username}</span>
+          <span className="text-xs text-gray-400">@{req.target.username}</span>
         </div>
         <span className={`text-xs px-2 py-0.5 rounded ${
           req.status === 'pending' ? 'bg-amber-100 text-amber-700'

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
+import Avatar from './Avatar';
 import NotificationBadge from './NotificationBadge';
 
 /**
@@ -279,9 +280,10 @@ export default function Nav() {
             <div ref={menuRef} className="relative hidden md:block">
               <button
                 onClick={() => setMenuOpen(!menuOpen)}
-                className="text-blue-200 hover:text-white text-sm flex items-center gap-1 transition-colors"
+                className="text-blue-200 hover:text-white text-sm flex items-center gap-2 transition-colors"
               >
-                {user.display_name}
+                <Avatar user={user} size="sm" />
+                <span>{user.display_name}</span>
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
@@ -411,8 +413,9 @@ export default function Nav() {
           )}
           {user && (
             <>
-              <div className="pt-2 mt-2 border-t border-blue-900">
-                <p className="text-xs text-blue-300 mb-1">{user.display_name}</p>
+              <div className="pt-2 mt-2 border-t border-blue-900 flex items-center gap-2">
+                <Avatar user={user} size="sm" />
+                <p className="text-xs text-blue-300">{user.display_name}</p>
               </div>
               <Link
                 to={`/users/${user.id}`}

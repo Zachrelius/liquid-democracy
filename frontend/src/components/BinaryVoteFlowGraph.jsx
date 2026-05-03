@@ -114,6 +114,30 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
         .attr('opacity', 0.7);
     });
 
+    // Phase 9.8 W A2 — register an SVG pattern per node that has an avatar.
+    // The pattern fills a circle of any size via objectBoundingBox units, so
+    // the existing main circle just sets fill="url(#avatar-...)" instead of
+    // "white" when an avatar is present. Initials fallback (the text label
+    // below the circle) stays unchanged for non-avatar users.
+    nodes.forEach((n) => {
+      if (n.avatar_url && n.type !== 'non_voter' && !n.isAnonymous) {
+        const r = nodeRadius(n);
+        defs
+          .append('pattern')
+          .attr('id', `avatar-${n.id}`)
+          .attr('patternUnits', 'userSpaceOnUse')
+          .attr('width', r * 2)
+          .attr('height', r * 2)
+          .attr('x', -r)
+          .attr('y', -r)
+          .append('image')
+          .attr('href', n.avatar_url)
+          .attr('width', r * 2)
+          .attr('height', r * 2)
+          .attr('preserveAspectRatio', 'xMidYMid slice');
+      }
+    });
+
     const BIG = 10000;
     const centerX = width / 2;
     const splitGap = 2;
@@ -231,6 +255,9 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
       .attr('fill', (d) => {
         if (d.type === 'non_voter') return '#ECF0F1';
         if (d.isAnonymous) return ANON_FILL;
+        // Phase 9.8 W A2 — fill the circle with the user's avatar pattern
+        // when one is registered above. Falls back to white otherwise.
+        if (d.avatar_url) return `url(#avatar-${d.id})`;
         return 'white';
       })
       .attr('stroke', (d) => {

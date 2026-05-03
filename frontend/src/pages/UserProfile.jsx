@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import api from '../api';
+import Avatar from '../components/Avatar';
 import TopicBadge from '../components/TopicBadge';
 
 function VoteRecordCell({ vote }) {
@@ -142,16 +143,19 @@ export default function UserProfile() {
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-[#1B3A5C]">{user.display_name}</h1>
-          <p className="text-sm text-gray-400">@{user.username}</p>
-          {profiles.length > 0 && (
-            <div className="flex gap-1.5 mt-2">
-              <span className="text-xs text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded">
-                Public Delegate
-              </span>
-            </div>
-          )}
+        <div className="flex items-center gap-4">
+          <Avatar user={user} size="lg" />
+          <div>
+            <h1 className="text-2xl font-bold text-[#1B3A5C]">{user.display_name}</h1>
+            <p className="text-sm text-gray-400">@{user.username}</p>
+            {profiles.length > 0 && (
+              <div className="flex gap-1.5 mt-2">
+                <span className="text-xs text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded">
+                  Public Delegate
+                </span>
+              </div>
+            )}
+          </div>
         </div>
 
         {isSelf ? (
