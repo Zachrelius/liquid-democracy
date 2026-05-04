@@ -1,9 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
+import { useConfirm } from '../../components/ConfirmDialog';
 // Phase 12.5 F4 — Default-thresholds editor gates on `org.edit_settings`.
+// Phase 12.7 F4 — Branding section gates on `org.edit_branding`.
 import { useHasPermission } from '../../hooks/useHasPermission';
+// Phase 12.7 F4 — auto-derived accent + dark variant share the F3 utility.
+import { getDerivedAccent } from '../../utils/color_derive';
 
 // Phase 9.6 — sustained-majority demotion. Defaults that mirror what the
 // backend uses when keys are absent. Used both for the "expand from
@@ -29,11 +33,31 @@ function smIsCustomized(settings) {
   });
 }
 
+// Phase 12.7 F4 — platform default colors (used for the picker initial
+// value when the org has not yet customized branding). Must match the
+// :root defaults in index.css so the picker reflects "what is currently
+// rendering" before any explicit pick.
+const PLATFORM_PRIMARY_DEFAULT = '#1B3A5C';
+const PLATFORM_ACCENT_DEFAULT = '#2E75B6';
+
+// Phase 12.7 F4 — basic hex validator for the synced hex text inputs.
+// The native <input type="color"> always emits a valid #RRGGBB so the
+// validator only matters on the text-input path. Backend (B2) also
+// validates server-side; this is a UX nicety to disable Save on bad input.
+function isValidHex(hex) {
+  return typeof hex === 'string' && /^#[0-9a-fA-F]{6}$/.test(hex);
+}
+
 export default function OrgSettings() {
   const { currentOrg, refreshOrgs } = useOrg();
   const toast = useToast();
+  const confirm = useConfirm();
   // Phase 12.5 F4 — Default Approval Thresholds editor visibility.
   const canEditOrgSettings = useHasPermission('org.edit_settings');
+  // Phase 12.7 F4 — Branding section visibility. The 'org.edit_branding'
+  // permission key has existed in the registry since Stage 1 (defaults to
+  // Steward + Admin). This is the UI that finally consumes it.
+  const canEditBranding = useHasPermission('org.edit_branding');
   // Phase 12 Stage 2 F7 — D4 hardcoded-gate UI hiding.
   //
   // The org-delete endpoint (DELETE /api/orgs/{slug}) is one of two D4
@@ -70,6 +94,25 @@ export default function OrgSettings() {
   // org has explicitly enabled SM or customized any of the keys.
   const [smExpanded, setSmExpanded] = useState(false);
 
+  // Phase 12.7 F4 — Branding section local state.
+  //
+  // Logo lives entirely on the org object (currentOrg.branding.logo_url)
+  // because the upload + delete endpoints are immediate-action (each call
+  // refreshes the org and mutates the displayed preview). Colors are
+  // staged locally so the steward can preview + cancel without
+  // accidentally persisting an in-progress pick.
+  //
+  // autoDeriveAccent gates whether the accent picker is editable. When
+  // ON, the displayed accent value follows getDerivedAccent(primary) and
+  // submits as accent_color along with accent_auto_derived: true. When
+  // OFF, the steward picks the accent freely.
+  const [primaryColor, setPrimaryColor] = useState(PLATFORM_PRIMARY_DEFAULT);
+  const [accentColor, setAccentColor] = useState(PLATFORM_ACCENT_DEFAULT);
+  const [autoDeriveAccent, setAutoDeriveAccent] = useState(true);
+  const [savingBranding, setSavingBranding] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const logoFileInputRef = useRef(null);
+
   useEffect(() => {
     if (currentOrg) {
       setName(currentOrg.name);
@@ -80,8 +123,34 @@ export default function OrgSettings() {
       // Expand the SM section if the org currently has it on, or if any
       // SM key is customized away from the default.
       setSmExpanded(!!s.sustained_majority_enabled_default || smIsCustomized(s));
+      // Branding state hydration. Backend B4 returns currentOrg.branding
+      // as an object with possibly-null fields; missing object is treated
+      // as "all unconfigured" -> use platform defaults in the pickers.
+      const b = currentOrg.branding || {};
+      setPrimaryColor(b.primary_color || PLATFORM_PRIMARY_DEFAULT);
+      // accent_auto_derived defaults true when the org hasn't opted in to
+      // a custom accent. If primary is set + accent_auto_derived is true,
+      // the displayed accent is the derived value (so the disabled picker
+      // shows what would be saved).
+      const autoDer = b.accent_auto_derived !== false;
+      setAutoDeriveAccent(autoDer);
+      if (autoDer && b.primary_color) {
+        setAccentColor(getDerivedAccent(b.primary_color));
+      } else {
+        setAccentColor(b.accent_color || PLATFORM_ACCENT_DEFAULT);
+      }
     }
   }, [currentOrg]);
+
+  // Phase 12.7 F4 — when auto-derive is on AND primary changes, accent
+  // updates in lockstep so the disabled accent picker reflects what would
+  // be saved. Decoupled from the hydration effect so user-driven primary
+  // edits also recompute accent live.
+  useEffect(() => {
+    if (autoDeriveAccent) {
+      setAccentColor(getDerivedAccent(primaryColor));
+    }
+  }, [primaryColor, autoDeriveAccent]);
 
   if (!currentOrg) return <div className="text-center py-16 text-gray-400">No organization selected</div>;
 
@@ -119,6 +188,94 @@ export default function OrgSettings() {
 
   function updateSetting(key, value) {
     setSettings(prev => ({ ...prev, [key]: value }));
+  }
+
+  // Phase 12.7 F4 — branding handlers.
+  //
+  // Logo upload + remove are immediate-action (each call mutates the org
+  // and we refresh so the preview reflects what's persisted). Color save
+  // is staged: stewards can wiggle the picker without persisting until
+  // they click Save branding.
+
+  async function handleLogoFilePicked(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingLogo(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      await api.postFormData(`/api/orgs/${currentOrg.slug}/logo`, form);
+      await refreshOrgs();
+      toast.success('Logo uploaded');
+    } catch (err) {
+      toast.error(err.message || 'Logo upload failed');
+    } finally {
+      setUploadingLogo(false);
+      // Reset the input so re-uploading the same filename re-fires.
+      if (logoFileInputRef.current) logoFileInputRef.current.value = '';
+    }
+  }
+
+  async function handleLogoRemove() {
+    const ok = await confirm({
+      title: 'Remove logo?',
+      message: 'The logo will be removed from the navigation bar and the organization picker. This cannot be undone — you can re-upload at any time.',
+      destructive: true,
+    });
+    if (!ok) return;
+    try {
+      await api.delete(`/api/orgs/${currentOrg.slug}/logo`);
+      await refreshOrgs();
+      toast.success('Logo removed');
+    } catch (err) {
+      toast.error(err.message || 'Failed to remove logo');
+    }
+  }
+
+  async function handleSaveBranding() {
+    if (!isValidHex(primaryColor) || !isValidHex(accentColor)) {
+      toast.error('Colors must be a 6-digit hex like #1B3A5C');
+      return;
+    }
+    setSavingBranding(true);
+    try {
+      // Per spec D3 line 46: when auto-derive is on, frontend submits the
+      // computed accent value explicitly so backend stores the snapshot
+      // and reads stay simple (no per-load recomputation).
+      await api.patch(`/api/orgs/${currentOrg.slug}/branding`, {
+        primary_color: primaryColor,
+        accent_color: accentColor,
+        accent_auto_derived: autoDeriveAccent,
+      });
+      await refreshOrgs();
+      toast.success('Branding saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save branding');
+    } finally {
+      setSavingBranding(false);
+    }
+  }
+
+  async function handleResetBranding() {
+    const ok = await confirm({
+      title: 'Reset to platform defaults?',
+      message: 'Primary and accent colors will revert to the Liquid Democracy platform defaults. The logo (if any) is unaffected — remove it separately if needed.',
+    });
+    if (!ok) return;
+    setSavingBranding(true);
+    try {
+      await api.patch(`/api/orgs/${currentOrg.slug}/branding`, {
+        primary_color: null,
+        accent_color: null,
+        accent_auto_derived: true,
+      });
+      await refreshOrgs();
+      toast.success('Branding reset to platform defaults');
+    } catch (err) {
+      toast.error(err.message || 'Failed to reset branding');
+    } finally {
+      setSavingBranding(false);
+    }
   }
 
   return (
@@ -174,6 +331,169 @@ export default function OrgSettings() {
           </div>
         </div>
       </section>
+
+      {/* Phase 12.7 F4 — Organization Branding (logo + primary/accent colors).
+          Gated on the `org.edit_branding` permission key (Steward + Admin
+          by default per Stage 1). The logo upload + remove call B1
+          (POST/DELETE /api/orgs/{slug}/logo); the color save calls B2
+          (PATCH /api/orgs/{slug}/branding). The currentOrg.branding object
+          (B4 response field) drives the displayed values on hydrate; F2's
+          BrandingThemeApplier picks up the changes after refreshOrgs(). */}
+      {canEditBranding && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Organization Branding
+          </h2>
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-6">
+            {/* Logo */}
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-700">Logo</label>
+              {currentOrg.branding?.logo_url ? (
+                <div className="flex items-center gap-4">
+                  <img
+                    src={currentOrg.branding.logo_url}
+                    alt={`${currentOrg.name} logo`}
+                    className="h-16 w-auto max-w-[200px] object-contain border border-gray-200 rounded bg-gray-50 p-2"
+                  />
+                  <div className="flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={() => logoFileInputRef.current?.click()}
+                      disabled={uploadingLogo}
+                      className="text-xs px-3 py-1.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      {uploadingLogo ? 'Uploading…' : 'Replace'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleLogoRemove}
+                      className="text-xs px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => logoFileInputRef.current?.click()}
+                    disabled={uploadingLogo}
+                    className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+                  >
+                    {uploadingLogo ? 'Uploading…' : 'Upload logo'}
+                  </button>
+                  <span className="text-xs text-gray-400">No logo set</span>
+                </div>
+              )}
+              <input
+                ref={logoFileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={handleLogoFilePicked}
+                className="hidden"
+              />
+              <p className="text-xs text-gray-500">
+                Logos appear in the navigation bar and the organization picker.
+                Recommended dimensions: 400×160 or smaller — square or
+                rectangular both work. Maximum 6 MB. Formats: JPEG, PNG, or WEBP.
+              </p>
+            </div>
+
+            {/* Primary Color */}
+            <div className="space-y-2 pt-4 border-t border-gray-100">
+              <label className="block text-sm font-medium text-gray-700">
+                Primary Color
+              </label>
+              <div className="flex items-center gap-3">
+                <input
+                  type="color"
+                  value={primaryColor}
+                  onChange={(e) => setPrimaryColor(e.target.value)}
+                  className="h-10 w-14 border border-gray-300 rounded cursor-pointer p-0"
+                  aria-label="Primary color picker"
+                />
+                <input
+                  type="text"
+                  value={primaryColor}
+                  onChange={(e) => setPrimaryColor(e.target.value)}
+                  placeholder="#1B3A5C"
+                  className={`px-3 py-2 border rounded-lg text-sm font-mono w-32 focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] ${
+                    isValidHex(primaryColor) ? 'border-gray-300' : 'border-red-400'
+                  }`}
+                  aria-label="Primary color hex"
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                Used for the navigation bar, primary buttons, and headings.
+              </p>
+            </div>
+
+            {/* Accent Color */}
+            <div className="space-y-2 pt-4 border-t border-gray-100">
+              <label className="block text-sm font-medium text-gray-700">
+                Accent Color
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoDeriveAccent}
+                  onChange={(e) => setAutoDeriveAccent(e.target.checked)}
+                  className="accent-[var(--brand-accent)]"
+                />
+                <span className="text-sm text-gray-700">
+                  Use auto-derived accent <span className="text-gray-400">(recommended)</span>
+                </span>
+              </label>
+              <div className="flex items-center gap-3 mt-1">
+                <input
+                  type="color"
+                  value={accentColor}
+                  onChange={(e) => setAccentColor(e.target.value)}
+                  disabled={autoDeriveAccent}
+                  className="h-10 w-14 border border-gray-300 rounded cursor-pointer p-0 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Accent color picker"
+                />
+                <input
+                  type="text"
+                  value={accentColor}
+                  onChange={(e) => setAccentColor(e.target.value)}
+                  disabled={autoDeriveAccent}
+                  placeholder="#2E75B6"
+                  className={`px-3 py-2 border rounded-lg text-sm font-mono w-32 focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] disabled:bg-gray-50 disabled:text-gray-500 ${
+                    isValidHex(accentColor) ? 'border-gray-300' : 'border-red-400'
+                  }`}
+                  aria-label="Accent color hex"
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                Used for links and secondary highlights.
+                {autoDeriveAccent && ' Auto-derived as a lighter shade of the primary color.'}
+              </p>
+            </div>
+
+            {/* Save / Reset */}
+            <div className="flex items-center gap-3 pt-4 border-t border-gray-100">
+              <button
+                type="button"
+                onClick={handleSaveBranding}
+                disabled={savingBranding}
+                className="px-5 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+              >
+                {savingBranding ? 'Saving…' : 'Save branding'}
+              </button>
+              <button
+                type="button"
+                onClick={handleResetBranding}
+                disabled={savingBranding}
+                className="px-5 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Reset to platform defaults
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Voting Defaults — duration */}
       <section className="space-y-3">
