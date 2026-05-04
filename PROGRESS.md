@@ -1171,3 +1171,67 @@ slug=demo org_id=835bc570-e3ae-4e05-a8b8-ed4b1b22ebdf name=Demo Organization cre
 ### Pass-summary
 
 **Phase 12.5 shipped clean in a single session** — 13 commits + closeout, no hot-fixes, no Railway incident, migration ran cleanly against prod's existing role_permissions rows. Three connected gaps Z surfaced dogfooding the Stage 2 matrix are all closed: granted permissions now have UI surface (admin nav + in-page controls permission-driven, 16 gates added across 9 pages), free-form thresholds now require `proposal.set_thresholds` (default Steward+Admin) with org-level defaults editable on OrgSettings, demo org now shows the four-tier role system clearly with voter02 promoted to Moderator. Backend tests 779 → 820 (+41). Bundle gzip +0.91 kB. PG smoke PASS both modes. Multi-agent staging discipline held cleanly for the sixth pass running. The permission system is now the source of truth for what users can do and the rest of the surface is aligned. **Stage 3 of Greater Phase 12 (org branding — logo + color + dynamic theming) is the natural next pass when it gets prioritized.**
+
+---
+
+## Phase 12.6 — Route Guard Permission Refactor + Demo & Copy Polish — 2026-05-04
+
+**Single-session bundled follow-up to 12.5.** 3 commits on `phase-12-6/route-guards-and-demo-polish` no-ff merged to master at `9fd9742` + closeout. **LIVE on prod**, bundle `index-Cewxn9Zb.js`. Three issues Z surfaced dogfooding 12.5: a real route-guard bug, a UX copy nit, and a planning-agent miss on what "demo persona" meant in 12.5. **No backend changes; no migration; no PG smoke required.** Backend tests unchanged at 820.
+
+### What shipped
+
+**Cluster G — Route guard refactor (the load-bearing fix):** 12.5 made admin-nav VISIBILITY permission-driven (F1) and in-page controls permission-driven (F2) but missed the route GUARDS. `AdminRoute` still used `isModeratorOrAdmin`; `AdminOnlyRoute` still used `isAdmin`. A Member granted `proposal.create` via the matrix saw the admin Proposals nav link (correct, 12.5 F1) but clicking it bounced to `/{slug}/proposals` because the route guard rejected them. **Same family of bug as 9.6/9.7/9.8/9.9/10.1** — feature works at one layer, broken at adjacent layer.
+
+- **G1 audit**: identified all 10 admin route usages across `AdminRoute` (5 routes: members, proposals, topics, polises × 3) and `AdminOnlyRoute` (4 routes: settings, delegates, analytics, sub-orgs). The `/admin/settings/permissions` route is intentionally NOT wrapped — Phase 12 Stage 2 F6 ships read-only mode for non-edit users and the page handles permission-driven gating internally. Sub-org admin routes (settings/members/proposals/topics/polises) rely on server-side `is_sub_org_admin` and have no client-side guard wrapper.
+- **G2 + G4 refactor**: both `AdminRoute` and `AdminOnlyRoute` now accept a `permissions={[]}` prop. Any-semantics — caller must have AT LEAST ONE of the listed permissions. Resolved from `currentOrg.user_permissions` (the 12.5 B4 field). Cache-safety fallback to legacy role-tier check when `user_permissions` is absent (cached stale API response during deploy cutover). On access denial: redirect to `/{slug}/proposals` (matches prior fallback behavior).
+- **G3 App.jsx**: all 10 routes updated to pass `permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.<key>}` from the SAME constant 12.5 F1 nav reads from. **Single source of truth** — nav and routes read from one mapping; can't drift.
+- The two guards (AdminRoute / AdminOnlyRoute) are now functionally indistinguishable — both gate on a passed-in permission list. Kept as separate components for now to keep call-site intent explicit ("this used to require moderator-or-admin" vs. "this used to require admin tier") and to keep the 12.6 diff surgical. A future cleanup pass could merge them into one `PermissionRoute`.
+
+**Cluster C — Threshold-form copy update:** 12.5 shipped a "Proposals will use this organization's default approval thresholds. Ask an Admin or Steward..." message for users without `proposal.set_thresholds`. Z's note: this told the user nothing about what the defaults actually ARE. C1 replaces it with a read-only display showing the actual percentages: **"Approval thresholds / This proposal will use the organization's defaults: 50% pass / 40% quorum."** Numbers from `orgSettings.default_pass_threshold/quorum` (12.5 B2) with fallback to 0.50 / 0.40. Updated in both `ProposalManagement.jsx` (org-wide proposals) and `SubOrgProposals.jsx` (sub-org proposals; for sub-orgs the prop is `effectiveSettings` which walks the parent chain via `get_org_config`). No "ask an Admin" suffix.
+
+**Cluster D — Demo persona Moderator fix:** 12.5 promoted `voter02` to Moderator on the demo org but voter02 isn't on the persona-picker page (alice/dr_chen/carol/dave/frank/admin) — original spec misread "demo persona" as "membership row" instead of "persona-picker entry." 12.6 promotes `frank` (formerly the "New Voter" card — least informative) to Moderator. **voter02's Moderator role from 12.5 stays** — having two Moderators in the demo is realistic.
+- **D1 prod DB UPDATE via railway ssh** (same pattern as 12.5's voter02 promotion; `_add_org_membership` is "never overwrite role/status" so seed re-run wouldn't help): `OrgMembership.role_id` flipped member → moderator. Pre-update: frank role=`member`, votes=1, comments=0, delegations=0. Post-update: role=`moderator` (Moderator), data intact (1 vote preserved).
+- **D1 seed_data.py** updated for fresh-DB scenarios (`_add_org_membership(frank, demo_org, "moderator")`).
+- **D2 Demo.jsx PERSONAS** — frank's entry changes from `{role: 'New Voter', description: 'No delegations or follows yet. Start fresh.'}` to `{role: 'Moderator', description: "A trusted member with limited admin powers. Can create proposals, manage topics, approve member join requests, and moderate comments — but can't change settings or remove members."}` per spec Q2. Other 5 personas unchanged.
+
+**Backend tests: 820 → 820 (unchanged).** No backend code touched.
+**Bundle: 345.43 → 345.67 kB gzipped (+0.24 kB).** Three small frontend changes; minimal delta.
+**No migration; no PG smoke required.**
+
+### Production verification
+
+| Check | Result | Evidence |
+|---|---|---|
+| Smoke (post-deploy auto-run via `poll_deploy.py`) | **5/5 PASS** | Bundle flipped at 102s; smoke ran in 1.50s |
+| **G5 LOAD-BEARING route-guard fix** | **PASS end-to-end on prod** | alice grants `member.proposal.create` via PATCH matrix → 200 + changes_applied=1. Carol now has `user_role: member` AND `user_permissions: ['proposal.create']`. Pre-12.6 AdminRoute (`isModeratorOrAdmin`) would have REJECTED carol; post-12.6 AdminRoute checks `permissions.some(p => userPerms.includes(p))` against `ADMIN_NAV_SUBSECTION_PERMISSIONS.proposals` and ACCEPTS her since `'proposal.create'` is in that list. Revert: changes_applied=1; carol back to 0 perms; prod state clean. |
+| G5 SPA route render verification | PASS-by-source | Bundle deployed (`user_permissions` string referenced 8× in `index-Cewxn9Zb.js`); AdminRoute + AdminOnlyRoute source verified to use the new permission-keyed shape; data-shape verification above proves the resolution path returns the right answer. |
+| C1 threshold defaults in API | **PASS** | `/api/orgs/demo` response includes `settings.default_pass_threshold=0.5` + `default_quorum_threshold=0.4`. C1 read-only display will render `50% pass / 40% quorum`. |
+| C1 copy update in deployed bundle | PASS-by-source | New "Approval thresholds" + "%pass / %quorum" copy in both ProposalManagement.jsx + SubOrgProposals.jsx; ProposalManagement uses `orgSettings` prop directly (= currentOrg.settings); SubOrgProposals uses `effectiveSettings` prop (parent chain via get_org_config). |
+| **D3 frank promotion on prod** | **PASS** | `/api/orgs/demo` as frank: `user_role: moderator`, `user_permissions count=8` matching DEFAULT_GRANTS exactly: `[comment.moderate, member.approve_join, member.invite, polis.create, proposal.advance_phase, proposal.create, topic.create, topic.edit]`. Existing data preserved: 1 vote, 0 comments, 0 delegations (same as pre-promotion). |
+| D3 Demo.jsx persona-card render | PASS-by-source | PERSONAS array updated; frank's role label = "Moderator", description = new spec copy. Other 5 personas untouched. |
+
+### Phase 12.6 commit list
+
+- `8258cfb` G route-guard permission refactor (the load-bearing fix)
+- `946b744` C1 threshold-form copy → read-only numeric defaults
+- `7f2ea29` D1+D2 promote frank to Moderator on demo (seed + persona card)
+- `9fd9742` Merge to master
+- closeout commit follows
+
+### Process notes
+
+1. **Multi-agent staging discipline N/A this pass** — single-dev path (lead handled all three clusters in serial). Total scope was small enough that parallelism wouldn't have helped.
+2. **`poll_deploy.py` auto-smoke worked again** — bundle flipped at 102s (slower than the 41s pattern; Railway cache may have been cold for this deploy), smoke 5/5 PASS in 1.50s.
+3. **D1 voter02-pattern reused for frank** — same `_add_org_membership` "never overwrite" caveat, same direct-DB-UPDATE-via-railway-ssh approach, same data-integrity-preserving outcome. The pattern is now reproducible and predictable for any future seeded-persona role flip.
+4. **G's audit confirmed exactly 10 routes need updating + 2 guards need refactoring.** No surprises — `ADMIN_NAV_SUBSECTION_PERMISSIONS` was already shaped right for the route-guard usage so single-source-of-truth fell out naturally without needing to adjust the constant's export.
+5. **The route-guard family was a Phase 12.5 audit coverage gap** — 12.5 explicitly covered in-page controls (F2: 16 gates) + admin nav visibility (F1) but didn't audit the route guards themselves. The 6th instance of "feature works at one layer, broken at adjacent layer" (joining 9.6 / 9.7 / 9.8 / 9.9 / 10.1). Worth flagging as a Phase 10.2-followup candidate: extend the test-depth audit doc to cover frontend route guards explicitly.
+
+### New tech debt
+
+1. **Cache-safety fallback in AdminRoute + AdminOnlyRoute** to legacy role-tier check preserves admin/moderator nav when `user_permissions` is absent (cached stale API responses during cutover). Once 12.5 + 12.6 are fully cut over and cached responses age out (~1 week post-deploy), the fallback can be removed for strict permission-driven gating only. Bundle this with 12.5 F1's identical fallback in Nav.jsx in the same future cleanup pass.
+2. **AdminRoute and AdminOnlyRoute are functionally indistinguishable** post-12.6 — both gate on a passed-in permission list. Kept as separate components for diff surgery + call-site intent clarity. A future cleanup pass could merge them into one `PermissionRoute` component.
+3. **Route-guard family was a 12.5 audit gap** — same theme as the Phase 10.2 test-depth audit but at the frontend route layer specifically. Worth a Phase 10.2-followup pass that extends the audit doc to cover frontend route guards as a documented class.
+
+### Pass-summary
+
+**Phase 12.6 shipped clean in a single session** — 3 commits + closeout, no hot-fixes, no Railway incident. The load-bearing route-guard bug (a Member granted `proposal.create` via matrix can now actually navigate to `/{slug}/admin/proposals` and the page renders) is verified end-to-end on prod via matrix grant → API user_permissions check → revert. Threshold-form copy now shows actual default percentages instead of unhelpful "ask an Admin" boilerplate. Frank is the demo persona-picker's Moderator entry alongside voter02 (data preserved end-to-end via direct DB UPDATE). Backend untouched. Bundle gzip +0.24 kB. **The "matrix lies" gap is now fully closed across all three layers (nav visibility from 12.5 F1 + in-page controls from 12.5 F2 + route guards from 12.6 G).** Stage 3 of Greater Phase 12 (org branding) remains the natural next pass when prioritized.
