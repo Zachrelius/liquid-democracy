@@ -55,11 +55,11 @@ export default function Landing() {
           />
           <Distinctive
             title="Transparent accountability."
-            body="Every delegate's voting history is public; trust is earned, not assumed."
+            body="Public delegates have public voting records; trust is earned, not assumed."
           />
           <Distinctive
             title="Multiple voting methods."
-            body="Binary, approval, and (soon) ranked-choice voting — the method fits the decision."
+            body="Binary, approval, and ranked-choice voting — the method fits the decision."
           />
         </div>
       </section>

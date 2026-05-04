@@ -132,16 +132,16 @@ export default function Demo() {
         {/* Register-your-own */}
         <section className="mt-14 p-6 rounded-xl border border-gray-200 bg-white shadow-sm max-w-3xl">
           <h2 className="text-lg font-semibold text-[var(--brand-primary)] mb-2">
-            Prefer to start fresh?
+            Prefer a clean slate?
           </h2>
           <p className="text-sm text-[#2C3E50] leading-relaxed">
             <Link
               to="/register"
               className="text-[var(--brand-accent)] font-medium hover:underline"
             >
-              Register your own demo account
+              Register an account
             </Link>{' '}
-            and walk through the full onboarding flow including email
+            — you'll go through the real onboarding flow including email
             verification.
           </p>
         </section>
