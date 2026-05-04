@@ -27,6 +27,38 @@ import models
 _MAX_PARENT_WALK_DEPTH = 5
 
 
+def get_default_proposal_thresholds(
+    org: Optional[models.Organization],
+) -> tuple[float, float]:
+    """Return ``(pass_threshold, quorum_threshold)`` defaults for new
+    proposals in this org.
+
+    Phase 12.5 — central helper for org-level threshold defaults. Reads
+    ``Organization.settings['default_pass_threshold']`` and
+    ``Organization.settings['default_quorum_threshold']`` if present;
+    falls back to the platform-wide defaults (0.50 / 0.40, matching the
+    pre-12.5 per-proposal defaults).
+
+    Spec line 122 explicit: NO migration backfill of these keys into
+    every existing org's settings JSON — defaults-if-absent here covers
+    every existing org transparently. Only orgs whose Steward has
+    customised the defaults via the new Org Settings UI will have these
+    keys persisted.
+
+    The helper does NOT walk the parent chain via ``get_org_config``:
+    the spec's "What this pass is NOT" §"Per-sub-org thresholds" defers
+    that to a future pass; sub-orgs inherit parent defaults today by
+    virtue of new sub-org-scoped proposals reading the parent org's
+    config when they don't have their own.
+    """
+    if org is None:
+        return (0.50, 0.40)
+    settings = org.settings or {}
+    pass_t = settings.get("default_pass_threshold", 0.50)
+    quorum_t = settings.get("default_quorum_threshold", 0.40)
+    return (pass_t, quorum_t)
+
+
 def get_org_config(
     org: Optional[models.Organization], key: str, default: Any = None,
 ) -> Any:
