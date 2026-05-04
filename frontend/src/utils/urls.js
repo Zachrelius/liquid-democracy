@@ -45,6 +45,9 @@ export function urlFor(org, kind, ...args) {
     // Org-scoped admin routes
     case 'admin-settings':
       return `/${slug}/admin/settings`;
+    // Phase 12 Stage 2 — role-permissions matrix page (Cluster F1).
+    case 'admin-permissions':
+      return `/${slug}/admin/settings/permissions`;
     case 'admin-members':
       return `/${slug}/admin/members`;
     case 'admin-proposals':

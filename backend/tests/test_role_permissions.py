@@ -32,8 +32,10 @@ import models
 from database import Base
 from role_permissions import (
     OWNER_ONLY_KEYS,
+    STEWARD_LOCKED_PERMISSIONS,
     get_or_init_permission_cache,
     has_permission,
+    is_locked,
 )
 from role_seed import seed_default_roles_for_org
 
@@ -479,3 +481,215 @@ def test_cache_isolated_per_user(db):
     # Alice's cache shows admin perms; Bob's is empty (member has none).
     assert cache[(alice.id, org.id)].get("proposal.create") is True
     assert cache[(bob.id, org.id)] == {}
+
+
+# ---------------------------------------------------------------------------
+# Phase 12 Stage 2 (B4) — STEWARD_LOCKED_PERMISSIONS + is_locked +
+# has_permission belt-and-suspenders
+# ---------------------------------------------------------------------------
+
+def test_steward_locked_permissions_constant_contents():
+    """The frozenset enumerates exactly the three keys the spec calls out
+    as required for self-lockout protection (Q1)."""
+    assert STEWARD_LOCKED_PERMISSIONS == frozenset({
+        "member.change_role",
+        "org.edit_settings",
+        "role_permissions.edit",
+    })
+
+
+def test_is_locked_true_for_steward_on_each_protected_key():
+    """is_locked covers all three Steward-protected permissions."""
+    assert is_locked("steward", "member.change_role") is True
+    assert is_locked("steward", "org.edit_settings") is True
+    assert is_locked("steward", "role_permissions.edit") is True
+
+
+def test_is_locked_false_for_steward_on_unprotected_key():
+    """is_locked returns False for any permission outside the protected
+    subset, even if the role is steward — only the three keys are locked."""
+    assert is_locked("steward", "proposal.create") is False
+    assert is_locked("steward", "topic.create") is False
+    assert is_locked("steward", "audit.view_org") is False
+    assert is_locked("steward", "org.delete") is False  # D4, not Stage-2-locked
+
+
+def test_is_locked_false_for_admin_on_protected_key():
+    """is_locked is steward-only — admin/moderator/member callers always
+    return False, even on the three protected keys (which they CAN have
+    flipped via the matrix for their own row)."""
+    assert is_locked("admin", "member.change_role") is False
+    assert is_locked("admin", "org.edit_settings") is False
+    assert is_locked("admin", "role_permissions.edit") is False
+    assert is_locked("moderator", "member.change_role") is False
+    assert is_locked("member", "role_permissions.edit") is False
+
+
+def test_is_locked_false_for_unknown_role():
+    """Defensive: an unknown system_key (typo, future custom role) is
+    never locked — only the literal 'steward' triggers the protection."""
+    assert is_locked("nonexistent-role", "member.change_role") is False
+    assert is_locked("", "role_permissions.edit") is False
+
+
+def test_has_permission_belt_and_suspenders_on_member_change_role(db):
+    """B4 belt-and-suspenders: a Steward asking for a STEWARD_LOCKED
+    permission gets True even if the underlying role_permissions row is
+    explicitly enabled=False (corrupted state, partial migration, manual
+    DB tampering — defense in depth)."""
+    user = _make_user(db, "steward_alice")
+    org = _make_org(db, "Org", "org")
+    _add_membership(db, user, org, "steward")
+
+    # Locate the Steward role, find its member.change_role row, force it
+    # to enabled=False to simulate a corrupted/tampered state.
+    steward_role = (
+        db.query(models.Role)
+        .filter(models.Role.org_id == org.id, models.Role.system_key == "steward")
+        .first()
+    )
+    rp = (
+        db.query(models.RolePermission)
+        .filter(
+            models.RolePermission.role_id == steward_role.id,
+            models.RolePermission.permission_key == "member.change_role",
+        )
+        .first()
+    )
+    assert rp is not None, "default seeding should leave a member.change_role row for steward"
+    rp.enabled = False
+    db.flush()
+
+    # has_permission still returns True — the locked-key short-circuit
+    # fires before the role_permissions lookup.
+    assert has_permission(db, user.id, org.id, "member.change_role") is True
+
+
+def test_has_permission_belt_and_suspenders_on_org_edit_settings(db):
+    """Same belt-and-suspenders shape for org.edit_settings."""
+    user = _make_user(db, "steward_bob")
+    org = _make_org(db, "Org", "org")
+    _add_membership(db, user, org, "steward")
+    steward_role = (
+        db.query(models.Role)
+        .filter(models.Role.org_id == org.id, models.Role.system_key == "steward")
+        .first()
+    )
+    rp = (
+        db.query(models.RolePermission)
+        .filter(
+            models.RolePermission.role_id == steward_role.id,
+            models.RolePermission.permission_key == "org.edit_settings",
+        )
+        .first()
+    )
+    rp.enabled = False
+    db.flush()
+
+    assert has_permission(db, user.id, org.id, "org.edit_settings") is True
+
+
+def test_has_permission_belt_and_suspenders_on_role_permissions_edit(db):
+    """B4 belt-and-suspenders for role_permissions.edit. Note: the
+    seed_default_roles_for_org helper inserts grant rows for the keys in
+    DEFAULT_GRANTS; role_permissions.edit IS in DEFAULT_GRANTS for steward
+    (Stage 2 added it), so the row exists."""
+    user = _make_user(db, "steward_carol")
+    org = _make_org(db, "Org", "org")
+    _add_membership(db, user, org, "steward")
+    steward_role = (
+        db.query(models.Role)
+        .filter(models.Role.org_id == org.id, models.Role.system_key == "steward")
+        .first()
+    )
+    rp = (
+        db.query(models.RolePermission)
+        .filter(
+            models.RolePermission.role_id == steward_role.id,
+            models.RolePermission.permission_key == "role_permissions.edit",
+        )
+        .first()
+    )
+    assert rp is not None, "Stage 2 seed should insert a role_permissions.edit row for steward"
+    rp.enabled = False
+    db.flush()
+
+    assert has_permission(db, user.id, org.id, "role_permissions.edit") is True
+
+
+def test_has_permission_belt_and_suspenders_works_with_missing_row(db):
+    """Edge case: if the role_permissions row for a locked key is missing
+    entirely (would never happen via the helper, but possible via raw DB
+    tampering), the steward still gets True. Belt-and-suspenders doesn't
+    require the row to exist."""
+    user = _make_user(db, "steward_dave")
+    org = _make_org(db, "Org", "org")
+    _add_membership(db, user, org, "steward")
+    steward_role = (
+        db.query(models.Role)
+        .filter(models.Role.org_id == org.id, models.Role.system_key == "steward")
+        .first()
+    )
+    # Delete the role_permissions.edit row entirely.
+    db.query(models.RolePermission).filter(
+        models.RolePermission.role_id == steward_role.id,
+        models.RolePermission.permission_key == "role_permissions.edit",
+    ).delete()
+    db.flush()
+
+    assert has_permission(db, user.id, org.id, "role_permissions.edit") is True
+
+
+def test_belt_and_suspenders_does_not_promote_non_steward(db):
+    """The belt-and-suspenders short-circuit is specific to the Steward
+    role — admins and moderators querying a locked key still go through
+    the standard role_permissions lookup and get whatever the matrix
+    says (admin defaults to True for role_permissions.edit; moderator
+    defaults to False)."""
+    admin_user = _make_user(db, "alice_admin")
+    mod_user = _make_user(db, "bob_mod")
+    org = _make_org(db, "Org", "org")
+    _add_membership(db, admin_user, org, "admin")
+    _add_membership(db, mod_user, org, "moderator")
+    db.flush()
+
+    # Admin gets True for role_permissions.edit by default (it's in
+    # DEFAULT_GRANTS for admin via ALL_PERMISSION_KEYS).
+    assert has_permission(db, admin_user.id, org.id, "role_permissions.edit") is True
+
+    # Moderator gets False — it's not in their default grants and
+    # belt-and-suspenders doesn't apply to non-Steward callers.
+    assert has_permission(db, mod_user.id, org.id, "role_permissions.edit") is False
+
+    # member.change_role: admin gets True (default grant); moderator
+    # also gets False (not in moderator default grants).
+    assert has_permission(db, admin_user.id, org.id, "member.change_role") is True
+    assert has_permission(db, mod_user.id, org.id, "member.change_role") is False
+
+
+def test_belt_and_suspenders_does_not_grant_arbitrary_permissions(db):
+    """The short-circuit fires only for keys in STEWARD_LOCKED_PERMISSIONS.
+    A Steward whose proposal.create row is enabled=False would actually
+    return False (proposal.create is not a locked key)."""
+    user = _make_user(db, "steward_alice")
+    org = _make_org(db, "Org", "org")
+    _add_membership(db, user, org, "steward")
+    steward_role = (
+        db.query(models.Role)
+        .filter(models.Role.org_id == org.id, models.Role.system_key == "steward")
+        .first()
+    )
+    rp = (
+        db.query(models.RolePermission)
+        .filter(
+            models.RolePermission.role_id == steward_role.id,
+            models.RolePermission.permission_key == "proposal.create",
+        )
+        .first()
+    )
+    rp.enabled = False
+    db.flush()
+
+    # proposal.create is NOT in STEWARD_LOCKED_PERMISSIONS → falls through
+    # to the standard role_permissions lookup, which now reads False.
+    assert has_permission(db, user.id, org.id, "proposal.create") is False

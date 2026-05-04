@@ -55,7 +55,9 @@ CATEGORIES: list[str] = [
 ]
 
 
-# Full registry — 23 entries. See spec §"Permission registry" lines 105-144.
+# Full registry — 24 entries. Stage 1 shipped 23; Stage 2 adds
+# `role_permissions.edit` (the meta-permission to edit the matrix itself).
+# See spec §"Permission registry" lines 105-144 for Stage 1's 23-key table.
 PERMISSION_REGISTRY: list[PermissionDefinition] = [
     # --- Proposals (4) ---
     PermissionDefinition(
@@ -178,7 +180,7 @@ PERMISSION_REGISTRY: list[PermissionDefinition] = [
         "Allow soft-deleting comments posted by other members. (Members can always edit and delete their own comments within the edit window.)",
         "Comments",
     ),
-    # --- Organization (2) ---
+    # --- Organization (3) ---
     PermissionDefinition(
         "org.edit_settings",
         "Edit organization settings",
@@ -189,6 +191,13 @@ PERMISSION_REGISTRY: list[PermissionDefinition] = [
         "org.edit_branding",
         "Edit organization branding",
         "Allow uploading a logo and choosing the organization's display color. (Reserved for Stage 3; the permission key exists in Stage 1 but the UI to use it ships in Stage 3.)",
+        "Organization",
+    ),
+    # Phase 12 Stage 2 — meta-permission for editing the matrix itself.
+    PermissionDefinition(
+        "role_permissions.edit",
+        "Edit role permissions",
+        "Allow editing the matrix of which roles have which permissions in this organization.",
         "Organization",
     ),
     # --- Audit and analytics (2) ---
@@ -216,10 +225,12 @@ ALL_PERMISSION_KEYS: set[str] = {p.key for p in PERMISSION_REGISTRY}
 # backend/role_seed.py (Cluster D) imports DEFAULT_GRANTS to populate
 # role_permissions rows when an org is created.
 #
-# Counts (verified by test_permission_registry.py):
-#   steward   = 23  (every key)
-#   admin     = 23  (every key — admin appears in every Default: line)
-#   moderator =  8  (the moderator-defaults from the spec table)
+# Counts (verified by test_permission_registry.py) — Phase 12 Stage 2 totals:
+#   steward   = 24  (every key, including `role_permissions.edit`)
+#   admin     = 24  (every key — admin appears in every Default: line, plus
+#                    `role_permissions.edit` from Stage 2)
+#   moderator =  8  (the moderator-defaults from the spec table — Stage 2
+#                    does NOT grant `role_permissions.edit` to moderator)
 #   member    =  0  (members are gated by membership status, not by these
 #                    administrative-action permissions)
 DEFAULT_GRANTS: dict[str, set[str]] = {

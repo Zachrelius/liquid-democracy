@@ -30,6 +30,8 @@ import OrgSelector from './pages/OrgSelector';
 import CreateOrg from './pages/CreateOrg';
 import SetupWizard from './pages/SetupWizard';
 import OrgSettings from './pages/admin/OrgSettings';
+// Phase 12 Stage 2 — role-permissions matrix page (Cluster F).
+import RolePermissionsPage from './pages/admin/RolePermissionsPage';
 import Members from './pages/admin/Members';
 import ProposalManagement from './pages/admin/ProposalManagement';
 import Topics from './pages/admin/Topics';
@@ -50,6 +52,7 @@ import Polis from './pages/Polis';
 import VotingMethodsHelp from './pages/VotingMethodsHelp';
 import SustainedMajorityHelp from './pages/SustainedMajorityHelp';
 import PolisHelp from './pages/PolisHelp';
+import RolePermissionsHelp from './pages/RolePermissionsHelp';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Landing from './pages/Landing';
@@ -156,6 +159,7 @@ export default function App() {
         <Route path="/help/voting-methods" element={<VotingMethodsHelp />} />
         <Route path="/help/sustained-majority" element={<SustainedMajorityHelp />} />
         <Route path="/help/polis" element={<PolisHelp />} />
+        <Route path="/help/role-permissions" element={<RolePermissionsHelp />} />
 
         {/* ------------------------------------------------------------- */}
         {/* Auth flows — no auth required, no org context                 */}
@@ -284,6 +288,19 @@ export default function App() {
                 <AdminOnlyRoute>
                   <OrgScopedLayout><OrgSettings /></OrgScopedLayout>
                 </AdminOnlyRoute>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 12 Stage 2 F1 — role-permissions matrix page.
+            NOT wrapped in AdminRoute: members get a read-only view via
+            internal page-level gating (F6) rather than a 403. */}
+        <Route
+          path="/:org_slug/admin/settings/permissions"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><RolePermissionsPage /></OrgScopedLayout>
               </OrgProvider>
             </ProtectedRoute>
           }

@@ -28,8 +28,30 @@ function smIsCustomized(settings) {
 }
 
 export default function OrgSettings() {
-  const { currentOrg, refreshOrgs, isOwner } = useOrg();
+  const { currentOrg, refreshOrgs } = useOrg();
   const toast = useToast();
+  // Phase 12 Stage 2 F7 — D4 hardcoded-gate UI hiding.
+  //
+  // The org-delete endpoint (DELETE /api/orgs/{slug}) is one of two D4
+  // hardcoded gates: its permission cannot be reassigned through the
+  // role-permissions matrix. Anyone short of Steward who clicks "Delete
+  // organization" hits the role-agnostic 403 with no path to fix it
+  // through the matrix UI, which is a confusing UX path. So we hide the
+  // entire Danger Zone section from non-Stewards. The backend 403 stays
+  // as defense in depth for direct API callers (curl, etc.).
+  //
+  // The legacy 'owner' system_key is also accepted: pre-Stage-1 cached
+  // /api/orgs responses may still report 'owner' for the same human user
+  // briefly during deploy cutover, and we don't want to lock the actual
+  // org owner out of the delete control they've always had.
+  //
+  // (Sub-org delete in SubOrgSettings is matrix-routed via sub_org.delete
+  // and is correctly governed by has_permission server-side; that surface
+  // is intentionally not gated this way.)
+  const isSteward = !!(
+    currentOrg &&
+    (currentOrg.user_role === 'steward' || currentOrg.user_role === 'owner')
+  );
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [joinPolicy, setJoinPolicy] = useState('approval_required');
@@ -483,8 +505,9 @@ export default function OrgSettings() {
         )}
       </div>
 
-      {/* Danger Zone */}
-      {isOwner && (
+      {/* Danger Zone — Phase 12 Stage 2 F7 D4 UI hiding (see isSteward
+          derivation comment at the top of this file). */}
+      {isSteward && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-red-500 uppercase tracking-wide">Danger Zone</h2>
           <div className="bg-white border border-red-200 rounded-xl p-5 space-y-4">

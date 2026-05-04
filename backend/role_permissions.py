@@ -67,8 +67,42 @@ OWNER_ONLY_KEYS: frozenset[str] = frozenset(
 )
 
 
+# Phase 12 Stage 2 (Q1) — permissions that are HARDCODED-TRUE for the
+# Steward role and not editable through the matrix UI. The matrix PATCH
+# endpoint rejects any attempt to flip these cells; ``has_permission``
+# also returns True for the Steward on these keys regardless of any
+# ``role_permissions`` row state (belt-and-suspenders against a corrupt
+# row, a partial migration, or direct DB tampering).
+#
+# The three keys are the minimum protection against self-lockout:
+#   - member.change_role: without it, removing a Steward's admin/moderator
+#     subordinates leaves no one to promote, and the org is structurally
+#     stuck.
+#   - org.edit_settings: without it, basic org operability is broken.
+#   - role_permissions.edit: without it, a Steward who saves a bad matrix
+#     state can't undo their own change; one save and the org is frozen.
+STEWARD_LOCKED_PERMISSIONS: frozenset[str] = frozenset(
+    {"member.change_role", "org.edit_settings", "role_permissions.edit"}
+)
+
+
 # Role system_keys that grant implicit sub-org admin power on the parent org.
 _PARENT_IMPLICIT_ADMIN_KEYS: frozenset[str] = frozenset({"admin", "steward"})
+
+
+def is_locked(role_system_key: str, permission_key: str) -> bool:
+    """Return True if this (role, permission) cell is hardcoded and not
+    user-editable via the matrix.
+
+    Currently only Steward has locked cells (the three
+    self-lockout-protected permissions in
+    ``STEWARD_LOCKED_PERMISSIONS``). The function is structured to admit
+    future locks on other roles without a signature change — callers
+    pass both axes and trust this single source of truth.
+    """
+    if role_system_key == "steward" and permission_key in STEWARD_LOCKED_PERMISSIONS:
+        return True
+    return False
 
 
 def get_or_init_permission_cache(db: Session) -> dict:
@@ -217,6 +251,21 @@ def has_permission(
         # the role's system_key being 'steward' grants them.
         return _user_role_system_key(db, user_id, org_id) == "steward"
 
+    # --- Resolution step 2b: Phase 12 Stage 2 belt-and-suspenders ---
+    # Steward-locked permissions are hardcoded TRUE for the Steward role
+    # on this org regardless of the underlying ``role_permissions`` row
+    # state. The matrix PATCH endpoint rejects flips on these cells, so
+    # in normal operation the row will always be enabled=True; this
+    # extra check defends against a corrupted row, a partial backfill, or
+    # direct DB tampering. Cheap (one frozenset membership check + one
+    # role lookup that's also needed for D4 above).
+    if permission_key in STEWARD_LOCKED_PERMISSIONS:
+        if _user_role_system_key(db, user_id, org_id) == "steward":
+            return True
+        # Non-Steward callers fall through to the standard path; their
+        # access is whatever the matrix says (admin defaults to True for
+        # role_permissions.edit, etc.).
+
     # --- Resolution step 3: standard path through role_permissions ---
     cache_key = (user_id, org_id)
     if cache_key not in cache:
@@ -226,6 +275,8 @@ def has_permission(
 
 __all__ = [
     "OWNER_ONLY_KEYS",
+    "STEWARD_LOCKED_PERMISSIONS",
     "get_or_init_permission_cache",
     "has_permission",
+    "is_locked",
 ]
