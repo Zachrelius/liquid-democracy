@@ -79,12 +79,29 @@ function OrgSwitcher() {
     }
   }
 
+  // Phase 12.7 F5 — when the active org has a logo configured, render it
+  // to the left of the org-name label. Both visible (logo + text) per spec
+  // line 74; no logo-replaces-text mode in v1. For sub-org scope, the
+  // breadcrumb already includes the parent name, so we use the *parent's*
+  // logo (not the sub-org's, which doesn't have its own branding in v1).
+  const brandedOrgForLogo = currentOrg.parent_org_id
+    ? userOrgs.find(o => o.id === currentOrg.parent_org_id) || currentOrg
+    : currentOrg;
+  const logoUrl = brandedOrgForLogo?.branding?.logo_url || null;
+
   return (
     <div ref={ref} className="hidden sm:block relative">
       <button
         onClick={() => setOpen(!open)}
-        className="text-xs text-blue-200 hover:text-white transition-colors flex items-center gap-1"
+        className="text-xs text-blue-200 hover:text-white transition-colors flex items-center gap-2"
       >
+        {logoUrl && (
+          <img
+            src={logoUrl}
+            alt={`${brandedOrgForLogo.name} logo`}
+            className="h-6 w-auto max-w-[100px] object-contain"
+          />
+        )}
         {labelNode}
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
