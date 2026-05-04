@@ -1,0 +1,22 @@
+# Phase 12.7 I1 — Railway service configuration.
+#
+# Volume mount declaration: persistent storage for uploaded user content
+# (avatars, org logos). Mounted at /data on the service container so
+# files survive deploys (the default Railway filesystem is ephemeral and
+# was losing avatars on every redeploy — see Phase 12.7 spec D1).
+#
+# The Volume itself is provisioned via the Railway dashboard separately
+# from this file — Z creates a 1 GB volume on the service before this
+# config takes effect. The 3-tier path resolver in
+# `backend/routes/avatars.py::_resolve_uploads_base()` falls back to the
+# in-image `backend/uploads/` directory if /data is not yet mounted, so
+# deploying this config before the volume is attached is safe (uploads
+# go to ephemeral disk as before; once the volume is attached, new
+# uploads land on persistent storage).
+#
+# After volume provisioning + first deploy that mounts it, run the
+# one-shot migration script to copy any salvageable existing files:
+#   railway ssh "cd /app && python scripts/phase12_7_migrate_uploads.py"
+
+[[volumes]]
+mountPath = "/data"
