@@ -296,6 +296,14 @@ enforced in code.
 > - **D4 UI hiding**: in addition to the server-side 403 from Stage 1, Stage 2 hides the org-delete UI control on the Settings page from anyone whose `user_role !== 'steward'`. The `transfer-stewardship` UI control gets the same treatment if/when that endpoint is added. Defense-in-depth — a non-Steward making a direct API call (curl, custom client) still gets 403; the UI hiding just prevents the "I clicked delete and got a confusing message" UX path. Sub-org delete (and other matrix-routed delete operations) is NOT gated by role-tier — those are governed by `has_permission(user, org, 'sub_org.delete')` etc. through the matrix.
 > - **Concurrency**: last-writer-wins on cell-level edits. No optimistic concurrency, no WebSocket sync. Acceptable for friend-pilot scale; a future pass could add a `version` field if real orgs run into stale-edit issues.
 
+> **Phase 12.5 update (2026-05-04):** permission system completeness pass. Three changes worth pinning here:
+>
+> - **New 25th permission key `proposal.set_thresholds`** (default Steward + Admin only). Previously `proposal.create` carried with it the implicit power to set arbitrary `pass_threshold` and `quorum_threshold` values at proposal-creation time; now those are gated independently. Members or Moderators granted `proposal.create` via the matrix can submit proposals but the threshold inputs are hidden in the UI and the backend (`POST /api/proposals` + `PATCH /api/proposals/{id}`) returns 400 on attempts to set non-default threshold values. The check is "differs from defaults," so a caller passing values matching the org's defaults always succeeds.
+> - **Org-level default thresholds** (`default_pass_threshold` + `default_quorum_threshold`) live in `Organization.settings` JSON, edited via a new section on the Org Settings page (gated by `org.edit_settings`). Save emits `org.default_thresholds_changed` audit event with a `{key: {old, new}}` diff. No hard floor — trust the permission system per Q2.
+> - **Permission-driven UI gating throughout admin nav**. The admin nav and per-page admin controls now gate on `has_permission` results (surfaced via the new `user_permissions: [...]` field on `/api/orgs/{slug}` responses), not on coarse role tier. A Member granted `proposal.create` via the matrix sees the admin tab → Proposals subsection only; a Moderator sees the subsections matching their default grants; etc. This closes the "matrix lies" gap where granting a permission via the matrix had no UI surface for non-admin users to actually use it.
+>
+> Defense-in-depth posture unchanged: backend permission checks (`has_permission(user, org, key)`) remain the source of truth. UI gating just prevents the confusing-error UX path; a direct API caller (curl, custom client) still gets 403 / 400 on operations they lack permission for.
+
 ### Tier 1 — Authenticated user
 
 Standard `Depends(get_current_user)`. A logged-in user may:
