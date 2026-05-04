@@ -287,6 +287,15 @@ enforced in code.
 > (if it exists) require `role.system_key == 'steward'` and cannot be
 > re-granted via the matrix UI Stage 2 will introduce.
 
+> **Phase 12 Stage 2 update (2026-05-03):** the configurable permission matrix UI shipped at `/{org-slug}/admin/settings/permissions`. **Editability surface:**
+>
+> - **Read access**: any authenticated org member can view the matrix (`GET /api/orgs/{slug}/role-permissions`). Members get a read-only rendering of the page that shows what their role can do — useful for accountability and self-service understanding.
+> - **Write access**: gated by the new `role_permissions.edit` permission key (the 24th key, added in Stage 2's B3 migration). Default grants: Steward + Admin = TRUE; Moderator + Member = FALSE. Any role with this permission can edit the matrix; an org can re-grant it through the matrix itself.
+> - **Steward lockout protection**: three Steward permissions are hardcoded TRUE and cannot be unset via the matrix — `member.change_role`, `org.edit_settings`, and `role_permissions.edit`. Together these guarantee a Steward can always recover from any matrix configuration. Enforcement is belt-and-suspenders: `PATCH /api/orgs/{slug}/role-permissions` returns 400 on attempts to unset these cells, AND `has_permission` returns TRUE for these (Steward, key) pairs even if the underlying `RolePermission` row is corrupted to `enabled=False`. The lockout set lives at `backend/role_permissions.py::STEWARD_LOCKED_PERMISSIONS`.
+> - **Audit logging**: every successful save produces one `role_permissions.updated` event with a structured `changes` payload listing each cell that flipped (role_system_key, permission_key, old, new). No-op saves (every change already matches current state) skip the audit insert.
+> - **D4 UI hiding**: in addition to the server-side 403 from Stage 1, Stage 2 hides the org-delete UI control on the Settings page from anyone whose `user_role !== 'steward'`. The `transfer-stewardship` UI control gets the same treatment if/when that endpoint is added. Defense-in-depth — a non-Steward making a direct API call (curl, custom client) still gets 403; the UI hiding just prevents the "I clicked delete and got a confusing message" UX path. Sub-org delete (and other matrix-routed delete operations) is NOT gated by role-tier — those are governed by `has_permission(user, org, 'sub_org.delete')` etc. through the matrix.
+> - **Concurrency**: last-writer-wins on cell-level edits. No optimistic concurrency, no WebSocket sync. Acceptable for friend-pilot scale; a future pass could add a `version` field if real orgs run into stale-edit issues.
+
 ### Tier 1 — Authenticated user
 
 Standard `Depends(get_current_user)`. A logged-in user may:
