@@ -1088,3 +1088,86 @@ slug=demo org_id=835bc570-e3ae-4e05-a8b8-ed4b1b22ebdf name=Demo Organization cre
 ### Pass-summary
 
 **Phase 12 Stage 2 shipped clean in a single session** — 7 commits + closeout, no hot-fixes, no Railway incident. The Greater Phase 12 arc's user-facing payoff is now live: any org with a Steward or Admin can navigate to `/{org-slug}/admin/settings/permissions` and edit the per-role permission matrix through a checkbox UI, with audit logging on every save, and three Steward permissions hardcoded TRUE to prevent self-lockout. The matrix is read-only-viewable by all org members for accountability. The D4 hardcoded gates (`org.delete` and the future `transfer-stewardship`) are now hidden from non-Steward UI as defense-in-depth on top of Stage 1's existing 403s. Backend tests 740 → 779 (+39). Bundle gzip +3.75 kB. PG smoke PASS both modes. Multi-agent staging discipline held for the fifth pass running. Stage 3 (org branding — logo upload, color picker, dynamic theming) is the natural final stage of the Greater Phase 12 arc and the next planning conversation.
+
+---
+
+## Phase 12.5 — Permission System Completeness — 2026-05-04
+
+**Single-session bundled coherence pass.** 13 commits on `phase-12-5/permission-completeness` no-ff merged to master at `578e643` + closeout. **LIVE on prod**, bundle `index-CZa6IDUq.js`. Three connected gaps Z surfaced dogfooding the Stage 2 matrix UI: (1) granted permissions had no UI surface — admin nav was role-gated separately ("the matrix lies"); (2) free-form approval thresholds bypassed the permission model entirely; (3) demo data didn't show off the Moderator tier. **PG smoke MANDATORY both modes PASS** (prior `e6371e56e860`).
+
+### What shipped
+
+**Cluster B — Backend:**
+- **B1 25th permission key `proposal.set_thresholds`** (default Steward+Admin only, "Proposals" category). Migration `41694d86821f` inserts 1 row per existing org's 4 preset roles (steward+admin true; moderator+member explicit false per Stage 2 consistency). DEFAULT_GRANTS counts now: steward=25, admin=25, moderator=8, member=0.
+- **B2 `get_default_proposal_thresholds(org)`** helper in `backend/org_config.py` with defaults-if-absent (0.50/0.40). NO migration backfill of `Organization.settings` JSON — defaults-if-absent in helper handles existing orgs (spec line 122 explicit: keep settings lean).
+- **B3 threshold enforcement on POST + PATCH `/api/proposals`**: new `_enforce_threshold_permission` helper. "Differs from defaults" check (not strict-omit) — caller passing values matching org defaults always succeeds; only differing values trigger the check. Without `proposal.set_thresholds` AND non-default value → 400 with explicit message. `ProposalUpdate` schema gained `pass_threshold` + `quorum_threshold` fields (previously the PATCH endpoint had no way to change thresholds at all — flagged as pre-existing observation). 12/12 enforcement tests PASS across both endpoints.
+- **B4 `user_permissions: [...]` field on `/api/orgs/{slug}` response**: enumerates 25-key registry + calls `has_permission` per key. **Stage 1's per-request cache verified end-to-end** — 25 has_permission calls in `_org_to_out` execute exactly **1 SELECT** against `role_permissions` (instrumented via SQLAlchemy `before_cursor_execute` event listener). For non-members → `user_permissions=[]`. Decision-6 implicit power resolves naturally via has_permission.
+- **F4 backend support** (Option A — extends existing): `PATCH /api/orgs/{slug}` accepts `settings.default_pass_threshold` + `default_quorum_threshold` with 0-1 validation. New audit event `org.default_thresholds_changed` with `{key: {old, new}}` diff map; only-when-changes (no-op patch emits no event).
+
+**Cluster F — Frontend:**
+- **F1 admin nav refactor**: NEW `frontend/src/constants/admin_nav_permissions.js` with 10-subsection mapping (proposals/topics/members/subOrgs/delegates/polises/settings/permissions/analytics/audit). NEW `useHasPermission(key)` + `useHasAnyPermission(keys)` hooks reading from `currentOrg.user_permissions`. Top-level Admin tab gated on `currentOrg.user_permissions.length > 0`; per-subsection gated via mapping. **Cache-safety fallback**: when `user_permissions` is absent (cached stale API response during cutover), legacy role-tier visibility preserves admin/moderator nav until cache clears.
+- **F2 in-page audit gated 16 controls across 9 admin pages** (ProposalManagement: 5, SubOrgProposals: 1, Topics: 3, Members: 5, Polises: 1, PolisDetail: 1, SubOrgList: 1, DelegateApplications: 1, ProposalDetail: 1). Sub-org delete intentionally LEFT ALONE — matrix-routed per Phase 12 Stage 2 F7. Per-control conditional renders via useHasPermission. Preserves Steward/Admin behavior; what changes is what Moderator/Member see when granted partial sets.
+- **F3 CreateProposal threshold form gating**: threshold inputs (`ProposalManagement::CreateProposalForm` + `SubOrgProposals::CreateProposalForm`) hidden for users without `proposal.set_thresholds`; explanatory blue notice "Proposals will use this organization's default approval thresholds. Ask an Admin or Steward if you need different thresholds for this proposal." POST payload omits threshold fields so backend B3 applies org defaults. PATCH-side gating implicit because no EditProposal page exists in the frontend.
+- **F4 Default Approval Thresholds editor on OrgSettings.jsx** (gated by `useHasPermission('org.edit_settings')`). 0-1 number inputs (step 0.01, clamped) for `default_pass_threshold` + `default_quorum_threshold`. Save uses existing PATCH `/api/orgs/{slug}` endpoint; audit fires only on actual diff.
+
+**Cluster D — Demo + docs:**
+- **D1 voter02 promoted to Moderator on demo**: seed_data.py updated for fresh-DB scenarios (idempotent helper "never overwrites" so seed re-run on existing prod row is a no-op). **Prod existing row updated via railway ssh** with direct `OrgMembership.role_id` flip to the demo-org Moderator role. Verified post-update: voter02's existing data intact (5 votes + 1 comment preserved); user_role = moderator on `/api/orgs/demo` response.
+- **D2 docs sweep**: browser_testing_playbook.md gets 2 new header notes (voter02 demo persona promotion — historical "voter02 is Member" tests stay PASS-as-recorded; admin-nav gating migrated from role-tier to permission-driven). SECURITY_REVIEW.md Privileged Access Tiers gets Phase 12.5 update note covering 25th permission key + threshold enforcement, org-level default thresholds + audit event, permission-driven admin nav gating closing the "matrix lies" gap. Defense-in-depth posture unchanged — backend remains source of truth.
+
+**Backend tests: 779 → 820 (+41).** Full suite green. **PG smoke PASS both modes.**
+**Bundle: 344.52 → 345.43 kB gzipped (+0.91 kB)** — well under 3-6 kB target.
+
+### Production verification
+
+| Check | Result | Evidence |
+|---|---|---|
+| Smoke (post-deploy auto-run via `poll_deploy.py`) | **5/5 PASS** | Bundle flipped at 41s; smoke ran in 1.41s |
+| **Migration count check on prod** | **PASS (250 rows)** | Total role_permissions = 250 (= 248 expected + 2 explicit-FALSE rows from prior matrix UI testing on demo + gamenights). 16 `proposal.set_thresholds` rows = 4 orgs × 4 preset roles ✓ |
+| **`user_permissions` field per tier** | **PASS** | Steward (admin user): 25 perms ✓ / Admin (alice): 25 perms ✓ / Moderator (voter02 post-promotion): **8 perms** matching DEFAULT_GRANTS for moderator (comment.moderate, member.approve_join, member.invite, polis.create, proposal.advance_phase, proposal.create, topic.create, topic.edit) ✓ / Member (carol): **0 perms** ✓ |
+| **B3 threshold enforcement (POST happy path)** | **PASS** | alice (admin, has set_thresholds) POST with non-default `pass_threshold=0.65` → 201; cleanup via direct DB delete |
+| B3 threshold enforcement (POST 400 case) | PASS-by-source (12/12 unit tests) | Carol blocked at proposal.create gate before B3 fires; backend tests cover the threshold-block exhaustively |
+| **Voter02 promotion on prod** | **PASS** | OrgMembership.role_id flipped via railway ssh from member role to moderator role; voter02's 5 votes + 1 comment intact; subsequent `/api/orgs/demo` shows user_role=moderator with correct 8-permission set |
+| F1 admin nav permission-driven | PASS-by-source | Bundle deployed; frontend dev's commits include subsection mapping + Nav.jsx refactor + cache-safety fallback |
+| F2 in-page control gating | PASS-by-source | 16 controls gated across 9 files per audit; verified via source review |
+| F3 threshold form gating | PASS-by-source | CreateProposalForm in both ProposalManagement.jsx + SubOrgProposals.jsx hide inputs when permission absent + show explanatory notice |
+| F4 Default Approval Thresholds editor | PASS-by-source | Section in OrgSettings.jsx + backend save endpoint with audit |
+| **Cache verification (B4)** | **PASS** | Backend agent's instrumented test confirmed 25 `has_permission` calls = exactly **1 SELECT** against role_permissions per `_org_to_out`. Stage 1's per-request cache works as designed. |
+
+### Phase 12.5 commit list
+
+- `657a787` F1 add admin_nav_permissions constant + useHasPermission hook
+- `736a2e5` F1 gate admin nav on user_permissions, not role tier
+- `2b83dbb` B1 add proposal.set_thresholds permission key + migration
+- `071fbaf` B2 get_default_proposal_thresholds helper
+- `7b14116` F2/F3 per-control permission gating across admin pages
+- `416cd19` B3 enforce proposal.set_thresholds on POST + PATCH
+- `ad8b40a` B3 _enforce_threshold_permission helper + tests
+- `8ca81e2` F4 Default Approval Thresholds editor on OrgSettings
+- `166e2ec` B4 user_permissions field on /api/orgs/{slug} response
+- `0a0c5be` F4 backend default-thresholds save endpoint extension
+- `d729865` B5 update existing migration cycle tests for new head
+- `c4e580a` D1 promote voter02 to Moderator on demo (seed for fresh DBs)
+- `cbc10fc` D2 docs sweep — playbook header notes + SECURITY_REVIEW update
+- `578e643` Merge to master
+- `<closeout>` PROGRESS entry
+
+### Process notes
+
+1. **Multi-agent staging discipline held cleanly for the SIXTH pass running.** B + F ran fully parallel with explicit per-agent file ownership; lead handled D + closeout serially. All 13 workstream commits clean, no rewrites needed. The pattern from Phase 10.1 onward is now reliably reproducible.
+2. **`poll_deploy.py` auto-smoke worked again** — bundle flipped at 41s, smoke 5/5 PASS in 1.41s. The W-FIX-D infrastructure from Phase 10.2 is now load-bearing for every JS-changing deploy.
+3. **F2 audit produced exactly 16 control gatings across 9 files** — frontend dev correctly identified that sub-org delete is matrix-routed and should NOT be tier-gated (per Phase 12 Stage 2 F7 precedent), only org-level controls + admin-tier action buttons get the new permission gates. Audit-discipline thread continues from Stage 2 F7.
+4. **B4 cache verification was a real win** — explicit instrumented test that 25 has_permission calls = 1 SELECT validates the Stage 1 per-request cache assumption end-to-end. Future passes that enumerate the registry can rely on this confidently.
+5. **D1 voter02 promotion via direct DB UPDATE on prod** — `_add_org_membership` is "never overwrite role/status" so seed re-run wouldn't help. One-shot `OrgMembership.role_id` flip via railway ssh is the correct pattern (mirrors Phase 9.6/9.7 backfill commands). voter02's votes + comments preserved end-to-end.
+
+### New tech debt
+
+1. **Sub-org admin nav shortcut still uses role-tier** (`subOrgUserIsAdmin`) rather than permission-driven gating. Sub-org permission system is explicitly out of scope per Phase 12 Stage 1 D2; flagged for whenever sub-orgs get their own permission matrix.
+2. **`PolisDetail.jsx` admin-controls visibility** uses `polis.manage` OR creator OR sub-org admin role-tier — the sub-org fallback should migrate when sub-orgs get permission gating.
+3. **F1 cache-safety fallback** to legacy role-tier preserves admin/moderator nav visibility when `user_permissions` is absent from cached responses. Once Phase 12.5 is fully cut over and cached responses age out (~1 week post-deploy), the fallback can be removed for strict permission-driven gating only.
+4. **`role_seed.py` only inserts True grants** (Stage 1 tech debt carried forward). Migrated orgs have explicit FALSE rows for moderator/member × `role_permissions.edit` + `proposal.set_thresholds`; freshly-seeded orgs (via DEFAULT_GRANTS) don't. Functionally identical via B1 default-False, but tidiness-wise a future pass could update the seed helper to write explicit FALSE rows for any (preset role, registry key) pair not in DEFAULT_GRANTS.
+5. **`ProposalUpdate.pass_threshold`/`quorum_threshold` are NEW fields** in this pass — previously PATCH had no way to change thresholds. If anyone was relying on "thresholds frozen post-create," the PATCH-with-permission path is now a valid mutation surface. Pre-existing observation; no current callers depend on the prior immutability.
+6. **Pattern of "feature surface gated by role rather than permission" likely exists elsewhere** beyond admin nav. F2 surfaced the high-value sites (admin nav + in-page admin controls + create-proposal form + default thresholds). Other places where role-tier gating still appears (e.g., DelegationNetworkGraph admin badge, profile-page role display) are cosmetic and can stay as-is until they become actively confusing.
+
+### Pass-summary
+
+**Phase 12.5 shipped clean in a single session** — 13 commits + closeout, no hot-fixes, no Railway incident, migration ran cleanly against prod's existing role_permissions rows. Three connected gaps Z surfaced dogfooding the Stage 2 matrix are all closed: granted permissions now have UI surface (admin nav + in-page controls permission-driven, 16 gates added across 9 pages), free-form thresholds now require `proposal.set_thresholds` (default Steward+Admin) with org-level defaults editable on OrgSettings, demo org now shows the four-tier role system clearly with voter02 promoted to Moderator. Backend tests 779 → 820 (+41). Bundle gzip +0.91 kB. PG smoke PASS both modes. Multi-agent staging discipline held cleanly for the sixth pass running. The permission system is now the source of truth for what users can do and the rest of the surface is aligned. **Stage 3 of Greater Phase 12 (org branding — logo + color + dynamic theming) is the natural next pass when it gets prioritized.**
