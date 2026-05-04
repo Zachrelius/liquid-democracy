@@ -16,7 +16,8 @@ import schemas
 from audit_utils import log_audit_event
 from database import get_db
 from email_service import send_invitation_email
-from org_config import get_org_config
+from org_config import get_default_proposal_thresholds, get_org_config
+from permission_registry import PERMISSION_REGISTRY
 from reserved_slugs import RESERVED_SLUGS
 from role_permissions import has_permission
 from role_seed import seed_default_roles_for_org
@@ -110,6 +111,7 @@ def _org_to_out(
     ).count()
 
     user_role = None
+    membership = None
     if user_id:
         membership = db.query(models.OrgMembership).filter(
             models.OrgMembership.org_id == org.id,
@@ -119,6 +121,19 @@ def _org_to_out(
         # Phase 12 — emit role.system_key (stable string, e.g. 'steward')
         # rather than the dropped string column. Frontend reads this.
         user_role = membership_role_system_key(membership)
+
+    # Phase 12.5 — resolved permission set for the current user on this
+    # org. Stage 1's per-request cache makes the 25 has_permission calls
+    # cheap: the first call loads the full grant set (1 SELECT against
+    # role_permissions); the remaining 24 are dict lookups. Non-members
+    # get []; the Decision-6 implicit-power path is handled inside
+    # has_permission so a parent-org admin viewing a sub-org enumerates
+    # the full set as expected.
+    user_permissions: list[str] = []
+    if user_id and membership is not None:
+        for perm_def in PERMISSION_REGISTRY:
+            if has_permission(db, user_id, org.id, perm_def.key):
+                user_permissions.append(perm_def.key)
 
     return schemas.OrgOut(
         id=org.id,
@@ -130,6 +145,7 @@ def _org_to_out(
         created_at=org.created_at,
         member_count=member_count,
         user_role=user_role,
+        user_permissions=user_permissions,
     )
 
 
@@ -395,8 +411,40 @@ def update_organization(
         org.join_policy = body.join_policy
     if body.settings is not None:
         from sustained_majority_service import diff_sustained_majority_settings
+        # Phase 12.5 — validate default-threshold keys (F4 backend support).
+        # Range 0.0-1.0 inclusive; no hard floor per spec Q2 decision. The
+        # check happens BEFORE the merge so an invalid value fails the
+        # whole PATCH cleanly, matching how Pydantic field-level validation
+        # would reject other settings keys.
+        threshold_keys = {
+            "default_pass_threshold", "default_quorum_threshold",
+        }
+        for tkey in threshold_keys & set(body.settings.keys()):
+            tval = body.settings[tkey]
+            if not isinstance(tval, (int, float)) or isinstance(tval, bool):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{tkey} must be a number between 0.0 and 1.0",
+                )
+            if tval < 0.0 or tval > 1.0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{tkey} must be between 0.0 and 1.0 inclusive",
+                )
+
         # Diff BEFORE merging so we capture the actual transition.
         sm_diff = diff_sustained_majority_settings(org.settings, body.settings)
+        # Phase 12.5 — capture default-threshold transitions for the audit
+        # log. Only emit when the value actually changes (no spurious
+        # events on no-op patches).
+        threshold_diff: dict[str, dict] = {}
+        old_settings = org.settings or {}
+        for tkey in threshold_keys & set(body.settings.keys()):
+            old_val = old_settings.get(tkey)
+            new_val = body.settings[tkey]
+            if old_val != new_val:
+                threshold_diff[tkey] = {"old": old_val, "new": new_val}
+
         org.settings = {**(org.settings or {}), **body.settings}
         if sm_diff:
             log_audit_event(
@@ -406,6 +454,16 @@ def update_organization(
                 target_id=org.id,
                 actor_id=current_user.id,
                 details={"changes": sm_diff},
+                ip_address=request.client.host if request.client else None,
+            )
+        if threshold_diff:
+            log_audit_event(
+                db,
+                action="org.default_thresholds_changed",
+                target_type="organization",
+                target_id=org.id,
+                actor_id=current_user.id,
+                details={"changes": threshold_diff},
                 ip_address=request.client.host if request.client else None,
             )
 
@@ -1469,6 +1527,30 @@ def create_org_proposal(
             db, linked_ids, current_user.id, org.id,
         )
 
+    # Phase 12.5 — threshold permission gate + org-default fallback. The
+    # gate uses model_fields_set to distinguish "explicitly passed" from
+    # "Pydantic-default 0.50/0.40" so the FE can omit the threshold inputs
+    # for users without `proposal.set_thresholds` and the proposal lands
+    # on the org's true defaults instead of the schema defaults. Sub-orgs
+    # inherit parent defaults today (per spec "Per-sub-org thresholds" out
+    # of scope), so the lookup uses the parent `org` regardless of
+    # target_sub_org.
+    from routes.proposals import _enforce_threshold_permission
+    requested_pass = (
+        body.pass_threshold
+        if "pass_threshold" in body.model_fields_set else None
+    )
+    requested_quorum = (
+        body.quorum_threshold
+        if "quorum_threshold" in body.model_fields_set else None
+    )
+    _enforce_threshold_permission(
+        db, current_user.id, org, requested_pass, requested_quorum,
+    )
+    default_pass, default_quorum = get_default_proposal_thresholds(org)
+    effective_pass = requested_pass if requested_pass is not None else default_pass
+    effective_quorum = requested_quorum if requested_quorum is not None else default_quorum
+
     proposal = models.Proposal(
         title=body.title,
         body=body.body,
@@ -1477,8 +1559,8 @@ def create_org_proposal(
         sub_org_id=target_sub_org.id if target_sub_org else None,
         voting_method=body.voting_method,
         num_winners=body.num_winners,
-        pass_threshold=body.pass_threshold,
-        quorum_threshold=body.quorum_threshold,
+        pass_threshold=effective_pass,
+        quorum_threshold=effective_quorum,
         sustained_majority_enabled=body.sustained_majority_enabled,
         linked_polis_ids=linked_ids if linked_ids else None,
     )

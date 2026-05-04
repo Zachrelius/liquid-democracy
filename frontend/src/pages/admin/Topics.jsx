@@ -3,6 +3,8 @@ import { useOrg } from '../../OrgContext';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
+// Phase 12.5 F2 — per-control permission gating.
+import { useHasPermission } from '../../hooks/useHasPermission';
 
 const PRESET_COLORS = [
   '#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
@@ -14,6 +16,11 @@ export default function Topics() {
   const { currentOrg, fetchSubOrgsFor } = useOrg();
   const toast = useToast();
   const confirm = useConfirm();
+  // Phase 12.5 F2 — per-control permission gating. Promote-to-org-wide is
+  // a structural edit so it gates on `topic.edit`.
+  const canCreateTopic = useHasPermission('topic.create');
+  const canEditTopic = useHasPermission('topic.edit');
+  const canDeleteTopic = useHasPermission('topic.delete');
   const [topics, setTopics] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -151,7 +158,8 @@ export default function Topics() {
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-[#1B3A5C]">Topic Management</h1>
-        {!showCreate && (
+        {/* Phase 12.5 F2 — Create button gated on `topic.create`. */}
+        {!showCreate && canCreateTopic && (
           <button
             onClick={() => setShowCreate(true)}
             className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
@@ -291,7 +299,10 @@ export default function Topics() {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    {t.sub_org_id && (
+                    {/* Phase 12.5 F2 — Promote (structural edit) gated on
+                        `topic.edit`; Edit on `topic.edit`; Deactivate on
+                        `topic.delete`. */}
+                    {t.sub_org_id && canEditTopic && (
                       <button
                         onClick={() => handlePromote(t)}
                         className="text-xs text-[#2E75B6] hover:underline"
@@ -300,18 +311,22 @@ export default function Topics() {
                         Promote to org-wide
                       </button>
                     )}
-                    <button
-                      onClick={() => startEdit(t)}
-                      className="text-xs text-[#2E75B6] hover:underline"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDeactivate(t.id, t.name)}
-                      className="text-xs text-red-500 hover:underline"
-                    >
-                      Deactivate
-                    </button>
+                    {canEditTopic && (
+                      <button
+                        onClick={() => startEdit(t)}
+                        className="text-xs text-[#2E75B6] hover:underline"
+                      >
+                        Edit
+                      </button>
+                    )}
+                    {canDeleteTopic && (
+                      <button
+                        onClick={() => handleDeactivate(t.id, t.name)}
+                        className="text-xs text-red-500 hover:underline"
+                      >
+                        Deactivate
+                      </button>
+                    )}
                   </div>
                 </div>
               )}

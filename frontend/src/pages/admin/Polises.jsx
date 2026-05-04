@@ -3,6 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
 import { urlFor } from '../../utils/urls';
 import api from '../../api';
+// Phase 12.5 F2 — per-control permission gating.
+import { useHasPermission } from '../../hooks/useHasPermission';
 
 /**
  * Phase 9 Session 3 — Polises list page (parent-org scope).
@@ -17,7 +19,9 @@ import api from '../../api';
  */
 export default function Polises() {
   const navigate = useNavigate();
-  const { currentOrg, isModeratorOrAdmin, fetchSubOrgsFor } = useOrg();
+  const { currentOrg, fetchSubOrgsFor } = useOrg();
+  // Phase 12.5 F2 — Create button gated on `polis.create`.
+  const canCreatePolis = useHasPermission('polis.create');
   const [polises, setPolises] = useState([]);
   const [subOrgs, setSubOrgs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -111,7 +115,8 @@ export default function Polises() {
             Pol.is deliberations linked to <strong>{currentOrg.name}</strong>.
           </p>
         </div>
-        {isModeratorOrAdmin && (
+        {/* Phase 12.5 F2 — Create button gated on `polis.create`. */}
+        {canCreatePolis && (
           <Link
             to={urlFor(parentSlug, 'admin-polises-create')}
             className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"

@@ -6,6 +6,8 @@ import StatusBadge from '../../components/StatusBadge';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 import LinkedPolisesPicker from '../../components/LinkedPolisesPicker';
+// Phase 12.5 F2 — per-control permission gating.
+import { useHasPermission } from '../../hooks/useHasPermission';
 
 function OptionsEditor({ options, onChange }) {
   function updateOption(idx, field, value) {
@@ -101,6 +103,12 @@ function OptionsEditor({ options, onChange }) {
 
 function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onCancel }) {
   const toast = useToast();
+  // Phase 12.5 F3 — threshold inputs are gated on `proposal.set_thresholds`.
+  // Members granted `proposal.create` but not `proposal.set_thresholds` see
+  // the form WITHOUT threshold inputs; the backend (Cluster B3) applies
+  // org defaults. The form simply omits pass_threshold/quorum_threshold
+  // from the POST payload in that case.
+  const canSetThresholds = useHasPermission('proposal.set_thresholds');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [votingMethod, setVotingMethod] = useState('binary');
@@ -185,10 +193,16 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
         title,
         body,
         topics: selectedTopics,
-        pass_threshold: passThreshold,
-        quorum_threshold: quorumThreshold,
         voting_method: votingMethod,
       };
+      // Phase 12.5 F3 — only include thresholds when the user has the
+      // `proposal.set_thresholds` permission. Backend (B3) applies org
+      // defaults when these fields are omitted; sending them without
+      // permission would fail with a 400 if they differ from defaults.
+      if (canSetThresholds) {
+        payload.pass_threshold = passThreshold;
+        payload.quorum_threshold = quorumThreshold;
+      }
       if (scope) payload.sub_org_id = scope;
       if (isMultiOption) {
         payload.options = options.map(o => ({
@@ -384,34 +398,44 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">
-            Pass Threshold: {Math.round(passThreshold * 100)}%
-          </label>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={Math.round(passThreshold * 100)}
-            onChange={e => setPassThreshold(parseInt(e.target.value) / 100)}
-            className="w-full accent-[#2E75B6]"
-          />
+      {/* Phase 12.5 F3 — threshold sliders are gated on `proposal.set_thresholds`.
+          Members granted `proposal.create` but not this key see the explanatory
+          notice in lieu of the inputs; backend uses the org defaults. */}
+      {canSetThresholds ? (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Pass Threshold: {Math.round(passThreshold * 100)}%
+            </label>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(passThreshold * 100)}
+              onChange={e => setPassThreshold(parseInt(e.target.value) / 100)}
+              className="w-full accent-[#2E75B6]"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Quorum Threshold: {Math.round(quorumThreshold * 100)}%
+            </label>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(quorumThreshold * 100)}
+              onChange={e => setQuorumThreshold(parseInt(e.target.value) / 100)}
+              className="w-full accent-[#2E75B6]"
+            />
+          </div>
         </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">
-            Quorum Threshold: {Math.round(quorumThreshold * 100)}%
-          </label>
-          <input
-            type="range"
-            min={0}
-            max={100}
-            value={Math.round(quorumThreshold * 100)}
-            onChange={e => setQuorumThreshold(parseInt(e.target.value) / 100)}
-            className="w-full accent-[#2E75B6]"
-          />
+      ) : (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-900">
+          Proposals will use this organization's default approval thresholds.
+          Ask an Admin or Steward if you need different thresholds for this proposal.
         </div>
-      </div>
+      )}
 
       {/* Phase 9 — Linked Deliberations picker. Backend currently rejects
           linked_polis_ids on parent-org-wide proposals (only org-scoped
@@ -482,6 +506,9 @@ export default function ProposalManagement() {
   const { currentOrg, fetchSubOrgsFor } = useOrg();
   const toast = useToast();
   const confirm = useConfirm();
+  // Phase 12.5 F2 — per-control permission gating.
+  const canCreateProposal = useHasPermission('proposal.create');
+  const canAdvancePhase = useHasPermission('proposal.advance_phase');
   const [proposals, setProposals] = useState([]);
   const [topics, setTopics] = useState([]);
   const [subOrgs, setSubOrgs] = useState([]);
@@ -568,7 +595,8 @@ export default function ProposalManagement() {
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-[#1B3A5C]">Proposal Management</h1>
-        {!showCreate && (
+        {/* Phase 12.5 F2 — Create button gated on `proposal.create`. */}
+        {!showCreate && canCreateProposal && (
           <button
             onClick={() => setShowCreate(true)}
             className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
@@ -625,14 +653,19 @@ export default function ProposalManagement() {
               </div>
               {expandedId === p.id && (
                 <div className="px-4 py-3 bg-gray-50 flex items-center gap-3">
+                  {/* Phase 12.5 F2 — phase-advance buttons gated on
+                      `proposal.advance_phase`. Withdraw also routes through
+                      the same advance endpoint, so we gate it identically. */}
                   {p.status === 'draft' && (
                     <>
-                      <button
-                        onClick={() => handleAdvance(p.id)}
-                        className="text-xs px-3 py-1.5 bg-[#2E75B6] text-white rounded-lg hover:bg-[#1B3A5C]"
-                      >
-                        Advance to Deliberation
-                      </button>
+                      {canAdvancePhase && (
+                        <button
+                          onClick={() => handleAdvance(p.id)}
+                          className="text-xs px-3 py-1.5 bg-[#2E75B6] text-white rounded-lg hover:bg-[#1B3A5C]"
+                        >
+                          Advance to Deliberation
+                        </button>
+                      )}
                       <a
                         href={`/proposals/${p.id}`}
                         className="text-xs px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-100"
@@ -641,7 +674,7 @@ export default function ProposalManagement() {
                       </a>
                     </>
                   )}
-                  {p.status === 'deliberation' && (
+                  {p.status === 'deliberation' && canAdvancePhase && (
                     <button
                       onClick={() => handleAdvance(p.id)}
                       className="text-xs px-3 py-1.5 bg-[#2E75B6] text-white rounded-lg hover:bg-[#1B3A5C]"
@@ -649,7 +682,7 @@ export default function ProposalManagement() {
                       Advance to Voting
                     </button>
                   )}
-                  {p.status === 'voting' && (
+                  {p.status === 'voting' && canAdvancePhase && (
                     <button
                       onClick={() => handleAdvance(p.id)}
                       className="text-xs px-3 py-1.5 bg-[#2E75B6] text-white rounded-lg hover:bg-[#1B3A5C]"
@@ -657,7 +690,7 @@ export default function ProposalManagement() {
                       Close Voting
                     </button>
                   )}
-                  {(p.status === 'draft' || p.status === 'deliberation' || p.status === 'voting') && (
+                  {(p.status === 'draft' || p.status === 'deliberation' || p.status === 'voting') && canAdvancePhase && (
                     <button
                       onClick={() => handleWithdraw(p.id)}
                       className="text-xs px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"

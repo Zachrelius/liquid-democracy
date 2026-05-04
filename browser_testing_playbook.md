@@ -8,6 +8,10 @@ These tests complement (not replace) the automated code tests. Code tests verify
 
 > **⚠ URL shape note (Phase 11, 2026-05-03).** Frontend URL shape changed in Phase 11 from flat (`/proposals`, `/admin/members`) to path-based (`/{org-slug}/proposals`, `/{org-slug}/admin/members`, `/{org-slug}/admin/sub-orgs/{sub-slug}/members`). Test cases below from Phase 5 onward were authored against the old flat shape and reference paths like `/admin/settings`, `/proposals`, etc. The PASS results recorded under those tests are valid AS OF the date stamp on each — they document what was true at the time. New tests should use the path-based shape; old tests are not retroactively rewritten because doing so would falsify the historical record.
 
+> **⚠ Demo persona note (Phase 12.5, 2026-05-04).** `voter02` was promoted from Member to Moderator on the demo org so the four-tier role system is visible from the demo. Historical tests that asserted "voter02 is a Member" or used voter02 as a member-tier persona are still PASS-as-recorded against the prior state — voter02's underlying user account, votes, and delegations are intact. The cross-scope sub-org tests (Suite R/S) still exercise the right path because voter02 remains parent-org-only (not an Engineering Team sub-org member); only the parent-org role string changed. Going forward, voter02 is the canonical Moderator persona in the demo seed.
+
+> **⚠ Admin-nav gating note (Phase 12.5, 2026-05-04).** Admin nav visibility migrated from role-tier (`isAdmin || isModerator`) to permission-driven (`currentOrg.user_permissions` is non-empty AND the subsection has at least one relevant permission). Historical tests that asserted "moderator sees Members admin page" pass for a different reason now (`member.approve_join` + `member.invite` are in moderator's defaults), but the user-visible behavior is preserved. New tests should reason about permissions, not roles.
+
 ## Prerequisites
 
 Before running browser tests:

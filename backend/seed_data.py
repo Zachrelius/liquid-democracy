@@ -559,6 +559,12 @@ def _seed_demo(db: Session) -> dict:
     _add_org_membership(db, alice, demo_org, "admin")
     for u in [dr_chen, econ_bob, carol, dave, env_emma, rights_raj]:
         _add_org_membership(db, u, demo_org, "member")
+    # Phase 12.5 D1: voter02 (extra_users[1]) is the Moderator demo persona
+    # so the four-tier role system is visible from the demo (Steward/Admin/
+    # Moderator/Member). _add_org_membership is "never overwrite role/status"
+    # for existing rows — for prod, the one-shot SQL UPDATE in the closeout
+    # promotes the existing membership row in place.
+    _add_org_membership(db, extra_users[1], demo_org, "moderator")
     for u in extra_users:
         _add_org_membership(db, u, demo_org, "member")
 

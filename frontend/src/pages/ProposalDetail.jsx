@@ -3,6 +3,8 @@ import { useParams, Link } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
+// Phase 12.5 F2 — per-control permission gating.
+import { useHasPermission } from '../hooks/useHasPermission';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 import VerifyEmailInlineNote from '../components/VerifyEmailInlineNote';
@@ -276,7 +278,9 @@ function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerif
 }
 
 function ApprovalResultsPanel({ tally, proposal }) {
-  const { currentOrg, userOrgs, isAdmin } = useOrg();
+  const { currentOrg, userOrgs } = useOrg();
+  // Phase 12.5 F2 — Resolve-tie button gated on `proposal.resolve_tie`.
+  const canResolveTie = useHasPermission('proposal.resolve_tie');
   const toast = useToast();
   const confirm = useConfirm();
   const [resolving, setResolving] = useState(false);
@@ -353,9 +357,10 @@ function ApprovalResultsPanel({ tally, proposal }) {
           <p className="text-sm font-medium text-amber-800">
             Tied result \u2014 {winners.length} options received {optionApprovals[winners[0]]} approvals each
           </p>
-          {isAdmin && (
+          {/* Phase 12.5 F2 — gated on `proposal.resolve_tie`. */}
+          {canResolveTie && (
             <div className="mt-2 space-y-1">
-              <p className="text-xs text-amber-700">As admin, select the winning option:</p>
+              <p className="text-xs text-amber-700">Select the winning option:</p>
               <div className="flex flex-wrap gap-2">
                 {winners.map(wid => (
                   <button key={wid} onClick={() => handleResolveTie(wid)} disabled={resolving}

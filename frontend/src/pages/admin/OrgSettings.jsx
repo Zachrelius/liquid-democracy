@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
+// Phase 12.5 F4 — Default-thresholds editor gates on `org.edit_settings`.
+import { useHasPermission } from '../../hooks/useHasPermission';
 
 // Phase 9.6 — sustained-majority demotion. Defaults that mirror what the
 // backend uses when keys are absent. Used both for the "expand from
@@ -30,6 +32,8 @@ function smIsCustomized(settings) {
 export default function OrgSettings() {
   const { currentOrg, refreshOrgs } = useOrg();
   const toast = useToast();
+  // Phase 12.5 F4 — Default Approval Thresholds editor visibility.
+  const canEditOrgSettings = useHasPermission('org.edit_settings');
   // Phase 12 Stage 2 F7 — D4 hardcoded-gate UI hiding.
   //
   // The org-delete endpoint (DELETE /api/orgs/{slug}) is one of two D4
@@ -171,7 +175,7 @@ export default function OrgSettings() {
         </div>
       </section>
 
-      {/* Voting Defaults */}
+      {/* Voting Defaults — duration */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Voting Defaults</h2>
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
@@ -198,35 +202,72 @@ export default function OrgSettings() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
               />
             </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">
-                Pass Threshold: {Math.round((settings.default_pass_threshold ?? 0.5) * 100)}%
-              </label>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={Math.round((settings.default_pass_threshold ?? 0.5) * 100)}
-                onChange={e => updateSetting('default_pass_threshold', parseInt(e.target.value) / 100)}
-                className="w-full accent-[#2E75B6]"
-              />
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">
-                Quorum Threshold: {Math.round((settings.default_quorum_threshold ?? 0.4) * 100)}%
-              </label>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={Math.round((settings.default_quorum_threshold ?? 0.4) * 100)}
-                onChange={e => updateSetting('default_quorum_threshold', parseInt(e.target.value) / 100)}
-                className="w-full accent-[#2E75B6]"
-              />
-            </div>
           </div>
         </div>
       </section>
+
+      {/* Default Approval Thresholds — Phase 12.5 F4.
+          Gated on `org.edit_settings` (Steward + Admin by default). The
+          backend (Cluster B2) reads these from Organization.settings JSON
+          via get_default_proposal_thresholds(); new proposals created
+          without `proposal.set_thresholds` permission inherit these
+          values. The save flow uses the same PATCH /api/orgs/{slug}
+          endpoint as the rest of this page (settings JSON merge). */}
+      {canEditOrgSettings && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Default Approval Thresholds
+          </h2>
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+            <p className="text-xs text-gray-500">
+              These values are used when new proposals are created without
+              custom thresholds. Members granted "Set proposal thresholds"
+              permission can override these on a per-proposal basis.
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">
+                  Default pass threshold: {Math.round((settings.default_pass_threshold ?? 0.5) * 100)}%
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={settings.default_pass_threshold ?? 0.5}
+                  onChange={e => {
+                    const v = parseFloat(e.target.value);
+                    if (Number.isNaN(v)) return;
+                    // Clamp 0.0–1.0 inclusive per spec validation.
+                    updateSetting('default_pass_threshold', Math.max(0, Math.min(1, v)));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                />
+                <p className="text-xs text-gray-400 mt-1">0.0 to 1.0 (e.g. 0.5 = 50%)</p>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">
+                  Default quorum threshold: {Math.round((settings.default_quorum_threshold ?? 0.4) * 100)}%
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={settings.default_quorum_threshold ?? 0.4}
+                  onChange={e => {
+                    const v = parseFloat(e.target.value);
+                    if (Number.isNaN(v)) return;
+                    updateSetting('default_quorum_threshold', Math.max(0, Math.min(1, v)));
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                />
+                <p className="text-xs text-gray-400 mt-1">0.0 to 1.0 (e.g. 0.4 = 40%)</p>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Voting Methods */}
       <section className="space-y-3">

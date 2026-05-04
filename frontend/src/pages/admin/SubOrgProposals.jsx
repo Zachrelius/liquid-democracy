@@ -7,6 +7,8 @@ import { useToast } from '../../components/Toast';
 import StatusBadge from '../../components/StatusBadge';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
 import LinkedPolisesPicker from '../../components/LinkedPolisesPicker';
+// Phase 12.5 F2/F3 — per-control + threshold gating.
+import { useHasPermission } from '../../hooks/useHasPermission';
 
 /**
  * Phase 8.5 — Sub-Org Proposals admin page.
@@ -20,6 +22,11 @@ import LinkedPolisesPicker from '../../components/LinkedPolisesPicker';
  */
 export default function SubOrgProposals() {
   const { parentSlug, subSlug, subOrg, loading: subLoading, error } = useSubOrg();
+  // Phase 12.5 F2 — Create button gated on `proposal.create`. The hook
+  // resolves against the parent-org's user_permissions because sub-org
+  // proposals are routed through the parent org's permission set
+  // (sub-org-level permissions are out of scope for 12.5).
+  const canCreateProposal = useHasPermission('proposal.create');
 
   const [proposals, setProposals] = useState([]);
   const [topics, setTopics] = useState([]);
@@ -76,7 +83,8 @@ export default function SubOrgProposals() {
         </p>
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-[#1B3A5C]">{subOrg.name} — Proposals</h1>
-          {!showCreate && (
+          {/* Phase 12.5 F2 — Create button gated on `proposal.create`. */}
+          {!showCreate && canCreateProposal && (
             <button
               onClick={() => setShowCreate(true)}
               className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
@@ -131,6 +139,8 @@ export default function SubOrgProposals() {
 
 function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated, onCancel }) {
   const toast = useToast();
+  // Phase 12.5 F3 — threshold inputs gated on `proposal.set_thresholds`.
+  const canSetThresholds = useHasPermission('proposal.set_thresholds');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [votingMethod, setVotingMethod] = useState('binary');
@@ -170,11 +180,14 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
         title,
         body,
         topics: selectedTopics,
-        pass_threshold: passThreshold,
-        quorum_threshold: quorumThreshold,
         voting_method: votingMethod,
         sub_org_id: subOrg.id,
       };
+      // Phase 12.5 F3 — only include thresholds when permitted.
+      if (canSetThresholds) {
+        payload.pass_threshold = passThreshold;
+        payload.quorum_threshold = quorumThreshold;
+      }
       if (isMultiOption) {
         payload.options = options.map(o => ({ label: o.label.trim(), description: o.description.trim() }));
       }
@@ -289,16 +302,24 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Pass Threshold: {Math.round(passThreshold * 100)}%</label>
-          <input type="range" min={0} max={100} value={Math.round(passThreshold * 100)} onChange={e => setPassThreshold(parseInt(e.target.value, 10) / 100)} className="w-full accent-[#2E75B6]" />
+      {/* Phase 12.5 F3 — threshold sliders gated on `proposal.set_thresholds`. */}
+      {canSetThresholds ? (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Pass Threshold: {Math.round(passThreshold * 100)}%</label>
+            <input type="range" min={0} max={100} value={Math.round(passThreshold * 100)} onChange={e => setPassThreshold(parseInt(e.target.value, 10) / 100)} className="w-full accent-[#2E75B6]" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Quorum Threshold: {Math.round(quorumThreshold * 100)}%</label>
+            <input type="range" min={0} max={100} value={Math.round(quorumThreshold * 100)} onChange={e => setQuorumThreshold(parseInt(e.target.value, 10) / 100)} className="w-full accent-[#2E75B6]" />
+          </div>
         </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Quorum Threshold: {Math.round(quorumThreshold * 100)}%</label>
-          <input type="range" min={0} max={100} value={Math.round(quorumThreshold * 100)} onChange={e => setQuorumThreshold(parseInt(e.target.value, 10) / 100)} className="w-full accent-[#2E75B6]" />
+      ) : (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-900">
+          Proposals will use this organization's default approval thresholds.
+          Ask an Admin or Steward if you need different thresholds for this proposal.
         </div>
-      </div>
+      )}
 
       {/* Phase 9 — Linked Deliberations picker. Sub-org proposals always
           carry sub_org_id, so the picker always renders here (no scope

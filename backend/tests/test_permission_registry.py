@@ -40,12 +40,12 @@ _DUMMY_HASH = auth_utils.hash_password("demo1234")
 # Module-level data tests (no DB required)
 # ---------------------------------------------------------------------------
 
-def test_registry_has_24_entries():
-    """Per Stage 2 spec — Stage 1 shipped 23 keys; Stage 2 adds the
-    meta-permission `role_permissions.edit`. Total: 24.
-    Per-category breakdown: 4+3+5+3+1+2+1+3+2 = 24
-    (Organization category bumped from 2 to 3 with the new key)."""
-    assert len(PERMISSION_REGISTRY) == 24
+def test_registry_has_25_entries():
+    """Per Phase 12.5 spec — Stage 1 shipped 23 keys; Stage 2 added
+    `role_permissions.edit` (24); Phase 12.5 adds `proposal.set_thresholds`
+    in the Proposals category (25). Per-category breakdown:
+    5+3+5+3+1+2+1+3+2 = 25."""
+    assert len(PERMISSION_REGISTRY) == 25
 
 
 def test_registry_keys_are_unique():
@@ -66,11 +66,11 @@ def test_registry_uses_nine_canonical_categories():
 
 
 def test_registry_per_category_counts_match_spec():
-    """Per spec table totals + Stage 2 addition: 4+3+5+3+1+2+1+3+2 = 24.
-    Stage 2 adds `role_permissions.edit` to the Organization category,
-    bumping that category from 2 to 3."""
+    """Per spec table totals + Stage 2 + Phase 12.5 additions:
+    5+3+5+3+1+2+1+3+2 = 25. Phase 12.5 adds `proposal.set_thresholds` to
+    the Proposals category, bumping that category from 4 to 5."""
     expected = {
-        "Proposals": 4,
+        "Proposals": 5,
         "Topics": 3,
         "Members": 5,
         "Sub-organizations": 3,
@@ -90,21 +90,23 @@ def test_registry_per_category_counts_match_spec():
 # DEFAULT_GRANTS counts
 # ---------------------------------------------------------------------------
 
-def test_default_grants_steward_gets_all_24():
-    """Stage 2 — steward holds every permission by default, including
-    `role_permissions.edit` (the meta-permission). The Steward column also
-    has three lockout-protected cells per Stage 2 spec Q1, but those still
-    appear in DEFAULT_GRANTS as TRUE — they're enforced as-locked at the
-    PATCH endpoint, not via DEFAULT_GRANTS."""
-    assert len(DEFAULT_GRANTS["steward"]) == 24
+def test_default_grants_steward_gets_all_25():
+    """Phase 12.5 — steward holds every permission by default, including
+    `role_permissions.edit` (Stage 2 meta) and `proposal.set_thresholds`
+    (Phase 12.5). The Steward column also has three lockout-protected
+    cells per Stage 2 spec Q1, but those still appear in DEFAULT_GRANTS
+    as TRUE — they're enforced as-locked at the PATCH endpoint, not via
+    DEFAULT_GRANTS."""
+    assert len(DEFAULT_GRANTS["steward"]) == 25
     assert DEFAULT_GRANTS["steward"] == ALL_PERMISSION_KEYS
 
 
-def test_default_grants_admin_gets_all_24():
-    """Stage 2 — admins also default to the full 24-key set, including
-    `role_permissions.edit`. Stage 2's matrix UI is what permits orgs
-    to scope this back."""
-    assert len(DEFAULT_GRANTS["admin"]) == 24
+def test_default_grants_admin_gets_all_25():
+    """Phase 12.5 — admins also default to the full 25-key set, including
+    both `role_permissions.edit` and `proposal.set_thresholds`. The matrix
+    UI is what permits orgs to scope these back if they want stricter
+    Admin scopes."""
+    assert len(DEFAULT_GRANTS["admin"]) == 25
     assert DEFAULT_GRANTS["admin"] == ALL_PERMISSION_KEYS
 
 
@@ -211,10 +213,10 @@ def test_get_registry_returns_200_for_authenticated_user(client, test_db):
     assert resp.status_code == 200, resp.text
 
 
-def test_get_registry_returns_24_entries_with_correct_shape(client, test_db):
-    """Stage 2 — endpoint returns the full 24-entry list (Stage 1's 23 plus
-    `role_permissions.edit`) with key/label/description/category on every
-    row."""
+def test_get_registry_returns_25_entries_with_correct_shape(client, test_db):
+    """Phase 12.5 — endpoint returns the full 25-entry list (Stage 2's 24
+    plus `proposal.set_thresholds`) with key/label/description/category on
+    every row."""
     user = _make_user(test_db, "bob")
     test_db.commit()
 
@@ -223,7 +225,7 @@ def test_get_registry_returns_24_entries_with_correct_shape(client, test_db):
 
     assert "permissions" in body
     assert "categories" in body
-    assert len(body["permissions"]) == 24
+    assert len(body["permissions"]) == 25
     for entry in body["permissions"]:
         assert set(entry.keys()) == {"key", "label", "description", "category"}
         assert isinstance(entry["key"], str) and entry["key"]

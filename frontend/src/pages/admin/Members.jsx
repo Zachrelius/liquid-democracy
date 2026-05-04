@@ -5,8 +5,11 @@ import Avatar from '../../components/Avatar';
 import ErrorMessage from '../../components/ErrorMessage';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
+// Phase 12.5 F2 — per-control permission gating.
+import { useHasPermission } from '../../hooks/useHasPermission';
 
-function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, isAdmin, confirm }) {
+function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, perms, confirm }) {
+  const { canChangeRole, canSuspend, canRemove } = perms;
   const [expanded, setExpanded] = useState(false);
   const [role, setRole] = useState(member.role);
   const [saving, setSaving] = useState(false);
@@ -52,7 +55,8 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, is
       </div>
       {expanded && !isOwner && (
         <div className="px-4 py-3 bg-gray-50 flex items-center gap-3 flex-wrap">
-          {isAdmin && (
+          {/* Phase 12.5 F2 — Change-role gated on `member.change_role`. */}
+          {canChangeRole && (
             <>
               <select
                 value={role}
@@ -78,23 +82,25 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, is
             </>
           )}
           <div className="flex-1" />
-          {member.status === 'active' ? (
+          {/* Phase 12.5 F2 — Suspend/Reactivate gated on `member.suspend`. */}
+          {canSuspend && member.status === 'active' && (
             <button
               onClick={() => onSuspend(member.user_id)}
               className="text-xs px-3 py-1.5 border border-yellow-400 text-yellow-700 rounded-lg hover:bg-yellow-50"
             >
               Suspend
             </button>
-          ) : member.status === 'suspended' && isAdmin ? (
-            // Reactivate is admin-only on the backend (require_org_admin) — gate the button to match.
+          )}
+          {canSuspend && member.status === 'suspended' && (
             <button
               onClick={() => onReactivate(member.user_id)}
               className="text-xs px-3 py-1.5 border border-green-400 text-green-700 rounded-lg hover:bg-green-50"
             >
               Reactivate
             </button>
-          ) : null}
-          {isAdmin && (
+          )}
+          {/* Phase 12.5 F2 — Remove gated on `member.remove`. */}
+          {canRemove && (
             <button
               onClick={async () => {
                 const ok = await confirm({
@@ -116,9 +122,16 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, is
 }
 
 export default function Members() {
-  const { currentOrg, isAdmin } = useOrg();
+  const { currentOrg } = useOrg();
   const toast = useToast();
   const confirm = useConfirm();
+  // Phase 12.5 F2 — per-control permission gating. Replaces the prior
+  // `isAdmin` role-tier check throughout this page.
+  const canApproveJoin = useHasPermission('member.approve_join');
+  const canChangeRole = useHasPermission('member.change_role');
+  const canRemove = useHasPermission('member.remove');
+  const canSuspend = useHasPermission('member.suspend');
+  const canInvite = useHasPermission('member.invite');
   const [members, setMembers] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [invitations, setInvitations] = useState([]);
@@ -149,18 +162,19 @@ export default function Members() {
     } catch (e) {
       setLoadError(e.message || 'Failed to load members');
     }
-    // Invitations are admin-only on the backend — only fetch when the viewer
-    // is an admin so moderators don't trigger a known-403 in the network log.
-    if (isAdmin) {
+    // Phase 12.5 F2 — invitations endpoint is gated on `member.invite`
+    // server-side; only fetch when the viewer holds the permission so users
+    // without it don't trigger a known-403 in the network log.
+    if (canInvite) {
       try {
         const invs = await api.get(`/api/orgs/${slug}/invitations`);
         setInvitations(invs);
-      } catch { /* invitations are admin-only — fall through */ }
+      } catch { /* invite endpoint may 403 — fall through */ }
     } else {
       setInvitations([]);
     }
     setLoading(false);
-  }, [slug, isAdmin]);
+  }, [slug, canInvite]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -301,20 +315,22 @@ export default function Members() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => handleApprove(m.user_id)}
-                    className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                  >
-                    Approve
-                  </button>
-                  {/* Deny is admin-only on the backend (require_org_admin) — gate to match. */}
-                  {isAdmin && (
-                    <button
-                      onClick={() => handleDeny(m.user_id)}
-                      className="text-xs px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
-                    >
-                      Deny
-                    </button>
+                  {/* Phase 12.5 F2 — Approve/Deny gated on `member.approve_join`. */}
+                  {canApproveJoin && (
+                    <>
+                      <button
+                        onClick={() => handleApprove(m.user_id)}
+                        className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => handleDeny(m.user_id)}
+                        className="text-xs px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
+                      >
+                        Deny
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -357,7 +373,7 @@ export default function Members() {
                 onSuspend={handleSuspend}
                 onReactivate={handleReactivate}
                 onRemove={handleRemove}
-                isAdmin={isAdmin}
+                perms={{ canChangeRole, canSuspend, canRemove }}
                 confirm={confirm}
               />
             ))
@@ -365,8 +381,8 @@ export default function Members() {
         </div>
       </section>
 
-      {/* Invite Members (admin only) */}
-      {isAdmin && <section className="space-y-3">
+      {/* Invite Members — gated on `member.invite` (Phase 12.5 F2). */}
+      {canInvite && <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Invite Members</h2>
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
           <div>
@@ -407,8 +423,8 @@ export default function Members() {
         </div>
       </section>}
 
-      {/* Pending Invitations (admin only) */}
-      {isAdmin && invitations.length > 0 && (
+      {/* Pending Invitations — gated on `member.invite` (Phase 12.5 F2). */}
+      {canInvite && invitations.length > 0 && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
             Invitations ({invitations.length})

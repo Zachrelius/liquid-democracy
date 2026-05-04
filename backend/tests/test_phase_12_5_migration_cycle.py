@@ -1,19 +1,19 @@
-"""Phase 12 Stage 2 migration: verify upgrade -> downgrade -> upgrade
-cycle on SQLite for the ``role_permissions.edit`` row inserts, plus
+"""Phase 12.5 migration: verify upgrade -> downgrade -> upgrade cycle on
+SQLite for the ``proposal.set_thresholds`` row inserts, plus
 data-correctness assertions about the seeded enabled-flag values per
 preset role.
 
-Mirrors ``test_phase_12_migration_cycle.py`` but exercises only the
-Stage 2 step (e6371e56e860):
-  - Build the schema through Stage 1 (upgrade to c8f4a9d712e6).
+Mirrors ``test_phase_12_stage2_migration_cycle.py`` but exercises only
+the Phase 12.5 step (41694d86821f):
+  - Build the schema through Stage 2 (upgrade to e6371e56e860).
   - Seed two orgs so we have preset roles to attach role_permissions
     rows to.
-  - Upgrade -> head (i.e. apply Stage 2).
+  - Upgrade -> head (i.e. apply Phase 12.5).
   - Assert: every preset role now has a role_permissions row with
-    permission_key='role_permissions.edit' and the spec-required
+    permission_key='proposal.set_thresholds' and the spec-required
     enabled value (steward/admin=True, moderator/member=False).
-  - Downgrade -1 -> Stage 2 reversed.
-  - Assert: NO role_permissions row with permission_key='role_permissions.edit'
+  - Downgrade -1 -> Phase 12.5 reversed.
+  - Assert: NO role_permissions row with permission_key='proposal.set_thresholds'
     exists for any role.
   - Re-upgrade head.
   - Assert: rows are present again, idempotently (no duplicates).
@@ -31,6 +31,7 @@ import sqlalchemy as sa
 
 
 _BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_PERMISSION_KEY = "proposal.set_thresholds"
 
 
 def _run_alembic(db_url: str, *args: str) -> None:
@@ -116,18 +117,15 @@ def _seed_two_orgs_with_memberships(db_url: str) -> dict:
                 "default_follow_policy, created_at) "
                 "VALUES (:id, :u, :dn, 'x', 0, 'human', "
                 "'strict_precedence', 0, 'require_approval', :now)"
-            ), {"id": user_id, "u": "stage2tester", "dn": "Tester", "now": now})
+            ), {"id": user_id, "u": "p125tester", "dn": "Tester", "now": now})
 
-            for org_id, slug in [(org_a_id, "stage2a"), (org_b_id, "stage2b")]:
+            for org_id, slug in [(org_a_id, "p125a"), (org_b_id, "p125b")]:
                 conn.execute(sa.text(
                     "INSERT INTO organizations "
                     "(id, name, slug, description, join_policy, settings, "
                     "created_at, updated_at) "
                     "VALUES (:id, :n, :s, '', 'open', '{}', :now, :now)"
                 ), {"id": org_id, "n": slug.title(), "s": slug, "now": now})
-                # Add a membership so Stage 1's role_id NOT-NULL flip can
-                # land cleanly (Stage 1 backfills role_id and then makes
-                # it NOT NULL only when null_count == 0).
                 conn.execute(sa.text(
                     "INSERT INTO org_memberships "
                     "(id, user_id, org_id, role, status, joined_at) "
@@ -144,10 +142,9 @@ def _seed_two_orgs_with_memberships(db_url: str) -> dict:
     return {"org_a_id": org_a_id, "org_b_id": org_b_id}
 
 
-def _count_role_permissions_edit_rows(db_url: str) -> dict[str, dict[str, int]]:
-    """Return a per-org, per-system_key count of role_permissions rows whose
-    permission_key='role_permissions.edit', plus a flat True/False breakdown.
-    """
+def _count_set_thresholds_rows(db_url: str) -> dict[str, dict[str, int]]:
+    """Return a per-org, per-system_key bool of role_permissions rows
+    whose permission_key='proposal.set_thresholds'."""
     engine = sa.create_engine(db_url)
     try:
         with engine.connect() as conn:
@@ -158,7 +155,7 @@ def _count_role_permissions_edit_rows(db_url: str) -> dict[str, dict[str, int]]:
                     "JOIN roles r ON r.id = rp.role_id "
                     "WHERE rp.permission_key = :pkey"
                 ),
-                {"pkey": "role_permissions.edit"},
+                {"pkey": _PERMISSION_KEY},
             ).fetchall()
     finally:
         engine.dispose()
@@ -168,10 +165,10 @@ def _count_role_permissions_edit_rows(db_url: str) -> dict[str, dict[str, int]]:
     return by_org
 
 
-def test_stage2_upgrade_downgrade_upgrade_cycle():
-    """Stage 2 migration is reversible and idempotent on SQLite.
+def test_phase_12_5_upgrade_downgrade_upgrade_cycle():
+    """Phase 12.5 migration is reversible and idempotent on SQLite.
 
-    Cycle: stage1 -> stage2 -> downgrade stage2 -> re-apply stage2.
+    Cycle: stage2 -> 12.5 -> downgrade 12.5 -> re-apply 12.5.
     """
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
@@ -180,78 +177,79 @@ def test_stage2_upgrade_downgrade_upgrade_cycle():
     try:
         _build_legacy_schema(db_url)
         _seed_two_orgs_with_memberships(db_url)
-        # Apply Stage 1 first so the preset roles get seeded for the orgs
-        # we just inserted; this is the starting state Stage 2 builds on.
-        _run_alembic(db_url, "upgrade", "c8f4a9d712e6")
+        # Apply Stage 1 + Stage 2 (everything BEFORE Phase 12.5) so the
+        # preset roles and the prior set of role_permissions rows are in
+        # place.
+        _run_alembic(db_url, "upgrade", "e6371e56e860")
 
-        # Sanity: at Stage 1, no role_permissions.edit rows exist yet.
+        # Sanity: at Stage 2, no proposal.set_thresholds rows exist yet.
         engine = sa.create_engine(db_url)
         with engine.connect() as conn:
-            pre_stage2_count = conn.execute(
+            pre_count = conn.execute(
                 sa.text(
                     "SELECT COUNT(*) FROM role_permissions "
-                    "WHERE permission_key = 'role_permissions.edit'"
-                )
+                    "WHERE permission_key = :pkey"
+                ),
+                {"pkey": _PERMISSION_KEY},
             ).scalar()
         engine.dispose()
-        assert pre_stage2_count == 0, (
-            "Stage 1 doesn't insert role_permissions.edit rows; expected 0 "
-            f"before Stage 2 runs, got {pre_stage2_count}"
+        assert pre_count == 0, (
+            "Stage 2 doesn't insert proposal.set_thresholds rows; "
+            f"expected 0 before Phase 12.5 runs, got {pre_count}"
         )
 
-        # 1. Upgrade head (applies Stage 2)
+        # 1. Upgrade head (applies Phase 12.5)
         _run_alembic(db_url, "upgrade", "head")
-        per_org = _count_role_permissions_edit_rows(db_url)
+        per_org = _count_set_thresholds_rows(db_url)
 
         # Each of two seeded orgs should now have all four preset roles
-        # carrying a role_permissions.edit row with the correct enabled flag.
+        # carrying a proposal.set_thresholds row with the correct enabled
+        # flag.
         assert len(per_org) == 2
         for org_id, by_role in per_org.items():
             assert by_role.get("steward") is True, (
                 f"org {org_id}: steward should have "
-                f"role_permissions.edit=True; got {by_role.get('steward')!r}"
+                f"proposal.set_thresholds=True; got {by_role.get('steward')!r}"
             )
             assert by_role.get("admin") is True, (
                 f"org {org_id}: admin should have "
-                f"role_permissions.edit=True; got {by_role.get('admin')!r}"
+                f"proposal.set_thresholds=True; got {by_role.get('admin')!r}"
             )
             assert by_role.get("moderator") is False, (
                 f"org {org_id}: moderator should have "
-                f"role_permissions.edit=False; got {by_role.get('moderator')!r}"
+                f"proposal.set_thresholds=False; got {by_role.get('moderator')!r}"
             )
             assert by_role.get("member") is False, (
                 f"org {org_id}: member should have "
-                f"role_permissions.edit=False; got {by_role.get('member')!r}"
+                f"proposal.set_thresholds=False; got {by_role.get('member')!r}"
             )
 
-        # 2. Downgrade -2: reverse Phase 12.5 + Stage 2 (i.e., back to
-        # Stage 1's head). Phase 12.5 added a third migration on top of
-        # Stage 1+2; this test asserts Stage 2's effect specifically, so
-        # we need to step back two revisions to undo both Phase 12.5 and
-        # Stage 2 row inserts.
-        _run_alembic(db_url, "downgrade", "-2")
+        # 2. Downgrade -1: reverse Phase 12.5 only.
+        _run_alembic(db_url, "downgrade", "-1")
         engine = sa.create_engine(db_url)
         with engine.connect() as conn:
             tables = set(sa.inspect(conn).get_table_names())
-            # Stage 1 tables should still exist (we only undid Stage 2).
+            # Stage 1+2 tables should still exist.
             assert "roles" in tables
             assert "role_permissions" in tables
             post_downgrade_count = conn.execute(
                 sa.text(
                     "SELECT COUNT(*) FROM role_permissions "
-                    "WHERE permission_key = 'role_permissions.edit'"
-                )
+                    "WHERE permission_key = :pkey"
+                ),
+                {"pkey": _PERMISSION_KEY},
             ).scalar()
         engine.dispose()
         assert post_downgrade_count == 0, (
-            f"Stage 2 downgrade should remove every role_permissions.edit "
-            f"row; got {post_downgrade_count} remaining"
+            f"Phase 12.5 downgrade should remove every "
+            f"proposal.set_thresholds row; got {post_downgrade_count} "
+            "remaining"
         )
 
         # 3. Re-upgrade head — idempotency. Re-applying must not duplicate
         # rows; we should see the same 8 rows (2 orgs × 4 preset roles).
         _run_alembic(db_url, "upgrade", "head")
-        per_org_2 = _count_role_permissions_edit_rows(db_url)
+        per_org_2 = _count_set_thresholds_rows(db_url)
         assert len(per_org_2) == 2
         for org_id, by_role in per_org_2.items():
             assert set(by_role.keys()) == {
@@ -262,19 +260,19 @@ def test_stage2_upgrade_downgrade_upgrade_cycle():
             assert by_role["moderator"] is False
             assert by_role["member"] is False
 
-        # No duplicates: count rows directly.
         engine = sa.create_engine(db_url)
         with engine.connect() as conn:
             total_rows = conn.execute(
                 sa.text(
                     "SELECT COUNT(*) FROM role_permissions "
-                    "WHERE permission_key = 'role_permissions.edit'"
-                )
+                    "WHERE permission_key = :pkey"
+                ),
+                {"pkey": _PERMISSION_KEY},
             ).scalar()
         engine.dispose()
         # 2 orgs × 4 preset roles = 8 rows exactly.
         assert total_rows == 8, (
-            f"After re-upgrade expected 8 role_permissions.edit rows "
+            f"After re-upgrade expected 8 proposal.set_thresholds rows "
             f"(2 orgs × 4 roles), got {total_rows} — possible duplicate "
             f"insert (idempotency violated)"
         )
@@ -285,9 +283,9 @@ def test_stage2_upgrade_downgrade_upgrade_cycle():
             pass
 
 
-def test_stage2_idempotent_when_re_applied_with_existing_rows():
-    """Running upgrade twice in a row (no intervening downgrade) is a no-op
-    on the second run — validates the WHERE NOT EXISTS guard."""
+def test_phase_12_5_idempotent_when_re_applied_with_existing_rows():
+    """Running upgrade twice in a row (no intervening downgrade) is a
+    no-op on the second run — validates the existence-check guard."""
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     db_url = f"sqlite:///{path}"
@@ -296,25 +294,24 @@ def test_stage2_idempotent_when_re_applied_with_existing_rows():
         _build_legacy_schema(db_url)
         _seed_two_orgs_with_memberships(db_url)
 
-        # First upgrade — runs Stage 1 then Stage 2.
+        # First upgrade — runs all migrations through Phase 12.5.
         _run_alembic(db_url, "upgrade", "head")
         engine = sa.create_engine(db_url)
         with engine.connect() as conn:
             after_first = conn.execute(
                 sa.text(
                     "SELECT COUNT(*) FROM role_permissions "
-                    "WHERE permission_key = 'role_permissions.edit'"
-                )
+                    "WHERE permission_key = :pkey"
+                ),
+                {"pkey": _PERMISSION_KEY},
             ).scalar()
         engine.dispose()
 
-        # Second invocation — alembic upgrade head is a no-op once we're at
-        # head, but let's also explicitly call the migration's upgrade()
-        # function via stamp+upgrade dance to prove the WHERE NOT EXISTS
-        # guard works even if the migration is somehow re-invoked.
+        # Second invocation: downgrade -1 then upgrade head re-applies the
+        # 12.5 migration; subsequent upgrade head with already-at-head is
+        # a no-op. Both forms should leave row counts identical.
         _run_alembic(db_url, "downgrade", "-1")
         _run_alembic(db_url, "upgrade", "head")
-        # Now run upgrade head again — already at head, true no-op.
         _run_alembic(db_url, "upgrade", "head")
 
         engine = sa.create_engine(db_url)
@@ -322,15 +319,16 @@ def test_stage2_idempotent_when_re_applied_with_existing_rows():
             after_repeat = conn.execute(
                 sa.text(
                     "SELECT COUNT(*) FROM role_permissions "
-                    "WHERE permission_key = 'role_permissions.edit'"
-                )
+                    "WHERE permission_key = :pkey"
+                ),
+                {"pkey": _PERMISSION_KEY},
             ).scalar()
         engine.dispose()
 
         assert after_first == after_repeat == 8, (
-            f"Expected 8 role_permissions.edit rows after both first apply "
-            f"and re-apply (2 orgs × 4 roles); got first={after_first}, "
-            f"repeat={after_repeat}"
+            f"Expected 8 proposal.set_thresholds rows after both first "
+            f"apply and re-apply (2 orgs × 4 roles); got "
+            f"first={after_first}, repeat={after_repeat}"
         )
     finally:
         try:

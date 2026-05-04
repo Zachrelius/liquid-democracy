@@ -2,10 +2,14 @@ import { useState, useEffect, useCallback } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
+// Phase 12.5 F2 — per-control permission gating.
+import { useHasPermission } from '../../hooks/useHasPermission';
 
 export default function DelegateApplications() {
   const { currentOrg } = useOrg();
   const toast = useToast();
+  // Phase 12.5 F2 — Approve/Deny gated on `delegate_application.approve`.
+  const canApprove = useHasPermission('delegate_application.approve');
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [denyId, setDenyId] = useState(null);
@@ -128,18 +132,24 @@ export default function DelegateApplications() {
                 </div>
               ) : (
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => handleApprove(app.id)}
-                    className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => setDenyId(app.id)}
-                    className="text-xs px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
-                  >
-                    Deny
-                  </button>
+                  {/* Phase 12.5 F2 — Approve/Deny gated on
+                      `delegate_application.approve`. */}
+                  {canApprove && (
+                    <>
+                      <button
+                        onClick={() => handleApprove(app.id)}
+                        className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        onClick={() => setDenyId(app.id)}
+                        className="text-xs px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
+                      >
+                        Deny
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>
