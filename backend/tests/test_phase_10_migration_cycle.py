@@ -74,8 +74,10 @@ def test_upgrade_downgrade_upgrade_cycle():
         engine.dispose()
         _run_alembic(db_url, "stamp", "a1c4e9d2f8b3")
 
-        # 1. Upgrade head -> comments table present
-        _run_alembic(db_url, "upgrade", "head")
+        # 1. Upgrade to the Phase 10 revision specifically (NOT head; head
+        #    moved to Phase 12 c8f4a9d712e6 and we want to test the Phase 10
+        #    transition in isolation).
+        _run_alembic(db_url, "upgrade", "b2d5f1a3c7e4")
         engine = sa.create_engine(db_url)
         assert _table_exists(engine, "comments")
         # Sanity-check columns are what we expect.
@@ -86,14 +88,14 @@ def test_upgrade_downgrade_upgrade_cycle():
         } <= cols
         engine.dispose()
 
-        # 2. Downgrade -1 -> comments table gone
+        # 2. Downgrade -1 -> back to Phase 9.8, comments table gone
         _run_alembic(db_url, "downgrade", "-1")
         engine = sa.create_engine(db_url)
         assert not _table_exists(engine, "comments")
         engine.dispose()
 
-        # 3. Re-upgrade head -> idempotent re-application
-        _run_alembic(db_url, "upgrade", "head")
+        # 3. Re-upgrade to Phase 10 -> idempotent re-application
+        _run_alembic(db_url, "upgrade", "b2d5f1a3c7e4")
         engine = sa.create_engine(db_url)
         assert _table_exists(engine, "comments")
         engine.dispose()

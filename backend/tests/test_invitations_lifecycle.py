@@ -30,6 +30,7 @@ import models
 from database import Base, get_db
 from main import app
 from routes import organizations as org_route
+from tests.conftest import make_org_membership
 
 
 _DUMMY_HASH = auth_utils.hash_password("demo1234")
@@ -110,11 +111,10 @@ def _make_org(db, slug: str = "testorg", name: str = "Test Org") -> models.Organ
 
 
 def _join(db, user, org, role="admin", status="active"):
-    m = models.OrgMembership(
+    m = make_org_membership(
+        db,
         user_id=user.id, org_id=org.id, role=role, status=status,
     )
-    db.add(m)
-    db.flush()
     return m
 
 
@@ -276,7 +276,8 @@ def test_accept_invitation_authenticated_emits_audit_and_membership(
     ).first()
     assert m is not None
     assert m.status == "active"
-    assert m.role == "member"
+    # Phase 12 — role is a Role ORM object; assert via system_key.
+    assert m.role is not None and m.role.system_key == "member"
 
     # Invitation marked accepted.
     test_db.refresh(inv)

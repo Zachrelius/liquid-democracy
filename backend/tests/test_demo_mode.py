@@ -259,7 +259,8 @@ def test_registration_auto_joins_demo_org_when_public_demo_flag_set(
         models.OrgMembership.org_id == demo_org.id,
     ).first()
     assert membership is not None
-    assert membership.role == "member"
+    # Phase 12 — membership.role is now a Role ORM object; assert via system_key.
+    assert membership.role is not None and membership.role.system_key == "member"
     assert membership.status == "active"
 
 

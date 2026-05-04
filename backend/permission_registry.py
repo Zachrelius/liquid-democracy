@@ -1,0 +1,248 @@
+"""Phase 12 Stage 1 — Permission registry (Cluster H, H3).
+
+Static module-level data describing the full permission vocabulary used
+by the configurable role-permission system. Stage 2's matrix UI consumes
+this registry directly via ``GET /api/permissions/registry``.
+
+The registry pairs each permission key with:
+  * key — stable identifier referenced from code and the
+    ``role_permissions`` table.
+  * label — human-readable, ~3-5 words.
+  * description — single sentence describing what the permission grants.
+  * category — UI grouping (matches the matrix's row sections in Stage 2).
+
+DEFAULT_GRANTS describes which preset roles get each permission TRUE on
+a freshly-seeded org. Roles are referenced by their stable
+``Role.system_key`` ("steward", "admin", "moderator", "member"), never
+by their display name.
+
+Hardcoded gates outside this registry (per spec D3, D4):
+
+  * Decision-6 implicit power (parent-org admin/steward → all sub-org
+    permissions): handled in ``role_permissions.has_permission``.
+  * ``org.delete`` and ``org.transfer_stewardship``: hardcoded gates on
+    ``role.system_key == 'steward'``. Not present in this registry.
+  * Platform admin (``User.is_admin``): completely separate concern,
+    not part of this system at all.
+
+See ``phase12_configurable_role_permissions_stage1_spec.md`` §"Permission
+registry" for the canonical table this file mirrors.
+"""
+
+from __future__ import annotations
+
+from typing import NamedTuple
+
+
+class PermissionDefinition(NamedTuple):
+    key: str
+    label: str
+    description: str
+    category: str
+
+
+# Categories — order is preserved for the matrix UI grouping in Stage 2.
+CATEGORIES: list[str] = [
+    "Proposals",
+    "Topics",
+    "Members",
+    "Sub-organizations",
+    "Delegate applications",
+    "Polis (deliberation)",
+    "Comments",
+    "Organization",
+    "Audit and analytics",
+]
+
+
+# Full registry — 23 entries. See spec §"Permission registry" lines 105-144.
+PERMISSION_REGISTRY: list[PermissionDefinition] = [
+    # --- Proposals (4) ---
+    PermissionDefinition(
+        "proposal.create",
+        "Create proposals",
+        "Allow creating new proposals in this organization.",
+        "Proposals",
+    ),
+    PermissionDefinition(
+        "proposal.delete",
+        "Delete proposals",
+        "Allow permanently removing proposals (including those created by other members).",
+        "Proposals",
+    ),
+    PermissionDefinition(
+        "proposal.advance_phase",
+        "Advance proposal phases",
+        "Allow moving a proposal between deliberation, voting, and closed phases.",
+        "Proposals",
+    ),
+    PermissionDefinition(
+        "proposal.resolve_tie",
+        "Resolve voting ties",
+        "Allow choosing the winner when a vote ends in a tie.",
+        "Proposals",
+    ),
+    # --- Topics (3) ---
+    PermissionDefinition(
+        "topic.create",
+        "Create topics",
+        "Allow creating new topics for delegation and proposal classification.",
+        "Topics",
+    ),
+    PermissionDefinition(
+        "topic.edit",
+        "Edit topics",
+        "Allow editing topic names, descriptions, and precedence.",
+        "Topics",
+    ),
+    PermissionDefinition(
+        "topic.delete",
+        "Delete topics",
+        "Allow permanently removing topics.",
+        "Topics",
+    ),
+    # --- Members (5) ---
+    PermissionDefinition(
+        "member.approve_join",
+        "Approve member join requests",
+        "Allow accepting or denying requests to join the organization.",
+        "Members",
+    ),
+    PermissionDefinition(
+        "member.remove",
+        "Remove members",
+        "Allow removing members from the organization (preserves their account; only ends membership).",
+        "Members",
+    ),
+    PermissionDefinition(
+        "member.suspend",
+        "Suspend members",
+        "Allow temporarily suspending a member's ability to vote and delegate without removing them.",
+        "Members",
+    ),
+    PermissionDefinition(
+        "member.change_role",
+        "Change member roles",
+        "Allow promoting or demoting other members between roles (cannot promote to or demote from Steward).",
+        "Members",
+    ),
+    PermissionDefinition(
+        "member.invite",
+        "Send invitations",
+        "Allow sending email invitations to join the organization.",
+        "Members",
+    ),
+    # --- Sub-organizations (3) ---
+    PermissionDefinition(
+        "sub_org.create",
+        "Create sub-organizations",
+        "Allow creating new sub-organizations under this parent.",
+        "Sub-organizations",
+    ),
+    PermissionDefinition(
+        "sub_org.delete",
+        "Delete sub-organizations",
+        "Allow permanently removing a sub-organization.",
+        "Sub-organizations",
+    ),
+    PermissionDefinition(
+        "sub_org.edit_settings",
+        "Edit sub-organization settings",
+        "Allow modifying sub-org name, visibility, and configuration.",
+        "Sub-organizations",
+    ),
+    # --- Delegate applications (1) ---
+    PermissionDefinition(
+        "delegate_application.approve",
+        "Approve public delegate applications",
+        "Allow accepting or denying users who apply to be public delegates within this organization.",
+        "Delegate applications",
+    ),
+    # --- Polis (2) ---
+    PermissionDefinition(
+        "polis.create",
+        "Create Polis conversations",
+        "Allow creating Polis deliberation conversations linked to proposals.",
+        "Polis (deliberation)",
+    ),
+    PermissionDefinition(
+        "polis.manage",
+        "Manage Polis conversations",
+        "Allow editing or archiving existing Polis conversations.",
+        "Polis (deliberation)",
+    ),
+    # --- Comments (1) ---
+    PermissionDefinition(
+        "comment.moderate",
+        "Moderate comments",
+        "Allow soft-deleting comments posted by other members. (Members can always edit and delete their own comments within the edit window.)",
+        "Comments",
+    ),
+    # --- Organization (2) ---
+    PermissionDefinition(
+        "org.edit_settings",
+        "Edit organization settings",
+        "Allow modifying org name, description, voting method defaults, and other org-wide configuration. Does not include branding (separate permission).",
+        "Organization",
+    ),
+    PermissionDefinition(
+        "org.edit_branding",
+        "Edit organization branding",
+        "Allow uploading a logo and choosing the organization's display color. (Reserved for Stage 3; the permission key exists in Stage 1 but the UI to use it ships in Stage 3.)",
+        "Organization",
+    ),
+    # --- Audit and analytics (2) ---
+    PermissionDefinition(
+        "audit.view_org",
+        "View organization audit log",
+        "Allow viewing the per-org audit log of administrative actions.",
+        "Audit and analytics",
+    ),
+    PermissionDefinition(
+        "analytics.view",
+        "View organization analytics",
+        "Allow viewing org-level participation, voting, and delegation analytics.",
+        "Audit and analytics",
+    ),
+]
+
+
+# Set of all permission keys for quick membership tests.
+ALL_PERMISSION_KEYS: set[str] = {p.key for p in PERMISSION_REGISTRY}
+
+
+# Default-grant table — which preset roles have each permission TRUE on a
+# freshly-seeded org. Keyed by Role.system_key. The seed helper in
+# backend/role_seed.py (Cluster D) imports DEFAULT_GRANTS to populate
+# role_permissions rows when an org is created.
+#
+# Counts (verified by test_permission_registry.py):
+#   steward   = 23  (every key)
+#   admin     = 23  (every key — admin appears in every Default: line)
+#   moderator =  8  (the moderator-defaults from the spec table)
+#   member    =  0  (members are gated by membership status, not by these
+#                    administrative-action permissions)
+DEFAULT_GRANTS: dict[str, set[str]] = {
+    "steward": set(ALL_PERMISSION_KEYS),
+    "admin": set(ALL_PERMISSION_KEYS),
+    "moderator": {
+        "proposal.create",
+        "proposal.advance_phase",
+        "topic.create",
+        "topic.edit",
+        "member.approve_join",
+        "member.invite",
+        "polis.create",
+        "comment.moderate",
+    },
+    "member": set(),
+}
+
+
+__all__ = [
+    "PermissionDefinition",
+    "PERMISSION_REGISTRY",
+    "ALL_PERMISSION_KEYS",
+    "CATEGORIES",
+    "DEFAULT_GRANTS",
+]

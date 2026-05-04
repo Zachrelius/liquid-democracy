@@ -15,7 +15,47 @@ import schemas
 from audit_utils import log_audit_event
 from database import get_db
 from email_service import send_verification_email, send_password_reset_email
+from role_seed import seed_default_roles_for_org
 from settings import settings
+
+
+# Phase 12 — translate legacy invitation/auto-join role strings to the
+# new system_keys. Invitations.role is still a string column; 'owner'
+# never appears in invitations historically but is mapped defensively.
+_INV_ROLE_TO_SYSTEM_KEY: dict[str, str] = {
+    "owner": "steward",
+    "steward": "steward",
+    "admin": "admin",
+    "moderator": "moderator",
+    "member": "member",
+}
+
+
+def _resolve_org_role_id(
+    db: Session, org_id: str, role_str: str,
+) -> Optional[str]:
+    """Return Role.id for ``(org_id, system_key)``, seeding presets if missing.
+
+    Used by membership-construction paths (auto-join, invitation
+    consumption). Returns None only if the org_id doesn't exist.
+    """
+    system_key = _INV_ROLE_TO_SYSTEM_KEY.get(role_str, role_str)
+    role = (
+        db.query(models.Role)
+        .filter(models.Role.org_id == org_id, models.Role.system_key == system_key)
+        .first()
+    )
+    if role is None:
+        # Defensive seed — production orgs are seeded at create-time and
+        # via the migration; this only fires for legacy / test fixture
+        # paths that pre-date the seed call.
+        seed_default_roles_for_org(db, org_id)
+        role = (
+            db.query(models.Role)
+            .filter(models.Role.org_id == org_id, models.Role.system_key == system_key)
+            .first()
+        )
+    return role.id if role else None
 
 log = logging.getLogger(__name__)
 
@@ -71,10 +111,11 @@ def _auto_join_demo_org(db: Session, user: models.User) -> None:
     ).first()
     if existing:
         return
+    member_role_id = _resolve_org_role_id(db, demo_org.id, "member")
     membership = models.OrgMembership(
         user_id=user.id,
         org_id=demo_org.id,
-        role="member",
+        role_id=member_role_id,
         status="active",
     )
     db.add(membership)
@@ -129,15 +170,16 @@ def _consume_invitation(
         models.OrgMembership.user_id == user.id,
         models.OrgMembership.org_id == inv.org_id,
     ).first()
+    inv_role_id = _resolve_org_role_id(db, inv.org_id, inv.role)
     if existing:
         if existing.status != "active":
             existing.status = "active"
-            existing.role = inv.role
+            existing.role_id = inv_role_id
     else:
         db.add(models.OrgMembership(
             user_id=user.id,
             org_id=inv.org_id,
-            role=inv.role,
+            role_id=inv_role_id,
             status="active",
         ))
 

@@ -42,6 +42,7 @@ from tests.conftest import (
     make_topic,
     set_delegation,
     set_precedence,
+    make_org_membership,
 )
 
 
@@ -112,11 +113,10 @@ def _create_org(db: Session, allowed_methods=None, slug="rcv-org") -> models.Org
 
 
 def _create_membership(db, org, user, role="admin"):
-    m = models.OrgMembership(
+    m = make_org_membership(
+        db,
         user_id=user.id, org_id=org.id, role=role, status="active",
     )
-    db.add(m)
-    db.flush()
     return m
 
 

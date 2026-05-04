@@ -11,7 +11,9 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, is
   const [role, setRole] = useState(member.role);
   const [saving, setSaving] = useState(false);
 
-  const isOwner = member.role === 'owner';
+  // Phase 12 Stage 1: 'owner' renamed to 'steward'. Legacy 'owner' kept
+  // for cached-response safety during the deploy cutover.
+  const isOwner = member.role === 'steward' || member.role === 'owner';
 
   return (
     <div className="border-b border-gray-100 last:border-0">
@@ -26,11 +28,11 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, is
         <span className="w-32 text-gray-500">@{member.username}</span>
         <span className="w-24">
           <span className={`text-xs px-2 py-0.5 rounded font-medium ${
-            member.role === 'owner' ? 'bg-purple-50 text-purple-700' :
+            (member.role === 'steward' || member.role === 'owner') ? 'bg-purple-50 text-purple-700' :
             member.role === 'admin' ? 'bg-blue-50 text-blue-700' :
             member.role === 'moderator' ? 'bg-green-50 text-green-700' :
             'bg-gray-50 text-gray-600'
-          }`}>{member.role}</span>
+          }`}>{member.role === 'owner' ? 'steward' : member.role}</span>
         </span>
         <span className="w-24">
           <span className={`text-xs px-2 py-0.5 rounded ${

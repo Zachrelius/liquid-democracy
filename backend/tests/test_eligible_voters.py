@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import models
 from delegation_engine import eligible_voter_ids_for_proposal
-from tests.conftest import make_user
+from tests.conftest import make_user, make_org_membership
 
 
 def _make_org(db, slug: str, parent_org_id: str | None = None) -> models.Organization:
@@ -27,11 +27,10 @@ def _make_org(db, slug: str, parent_org_id: str | None = None) -> models.Organiz
 
 
 def _add_membership(db, user, org, status: str = "active"):
-    m = models.OrgMembership(
+    m = make_org_membership(
+        db,
         user_id=user.id, org_id=org.id, role="member", status=status,
     )
-    db.add(m)
-    db.flush()
     return m
 
 

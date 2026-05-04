@@ -16,7 +16,12 @@ from sqlalchemy.orm import Session
 import models
 
 
-_ADMIN_ROLES = ("admin", "owner")
+# Phase 12 — Role.system_key sets used by the SQL-bulk role-tier joins.
+# Legacy string column ('admin', 'owner') is dropped; we now join through
+# the Role table to access system_key. Kept as constants so the repeated
+# joins below stay symmetric and self-documenting.
+_ADMIN_TIER_SYSTEM_KEYS = ("admin", "steward")
+_MODERATOR_TIER_SYSTEM_KEYS = ("moderator", "admin", "steward")
 
 
 def eligible_viewers_for_polis(
@@ -65,12 +70,17 @@ def eligible_viewers_for_polis(
     ).all()
     visible.update(r.user_id for r in sub_rows)
 
-    # 2. Parent-org admins/owners (implicit power).
-    parent_admins = db.query(models.OrgMembership.user_id).filter(
-        models.OrgMembership.org_id == polis.org_id,
-        models.OrgMembership.status == "active",
-        models.OrgMembership.role.in_(_ADMIN_ROLES),
-    ).all()
+    # 2. Parent-org admins/Stewards (implicit power) — join through Role.
+    parent_admins = (
+        db.query(models.OrgMembership.user_id)
+        .join(models.Role, models.Role.id == models.OrgMembership.role_id)
+        .filter(
+            models.OrgMembership.org_id == polis.org_id,
+            models.OrgMembership.status == "active",
+            models.Role.system_key.in_(_ADMIN_TIER_SYSTEM_KEYS),
+        )
+        .all()
+    )
     visible.update(r.user_id for r in parent_admins)
 
     # 3. Default visibility — parent-org members unless sub-org is private.
@@ -109,27 +119,39 @@ def eligible_polis_admin_ids(
     admins: set[str] = {polis.created_by}
 
     if polis.sub_org_id is not None:
-        # Sub-org admins/owners.
+        # Sub-org admins/owners — SubOrgMembership.role is STILL a string
+        # column per Phase 12 D2 (sub-org-direct memberships keep the
+        # legacy shape until Stage 2+).
         sub_admins = db.query(models.SubOrgMembership.user_id).filter(
             models.SubOrgMembership.sub_org_id == polis.sub_org_id,
             models.SubOrgMembership.status == "active",
-            models.SubOrgMembership.role.in_(_ADMIN_ROLES),
+            models.SubOrgMembership.role.in_(("admin", "owner")),
         ).all()
         admins.update(r.user_id for r in sub_admins)
-        # Parent-org admins/owners.
-        parent_admins = db.query(models.OrgMembership.user_id).filter(
-            models.OrgMembership.org_id == polis.org_id,
-            models.OrgMembership.status == "active",
-            models.OrgMembership.role.in_(_ADMIN_ROLES),
-        ).all()
+        # Parent-org admins/Stewards — OrgMembership join through Role.
+        parent_admins = (
+            db.query(models.OrgMembership.user_id)
+            .join(models.Role, models.Role.id == models.OrgMembership.role_id)
+            .filter(
+                models.OrgMembership.org_id == polis.org_id,
+                models.OrgMembership.status == "active",
+                models.Role.system_key.in_(_ADMIN_TIER_SYSTEM_KEYS),
+            )
+            .all()
+        )
         admins.update(r.user_id for r in parent_admins)
     else:
-        # Org-wide: parent-org moderator+.
-        parent_mods = db.query(models.OrgMembership.user_id).filter(
-            models.OrgMembership.org_id == polis.org_id,
-            models.OrgMembership.status == "active",
-            models.OrgMembership.role.in_(("moderator", "admin", "owner")),
-        ).all()
+        # Org-wide: parent-org moderator+ — join through Role.
+        parent_mods = (
+            db.query(models.OrgMembership.user_id)
+            .join(models.Role, models.Role.id == models.OrgMembership.role_id)
+            .filter(
+                models.OrgMembership.org_id == polis.org_id,
+                models.OrgMembership.status == "active",
+                models.Role.system_key.in_(_MODERATOR_TIER_SYSTEM_KEYS),
+            )
+            .all()
+        )
         admins.update(r.user_id for r in parent_mods)
 
     return admins

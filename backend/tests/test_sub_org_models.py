@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 import models
-from tests.conftest import make_user, make_topic
+from tests.conftest import make_user, make_topic, make_org_membership
 
 
 # ---------------------------------------------------------------------------
@@ -204,10 +204,10 @@ def test_single_org_topic_proposal_membership_unaffected(db):
     OrgMembership go through their existing constructors unchanged."""
     org = _make_org(db, "Single", "single")
     user = make_user(db, "alice")
-    membership = models.OrgMembership(
+    membership = make_org_membership(
+        db,
         user_id=user.id, org_id=org.id, role="member", status="active",
     )
-    db.add(membership)
     topic = models.Topic(
         name="Healthcare", description="", color="#000", org_id=org.id,
     )

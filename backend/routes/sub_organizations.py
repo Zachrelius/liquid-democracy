@@ -83,12 +83,19 @@ def _require_parent_org_member(
 def _is_parent_org_admin(
     db: Session, user_id: str, parent: models.Organization
 ) -> bool:
+    """Phase 12 — admin-tier check on parent OrgMembership via Role.system_key.
+
+    'admin' and 'steward' grant implicit sub-org admin power per
+    Decision 6; 'owner' was renamed to 'steward' by the migration.
+    """
     m = db.query(models.OrgMembership).filter(
         models.OrgMembership.user_id == user_id,
         models.OrgMembership.org_id == parent.id,
         models.OrgMembership.status == "active",
     ).first()
-    return m is not None and m.role in ("admin", "owner")
+    if m is None or m.role is None:
+        return False
+    return m.role.system_key in ("admin", "steward")
 
 
 def _sub_org_to_out(
@@ -262,7 +269,11 @@ def list_sub_orgs(
     parent-org admins always see everything (Decision 6).
     """
     parent = _parent_or_404(db, org_slug)
-    is_parent_admin = membership.role in ("admin", "owner")
+    # Phase 12 — admin-tier on Role.system_key (renamed 'owner' → 'steward').
+    is_parent_admin = (
+        membership.role is not None
+        and membership.role.system_key in ("admin", "steward")
+    )
 
     sub_orgs = db.query(models.Organization).filter(
         models.Organization.parent_org_id == parent.id
@@ -306,7 +317,11 @@ def get_sub_org(
     parent = _parent_or_404(db, org_slug)
     sub_org = _sub_org_or_404(db, parent, sub_slug)
 
-    is_parent_admin = membership.role in ("admin", "owner")
+    # Phase 12 — admin-tier on Role.system_key (renamed 'owner' → 'steward').
+    is_parent_admin = (
+        membership.role is not None
+        and membership.role.system_key in ("admin", "steward")
+    )
     if (sub_org.settings or {}).get("private", False) and not is_parent_admin:
         sm = db.query(models.SubOrgMembership).filter(
             models.SubOrgMembership.user_id == current_user.id,
@@ -513,7 +528,11 @@ def list_sub_org_members(
     parent = _parent_or_404(db, org_slug)
     sub_org = _sub_org_or_404(db, parent, sub_slug)
 
-    is_parent_admin = membership.role in ("admin", "owner")
+    # Phase 12 — admin-tier on Role.system_key (renamed 'owner' → 'steward').
+    is_parent_admin = (
+        membership.role is not None
+        and membership.role.system_key in ("admin", "steward")
+    )
     sm = db.query(models.SubOrgMembership).filter(
         models.SubOrgMembership.user_id == current_user.id,
         models.SubOrgMembership.sub_org_id == sub_org.id,

@@ -131,11 +131,35 @@ def backfill(db: Session) -> BackfillResult:
             )
             result.already_member += 1
         else:
+            # Phase 12 — resolve invitation role string to a Role.id
+            # against the org's preset rows; defensively seed if missing
+            # (legacy data path; production orgs are seeded by migration).
+            from role_seed import seed_default_roles_for_org as _seed
+            _system_key_map = {"owner": "steward"}
+            sk = _system_key_map.get(inv.role, inv.role)
+            role_row = (
+                db.query(models.Role)
+                .filter(
+                    models.Role.org_id == inv.org_id,
+                    models.Role.system_key == sk,
+                )
+                .first()
+            )
+            if role_row is None:
+                _seed(db, inv.org_id)
+                role_row = (
+                    db.query(models.Role)
+                    .filter(
+                        models.Role.org_id == inv.org_id,
+                        models.Role.system_key == sk,
+                    )
+                    .first()
+                )
             db.add(
                 models.OrgMembership(
                     user_id=user.id,
                     org_id=inv.org_id,
-                    role=inv.role,
+                    role_id=role_row.id if role_row else None,
                     status="active",
                 )
             )

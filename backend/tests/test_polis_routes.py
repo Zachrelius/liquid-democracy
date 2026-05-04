@@ -33,6 +33,7 @@ import auth as auth_utils
 import models
 import polis_service
 from database import Base, get_db
+from tests.conftest import make_org_membership
 from main import app
 from settings import settings as app_settings
 
@@ -108,11 +109,9 @@ def _org(
 
 
 def _membership(db, org, user, role="member", status="active"):
-    m = models.OrgMembership(
-        user_id=user.id, org_id=org.id, role=role, status=status,
+    return make_org_membership(
+        db, user_id=user.id, org_id=org.id, role=role, status=status,
     )
-    db.add(m); db.flush()
-    return m
 
 
 def _sub_membership(db, sub_org, user, role="member", status="active"):

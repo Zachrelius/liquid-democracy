@@ -2,6 +2,15 @@
 Shared pytest fixtures for the backend test suite.
 
 Uses an in-memory SQLite database so tests are fast and isolated.
+
+Phase 12 Stage 1 — ``make_org_membership`` helper added to bridge the
+``OrgMembership.role`` (string) → ``OrgMembership.role_id`` (FK) migration.
+Test fixtures and direct callers should construct memberships via this
+helper rather than ``models.OrgMembership(role="...")`` so the underlying
+Role row is auto-seeded for the org and the FK is correctly populated.
+The helper is a thin wrapper around ``role_seed.seed_default_roles_for_org``;
+production code calls that seed helper directly during org creation /
+migration, so the conftest indirection is a test-only convenience.
 """
 
 import pytest
@@ -10,6 +19,7 @@ from sqlalchemy.orm import sessionmaker, Session
 
 from database import Base
 import models  # noqa: F401 — registers ORM classes with Base
+from role_seed import seed_default_roles_for_org
 from delegation_engine import (
     DelegationGraphStore,
     DelegationEngine,
@@ -68,6 +78,77 @@ def make_topic(db: Session, name: str) -> models.Topic:
     db.add(t)
     db.flush()
     return t
+
+
+# ---------------------------------------------------------------------------
+# Phase 12 — role / membership helpers
+# ---------------------------------------------------------------------------
+
+# Legacy role-string → preset Role.system_key. The migration renamed
+# 'owner' → 'steward'; tests that still pass the legacy string get the
+# rename applied transparently so the broad fixture sweep is purely
+# mechanical (s/role="owner"/role_id=<steward>/).
+_LEGACY_ROLE_TO_SYSTEM_KEY: dict[str, str] = {
+    "owner": "steward",
+    "steward": "steward",
+    "admin": "admin",
+    "moderator": "moderator",
+    "member": "member",
+}
+
+
+def ensure_org_roles(db: Session, org_id: str) -> dict[str, models.Role]:
+    """Idempotent: ensure the four preset Role rows exist for ``org_id``.
+
+    Returns a ``{system_key: Role}`` dict identical to the production seed
+    helper. Safe to call repeatedly within a single test.
+    """
+    return seed_default_roles_for_org(db, org_id)
+
+
+def resolve_role_id(db: Session, org_id: str, role_str: str) -> str:
+    """Return the Role.id matching ``(org_id, system_key)`` for the given
+    legacy role string. Auto-seeds presets on first use.
+
+    ``role_str`` accepts both the new system_keys ('steward', 'admin',
+    'moderator', 'member') and the legacy 'owner' (silently mapped to
+    'steward' to keep the test-fixture diff small).
+    """
+    system_key = _LEGACY_ROLE_TO_SYSTEM_KEY.get(role_str, role_str)
+    roles = ensure_org_roles(db, org_id)
+    if system_key not in roles:
+        raise ValueError(
+            f"resolve_role_id: unknown role string {role_str!r}; expected one "
+            f"of {sorted(_LEGACY_ROLE_TO_SYSTEM_KEY)}"
+        )
+    return roles[system_key].id
+
+
+def make_org_membership(
+    db: Session,
+    *,
+    org_id: str,
+    user_id: str,
+    role: str = "member",
+    status: str = "active",
+) -> models.OrgMembership:
+    """Test-only constructor for ``OrgMembership`` post-Phase-12 migration.
+
+    Replaces ``models.OrgMembership(role="admin", ...)`` patterns scattered
+    throughout the suite. Auto-seeds the org's preset Role rows on first
+    use (idempotent), resolves the legacy role string to a ``role_id``,
+    and inserts the row. Returns the flushed ORM object.
+    """
+    role_id = resolve_role_id(db, org_id, role)
+    m = models.OrgMembership(
+        user_id=user_id,
+        org_id=org_id,
+        role_id=role_id,
+        status=status,
+    )
+    db.add(m)
+    db.flush()
+    return m
 
 
 def make_proposal(

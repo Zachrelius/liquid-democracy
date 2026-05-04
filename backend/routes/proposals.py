@@ -575,9 +575,16 @@ def advance_proposal(
             models.OrgMembership.status == "active",
         ).first()
         if membership:
-            if membership.role in ("admin", "owner"):
+            # Phase 12 — admin/Steward via has_permission(...)
+            # 'proposal.advance_phase' is the canonical gate; Steward retains
+            # the bypass via D4 + the standard grant table (admin gets it).
+            from role_permissions import has_permission as _has_permission
+            from org_middleware import membership_role_system_key as _sk
+            if _has_permission(
+                db, current_user.id, proposal.org_id, "proposal.advance_phase"
+            ):
                 is_org_admin_or_owner = True
-            elif membership.role == "moderator":
+            elif _sk(membership) == "moderator":
                 is_org_moderator = True
 
     if is_org_moderator and not is_author:

@@ -27,6 +27,7 @@ import auth as auth_utils
 import models
 from database import Base, get_db
 from main import app
+from tests.conftest import make_org_membership
 
 
 _DUMMY_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewrwKJuRxm5pJmJi"
@@ -96,14 +97,13 @@ def _make_org(db, name: str, slug: str) -> models.Organization:
 
 
 def _join(db, user: models.User, org: models.Organization, status: str = "active") -> models.OrgMembership:
-    m = models.OrgMembership(
+    m = make_org_membership(
+        db,
         user_id=user.id,
         org_id=org.id,
         role="member",
         status=status,
     )
-    db.add(m)
-    db.flush()
     return m
 
 

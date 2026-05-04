@@ -165,7 +165,7 @@ export default function PolisDetail() {
   // Decision 6 implicit power, since parent admins always pass through too).
   const viewerCreated = polis.created_by === user?.id;
   const subOrgUserRole = isSubOrgRoute ? subOrgCtx.subOrg?.user_role : null;
-  const isSubOrgAdmin = subOrgUserRole === 'admin' || subOrgUserRole === 'owner';
+  const isSubOrgAdmin = subOrgUserRole === 'admin' || subOrgUserRole === 'steward' || subOrgUserRole === 'owner';
   const showAdminControls = !!(viewerCreated || isModeratorOrAdmin || isSubOrgAdmin);
 
   const isArchived = polis.status === 'archived';

@@ -91,8 +91,16 @@ def _polis_to_out(polis: models.Polis) -> schemas.PolisOut:
 
 
 def _is_org_moderator_plus(membership: models.OrgMembership) -> bool:
-    """moderator+ matches Decision 6: org-wide Polis creation tier."""
-    return membership.role in ("moderator", "admin", "owner")
+    """Phase 12 — moderator+ tier check on the resolved Role.system_key.
+
+    The function is kept as a pre-existing call-site convenience; the
+    canonical permission gate for Polis creation is the
+    'polis.create' permission key (use ``has_permission`` at the call
+    site for new code).
+    """
+    if membership is None or membership.role is None:
+        return False
+    return membership.role.system_key in ("moderator", "admin", "steward")
 
 
 def _resolve_sub_org(

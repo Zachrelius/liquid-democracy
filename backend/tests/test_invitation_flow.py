@@ -34,6 +34,7 @@ import models
 from database import Base, get_db
 from main import app
 from settings import settings
+from tests.conftest import make_org_membership
 
 
 _DUMMY_HASH = auth_utils.hash_password("demo1234")
@@ -192,7 +193,8 @@ def test_register_with_invitation_token_skips_demo_auto_join(
         models.OrgMembership.org_id == gamenights.id,
     ).first()
     assert gn_membership is not None
-    assert gn_membership.role == "member"
+    # Phase 12 — role is a Role ORM object; assert via system_key.
+    assert gn_membership.role is not None and gn_membership.role.system_key == "member"
     assert gn_membership.status == "active"
 
     # Invitation marked accepted.
@@ -401,7 +403,8 @@ def test_login_with_invitation_token_consumes_invitation(client, test_db):
         models.OrgMembership.org_id == org.id,
     ).first()
     assert membership is not None
-    assert membership.role == "admin"
+    # Phase 12 — role is a Role ORM object; assert via system_key.
+    assert membership.role is not None and membership.role.system_key == "admin"
     assert membership.status == "active"
 
     # Invitation accepted, audit fired.
@@ -426,9 +429,10 @@ def test_login_with_invitation_token_already_member_is_idempotent(client, test_d
     user = _create_user(test_db, "alice", email="alice@test.example")
     user.password_hash = auth_utils.hash_password("p@ssword!")
     # Pre-existing active membership.
-    test_db.add(models.OrgMembership(
+    make_org_membership(
+        test_db,
         user_id=user.id, org_id=org.id, role="member", status="active",
-    ))
+    )
     inv = _create_invitation(test_db, org, "alice@test.example", role="admin")
     test_db.commit()
 
@@ -449,7 +453,11 @@ def test_login_with_invitation_token_already_member_is_idempotent(client, test_d
         models.OrgMembership.org_id == org.id,
     ).all()
     assert len(memberships) == 1
-    assert memberships[0].role == "member"
+    # Phase 12 — role is a Role ORM object; assert via system_key.
+    assert (
+        memberships[0].role is not None
+        and memberships[0].role.system_key == "member"
+    )
 
     # Invitation marked accepted and audit fired.
     test_db.refresh(inv)

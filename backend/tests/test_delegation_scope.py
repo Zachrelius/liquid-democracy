@@ -28,6 +28,7 @@ from delegation_engine import (
 from tests.conftest import (
     make_user, make_topic, make_proposal,
     cast_direct_vote, set_delegation, set_precedence, make_context,
+    make_org_membership,
 )
 
 
@@ -42,11 +43,10 @@ def _make_org(db, slug: str, parent_org_id: str | None = None) -> models.Organiz
 
 
 def _add_membership(db, user, org):
-    m = models.OrgMembership(
+    m = make_org_membership(
+        db,
         user_id=user.id, org_id=org.id, role="member", status="active",
     )
-    db.add(m)
-    db.flush()
     return m
 
 
