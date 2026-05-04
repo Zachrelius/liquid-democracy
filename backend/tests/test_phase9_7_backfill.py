@@ -104,7 +104,8 @@ def test_backfill_rescued_creates_membership(db, capsys):
         models.OrgMembership.org_id == gamenights.id,
     ).first()
     assert membership is not None
-    assert membership.role == "member"
+    # Phase 12 — role is a Role ORM object; assert via system_key.
+    assert membership.role is not None and membership.role.system_key == "member"
     assert membership.status == "active"
 
     db.refresh(inv)

@@ -352,17 +352,34 @@ def _get_or_create_org(
 def _add_org_membership(
     db: Session, user: models.User, org: models.Organization, role: str = "member"
 ) -> models.OrgMembership:
-    """Idempotent: skip if membership exists. Never overwrite role/status."""
+    """Idempotent: skip if membership exists. Never overwrite role/status.
+
+    Phase 12 — resolve the legacy role string to a Role.id via the org's
+    preset rows. Seeds the four presets defensively if missing (the
+    production migration handles this for prod; this branch is only hit
+    by ``python seed_data.py`` for QA / local-dev scenarios).
+    """
     existing = db.query(models.OrgMembership).filter(
         models.OrgMembership.user_id == user.id,
         models.OrgMembership.org_id == org.id,
     ).first()
     if existing:
         return existing
+    # Map legacy 'owner' → 'steward' for callers that still use the old name.
+    system_key = {"owner": "steward"}.get(role, role)
+    role_row = (
+        db.query(models.Role)
+        .filter(models.Role.org_id == org.id, models.Role.system_key == system_key)
+        .first()
+    )
+    if role_row is None:
+        from role_seed import seed_default_roles_for_org
+        roles = seed_default_roles_for_org(db, org.id)
+        role_row = roles.get(system_key)
     m = models.OrgMembership(
         user_id=user.id,
         org_id=org.id,
-        role=role,
+        role_id=role_row.id if role_row else None,
         status="active",
     )
     db.add(m)

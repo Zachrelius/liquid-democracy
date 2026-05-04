@@ -18,15 +18,49 @@ from database import get_db
 from email_service import send_invitation_email
 from org_config import get_org_config
 from reserved_slugs import RESERVED_SLUGS
+from role_permissions import has_permission
 from role_seed import seed_default_roles_for_org
 from settings import settings as app_settings
 from org_middleware import (
     get_org_context,
+    membership_role_system_key,
     require_org_membership,
     require_org_moderator_or_admin,
     require_org_admin,
     require_org_owner,
 )
+
+
+def _resolve_role_id_by_system_key(
+    db: Session, org_id: str, system_key: str,
+) -> Optional[str]:
+    """Phase 12 — find an org's preset Role row by system_key.
+
+    Used by membership-construction code paths (registration auto-join,
+    invitation acceptance, join-request approval). Returns None if the
+    role doesn't exist; callers can raise or fall back as appropriate.
+    """
+    role = (
+        db.query(models.Role)
+        .filter(
+            models.Role.org_id == org_id,
+            models.Role.system_key == system_key,
+        )
+        .first()
+    )
+    return role.id if role else None
+
+
+# Translate legacy invitation role strings to the new system_keys.
+# Invitations.role keeps a string column per spec ('member' / 'admin'); the
+# 'owner' value never appears in invitations historically.
+_INV_ROLE_TO_SYSTEM_KEY: dict[str, str] = {
+    "owner": "steward",
+    "steward": "steward",
+    "admin": "admin",
+    "moderator": "moderator",
+    "member": "member",
+}
 
 router = APIRouter(prefix="/api/orgs", tags=["organizations"])
 
@@ -82,8 +116,9 @@ def _org_to_out(
             models.OrgMembership.user_id == user_id,
             models.OrgMembership.status == "active",
         ).first()
-        if membership:
-            user_role = membership.role
+        # Phase 12 — emit role.system_key (stable string, e.g. 'steward')
+        # rather than the dropped string column. Frontend reads this.
+        user_role = membership_role_system_key(membership)
 
     return schemas.OrgOut(
         id=org.id,
@@ -424,7 +459,9 @@ def list_members(
                 display_name=user.display_name,
                 email=user.email,
                 avatar_url=user.avatar_url,
-                role=m.role,
+                # Phase 12 — emit role.system_key (e.g. 'steward', 'admin');
+                # the dropped string column would surface a Role ORM object.
+                role=membership_role_system_key(m) or "member",
                 status=m.status,
                 joined_at=m.joined_at,
             ))
@@ -450,9 +487,16 @@ def change_member_role(
     ).first()
     if not m:
         raise HTTPException(status_code=404, detail="Member not found")
-    if m.role == "owner":
-        raise HTTPException(status_code=400, detail="Cannot change owner role")
-    m.role = body.role
+    # Phase 12 — Steward (renamed from 'owner') is protected from
+    # role-change via this endpoint; reassignment is its own flow.
+    if membership_role_system_key(m) == "steward":
+        raise HTTPException(status_code=400, detail="Cannot change Steward role")
+    new_role_id = _resolve_role_id_by_system_key(
+        db, org.id, _INV_ROLE_TO_SYSTEM_KEY.get(body.role, body.role),
+    )
+    if new_role_id is None:
+        raise HTTPException(status_code=400, detail=f"Unknown role '{body.role}'")
+    m.role_id = new_role_id
     db.commit()
     db.refresh(m)
     user = db.get(models.User, m.user_id)
@@ -462,7 +506,7 @@ def change_member_role(
         display_name=user.display_name,
         email=user.email,
         avatar_url=user.avatar_url,
-        role=m.role,
+        role=membership_role_system_key(m) or "member",
         status=m.status,
         joined_at=m.joined_at,
     )
@@ -486,8 +530,9 @@ def remove_member(
     ).first()
     if not m:
         raise HTTPException(status_code=404, detail="Member not found")
-    if m.role == "owner":
-        raise HTTPException(status_code=400, detail="Cannot remove the owner")
+    # Phase 12 — Steward (renamed from 'owner') cannot be removed.
+    if membership_role_system_key(m) == "steward":
+        raise HTTPException(status_code=400, detail="Cannot remove the Steward")
     db.delete(m)
     db.commit()
 
@@ -510,8 +555,9 @@ def suspend_member(
     ).first()
     if not m:
         raise HTTPException(status_code=404, detail="Member not found")
-    if m.role == "owner":
-        raise HTTPException(status_code=400, detail="Cannot suspend the owner")
+    # Phase 12 — Steward (renamed from 'owner') cannot be suspended.
+    if membership_role_system_key(m) == "steward":
+        raise HTTPException(status_code=400, detail="Cannot suspend the Steward")
     m.status = "suspended"
     db.commit()
     return {"message": "Member suspended"}
@@ -572,11 +618,19 @@ def request_join(
         if existing.status == "pending_approval":
             raise HTTPException(status_code=409, detail="Join request already pending")
 
+    # Phase 12 — defensively seed preset roles for the org if missing
+    # (production orgs are seeded at create time and via the migration; this
+    # is belt-and-suspenders for legacy data paths).
+    member_role_id = _resolve_role_id_by_system_key(db, org.id, "member")
+    if member_role_id is None:
+        seed_default_roles_for_org(db, org.id)
+        member_role_id = _resolve_role_id_by_system_key(db, org.id, "member")
+
     if org.join_policy == "open":
         membership = models.OrgMembership(
             user_id=current_user.id,
             org_id=org.id,
-            role="member",
+            role_id=member_role_id,
             status="active",
         )
         db.add(membership)
@@ -587,7 +641,7 @@ def request_join(
         membership = models.OrgMembership(
             user_id=current_user.id,
             org_id=org.id,
-            role="member",
+            role_id=member_role_id,
             status="pending_approval",
         )
         db.add(membership)
@@ -821,16 +875,23 @@ def accept_invitation(
         models.OrgMembership.org_id == inv.org_id,
         models.OrgMembership.user_id == current_user.id,
     ).first()
+    # Phase 12 — resolve invitation role string to a role_id; seed presets
+    # defensively in case the org predates the migration backfill.
+    inv_system_key = _INV_ROLE_TO_SYSTEM_KEY.get(inv.role, inv.role)
+    role_id = _resolve_role_id_by_system_key(db, inv.org_id, inv_system_key)
+    if role_id is None:
+        seed_default_roles_for_org(db, inv.org_id)
+        role_id = _resolve_role_id_by_system_key(db, inv.org_id, inv_system_key)
     if existing:
         if existing.status == "active":
             raise HTTPException(status_code=409, detail="Already a member of this organization")
         existing.status = "active"
-        existing.role = inv.role
+        existing.role_id = role_id
     else:
         db.add(models.OrgMembership(
             user_id=current_user.id,
             org_id=inv.org_id,
-            role=inv.role,
+            role_id=role_id,
             status="active",
         ))
 
@@ -1070,7 +1131,9 @@ def list_org_topics(
         models.Topic.org_id == org.id,
     ).order_by(models.Topic.name).all()
 
-    is_parent_admin = membership.role in ("admin", "owner")
+    # Phase 12 — admin-tier visibility (parent-org admin/steward see every
+    # sub-org topic regardless of membership).
+    is_parent_admin = membership_role_system_key(membership) in ("admin", "steward")
     if is_parent_admin:
         return all_topics
 
@@ -1110,9 +1173,12 @@ def create_org_topic(
     ).first()
 
     if body.sub_org_id is None:
-        # Parent-org-wide topic — admin-only as before.
-        if membership.role not in ("admin", "owner"):
-            raise HTTPException(status_code=403, detail="Admin access required")
+        # Parent-org-wide topic — gated by 'topic.create' permission.
+        if not has_permission(db, current_user.id, org.id, "topic.create"):
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have permission to create topics in this organization.",
+            )
         target_sub_org_id = None
     else:
         sub_org = db.query(models.Organization).filter(
@@ -1239,7 +1305,9 @@ def list_org_proposals(
         q = q.join(models.ProposalTopic).filter(models.ProposalTopic.topic_id == topic_id)
     proposals = q.order_by(models.Proposal.created_at.desc()).all()
 
-    is_parent_admin = membership.role in ("admin", "owner")
+    # Phase 12 — admin-tier visibility (parent-org admin/steward see all
+    # sub-org proposals regardless of membership).
+    is_parent_admin = membership_role_system_key(membership) in ("admin", "steward")
     if not is_parent_admin:
         # Resolve which (private) sub-orgs the viewer is a member of, so
         # private-flag filtering is correct.
@@ -1335,11 +1403,11 @@ def create_org_proposal(
                 ),
             )
     else:
-        # Parent-org-scoped: preserve the legacy moderator+ gate.
-        if membership.role not in ("moderator", "admin", "owner"):
+        # Parent-org-scoped: gated by 'proposal.create' permission.
+        if not has_permission(db, current_user.id, org.id, "proposal.create"):
             raise HTTPException(
                 status_code=403,
-                detail="Moderator access required",
+                detail="You do not have permission to create proposals in this organization.",
             )
 
     from routes.proposals import _validate_proposal_creation, _create_proposal_options
@@ -1522,7 +1590,14 @@ def advance_org_proposal(
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found in this organization")
 
-    if membership.role == "moderator" and proposal.author_id != current_user.id:
+    # Phase 12 — moderator-tier authors are restricted to advancing their
+    # own proposals. Admin/Steward have no such restriction. Documented in
+    # docs/phase12_role_check_audit.md as DOESNT_MAP_FLAG (Stage-1
+    # behavior preserved; Stage 2 may revisit).
+    if (
+        membership_role_system_key(membership) == "moderator"
+        and proposal.author_id != current_user.id
+    ):
         raise HTTPException(status_code=403, detail="Moderators can only advance proposals they created")
 
     from routes.proposals import STATUS_TRANSITIONS

@@ -151,4 +151,6 @@ def test_suspend_reactivate_preserves_role(db: Session):
         models.OrgMembership.user_id == user.id,
     ).first()
     assert m.status == "active"
-    assert m.role == "admin"
+    # Phase 12 — m.role is now a Role ORM object; system_key is the stable
+    # string identifier (display name lives at .name).
+    assert m.role is not None and m.role.system_key == "admin"

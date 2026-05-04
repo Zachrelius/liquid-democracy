@@ -276,7 +276,8 @@ def test_accept_invitation_authenticated_emits_audit_and_membership(
     ).first()
     assert m is not None
     assert m.status == "active"
-    assert m.role == "member"
+    # Phase 12 — role is a Role ORM object; assert via system_key.
+    assert m.role is not None and m.role.system_key == "member"
 
     # Invitation marked accepted.
     test_db.refresh(inv)

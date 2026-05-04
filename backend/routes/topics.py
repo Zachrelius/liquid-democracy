@@ -43,13 +43,19 @@ def list_topics(
     if current_user is None:
         return [t for t in all_topics if t.sub_org_id is None]
 
-    # Resolve the set of (org_id) for which the user is a parent-org admin.
+    # Phase 12 — resolve admin-tier orgs by joining through the Role table;
+    # legacy string column ('admin', 'owner') is dropped.
     parent_admin_org_ids = {
-        row.org_id for row in db.query(models.OrgMembership.org_id).filter(
-            models.OrgMembership.user_id == current_user.id,
-            models.OrgMembership.status == "active",
-            models.OrgMembership.role.in_(("admin", "owner")),
-        ).all()
+        row.org_id for row in (
+            db.query(models.OrgMembership.org_id)
+            .join(models.Role, models.Role.id == models.OrgMembership.role_id)
+            .filter(
+                models.OrgMembership.user_id == current_user.id,
+                models.OrgMembership.status == "active",
+                models.Role.system_key.in_(("admin", "steward")),
+            )
+            .all()
+        )
     }
 
     # Resolve sub-orgs the current user belongs to (across all parents).

@@ -125,8 +125,13 @@ def public_delegate_topic_ids(db: Session, user_id: str) -> set[str]:
 # Phase 8.5 — Sub-org permission helper
 # ---------------------------------------------------------------------------
 
-_ADMIN_ROLES = ("admin", "owner")
+# Phase 12 — SubOrgMembership.role is STILL a string column per D2; the
+# direct sub-org-admin check below compares against this tuple unchanged.
+# OrgMembership.role is now an FK to Role; the parent-org-admin branch
+# uses ``role.system_key`` via a Role lookup instead.
+_SUB_ORG_ADMIN_STRING_ROLES = ("admin", "owner")
 _SUB_ORG_PROPOSAL_CREATOR_ROLES = ("moderator", "admin", "owner")
+_PARENT_ADMIN_TIER_SYSTEM_KEYS = ("admin", "steward")
 
 
 def is_sub_org_admin(
@@ -158,22 +163,28 @@ def is_sub_org_admin(
             "This helper is only valid for sub-orgs."
         )
 
-    # (a) Direct sub-org admin/owner
+    # (a) Direct sub-org admin/owner — SubOrgMembership.role is STILL a
+    # string column per Phase 12 D2.
     sub_membership = db.query(models.SubOrgMembership).filter(
         models.SubOrgMembership.user_id == user_id,
         models.SubOrgMembership.sub_org_id == sub_org.id,
         models.SubOrgMembership.status == "active",
     ).first()
-    if sub_membership is not None and sub_membership.role in _ADMIN_ROLES:
+    if sub_membership is not None and sub_membership.role in _SUB_ORG_ADMIN_STRING_ROLES:
         return True
 
-    # (b) Parent-org admin/owner (implicit power)
+    # (b) Parent-org admin/Steward (implicit power) — OrgMembership.role is
+    # an FK to Role; check via the related Role row's ``system_key``.
     parent_membership = db.query(models.OrgMembership).filter(
         models.OrgMembership.user_id == user_id,
         models.OrgMembership.org_id == sub_org.parent_org_id,
         models.OrgMembership.status == "active",
     ).first()
-    if parent_membership is not None and parent_membership.role in _ADMIN_ROLES:
+    if (
+        parent_membership is not None
+        and parent_membership.role is not None
+        and parent_membership.role.system_key in _PARENT_ADMIN_TIER_SYSTEM_KEYS
+    ):
         return True
 
     return False
@@ -265,6 +276,8 @@ def is_polis_admin(
         models.OrgMembership.org_id == polis.org_id,
         models.OrgMembership.status == "active",
     ).first()
-    if membership is None:
+    if membership is None or membership.role is None:
         return False
-    return membership.role in ("moderator", "admin", "owner")
+    # Phase 12 — moderator+ tier on the Role.system_key (renamed from the
+    # legacy 'owner' string column).
+    return membership.role.system_key in ("moderator", "admin", "steward")

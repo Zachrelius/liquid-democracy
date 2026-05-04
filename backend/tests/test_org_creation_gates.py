@@ -241,7 +241,8 @@ class TestOrgCreationGates:
         assert resp.status_code == 201, resp.text
         body = resp.json()
         assert body["slug"] == "happy"
-        assert body["user_role"] == "owner"
+        # Phase 12 — preset role rename: 'owner' → 'steward'.
+        assert body["user_role"] == "steward"
 
         # Audit enrichment present
         audit = db.query(models.AuditLog).filter(

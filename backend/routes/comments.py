@@ -71,7 +71,10 @@ proposal_router = APIRouter(prefix="/api/proposals", tags=["comments"])
 comment_router = APIRouter(prefix="/api/comments", tags=["comments"])
 
 
-_ADMIN_ROLES = ("admin", "owner")
+# Phase 12 — Role.system_key set used for the SQL-bulk parent-org admin
+# join in eligible-viewer computation. Replaces the legacy string-column
+# ('admin', 'owner') tuple.
+_ADMIN_TIER_SYSTEM_KEYS = ("admin", "steward")
 EDIT_WINDOW = timedelta(minutes=15)
 
 
@@ -125,11 +128,18 @@ def _eligible_viewers_for_proposal(
     visible.update(r.user_id for r in sub_rows)
 
     if org_id is not None:
-        parent_admins = db.query(models.OrgMembership.user_id).filter(
-            models.OrgMembership.org_id == org_id,
-            models.OrgMembership.status == "active",
-            models.OrgMembership.role.in_(_ADMIN_ROLES),
-        ).all()
+        # Phase 12 — join through the Role table to get parent-org admin/
+        # Steward members; the legacy string column is gone.
+        parent_admins = (
+            db.query(models.OrgMembership.user_id)
+            .join(models.Role, models.Role.id == models.OrgMembership.role_id)
+            .filter(
+                models.OrgMembership.org_id == org_id,
+                models.OrgMembership.status == "active",
+                models.Role.system_key.in_(_ADMIN_TIER_SYSTEM_KEYS),
+            )
+            .all()
+        )
         visible.update(r.user_id for r in parent_admins)
 
     sub_org = db.get(models.Organization, sub_org_id)
