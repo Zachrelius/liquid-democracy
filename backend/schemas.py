@@ -346,6 +346,12 @@ class ProposalUpdate(BaseModel):
     # When present, the route diffs old vs. new and emits
     # `polis.linked_to_proposal` / `polis.unlinked_from_proposal` per change.
     linked_polis_ids: Optional[list[str]] = Field(default=None)
+    # Phase 12.5 — per-proposal thresholds. Setting either to a value that
+    # differs from the org default requires `proposal.set_thresholds`. Both
+    # default to None (omitted) so we can distinguish "not patching" from
+    # "patching to a value matching the default."
+    pass_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    quorum_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
     @field_validator("topics", mode="before")
     @classmethod

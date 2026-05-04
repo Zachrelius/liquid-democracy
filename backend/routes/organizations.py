@@ -16,7 +16,7 @@ import schemas
 from audit_utils import log_audit_event
 from database import get_db
 from email_service import send_invitation_email
-from org_config import get_org_config
+from org_config import get_default_proposal_thresholds, get_org_config
 from reserved_slugs import RESERVED_SLUGS
 from role_permissions import has_permission
 from role_seed import seed_default_roles_for_org
@@ -1469,6 +1469,30 @@ def create_org_proposal(
             db, linked_ids, current_user.id, org.id,
         )
 
+    # Phase 12.5 — threshold permission gate + org-default fallback. The
+    # gate uses model_fields_set to distinguish "explicitly passed" from
+    # "Pydantic-default 0.50/0.40" so the FE can omit the threshold inputs
+    # for users without `proposal.set_thresholds` and the proposal lands
+    # on the org's true defaults instead of the schema defaults. Sub-orgs
+    # inherit parent defaults today (per spec "Per-sub-org thresholds" out
+    # of scope), so the lookup uses the parent `org` regardless of
+    # target_sub_org.
+    from routes.proposals import _enforce_threshold_permission
+    requested_pass = (
+        body.pass_threshold
+        if "pass_threshold" in body.model_fields_set else None
+    )
+    requested_quorum = (
+        body.quorum_threshold
+        if "quorum_threshold" in body.model_fields_set else None
+    )
+    _enforce_threshold_permission(
+        db, current_user.id, org, requested_pass, requested_quorum,
+    )
+    default_pass, default_quorum = get_default_proposal_thresholds(org)
+    effective_pass = requested_pass if requested_pass is not None else default_pass
+    effective_quorum = requested_quorum if requested_quorum is not None else default_quorum
+
     proposal = models.Proposal(
         title=body.title,
         body=body.body,
@@ -1477,8 +1501,8 @@ def create_org_proposal(
         sub_org_id=target_sub_org.id if target_sub_org else None,
         voting_method=body.voting_method,
         num_winners=body.num_winners,
-        pass_threshold=body.pass_threshold,
-        quorum_threshold=body.quorum_threshold,
+        pass_threshold=effective_pass,
+        quorum_threshold=effective_quorum,
         sustained_majority_enabled=body.sustained_majority_enabled,
         linked_polis_ids=linked_ids if linked_ids else None,
     )
