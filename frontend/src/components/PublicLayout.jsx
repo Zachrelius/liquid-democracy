@@ -12,7 +12,7 @@ export default function PublicLayout({ children }) {
       <footer className="border-t border-gray-200 bg-white">
         <div className="max-w-6xl mx-auto px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-sm text-gray-500">
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-[#1B3A5C]">Liquid Democracy</span>
+            <span className="font-semibold text-[var(--brand-primary)]">Liquid Democracy</span>
             <span className="text-gray-300">·</span>
             <span className="text-xs">open source</span>
           </div>
@@ -21,20 +21,20 @@ export default function PublicLayout({ children }) {
               href="https://github.com/Zachrelius/liquid-democracy"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-[#2E75B6] hover:underline"
+              className="hover:text-[var(--brand-accent)] hover:underline"
             >
               GitHub
             </a>
-            <Link to="/why" className="hover:text-[#2E75B6] hover:underline">
+            <Link to="/why" className="hover:text-[var(--brand-accent)] hover:underline">
               Why
             </Link>
-            <Link to="/security" className="hover:text-[#2E75B6] hover:underline">
+            <Link to="/security" className="hover:text-[var(--brand-accent)] hover:underline">
               Security & Trust
             </Link>
-            <Link to="/privacy" className="hover:text-[#2E75B6] hover:underline">
+            <Link to="/privacy" className="hover:text-[var(--brand-accent)] hover:underline">
               Privacy
             </Link>
-            <Link to="/terms" className="hover:text-[#2E75B6] hover:underline">
+            <Link to="/terms" className="hover:text-[var(--brand-accent)] hover:underline">
               Terms
             </Link>
           </div>

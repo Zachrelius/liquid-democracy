@@ -99,7 +99,7 @@ export default function CommentComposer({
             <button
               type="button"
               disabled
-              className="text-sm px-4 py-1.5 rounded-lg bg-[#1B3A5C] text-white opacity-50 cursor-not-allowed"
+              className="text-sm px-4 py-1.5 rounded-lg bg-[var(--brand-primary)] text-white opacity-50 cursor-not-allowed"
             >
               Post
             </button>
@@ -120,7 +120,7 @@ export default function CommentComposer({
         onKeyDown={handleKeyDown}
         placeholder={placeholder || (isReply ? 'Write a reply…' : 'Add a comment…')}
         disabled={submitting}
-        className="w-full min-h-[80px] rounded-lg border border-gray-300 p-3 text-sm text-[#2C3E50] placeholder-gray-400 resize-y focus:outline-none focus:border-[#2E75B6] focus:ring-1 focus:ring-[#2E75B6]/30 disabled:bg-gray-50"
+        className="w-full min-h-[80px] rounded-lg border border-gray-300 p-3 text-sm text-[#2C3E50] placeholder-gray-400 resize-y focus:outline-none focus:border-[var(--brand-accent)] focus:ring-1 focus:ring-[var(--brand-accent)]/30 disabled:bg-gray-50"
       />
       <div className="flex items-center justify-between gap-3">
         <span className={`text-xs ${tooLong ? 'text-red-600' : 'text-gray-400'}`}>
@@ -141,7 +141,7 @@ export default function CommentComposer({
             type="button"
             onClick={handleSubmit}
             disabled={!canSubmit}
-            className="text-sm px-4 py-1.5 rounded-lg bg-[#1B3A5C] text-white hover:bg-[#2E75B6] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="text-sm px-4 py-1.5 rounded-lg bg-[var(--brand-primary)] text-white hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {submitting ? 'Posting…' : 'Post'}
           </button>

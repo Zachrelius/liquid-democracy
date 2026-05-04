@@ -85,7 +85,7 @@ function TallySummary({ data, proposal, tally }) {
           {clusters.not_cast?.count || 0} Not cast
         </span>
         {status && (
-          <span className="text-[#2E75B6] font-medium">{status.label}</span>
+          <span className="text-[var(--brand-accent)] font-medium">{status.label}</span>
         )}
       </div>
     );
@@ -143,11 +143,11 @@ function TallySummary({ data, proposal, tally }) {
             ({totalAbstain} abstain{totalAbstain === 1 ? '' : 's'}, {notCast} not cast)
           </span>
           {headline ? (
-            <span className="text-[#2E75B6] font-medium">
+            <span className="text-[var(--brand-accent)] font-medium">
               {headline.label}: {headline.suffix} ({topCount})
             </span>
           ) : topLabel ? (
-            <span className="text-[#2E75B6] font-medium">
+            <span className="text-[var(--brand-accent)] font-medium">
               Top: {topLabel} ({topCount})
             </span>
           ) : null}
@@ -203,11 +203,11 @@ function TallySummary({ data, proposal, tally }) {
             ({totalAbstain} abstain{totalAbstain === 1 ? '' : 's'}, {notCast} not cast)
           </span>
           {singleWinnerStatus ? (
-            <span className="text-[#2E75B6] font-medium">
+            <span className="text-[var(--brand-accent)] font-medium">
               {singleWinnerStatus.label}: {singleWinnerStatus.suffix}
             </span>
           ) : winners.length > 0 ? (
-            <span className="text-[#2E75B6] font-medium">
+            <span className="text-[var(--brand-accent)] font-medium">
               {winners.length > 1 ? (inProgress ? 'Currently winning: ' : 'Winners: ') : 'Winner: '}
               {winnerLabels}
               {totalRounds != null && (

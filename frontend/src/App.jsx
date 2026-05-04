@@ -98,7 +98,7 @@ function OrgScopedLayout({ children }) {
     return (
       <Layout>
         <div className="max-w-xl mx-auto px-4 py-20 text-center space-y-3">
-          <h1 className="text-xl font-semibold text-[#1B3A5C]">
+          <h1 className="text-xl font-semibold text-[var(--brand-primary)]">
             You don&apos;t have access to this organization
           </h1>
           <p className="text-sm text-gray-600">
@@ -107,7 +107,7 @@ function OrgScopedLayout({ children }) {
           </p>
           <Link
             to="/orgs"
-            className="inline-block mt-2 px-5 py-2 bg-[#1B3A5C] text-white text-sm rounded-lg hover:bg-[#2E75B6] transition-colors"
+            className="inline-block mt-2 px-5 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
           >
             Back to your organizations
           </Link>

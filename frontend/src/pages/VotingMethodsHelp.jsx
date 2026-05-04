@@ -7,10 +7,10 @@ export default function VotingMethodsHelp() {
         {/* Phase 11 — help pages are public/non-org-scoped; back-link
             routes to /orgs (the picker) since we don't know which org the
             visitor came from. */}
-        <Link to="/orgs" className="text-sm text-[#2E75B6] hover:underline mb-4 inline-block">
+        <Link to="/orgs" className="text-sm text-[var(--brand-accent)] hover:underline mb-4 inline-block">
           ← Back
         </Link>
-        <h1 className="text-2xl font-bold text-[#1B3A5C]">Voting Methods</h1>
+        <h1 className="text-2xl font-bold text-[var(--brand-primary)]">Voting Methods</h1>
         <p className="text-sm text-gray-500 mt-1">
           Understanding the different ways your organization can make decisions.
         </p>
@@ -18,26 +18,26 @@ export default function VotingMethodsHelp() {
 
       {/* Decision guide */}
       <section className="bg-blue-50 border border-blue-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">Which method should I pick?</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Which method should I pick?</h2>
         <ul className="text-sm text-gray-700 space-y-2 leading-relaxed">
           <li>
             <strong>Simple yes/no question</strong> &mdash; use{' '}
-            <span className="font-medium text-[#1B3A5C]">Binary</span>. Policy approvals, charter changes,
+            <span className="font-medium text-[var(--brand-primary)]">Binary</span>. Policy approvals, charter changes,
             anything with a clean accept/reject framing.
           </li>
           <li>
             <strong>Multiple options where any combination could be acceptable</strong> &mdash; use{' '}
-            <span className="font-medium text-[#1B3A5C]">Approval</span>. Voters tick every option they
+            <span className="font-medium text-[var(--brand-primary)]">Approval</span>. Voters tick every option they
             could live with; the most-approved option wins.
           </li>
           <li>
             <strong>One winner from a slate, want majority preference</strong> &mdash; use{' '}
-            <span className="font-medium text-[#1B3A5C]">Ranked-Choice (IRV)</span>. Voters rank options
+            <span className="font-medium text-[var(--brand-primary)]">Ranked-Choice (IRV)</span>. Voters rank options
             in order; lowest-ranked options are eliminated until one has majority support.
           </li>
           <li>
             <strong>Multiple winners from a slate, want proportional representation</strong> &mdash; use{' '}
-            <span className="font-medium text-[#1B3A5C]">Single Transferable Vote (STV)</span>. Picks N
+            <span className="font-medium text-[var(--brand-primary)]">Single Transferable Vote (STV)</span>. Picks N
             winners while reflecting different preference groups in the body.
           </li>
         </ul>
@@ -45,7 +45,7 @@ export default function VotingMethodsHelp() {
 
       {/* Binary */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">Binary Voting (Yes / No / Abstain)</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Binary Voting (Yes / No / Abstain)</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           The simplest form of voting. Each member votes Yes, No, or Abstain on a single question.
           A proposal passes if it meets both the quorum threshold (enough people voted) and the pass
@@ -59,7 +59,7 @@ export default function VotingMethodsHelp() {
 
       {/* Approval */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">Approval Voting</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Approval Voting</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Each member can approve as many options as they like. The option with the most approvals wins.
           This is great for picking from a list of alternatives where voters might genuinely support
@@ -94,7 +94,7 @@ export default function VotingMethodsHelp() {
 
       {/* Ranked-Choice */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">Ranked-Choice Voting (IRV)</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Ranked-Choice Voting (IRV)</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Voters rank the options in order of preference. The system runs an instant runoff: if no option
           has a majority of first-place votes, the option with the fewest first-place votes is eliminated,
@@ -114,7 +114,7 @@ export default function VotingMethodsHelp() {
           </ol>
         </div>
 
-        <h3 className="text-base font-semibold text-[#1B3A5C] mt-2">Single Transferable Vote (STV)</h3>
+        <h3 className="text-base font-semibold text-[var(--brand-primary)] mt-2">Single Transferable Vote (STV)</h3>
         <p className="text-sm text-gray-700 leading-relaxed">
           STV is the multi-winner extension of ranked-choice. When a proposal needs to elect more than
           one option (e.g., picking 3 board members from 7 candidates), STV uses the same ranked ballot

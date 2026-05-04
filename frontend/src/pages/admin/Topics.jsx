@@ -9,7 +9,7 @@ import { useHasPermission } from '../../hooks/useHasPermission';
 const PRESET_COLORS = [
   '#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
   '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6',
-  '#1B3A5C', '#2E75B6', '#64748b', '#78716c',
+  'var(--brand-primary)', 'var(--brand-accent)', '#64748b', '#78716c',
 ];
 
 export default function Topics() {
@@ -65,7 +65,7 @@ export default function Topics() {
   if (!currentOrg) return <div className="text-center py-16 text-gray-400">No organization selected</div>;
   if (loading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
 
@@ -157,12 +157,12 @@ export default function Topics() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-[#1B3A5C]">Topic Management</h1>
+        <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Topic Management</h1>
         {/* Phase 12.5 F2 — Create button gated on `topic.create`. */}
         {!showCreate && canCreateTopic && (
           <button
             onClick={() => setShowCreate(true)}
-            className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
+            className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
           >
             Create Topic
           </button>
@@ -180,7 +180,7 @@ export default function Topics() {
               value={newName}
               onChange={e => setNewName(e.target.value)}
               required
-              className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
           </div>
           <div>
@@ -189,7 +189,7 @@ export default function Topics() {
               type="text"
               value={newDesc}
               onChange={e => setNewDesc(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
           </div>
           {subOrgs.length > 0 && (
@@ -198,7 +198,7 @@ export default function Topics() {
               <select
                 value={newScope}
                 onChange={e => setNewScope(e.target.value)}
-                className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
               >
                 <option value="">Parent-org-wide (default)</option>
                 {subOrgs.map(s => (
@@ -218,7 +218,7 @@ export default function Topics() {
             <button
               type="submit"
               disabled={!newName.trim()}
-              className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
+              className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50"
             >
               Create
             </button>
@@ -248,7 +248,7 @@ export default function Topics() {
                       type="text"
                       value={editName}
                       onChange={e => setEditName(e.target.value)}
-                      className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                      className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
                     />
                   </div>
                   <div>
@@ -257,7 +257,7 @@ export default function Topics() {
                       type="text"
                       value={editDesc}
                       onChange={e => setEditDesc(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
                     />
                   </div>
                   <div>
@@ -267,7 +267,7 @@ export default function Topics() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleUpdate(t.id)}
-                      className="text-xs px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6]"
+                      className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)]"
                     >
                       Save
                     </button>
@@ -305,7 +305,7 @@ export default function Topics() {
                     {t.sub_org_id && canEditTopic && (
                       <button
                         onClick={() => handlePromote(t)}
-                        className="text-xs text-[#2E75B6] hover:underline"
+                        className="text-xs text-[var(--brand-accent)] hover:underline"
                         title="Make this topic visible to the whole parent org"
                       >
                         Promote to org-wide
@@ -314,7 +314,7 @@ export default function Topics() {
                     {canEditTopic && (
                       <button
                         onClick={() => startEdit(t)}
-                        className="text-xs text-[#2E75B6] hover:underline"
+                        className="text-xs text-[var(--brand-accent)] hover:underline"
                       >
                         Edit
                       </button>

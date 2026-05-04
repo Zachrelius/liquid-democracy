@@ -20,10 +20,10 @@ export default function RolePermissionsHelp() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
       <div>
-        <Link to="/orgs" className="text-sm text-[#2E75B6] hover:underline mb-4 inline-block">
+        <Link to="/orgs" className="text-sm text-[var(--brand-accent)] hover:underline mb-4 inline-block">
           ← Back
         </Link>
-        <h1 className="text-2xl font-bold text-[#1B3A5C]">About Role Permissions</h1>
+        <h1 className="text-2xl font-bold text-[var(--brand-primary)]">About Role Permissions</h1>
         <p className="text-sm text-gray-500 mt-1">
           How the matrix works, what each role does by default, and which
           operations live outside the matrix on purpose.
@@ -31,7 +31,7 @@ export default function RolePermissionsHelp() {
       </div>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">The four preset roles</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">The four preset roles</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Every organization is created with four built-in roles:
         </p>
@@ -44,7 +44,7 @@ export default function RolePermissionsHelp() {
       </section>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">Common configurations</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Common configurations</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Defaults work for most organizations. A few examples of when you might change them:
         </p>
@@ -57,7 +57,7 @@ export default function RolePermissionsHelp() {
       </section>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">Why some Steward permissions are locked</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Why some Steward permissions are locked</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Three Steward permissions are locked TRUE and cannot be unset via the matrix:
         </p>
@@ -72,14 +72,14 @@ export default function RolePermissionsHelp() {
       </section>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">Audit log</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Audit log</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Every save to the matrix produces a single audit entry of type <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">role_permissions.updated</code>, with a structured list of every cell that flipped (which role, which permission, old value, new value). A save that changes nothing produces no audit entry. The audit log is visible at the org's audit-log surface (admin nav).
         </p>
       </section>
 
       <section className="bg-white border border-amber-200 bg-amber-50/30 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">What is <em>NOT</em> in the matrix and why</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">What is <em>NOT</em> in the matrix and why</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Two operations are deliberately Steward-only and cannot be reassigned via the matrix:
         </p>

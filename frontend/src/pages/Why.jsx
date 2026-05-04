@@ -6,10 +6,10 @@ export default function Why() {
     <PublicLayout>
       <article className="max-w-3xl mx-auto px-6 py-16 sm:py-20 text-[#2C3E50]">
         <header className="mb-12">
-          <p className="text-sm font-medium text-[#2E75B6] uppercase tracking-wider">
+          <p className="text-sm font-medium text-[var(--brand-accent)] uppercase tracking-wider">
             The longer answer
           </p>
-          <h1 className="mt-2 text-4xl sm:text-5xl font-semibold text-[#1B3A5C] tracking-tight">
+          <h1 className="mt-2 text-4xl sm:text-5xl font-semibold text-[var(--brand-primary)] tracking-tight">
             Why this project
           </h1>
         </header>
@@ -22,7 +22,7 @@ export default function Why() {
               href="https://www.goodreads.com/book/show/18490293-a-history-of-the-future-in-100-objects"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[#2E75B6] hover:text-[#1B3A5C] underline italic"
+              className="text-[var(--brand-accent)] hover:text-[var(--brand-primary)] underline italic"
             >
               A History of the Future in 100 Objects
             </a>
@@ -39,7 +39,7 @@ export default function Why() {
               href="https://www.cognitiverevolution.ai"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[#2E75B6] hover:text-[#1B3A5C] underline italic"
+              className="text-[var(--brand-accent)] hover:text-[var(--brand-primary)] underline italic"
             >
               The Cognitive Revolution
             </a>{' '}
@@ -52,7 +52,7 @@ export default function Why() {
               href="https://www.goodreads.com/book/show/60806778-the-deluge"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[#2E75B6] hover:text-[#1B3A5C] underline italic"
+              className="text-[var(--brand-accent)] hover:text-[var(--brand-primary)] underline italic"
             >
               The Deluge
             </a>{' '}
@@ -208,13 +208,13 @@ export default function Why() {
         <div className="mt-12 pt-8 border-t border-gray-200 flex flex-wrap items-center gap-3">
           <Link
             to="/about"
-            className="inline-flex items-center px-5 py-2.5 bg-white text-[#1B3A5C] text-sm font-medium rounded-lg border border-gray-300 hover:border-[#2E75B6] hover:text-[#2E75B6] transition-colors"
+            className="inline-flex items-center px-5 py-2.5 bg-white text-[var(--brand-primary)] text-sm font-medium rounded-lg border border-gray-300 hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors"
           >
             Back to About
           </Link>
           <Link
             to="/demo"
-            className="inline-flex items-center px-5 py-2.5 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors"
+            className="inline-flex items-center px-5 py-2.5 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
           >
             Try the demo
           </Link>
@@ -227,7 +227,7 @@ export default function Why() {
 function Section({ title, children }) {
   return (
     <section className="mt-12">
-      <h2 className="text-2xl font-semibold text-[#1B3A5C] mb-4 tracking-tight">
+      <h2 className="text-2xl font-semibold text-[var(--brand-primary)] mb-4 tracking-tight">
         {title}
       </h2>
       <div className="space-y-4 text-base leading-relaxed text-[#2C3E50]">

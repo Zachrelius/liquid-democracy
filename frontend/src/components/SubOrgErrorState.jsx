@@ -16,9 +16,9 @@ export default function SubOrgErrorState({ error }) {
       : (error?.message || 'Please try again.');
   return (
     <div className="max-w-2xl mx-auto px-4 py-16 text-center">
-      <h1 className="text-xl font-semibold text-[#1B3A5C] mb-3">{heading}</h1>
+      <h1 className="text-xl font-semibold text-[var(--brand-primary)] mb-3">{heading}</h1>
       <p className="text-sm text-gray-600 mb-4">{detail}</p>
-      <a href="/proposals" className="text-sm text-[#2E75B6] hover:underline">Back to proposals</a>
+      <a href="/proposals" className="text-sm text-[var(--brand-accent)] hover:underline">Back to proposals</a>
     </div>
   );
 }

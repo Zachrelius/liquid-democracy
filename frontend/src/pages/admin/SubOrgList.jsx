@@ -54,7 +54,7 @@ export default function SubOrgList() {
   if (currentOrg && currentOrg.parent_org_id) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-16 text-center">
-        <h1 className="text-xl font-semibold text-[#1B3A5C] mb-3">Switch to parent org</h1>
+        <h1 className="text-xl font-semibold text-[var(--brand-primary)] mb-3">Switch to parent org</h1>
         <p className="text-sm text-gray-600 mb-4">
           Sub-organizations are managed at the parent-org level. Use the org
           switcher in the nav to select <strong>the parent organization</strong>
@@ -98,7 +98,7 @@ export default function SubOrgList() {
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-[#1B3A5C]">Sub-Organizations</h1>
+          <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Sub-Organizations</h1>
           <p className="text-xs text-gray-500 mt-1">
             Manage scoped governance groups inside <strong>{currentOrg.name}</strong>.
           </p>
@@ -107,7 +107,7 @@ export default function SubOrgList() {
         {canCreateSubOrg && !showCreate && (
           <button
             onClick={() => setShowCreate(true)}
-            className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
+            className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
           >
             Create Sub-Organization
           </button>
@@ -124,7 +124,7 @@ export default function SubOrgList() {
               value={name}
               onChange={e => onNameChange(e.target.value)}
               required
-              className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
           </div>
           <div>
@@ -134,7 +134,7 @@ export default function SubOrgList() {
               value={slug}
               onChange={e => setSlug(e.target.value)}
               required
-              className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
             <p className="text-xs text-gray-400 mt-1">
               Lowercase letters, digits, and hyphens. 3-50 characters.
@@ -146,14 +146,14 @@ export default function SubOrgList() {
               value={description}
               onChange={e => setDescription(e.target.value)}
               rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
             />
           </div>
           <div className="flex gap-2">
             <button
               type="submit"
               disabled={creating || !name.trim() || !slug.trim()}
-              className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
+              className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50"
             >
               {creating ? 'Creating...' : 'Create'}
             </button>
@@ -170,7 +170,7 @@ export default function SubOrgList() {
 
       {loading ? (
         <div className="flex justify-center items-center py-20">
-          <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+          <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
         </div>
       ) : subOrgs.length === 0 ? (
         <div className="text-center py-12 text-gray-400 text-sm">
@@ -200,19 +200,19 @@ export default function SubOrgList() {
                 )}
               </div>
               <div className="flex gap-3 text-xs">
-                <Link to={urlFor(parentSlug, 'admin-sub-org-settings', s.slug)} className="text-[#2E75B6] hover:underline">
+                <Link to={urlFor(parentSlug, 'admin-sub-org-settings', s.slug)} className="text-[var(--brand-accent)] hover:underline">
                   Settings
                 </Link>
-                <Link to={urlFor(parentSlug, 'admin-sub-org-members', s.slug)} className="text-[#2E75B6] hover:underline">
+                <Link to={urlFor(parentSlug, 'admin-sub-org-members', s.slug)} className="text-[var(--brand-accent)] hover:underline">
                   Members
                 </Link>
-                <Link to={urlFor(parentSlug, 'admin-sub-org-proposals', s.slug)} className="text-[#2E75B6] hover:underline">
+                <Link to={urlFor(parentSlug, 'admin-sub-org-proposals', s.slug)} className="text-[var(--brand-accent)] hover:underline">
                   Proposals
                 </Link>
-                <Link to={urlFor(parentSlug, 'admin-sub-org-topics', s.slug)} className="text-[#2E75B6] hover:underline">
+                <Link to={urlFor(parentSlug, 'admin-sub-org-topics', s.slug)} className="text-[var(--brand-accent)] hover:underline">
                   Topics
                 </Link>
-                <Link to={urlFor(parentSlug, 'admin-sub-org-polises', s.slug)} className="text-[#2E75B6] hover:underline">
+                <Link to={urlFor(parentSlug, 'admin-sub-org-polises', s.slug)} className="text-[var(--brand-accent)] hover:underline">
                   Polises
                 </Link>
               </div>

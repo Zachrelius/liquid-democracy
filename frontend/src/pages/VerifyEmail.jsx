@@ -29,11 +29,11 @@ export default function VerifyEmail() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#F8F9FA] px-4">
       <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
-        <h1 className="text-2xl font-semibold text-[#1B3A5C] mb-4">Email Verification</h1>
+        <h1 className="text-2xl font-semibold text-[var(--brand-primary)] mb-4">Email Verification</h1>
 
         {status === 'verifying' && (
           <div className="text-gray-500">
-            <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full mx-auto mb-4"></div>
+            <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full mx-auto mb-4"></div>
             <p>Verifying your email...</p>
           </div>
         )}
@@ -48,7 +48,7 @@ export default function VerifyEmail() {
             <p className="text-green-700 mb-6">{message}</p>
             <Link
               to="/login"
-              className="inline-block px-6 py-2.5 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors"
+              className="inline-block px-6 py-2.5 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
             >
               Go to Login
             </Link>
@@ -65,7 +65,7 @@ export default function VerifyEmail() {
             <p className="text-red-700 mb-6">{message}</p>
             <Link
               to="/login"
-              className="inline-block px-6 py-2.5 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors"
+              className="inline-block px-6 py-2.5 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
             >
               Go to Login
             </Link>

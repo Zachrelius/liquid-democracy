@@ -84,14 +84,14 @@ export default function InstallPWABanner() {
   if (!visible) return null;
 
   return (
-    <div className="fixed bottom-0 inset-x-0 z-40 bg-[#1B3A5C] text-white px-4 py-3 shadow-lg flex items-center gap-3">
+    <div className="fixed bottom-0 inset-x-0 z-40 bg-[var(--brand-primary)] text-white px-4 py-3 shadow-lg flex items-center gap-3">
       <span className="flex-1 text-sm">
         Install Liquid Democracy as an app
       </span>
       <button
         type="button"
         onClick={install}
-        className="px-3 py-1.5 bg-white text-[#1B3A5C] rounded font-semibold text-sm"
+        className="px-3 py-1.5 bg-white text-[var(--brand-primary)] rounded font-semibold text-sm"
       >
         Install
       </button>

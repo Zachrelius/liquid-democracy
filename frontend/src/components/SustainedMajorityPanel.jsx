@@ -57,8 +57,8 @@ function SupportBar({ support, floor, threshold }) {
             style={{ left: `${supportPct * 100}%` }}
             title={`Current support: ${formatPct(support)}`}
           >
-            <div className="w-0.5 h-full bg-[#1B3A5C]" />
-            <div className="absolute -top-2 -translate-x-1/2 text-[10px] font-medium text-[#1B3A5C] bg-white px-1 rounded whitespace-nowrap">
+            <div className="w-0.5 h-full bg-[var(--brand-primary)]" />
+            <div className="absolute -top-2 -translate-x-1/2 text-[10px] font-medium text-[var(--brand-primary)] bg-white px-1 rounded whitespace-nowrap">
               {formatPct(support)}
             </div>
           </div>
@@ -104,7 +104,7 @@ function HistoricalChart({ timeSeries, floor, threshold }) {
           <ReferenceArea y1={0} y2={floor} fill="#FEE2E2" fillOpacity={0.6} />
           <ReferenceLine y={threshold} stroke="#3B82F6" strokeDasharray="3 3" />
           <ReferenceLine y={floor} stroke="#DC2626" strokeDasharray="3 3" />
-          <Line type="monotone" dataKey="support" stroke="#1B3A5C" strokeWidth={2} dot={false} />
+          <Line type="monotone" dataKey="support" stroke="var(--brand-primary)" strokeWidth={2} dot={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -178,14 +178,14 @@ export default function SustainedMajorityPanel({ tally, proposal, myVote }) {
       {/* Body */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
         <div className="flex items-baseline justify-between">
-          <h3 className="text-sm font-semibold text-[#1B3A5C]">
+          <h3 className="text-sm font-semibold text-[var(--brand-primary)]">
             Sustained-Majority Status
           </h3>
           <a
             href="/help/sustained-majority"
             target="_blank"
             rel="noreferrer"
-            className="text-xs text-[#2E75B6] hover:underline"
+            className="text-xs text-[var(--brand-accent)] hover:underline"
           >
             What is this?
           </a>

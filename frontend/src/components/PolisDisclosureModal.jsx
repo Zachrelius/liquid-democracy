@@ -32,7 +32,7 @@ export default function PolisDisclosureModal({ open, onDismiss }) {
       <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
         <h2
           id="polis-disclosure-title"
-          className="text-lg font-semibold text-[#1B3A5C]"
+          className="text-lg font-semibold text-[var(--brand-primary)]"
         >
           About this conversation
         </h2>
@@ -47,13 +47,13 @@ export default function PolisDisclosureModal({ open, onDismiss }) {
           <button
             type="button"
             onClick={onDismiss}
-            className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
+            className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
           >
             Got it
           </button>
           <Link
             to="/help/polis"
-            className="text-sm text-[#2E75B6] hover:underline"
+            className="text-sm text-[var(--brand-accent)] hover:underline"
           >
             Learn more →
           </Link>

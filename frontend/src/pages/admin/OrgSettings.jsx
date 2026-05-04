@@ -123,7 +123,7 @@ export default function OrgSettings() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-10">
-      <h1 className="text-2xl font-semibold text-[#1B3A5C]">Organization Settings</h1>
+      <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Organization Settings</h1>
 
       {/* General */}
       <section className="space-y-3">
@@ -135,7 +135,7 @@ export default function OrgSettings() {
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
-              className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
           </div>
           <div>
@@ -144,7 +144,7 @@ export default function OrgSettings() {
               value={description}
               onChange={e => setDescription(e.target.value)}
               rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
             />
           </div>
           <div>
@@ -162,7 +162,7 @@ export default function OrgSettings() {
                     value={opt.value}
                     checked={joinPolicy === opt.value}
                     onChange={() => setJoinPolicy(opt.value)}
-                    className="mt-0.5 accent-[#2E75B6]"
+                    className="mt-0.5 accent-[var(--brand-accent)]"
                   />
                   <div>
                     <p className="text-sm text-gray-700">{opt.label}</p>
@@ -188,7 +188,7 @@ export default function OrgSettings() {
                 max={90}
                 value={settings.default_deliberation_days ?? 14}
                 onChange={e => updateSetting('default_deliberation_days', parseInt(e.target.value) || 14)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
               />
             </div>
             <div>
@@ -199,7 +199,7 @@ export default function OrgSettings() {
                 max={90}
                 value={settings.default_voting_days ?? 7}
                 onChange={e => updateSetting('default_voting_days', parseInt(e.target.value) || 7)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
               />
             </div>
           </div>
@@ -241,7 +241,7 @@ export default function OrgSettings() {
                     // Clamp 0.0–1.0 inclusive per spec validation.
                     updateSetting('default_pass_threshold', Math.max(0, Math.min(1, v)));
                   }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
                 />
                 <p className="text-xs text-gray-400 mt-1">0.0 to 1.0 (e.g. 0.5 = 50%)</p>
               </div>
@@ -260,7 +260,7 @@ export default function OrgSettings() {
                     if (Number.isNaN(v)) return;
                     updateSetting('default_quorum_threshold', Math.max(0, Math.min(1, v)));
                   }}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
                 />
                 <p className="text-xs text-gray-400 mt-1">0.0 to 1.0 (e.g. 0.4 = 40%)</p>
               </div>
@@ -274,7 +274,7 @@ export default function OrgSettings() {
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Voting Methods</h2>
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
           <label className="flex items-center gap-3">
-            <input type="checkbox" checked disabled className="accent-[#2E75B6]" />
+            <input type="checkbox" checked disabled className="accent-[var(--brand-accent)]" />
             <div>
               <span className="text-sm text-gray-700">Binary (Yes/No/Abstain)</span>
               <p className="text-xs text-gray-400">Always enabled. Standard yes/no voting.</p>
@@ -291,7 +291,7 @@ export default function OrgSettings() {
                   : current.filter(m => m !== 'approval');
                 updateSetting('allowed_voting_methods', updated);
               }}
-              className="accent-[#2E75B6]"
+              className="accent-[var(--brand-accent)]"
             />
             <div>
               <span className="text-sm text-gray-700">Approval Voting</span>
@@ -309,7 +309,7 @@ export default function OrgSettings() {
                   : current.filter(m => m !== 'ranked_choice');
                 updateSetting('allowed_voting_methods', updated);
               }}
-              className="accent-[#2E75B6]"
+              className="accent-[var(--brand-accent)]"
             />
             <div>
               <span className="text-sm text-gray-700">Ranked Choice (IRV / STV)</span>
@@ -331,7 +331,7 @@ export default function OrgSettings() {
             href="/help/sustained-majority"
             target="_blank"
             rel="noreferrer"
-            className="text-xs text-[#2E75B6] hover:underline"
+            className="text-xs text-[var(--brand-accent)] hover:underline"
           >
             Learn more →
           </a>
@@ -364,7 +364,7 @@ export default function OrgSettings() {
                   });
                 }
               }}
-              className="mt-0.5 accent-[#2E75B6]"
+              className="mt-0.5 accent-[var(--brand-accent)]"
             />
             <div>
               <p className="text-sm text-gray-700">Enable sustained-majority voting</p>
@@ -381,7 +381,7 @@ export default function OrgSettings() {
                   type="checkbox"
                   checked={settings.sustained_majority_enabled_default ?? false}
                   onChange={e => updateSetting('sustained_majority_enabled_default', e.target.checked)}
-                  className="mt-0.5 accent-[#2E75B6]"
+                  className="mt-0.5 accent-[var(--brand-accent)]"
                 />
                 <div>
                   <p className="text-sm text-gray-700">Default on for new proposals</p>
@@ -396,7 +396,7 @@ export default function OrgSettings() {
                   type="checkbox"
                   checked={settings.sustained_majority_per_proposal_override ?? true}
                   onChange={e => updateSetting('sustained_majority_per_proposal_override', e.target.checked)}
-                  className="mt-0.5 accent-[#2E75B6]"
+                  className="mt-0.5 accent-[var(--brand-accent)]"
                 />
                 <div>
                   <p className="text-sm text-gray-700">Allow proposal authors to override per-proposal</p>
@@ -417,7 +417,7 @@ export default function OrgSettings() {
                   max={100}
                   value={Math.round((settings.sustained_majority_threshold ?? 0.5) * 100)}
                   onChange={e => updateSetting('sustained_majority_threshold', parseInt(e.target.value) / 100)}
-                  className="w-full accent-[#2E75B6]"
+                  className="w-full accent-[var(--brand-accent)]"
                 />
               </div>
 
@@ -434,7 +434,7 @@ export default function OrgSettings() {
                   max={100}
                   value={Math.round((settings.sustained_majority_floor ?? 0.45) * 100)}
                   onChange={e => updateSetting('sustained_majority_floor', parseInt(e.target.value) / 100)}
-                  className="w-full accent-[#2E75B6]"
+                  className="w-full accent-[var(--brand-accent)]"
                 />
               </div>
 
@@ -456,7 +456,7 @@ export default function OrgSettings() {
                         value={opt.value}
                         checked={(settings.sustained_majority_failure_mode ?? 'fail') === opt.value}
                         onChange={() => updateSetting('sustained_majority_failure_mode', opt.value)}
-                        className="mt-0.5 accent-[#2E75B6]"
+                        className="mt-0.5 accent-[var(--brand-accent)]"
                       />
                       <div>
                         <p className="text-sm text-gray-700">{opt.label}</p>
@@ -480,7 +480,7 @@ export default function OrgSettings() {
               type="checkbox"
               checked={settings.require_polis_for_new_proposals ?? false}
               onChange={e => updateSetting('require_polis_for_new_proposals', e.target.checked)}
-              className="mt-0.5 accent-[#2E75B6]"
+              className="mt-0.5 accent-[var(--brand-accent)]"
             />
             <div>
               <p className="text-sm text-gray-700">Require linked Polis for new proposals</p>
@@ -501,7 +501,7 @@ export default function OrgSettings() {
               type="checkbox"
               checked={settings.allow_public_delegates ?? true}
               onChange={e => updateSetting('allow_public_delegates', e.target.checked)}
-              className="accent-[#2E75B6]"
+              className="accent-[var(--brand-accent)]"
             />
             <span className="text-sm text-gray-700">Allow public delegates in this organization</span>
           </label>
@@ -519,7 +519,7 @@ export default function OrgSettings() {
                     value={opt.value}
                     checked={(settings.public_delegate_policy ?? 'admin_approval') === opt.value}
                     onChange={() => updateSetting('public_delegate_policy', opt.value)}
-                    className="mt-0.5 accent-[#2E75B6]"
+                    className="mt-0.5 accent-[var(--brand-accent)]"
                   />
                   <div>
                     <p className="text-sm text-gray-700">{opt.label}</p>
@@ -537,7 +537,7 @@ export default function OrgSettings() {
         <button
           onClick={handleSave}
           disabled={saving}
-          className="px-6 py-2 bg-[#1B3A5C] text-white text-sm rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+          className="px-6 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
         >
           {saving ? 'Saving...' : 'Save Settings'}
         </button>

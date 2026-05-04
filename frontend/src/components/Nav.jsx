@@ -104,7 +104,7 @@ function OrgSwitcher() {
                 <button
                   onClick={() => pickOrg(parent)}
                   className={`w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 transition-colors flex items-center justify-between ${
-                    isCurrentParent ? 'bg-blue-50 font-medium text-[#1B3A5C]' : 'text-gray-800'
+                    isCurrentParent ? 'bg-blue-50 font-medium text-[var(--brand-primary)]' : 'text-gray-800'
                   }`}
                 >
                   <span>{parent.name}</span>
@@ -122,7 +122,7 @@ function OrgSwitcher() {
                           <button
                             onClick={() => pickOrg(sub)}
                             className={`flex-1 text-left px-4 py-1.5 text-xs hover:bg-gray-50 transition-colors flex items-center gap-2 ${
-                              isCurrentSub ? 'bg-blue-50 font-medium text-[#1B3A5C]' : 'text-gray-700'
+                              isCurrentSub ? 'bg-blue-50 font-medium text-[var(--brand-primary)]' : 'text-gray-700'
                             }`}
                           >
                             <span className="text-blue-400">↳</span>
@@ -135,7 +135,7 @@ function OrgSwitcher() {
                             <Link
                               to={urlFor(parent, 'admin-sub-org-settings', sub.slug)}
                               onClick={() => setOpen(false)}
-                              className="text-[10px] text-[#2E75B6] hover:underline shrink-0"
+                              className="text-[10px] text-[var(--brand-accent)] hover:underline shrink-0"
                               title="Manage this sub-org"
                             >
                               manage
@@ -150,7 +150,7 @@ function OrgSwitcher() {
                   <Link
                     to={urlFor(parent, 'admin-sub-orgs')}
                     onClick={() => setOpen(false)}
-                    className="block px-4 py-1.5 text-xs text-[#2E75B6] hover:underline pl-8"
+                    className="block px-4 py-1.5 text-xs text-[var(--brand-accent)] hover:underline pl-8"
                   >
                     + manage sub-organizations
                   </Link>
@@ -164,7 +164,7 @@ function OrgSwitcher() {
             <Link
               to="/orgs/create"
               onClick={() => setOpen(false)}
-              className="block px-4 py-1.5 text-sm text-[#2E75B6] hover:bg-gray-50 transition-colors"
+              className="block px-4 py-1.5 text-sm text-[var(--brand-accent)] hover:bg-gray-50 transition-colors"
             >
               + Create new organization
             </Link>
@@ -273,7 +273,7 @@ export default function Nav() {
   }, []);
 
   return (
-    <nav className="bg-[#1B3A5C] text-white">
+    <nav className="bg-[var(--brand-primary)] text-white">
       <div className="max-w-6xl mx-auto px-4 flex items-center justify-between h-14">
         <div className="flex items-center gap-6">
           <Link
@@ -455,7 +455,7 @@ export default function Nav() {
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div className="md:hidden bg-[#152d4a] border-t border-blue-900 px-4 py-3 space-y-1">
+        <div className="md:hidden bg-[var(--brand-primary-dark)] border-t border-blue-900 px-4 py-3 space-y-1">
           {currentOrg && (
             <p className="text-xs text-blue-300 mb-2 pb-2 border-b border-blue-900">
               {currentOrg.parent_org_id

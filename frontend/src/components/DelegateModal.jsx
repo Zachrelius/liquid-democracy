@@ -158,13 +158,13 @@ function ResultCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <Avatar user={user} size="sm" />
-            <span className="font-medium text-sm text-[#1B3A5C]">{user.display_name}</span>
+            <span className="font-medium text-sm text-[var(--brand-primary)]">{user.display_name}</span>
             <span className="text-xs text-gray-400">@{user.username}</span>
             <Link
               to={profileLinkOrg ? urlFor(profileLinkOrg, 'user-profile', user.id) : '#'}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-[#2E75B6] hover:text-[#1B3A5C] ml-0.5"
+              className="text-[var(--brand-accent)] hover:text-[var(--brand-primary)] ml-0.5"
               title="View Profile"
               onClick={e => e.stopPropagation()}
             >
@@ -223,7 +223,7 @@ function ResultCard({
           <button
             onClick={doDelegate}
             disabled={acting || unverified}
-            className="text-xs px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+            className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
           >
             Delegate
           </button>
@@ -232,7 +232,7 @@ function ResultCard({
           <button
             onClick={doRequestDelegate}
             disabled={acting || unverified}
-            className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
+            className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors disabled:opacity-50"
           >
             Request Delegate
           </button>
@@ -249,7 +249,7 @@ function ResultCard({
             <button
               onClick={doRequestDelegate}
               disabled={acting || unverified}
-              className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
+              className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors disabled:opacity-50"
             >
               Request Delegate
             </button>
@@ -385,7 +385,7 @@ export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-lg w-full max-w-md max-h-[80vh] flex flex-col">
         <div className="p-4 border-b border-gray-100">
-          <h2 className="font-semibold text-[#1B3A5C]">
+          <h2 className="font-semibold text-[var(--brand-primary)]">
             {topicName ? `Set delegate for ${topicName}` : 'Set global default delegate'}
           </h2>
           <p className="text-xs text-gray-400 mt-0.5">
@@ -439,7 +439,7 @@ export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Search by name or username..."
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
           />
           {searching && <p className="text-xs text-gray-400 text-center">Searching...</p>}
           {results.length > 0 && (

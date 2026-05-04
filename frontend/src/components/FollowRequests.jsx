@@ -71,7 +71,7 @@ function IncomingCard({ req, onResponded }) {
           <button
             onClick={() => respond('approved', 'delegation_allowed')}
             disabled={acting}
-            className="text-xs px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+            className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
           >
             Accept Delegate
           </button>
@@ -114,7 +114,7 @@ function OutgoingCard({ req, intent, onCancelled }) {
       </div>
       <p className="text-xs text-gray-400">
         {intent
-          ? <span className="text-[#2E75B6] font-medium">Delegation request</span>
+          ? <span className="text-[var(--brand-accent)] font-medium">Delegation request</span>
           : <span className="text-gray-500">Follow request</span>
         }
         {' · '}Sent {timeAgo(req.requested_at)}

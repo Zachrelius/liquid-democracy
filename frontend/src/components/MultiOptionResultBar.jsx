@@ -30,25 +30,25 @@ export default function MultiOptionResultBar({ options, maxBars }) {
           <div key={`${o.label}-${i}`} className="space-y-0.5">
             <div className="flex items-baseline justify-between gap-3 text-xs">
               <span
-                className={isWinner ? 'text-[#1B3A5C] font-semibold' : 'text-gray-700'}
+                className={isWinner ? 'text-[var(--brand-primary)] font-semibold' : 'text-gray-700'}
                 title={o.label}
               >
                 {o.label}
               </span>
               <span
-                className={isWinner ? 'text-[#1B3A5C] font-semibold tabular-nums' : 'text-gray-500 tabular-nums'}
+                className={isWinner ? 'text-[var(--brand-primary)] font-semibold tabular-nums' : 'text-gray-500 tabular-nums'}
               >
                 {pct.toFixed(0)}%
               </span>
             </div>
             <div
               className={`h-2 rounded overflow-hidden bg-gray-100 ${
-                isWinner ? 'ring-1 ring-[#1B3A5C]' : ''
+                isWinner ? 'ring-1 ring-[var(--brand-primary)]' : ''
               }`}
             >
               <div
                 style={{ width: `${pct}%` }}
-                className={isWinner ? 'h-full bg-[#1B3A5C]' : 'h-full bg-[#2E75B6]'}
+                className={isWinner ? 'h-full bg-[var(--brand-primary)]' : 'h-full bg-[var(--brand-accent)]'}
               />
             </div>
           </div>

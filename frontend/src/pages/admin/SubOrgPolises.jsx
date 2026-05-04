@@ -43,7 +43,7 @@ export default function SubOrgPolises() {
 
   if (subLoading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
   if (error || !subOrg) return <SubOrgErrorState error={error} />;
@@ -70,10 +70,10 @@ export default function SubOrgPolises() {
           <Link to={urlFor(parentSlug, 'admin-sub-org-settings', subSlug)} className="hover:underline">{subOrg.name}</Link>
         </p>
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold text-[#1B3A5C]">{subOrg.name} — Polises</h1>
+          <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">{subOrg.name} — Polises</h1>
           <Link
             to={urlFor(parentSlug, 'admin-sub-org-polises-create', subSlug)}
-            className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
+            className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
           >
             Create Polis
           </Link>
@@ -88,7 +88,7 @@ export default function SubOrgPolises() {
         <select
           value={statusFilter}
           onChange={e => setStatusFilter(e.target.value)}
-          className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+          className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
         >
           <option value="active">Active</option>
           <option value="archived">Archived</option>

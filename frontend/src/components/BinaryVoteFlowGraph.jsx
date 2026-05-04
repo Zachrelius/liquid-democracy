@@ -474,7 +474,7 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
               shorter privacy explainer follows. Named-voter form is unchanged. */}
           {tooltip.node.isAnonymous ? (
             <>
-              <div className="font-semibold text-[#1B3A5C]">
+              <div className="font-semibold text-[var(--brand-primary)]">
                 Anonymous voter
                 {tooltip.node.vote ? (
                   <>
@@ -509,7 +509,7 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
             </>
           ) : (
             <>
-              <div className="font-semibold text-[#1B3A5C]">
+              <div className="font-semibold text-[var(--brand-primary)]">
                 {tooltip.node.label}
               </div>
               {tooltip.node.is_public_delegate && (
@@ -557,7 +557,7 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
         <div className="absolute bottom-2 left-2 right-2 bg-white border border-gray-200 rounded-xl shadow-lg p-4 text-sm z-10 md:left-auto md:right-2 md:w-72 md:bottom-2">
           <div className="flex justify-between items-start mb-2">
             <div>
-              <div className="font-semibold text-[#1B3A5C]">
+              <div className="font-semibold text-[var(--brand-primary)]">
                 {selectedNode.isAnonymous ? 'Anonymous voter' : selectedNode.label}
               </div>
               {selectedNode.is_public_delegate && !selectedNode.isAnonymous && (
@@ -614,12 +614,12 @@ export default function BinaryVoteFlowGraph({ data, onNodeClick }) {
               </p>
             )}
             {selectedNode.is_current_user && (
-              <p className="text-[#2E75B6] font-medium text-xs mt-2">This is you.</p>
+              <p className="text-[var(--brand-accent)] font-medium text-xs mt-2">This is you.</p>
             )}
             {selectedNode.label && !selectedNode.isAnonymous && profileLinkOrg && (
               <Link
                 to={urlFor(profileLinkOrg, 'user-profile', selectedNode.id)}
-                className="inline-block mt-2 text-xs text-[#2E75B6] hover:underline"
+                className="inline-block mt-2 text-xs text-[var(--brand-accent)] hover:underline"
               >
                 View Profile
               </Link>

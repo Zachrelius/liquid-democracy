@@ -569,7 +569,7 @@ export default function RCVSankeyChart({ tally, proposal }) {
           .attr('text-anchor', 'middle')
           .attr('font-size', 11)
           .attr('font-weight', 600)
-          .attr('fill', '#1B3A5C');
+          .attr('fill', 'var(--brand-primary)');
         return;
       }
       if (r === FINAL_COL_IDX) {
@@ -581,7 +581,7 @@ export default function RCVSankeyChart({ tally, proposal }) {
           .attr('text-anchor', 'middle')
           .attr('font-size', 11)
           .attr('font-weight', 600)
-          .attr('fill', '#1B3A5C');
+          .attr('fill', 'var(--brand-primary)');
 
         // Phase 8.1 Item 5: STV halt-winner annotation. Winners that never
         // crossed quota (the algorithm terminated with N seats and N
@@ -619,7 +619,7 @@ export default function RCVSankeyChart({ tally, proposal }) {
         .attr('text-anchor', 'middle')
         .attr('font-size', 10)
         .attr('font-weight', 500)
-        .attr('fill', event.hasElected && !event.hasEliminated ? '#2D8A56' : event.hasEliminated && !event.hasElected ? '#C0392B' : '#1B3A5C')
+        .attr('fill', event.hasElected && !event.hasEliminated ? '#2D8A56' : event.hasEliminated && !event.hasElected ? '#C0392B' : 'var(--brand-primary)')
         .attr('text-decoration', event.hasEliminated && !event.hasElected ? 'line-through' : null);
     });
 
@@ -696,7 +696,7 @@ export default function RCVSankeyChart({ tally, proposal }) {
       .attr('stroke', (d) => {
         // Final-column winner(s) get the dark-navy emphasis stroke. STV with
         // multiple winners highlights every winner equivalently.
-        if (d.roundIdx === FINAL_COL_IDX && winners.has(d.optionId)) return '#1B3A5C';
+        if (d.roundIdx === FINAL_COL_IDX && winners.has(d.optionId)) return 'var(--brand-primary)';
         return '#FFFFFF';
       })
       .attr('stroke-width', (d) => {
@@ -784,7 +784,7 @@ export default function RCVSankeyChart({ tally, proposal }) {
         <p className="text-xs text-gray-500 mt-0.5">
           Each column is an elimination round. Slabs show option counts; flows show
           how votes carry forward and transfer between rounds.{' '}
-          <Link to="/help/voting-methods" className="text-[#2E75B6] hover:underline">
+          <Link to="/help/voting-methods" className="text-[var(--brand-accent)] hover:underline">
             Learn more
           </Link>
         </p>
@@ -810,7 +810,7 @@ export default function RCVSankeyChart({ tally, proposal }) {
               >
                 {tooltip.kind === 'node' ? (
                   <>
-                    <div className="font-semibold text-[#1B3A5C]">{tooltip.label}</div>
+                    <div className="font-semibold text-[var(--brand-primary)]">{tooltip.label}</div>
                     <div className="text-gray-500 mt-0.5">
                       {tooltip.roundLabel} · {formatCount(tooltip.value)} vote
                       {tooltip.value === 1 ? '' : 's'}
@@ -818,7 +818,7 @@ export default function RCVSankeyChart({ tally, proposal }) {
                   </>
                 ) : tooltip.linkKind === 'transfer-surplus' ? (
                   <>
-                    <div className="font-semibold text-[#1B3A5C]">
+                    <div className="font-semibold text-[var(--brand-primary)]">
                       {tooltip.srcLabel} → {tooltip.tgtLabel}
                     </div>
                     <div className="text-gray-500 mt-0.5">
@@ -828,7 +828,7 @@ export default function RCVSankeyChart({ tally, proposal }) {
                   </>
                 ) : tooltip.linkKind === 'transfer-multi-source' ? (
                   <>
-                    <div className="font-semibold text-[#1B3A5C]">
+                    <div className="font-semibold text-[var(--brand-primary)]">
                       {tooltip.srcLabel} → {tooltip.tgtLabel}
                     </div>
                     <div className="text-gray-500 mt-0.5">
@@ -838,7 +838,7 @@ export default function RCVSankeyChart({ tally, proposal }) {
                   </>
                 ) : tooltip.linkKind === 'transfer-exhausted' ? (
                   <>
-                    <div className="font-semibold text-[#1B3A5C]">{tooltip.srcLabel}</div>
+                    <div className="font-semibold text-[var(--brand-primary)]">{tooltip.srcLabel}</div>
                     <div className="text-gray-500 mt-0.5">
                       Exhausted: {formatCount(tooltip.value)} vote
                       {tooltip.value === 1 ? '' : 's'} (no remaining preference on these ballots).
@@ -846,7 +846,7 @@ export default function RCVSankeyChart({ tally, proposal }) {
                   </>
                 ) : (
                   <>
-                    <div className="font-semibold text-[#1B3A5C]">
+                    <div className="font-semibold text-[var(--brand-primary)]">
                       {tooltip.srcLabel} → {tooltip.tgtLabel}
                     </div>
                     <div className="text-gray-500 mt-0.5">

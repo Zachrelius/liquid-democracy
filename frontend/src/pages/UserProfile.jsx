@@ -136,7 +136,7 @@ export default function UserProfile() {
 
   if (loading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
   if (error) return (
@@ -157,7 +157,7 @@ export default function UserProfile() {
         <div className="flex items-center gap-4">
           <Avatar user={user} size="lg" />
           <div>
-            <h1 className="text-2xl font-bold text-[#1B3A5C]">{user.display_name}</h1>
+            <h1 className="text-2xl font-bold text-[var(--brand-primary)]">{user.display_name}</h1>
             <p className="text-sm text-gray-400">@{user.username}</p>
             {profiles.length > 0 && (
               <div className="flex gap-1.5 mt-2">
@@ -172,7 +172,7 @@ export default function UserProfile() {
         {isSelf ? (
           <Link
             to="/settings"
-            className="text-sm px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors"
+            className="text-sm px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
           >
             Edit settings
           </Link>
@@ -186,7 +186,7 @@ export default function UserProfile() {
             </button>
             <button
               onClick={handleRequestDelegate}
-              className="text-sm px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors"
+              className="text-sm px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
             >
               Request Delegate
             </button>
@@ -245,7 +245,7 @@ export default function UserProfile() {
                     <td className="px-4 py-3">
                       <Link
                         to={proposalLinkOrg ? urlFor(proposalLinkOrg, 'proposal-detail', v.proposal_id) : '#'}
-                        className="text-sm text-[#2E75B6] hover:underline"
+                        className="text-sm text-[var(--brand-accent)] hover:underline"
                       >
                         {v.proposal_title || v.proposal_id}
                       </Link>
@@ -272,7 +272,7 @@ export default function UserProfile() {
             {!isSelf && (
               <button
                 onClick={handleFollow}
-                className="mt-3 text-sm px-4 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors"
+                className="mt-3 text-sm px-4 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
               >
                 Request Follow
               </button>
@@ -286,7 +286,7 @@ export default function UserProfile() {
             {!isSelf && (
               <button
                 onClick={handleFollow}
-                className="mt-3 text-sm px-4 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors"
+                className="mt-3 text-sm px-4 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
               >
                 Request Follow
               </button>

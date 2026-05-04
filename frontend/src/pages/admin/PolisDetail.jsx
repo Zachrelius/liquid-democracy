@@ -137,7 +137,7 @@ export default function PolisDetail() {
 
   if (isSubOrgRoute && subOrgCtx.loading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
   if (isSubOrgRoute && (subOrgCtx.error || !subOrgCtx.subOrg)) {
@@ -146,18 +146,18 @@ export default function PolisDetail() {
 
   if (loading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
 
   if (error || !polis) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-16 text-center">
-        <h1 className="text-xl font-semibold text-[#1B3A5C] mb-3">Polis not found</h1>
+        <h1 className="text-xl font-semibold text-[var(--brand-primary)] mb-3">Polis not found</h1>
         <p className="text-sm text-gray-600 mb-4">
           {error?.message || 'This Polis does not exist or is not visible to you.'}
         </p>
-        <Link to={isSubOrgRoute ? `/admin/sub-orgs/${params.sub_slug}/polises` : '/admin/polises'} className="text-sm text-[#2E75B6] hover:underline">
+        <Link to={isSubOrgRoute ? `/admin/sub-orgs/${params.sub_slug}/polises` : '/admin/polises'} className="text-sm text-[var(--brand-accent)] hover:underline">
           Back to Polises
         </Link>
       </div>
@@ -307,11 +307,11 @@ export default function PolisDetail() {
                   type="text"
                   value={titleDraft}
                   onChange={e => setTitleDraft(e.target.value)}
-                  className="flex-1 max-w-xl px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                  className="flex-1 max-w-xl px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
                 />
                 <button
                   onClick={handleSaveTitle}
-                  className="text-sm px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6]"
+                  className="text-sm px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)]"
                 >Save</button>
                 <button
                   onClick={() => { setEditingTitle(false); setTitleDraft(polis.title); }}
@@ -320,7 +320,7 @@ export default function PolisDetail() {
               </div>
             ) : (
               <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-2xl font-semibold text-[#1B3A5C]">{polis.title}</h1>
+                <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">{polis.title}</h1>
                 {statusBadge(polis.status)}
                 {polis.sub_org_id ? (
                   <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">
@@ -354,15 +354,15 @@ export default function PolisDetail() {
         <div className="bg-white border border-gray-200 rounded-xl p-5 grid grid-cols-3 gap-6">
           <div>
             <p className="text-xs text-gray-500">Participants</p>
-            <p className="text-xl font-semibold text-[#1B3A5C]">{statValue(stats?.participant_count)}</p>
+            <p className="text-xl font-semibold text-[var(--brand-primary)]">{statValue(stats?.participant_count)}</p>
           </div>
           <div>
             <p className="text-xs text-gray-500">Statements</p>
-            <p className="text-xl font-semibold text-[#1B3A5C]">{statValue(stats?.statement_count)}</p>
+            <p className="text-xl font-semibold text-[var(--brand-primary)]">{statValue(stats?.statement_count)}</p>
           </div>
           <div>
             <p className="text-xs text-gray-500">Votes</p>
-            <p className="text-xl font-semibold text-[#1B3A5C]">{statValue(stats?.vote_count)}</p>
+            <p className="text-xl font-semibold text-[var(--brand-primary)]">{statValue(stats?.vote_count)}</p>
           </div>
         </div>
         {liveStatsUnavailable && (
@@ -395,7 +395,7 @@ export default function PolisDetail() {
                   href={polisManageUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="text-sm text-[#2E75B6] hover:underline"
+                  className="text-sm text-[var(--brand-accent)] hover:underline"
                 >
                   Manage on pol.is →
                 </a>
@@ -410,7 +410,7 @@ export default function PolisDetail() {
               <div>
                 <button
                   onClick={() => setEditingTitle(true)}
-                  className="text-sm text-[#2E75B6] hover:underline"
+                  className="text-sm text-[var(--brand-accent)] hover:underline"
                   disabled={isArchived}
                 >
                   Edit title
@@ -445,7 +445,7 @@ export default function PolisDetail() {
                   type="checkbox"
                   checked={deanonymize}
                   onChange={e => setDeanonymize(e.target.checked)}
-                  className="accent-[#2E75B6]"
+                  className="accent-[var(--brand-accent)]"
                 />
                 <span className="text-xs text-gray-600">Deanonymized (joins xids back to platform users — handle carefully)</span>
               </label>

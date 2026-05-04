@@ -166,7 +166,7 @@ export default function Login() {
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#F8F9FA] px-4">
       {/* Header */}
       <div className="mb-8 text-center">
-        <h1 className="text-3xl font-semibold text-[#1B3A5C] tracking-tight">
+        <h1 className="text-3xl font-semibold text-[var(--brand-primary)] tracking-tight">
           Liquid Democracy
         </h1>
         <p className="mt-1 text-[#64748b] text-sm">
@@ -183,7 +183,7 @@ export default function Login() {
               onClick={() => { setTab(t); setError(''); }}
               className={`flex-1 py-3 text-sm font-medium capitalize transition-colors ${
                 tab === t
-                  ? 'text-[#2E75B6] border-b-2 border-[#2E75B6]'
+                  ? 'text-[var(--brand-accent)] border-b-2 border-[var(--brand-accent)]'
                   : 'text-gray-500 hover:text-gray-700'
               }`}
             >
@@ -208,7 +208,7 @@ export default function Login() {
                   value={loginUsername}
                   onChange={e => setLoginUsername(e.target.value)}
                   required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
                   placeholder="alice"
                 />
               </div>
@@ -219,21 +219,21 @@ export default function Login() {
                   value={loginPassword}
                   onChange={e => setLoginPassword(e.target.value)}
                   required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
                   placeholder="••••••••"
                 />
               </div>
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full py-2.5 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+                className="w-full py-2.5 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
               >
                 {submitting ? 'Signing in...' : 'Sign In'}
               </button>
               <div className="text-center">
                 <Link
                   to="/forgot-password"
-                  className="text-sm text-[#2E75B6] hover:underline"
+                  className="text-sm text-[var(--brand-accent)] hover:underline"
                 >
                   Forgot password?
                 </Link>
@@ -250,7 +250,7 @@ export default function Login() {
                   required
                   minLength={3}
                   maxLength={50}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
                   placeholder="your_username"
                 />
                 <p className="mt-1 text-xs text-gray-400">3-50 characters</p>
@@ -262,7 +262,7 @@ export default function Login() {
                   value={regDisplayName}
                   onChange={e => setRegDisplayName(e.target.value)}
                   required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
                   placeholder="Your Name"
                 />
               </div>
@@ -273,7 +273,7 @@ export default function Login() {
                   value={regEmail}
                   onChange={e => setRegEmail(e.target.value)}
                   required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
                   placeholder="you@example.com"
                 />
               </div>
@@ -285,7 +285,7 @@ export default function Login() {
                   onChange={e => setRegPassword(e.target.value)}
                   required
                   minLength={8}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
                   placeholder="••••••••"
                 />
                 <p className="mt-1 text-xs text-gray-400">Minimum 8 characters</p>
@@ -293,15 +293,15 @@ export default function Login() {
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full py-2.5 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+                className="w-full py-2.5 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
               >
                 {submitting ? 'Creating account...' : 'Create Account'}
               </button>
               <p className="text-xs text-gray-400 text-center">
                 By registering, you agree to our{' '}
-                <Link to="/terms" className="text-[#2E75B6] hover:underline">Terms of Service</Link>
+                <Link to="/terms" className="text-[var(--brand-accent)] hover:underline">Terms of Service</Link>
                 {' '}and{' '}
-                <Link to="/privacy" className="text-[#2E75B6] hover:underline">Privacy Policy</Link>.
+                <Link to="/privacy" className="text-[var(--brand-accent)] hover:underline">Privacy Policy</Link>.
               </p>
             </form>
           )}
@@ -324,9 +324,9 @@ export default function Login() {
                         key={u.username}
                         onClick={() => handleQuickLogin(u.username)}
                         disabled={submitting}
-                        className="flex flex-col items-center gap-1 p-2 bg-gray-50 border border-gray-200 rounded-lg hover:border-[#2E75B6] hover:bg-blue-50 transition-colors disabled:opacity-50"
+                        className="flex flex-col items-center gap-1 p-2 bg-gray-50 border border-gray-200 rounded-lg hover:border-[var(--brand-accent)] hover:bg-blue-50 transition-colors disabled:opacity-50"
                       >
-                        <div className="w-8 h-8 rounded-full bg-[#1B3A5C] text-white flex items-center justify-center text-xs font-bold">
+                        <div className="w-8 h-8 rounded-full bg-[var(--brand-primary)] text-white flex items-center justify-center text-xs font-bold">
                           {u.display_name.charAt(0).toUpperCase()}
                         </div>
                         <span className="text-xs text-gray-700 font-medium truncate w-full text-center">{u.display_name}</span>
@@ -350,7 +350,7 @@ export default function Login() {
                 <button
                   onClick={handleDemo}
                   disabled={demoLoading}
-                  className="w-full py-2 border border-[#2E75B6] text-[#2E75B6] text-sm font-medium rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
+                  className="w-full py-2 border border-[var(--brand-accent)] text-[var(--brand-accent)] text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors disabled:opacity-50"
                 >
                   {demoLoading ? 'Loading demo data...' : 'Load Demo Scenario'}
                 </button>
@@ -377,8 +377,8 @@ export default function Login() {
 
       {/* Footer links */}
       <div className="mt-6 flex gap-4 text-xs text-gray-400">
-        <Link to="/privacy" className="hover:text-[#2E75B6] hover:underline">Privacy Policy</Link>
-        <Link to="/terms" className="hover:text-[#2E75B6] hover:underline">Terms of Service</Link>
+        <Link to="/privacy" className="hover:text-[var(--brand-accent)] hover:underline">Privacy Policy</Link>
+        <Link to="/terms" className="hover:text-[var(--brand-accent)] hover:underline">Terms of Service</Link>
       </div>
     </div>
   );

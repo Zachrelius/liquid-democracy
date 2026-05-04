@@ -6,10 +6,10 @@ export default function Security() {
     <PublicLayout>
       <article className="max-w-3xl mx-auto px-6 py-16 sm:py-20 text-[#2C3E50]">
         <header className="mb-12">
-          <p className="text-sm font-medium text-[#2E75B6] uppercase tracking-wider">
+          <p className="text-sm font-medium text-[var(--brand-accent)] uppercase tracking-wider">
             Security & Trust
           </p>
-          <h1 className="mt-2 text-4xl sm:text-5xl font-semibold text-[#1B3A5C] tracking-tight">
+          <h1 className="mt-2 text-4xl sm:text-5xl font-semibold text-[var(--brand-primary)] tracking-tight">
             The tradeoff we made, and why
           </h1>
           <div className="mt-5 space-y-4 text-lg text-[#2C3E50] leading-relaxed">
@@ -104,7 +104,7 @@ export default function Security() {
               their account — in the{' '}
               <Link
                 to="/settings"
-                className="text-[#2E75B6] hover:text-[#1B3A5C] underline"
+                className="text-[var(--brand-accent)] hover:text-[var(--brand-primary)] underline"
               >
                 Data Access History
               </Link>{' '}
@@ -314,13 +314,13 @@ export default function Security() {
               href="https://github.com/Zachrelius/liquid-democracy"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center px-5 py-2.5 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors"
+              className="inline-flex items-center px-5 py-2.5 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
             >
               View on GitHub
             </a>
             <Link
               to="/demo"
-              className="inline-flex items-center px-5 py-2.5 bg-white text-[#1B3A5C] text-sm font-medium rounded-lg border border-gray-300 hover:border-[#2E75B6] hover:text-[#2E75B6] transition-colors"
+              className="inline-flex items-center px-5 py-2.5 bg-white text-[var(--brand-primary)] text-sm font-medium rounded-lg border border-gray-300 hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors"
             >
               Try the demo
             </Link>
@@ -334,7 +334,7 @@ export default function Security() {
 function Section({ title, children }) {
   return (
     <section className="mt-12">
-      <h2 className="text-2xl font-semibold text-[#1B3A5C] mb-4 tracking-tight">
+      <h2 className="text-2xl font-semibold text-[var(--brand-primary)] mb-4 tracking-tight">
         {title}
       </h2>
       <div className="space-y-4 text-base leading-relaxed text-[#2C3E50]">

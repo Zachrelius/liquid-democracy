@@ -145,7 +145,7 @@ export default function SubOrgSettings() {
 
   if (loading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
   if (error || !subOrg) return <SubOrgErrorState error={error} />;
@@ -250,7 +250,7 @@ export default function SubOrgSettings() {
           {' / '}
           <span>{subOrg.name}</span>
         </p>
-        <h1 className="text-2xl font-semibold text-[#1B3A5C]">{subOrg.name} — Settings</h1>
+        <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">{subOrg.name} — Settings</h1>
       </div>
 
       {/* Identity */}
@@ -263,7 +263,7 @@ export default function SubOrgSettings() {
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
-              className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
           </div>
           <div>
@@ -272,7 +272,7 @@ export default function SubOrgSettings() {
               value={description}
               onChange={e => setDescription(e.target.value)}
               rows={3}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
             />
           </div>
           <p className="text-xs text-gray-400">Slug <code className="bg-gray-100 px-1.5 py-0.5 rounded">{subOrg.slug}</code> is fixed at creation.</p>
@@ -288,7 +288,7 @@ export default function SubOrgSettings() {
               type="checkbox"
               checked={privateFlag}
               onChange={e => setPrivateFlag(e.target.checked)}
-              className="mt-0.5 accent-[#2E75B6]"
+              className="mt-0.5 accent-[var(--brand-accent)]"
             />
             <div>
               <p className="text-sm text-gray-700">Make sub-org content visible only to members</p>
@@ -311,7 +311,7 @@ export default function SubOrgSettings() {
               type="checkbox"
               checked={rejectNonMember}
               onChange={e => setRejectNonMember(e.target.checked)}
-              className="mt-0.5 accent-[#2E75B6]"
+              className="mt-0.5 accent-[var(--brand-accent)]"
             />
             <div>
               <p className="text-sm text-gray-700">Reject delegations from non-members on this sub-org's topics</p>
@@ -335,7 +335,7 @@ export default function SubOrgSettings() {
               type="checkbox"
               checked={vmOverride}
               onChange={e => setVmOverride(e.target.checked)}
-              className="mt-0.5 accent-[#2E75B6]"
+              className="mt-0.5 accent-[var(--brand-accent)]"
             />
             <div>
               <p className="text-sm text-gray-700">Override allowed voting methods for this sub-org</p>
@@ -353,7 +353,7 @@ export default function SubOrgSettings() {
                     checked={vmList.includes(m)}
                     disabled={m === 'binary'}
                     onChange={e => toggleVotingMethod(m, e.target.checked)}
-                    className="accent-[#2E75B6]"
+                    className="accent-[var(--brand-accent)]"
                   />
                   <span className="text-sm text-gray-700">
                     {m === 'binary' ? 'Binary (always enabled)' : m === 'approval' ? 'Approval' : 'Ranked Choice'}
@@ -369,7 +369,7 @@ export default function SubOrgSettings() {
       <section className="space-y-3">
         <div className="flex items-baseline justify-between">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Sustained-Majority Override</h2>
-          <a href="/help/sustained-majority" target="_blank" rel="noreferrer" className="text-xs text-[#2E75B6] hover:underline">
+          <a href="/help/sustained-majority" target="_blank" rel="noreferrer" className="text-xs text-[var(--brand-accent)] hover:underline">
             Learn more →
           </a>
         </div>
@@ -444,7 +444,7 @@ export default function SubOrgSettings() {
               type="checkbox"
               checked={!requirePolisOverride}
               onChange={e => setRequirePolisOverride(!e.target.checked)}
-              className="mt-0.5 accent-[#2E75B6]"
+              className="mt-0.5 accent-[var(--brand-accent)]"
             />
             <div>
               <p className="text-sm text-gray-700">Use parent default</p>
@@ -459,7 +459,7 @@ export default function SubOrgSettings() {
                 type="checkbox"
                 checked={!!requirePolisValue}
                 onChange={e => setRequirePolisValue(e.target.checked)}
-                className="mt-0.5 accent-[#2E75B6]"
+                className="mt-0.5 accent-[var(--brand-accent)]"
               />
               <div>
                 <p className="text-sm text-gray-700">Require linked Polis for new proposals</p>
@@ -477,7 +477,7 @@ export default function SubOrgSettings() {
         <button
           onClick={handleSave}
           disabled={saving}
-          className="px-6 py-2 bg-[#1B3A5C] text-white text-sm rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+          className="px-6 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
         >
           {saving ? 'Saving...' : 'Save Settings'}
         </button>
@@ -522,7 +522,7 @@ function SmRow({ label, keyName, kind, override, value, inherited, setOverride, 
             type="checkbox"
             checked={!!override}
             onChange={e => setOverride(e.target.checked)}
-            className="accent-[#2E75B6]"
+            className="accent-[var(--brand-accent)]"
           />
           <span className="text-sm text-gray-700">Override</span>
         </label>
@@ -541,7 +541,7 @@ function SmRow({ label, keyName, kind, override, value, inherited, setOverride, 
                 type="checkbox"
                 checked={!!value}
                 onChange={e => setValue(e.target.checked)}
-                className="accent-[#2E75B6]"
+                className="accent-[var(--brand-accent)]"
               />
               <span className="text-xs text-gray-600">{value ? 'On' : 'Off'}</span>
             </label>
@@ -555,7 +555,7 @@ function SmRow({ label, keyName, kind, override, value, inherited, setOverride, 
                 max={100}
                 value={Math.round((value ?? 0) * 100)}
                 onChange={e => setValue(parseInt(e.target.value, 10) / 100)}
-                className="w-full max-w-xs accent-[#2E75B6]"
+                className="w-full max-w-xs accent-[var(--brand-accent)]"
               />
             </div>
           )}
@@ -573,7 +573,7 @@ function SmRow({ label, keyName, kind, override, value, inherited, setOverride, 
                     value={opt.value}
                     checked={value === opt.value}
                     onChange={() => setValue(opt.value)}
-                    className="accent-[#2E75B6]"
+                    className="accent-[var(--brand-accent)]"
                   />
                   <span className="text-xs text-gray-700">{opt.label}</span>
                 </label>

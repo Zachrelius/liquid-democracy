@@ -86,7 +86,7 @@ export default function CreatePolis() {
   if (isSubOrgRoute && subOrgCtx.loading) {
     return (
       <div className="flex justify-center items-center py-20">
-        <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+        <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
       </div>
     );
   }
@@ -102,11 +102,11 @@ export default function CreatePolis() {
   if (!isSubOrgRoute && !isModeratorOrAdmin) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-16 text-center">
-        <h1 className="text-xl font-semibold text-[#1B3A5C] mb-3">Permission required</h1>
+        <h1 className="text-xl font-semibold text-[var(--brand-primary)] mb-3">Permission required</h1>
         <p className="text-sm text-gray-600 mb-4">
           You need to be a moderator or admin of this org to create a Polis.
         </p>
-        <Link to={parentSlug ? urlFor(parentSlug, 'admin-polises') : '/orgs'} className="text-sm text-[#2E75B6] hover:underline">Back to Polises</Link>
+        <Link to={parentSlug ? urlFor(parentSlug, 'admin-polises') : '/orgs'} className="text-sm text-[var(--brand-accent)] hover:underline">Back to Polises</Link>
       </div>
     );
   }
@@ -212,7 +212,7 @@ export default function CreatePolis() {
           )}
           {' / '}<span>Create</span>
         </p>
-        <h1 className="text-2xl font-semibold text-[#1B3A5C]">Create a Polis</h1>
+        <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Create a Polis</h1>
         <p className="text-xs text-gray-500 mt-1">
           A pol.is conversation linked to <strong>{scopeName}</strong>.
         </p>
@@ -240,7 +240,7 @@ export default function CreatePolis() {
             onChange={e => setTitle(e.target.value)}
             required
             maxLength={500}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
           />
         </div>
         <div>
@@ -254,7 +254,7 @@ export default function CreatePolis() {
             required
             rows={4}
             maxLength={10000}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
           />
         </div>
 
@@ -264,7 +264,7 @@ export default function CreatePolis() {
             <select
               value={scopeSubOrgId || ''}
               onChange={e => setScopeSubOrgId(e.target.value || '')}
-              className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             >
               <option value="">Parent-org-wide (default)</option>
               {subOrgs.map(s => (
@@ -300,7 +300,7 @@ export default function CreatePolis() {
                   onChange={e => updateSeed(i, e.target.value)}
                   placeholder={`Statement ${i + 1}`}
                   maxLength={997}
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
                 />
                 {seedStatements.length > 1 && (
                   <button
@@ -316,7 +316,7 @@ export default function CreatePolis() {
           <button
             type="button"
             onClick={addSeed}
-            className="mt-2 text-xs text-[#2E75B6] hover:underline"
+            className="mt-2 text-xs text-[var(--brand-accent)] hover:underline"
           >+ Add statement</button>
           {seedWarning && (
             <p className="text-xs text-amber-600 mt-2">{seedWarning}</p>
@@ -335,7 +335,7 @@ export default function CreatePolis() {
               value={pastedConversationId}
               onChange={e => setPastedConversationId(e.target.value)}
               maxLength={300}
-              className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
           </div>
         )}
@@ -344,7 +344,7 @@ export default function CreatePolis() {
           <button
             type="submit"
             disabled={submitting || !title.trim() || !prompt.trim() || (!tokenConfigured && !pastedConversationId.trim())}
-            className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
+            className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50"
           >
             {submitting ? 'Creating…' : 'Create Polis'}
           </button>
@@ -459,7 +459,7 @@ function SuccessPanel({
 
         <button
           onClick={onGoToDetail}
-          className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6]"
+          className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)]"
         >
           Go to Polis →
         </button>
@@ -507,14 +507,14 @@ function SuccessPanel({
                     <span className="flex-1">{s}</span>
                     <button
                       onClick={() => copyOne(s)}
-                      className="text-xs text-[#2E75B6] hover:underline shrink-0"
+                      className="text-xs text-[var(--brand-accent)] hover:underline shrink-0"
                     >copy</button>
                   </div>
                 ))}
                 <div className="pt-2 border-t border-amber-100">
                   <button
                     onClick={copyAll}
-                    className="text-xs text-[#2E75B6] hover:underline"
+                    className="text-xs text-[var(--brand-accent)] hover:underline"
                   >Copy all</button>
                 </div>
               </div>
@@ -537,12 +537,12 @@ function SuccessPanel({
               onChange={e => setPastedConversationId(e.target.value)}
               placeholder="e.g. 3jrhnuhnjs"
               disabled={savingConn}
-              className="flex-1 max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] disabled:opacity-50"
+              className="flex-1 max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] disabled:opacity-50"
             />
             <button
               onClick={handleSaveConversationId}
               disabled={savingConn || !pastedConversationId.trim()}
-              className="text-sm px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
+              className="text-sm px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50"
             >{savingConn ? 'Saving…' : 'Save'}</button>
           </div>
           <p className="text-xs text-gray-500">
@@ -557,7 +557,7 @@ function SuccessPanel({
 
       <button
         onClick={onGoToDetail}
-        className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6]"
+        className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)]"
       >
         Go to Polis →
       </button>

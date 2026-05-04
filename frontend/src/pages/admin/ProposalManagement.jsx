@@ -50,7 +50,7 @@ function OptionsEditor({ options, onChange }) {
           type="button"
           onClick={addOption}
           disabled={options.length >= 20}
-          className="text-xs px-3 py-1 bg-[#2E75B6] text-white rounded-lg hover:bg-[#1B3A5C] transition-colors disabled:opacity-50"
+          className="text-xs px-3 py-1 bg-[var(--brand-accent)] text-white rounded-lg hover:bg-[var(--brand-primary)] transition-colors disabled:opacity-50"
         >
           Add Option
         </button>
@@ -67,7 +67,7 @@ function OptionsEditor({ options, onChange }) {
                 onChange={e => updateOption(idx, 'label', e.target.value)}
                 placeholder="Option label (required)"
                 maxLength={200}
-                className={`flex-1 px-2 py-1.5 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] ${isDuplicate ? 'border-red-400' : 'border-gray-300'}`}
+                className={`flex-1 px-2 py-1.5 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] ${isDuplicate ? 'border-red-400' : 'border-gray-300'}`}
               />
               <div className="flex gap-1">
                 <button type="button" onClick={() => moveOption(idx, -1)} disabled={idx === 0}
@@ -91,7 +91,7 @@ function OptionsEditor({ options, onChange }) {
               placeholder="Description (optional)"
               maxLength={2000}
               rows={2}
-              className="w-full ml-8 px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+              className="w-full ml-8 px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
               style={{ width: 'calc(100% - 2rem)' }}
             />
           </div>
@@ -236,7 +236,7 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
 
   return (
     <form onSubmit={handleSubmit} className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-      <h3 className="text-lg font-semibold text-[#1B3A5C]">Create Proposal</h3>
+      <h3 className="text-lg font-semibold text-[var(--brand-primary)]">Create Proposal</h3>
 
       {/* Phase 8.5 — Scope Selector */}
       {subOrgs && subOrgs.length > 0 && (
@@ -254,7 +254,7 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
                 return t.sub_org_id == null;
               }));
             }}
-            className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+            className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
           >
             <option value="">Parent-org-wide (default)</option>
             {subOrgs.map(s => (
@@ -273,25 +273,25 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
       <div>
         <label className="block text-xs text-gray-500 mb-2">
           Voting Method
-          <Link to="/help/voting-methods" className="ml-2 text-[#2E75B6] hover:underline">Which should I pick?</Link>
+          <Link to="/help/voting-methods" className="ml-2 text-[var(--brand-accent)] hover:underline">Which should I pick?</Link>
         </label>
         <div className="flex gap-3">
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="radio" name="votingMethod" value="binary" checked={votingMethod === 'binary'}
-              onChange={() => setVotingMethod('binary')} className="accent-[#2E75B6]" />
+              onChange={() => setVotingMethod('binary')} className="accent-[var(--brand-accent)]" />
             <span className="text-sm text-gray-700">Binary (Yes/No)</span>
           </label>
           <label className={`flex items-center gap-2 ${approvalAllowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>
             <input type="radio" name="votingMethod" value="approval" checked={votingMethod === 'approval'}
               onChange={() => approvalAllowed && setVotingMethod('approval')}
-              disabled={!approvalAllowed} className="accent-[#2E75B6]" />
+              disabled={!approvalAllowed} className="accent-[var(--brand-accent)]" />
             <span className="text-sm text-gray-700">Approval</span>
             {!approvalAllowed && <span className="text-xs text-amber-600">(Not enabled for this org)</span>}
           </label>
           <label className={`flex items-center gap-2 ${rankedChoiceAllowed ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>
             <input type="radio" name="votingMethod" value="ranked_choice" checked={votingMethod === 'ranked_choice'}
               onChange={() => rankedChoiceAllowed && setVotingMethod('ranked_choice')}
-              disabled={!rankedChoiceAllowed} className="accent-[#2E75B6]" />
+              disabled={!rankedChoiceAllowed} className="accent-[var(--brand-accent)]" />
             <span className="text-sm text-gray-700">Ranked Choice</span>
             {!rankedChoiceAllowed && <span className="text-xs text-amber-600">(Not enabled for this org)</span>}
           </label>
@@ -305,7 +305,7 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
           value={title}
           onChange={e => setTitle(e.target.value)}
           required
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
         />
       </div>
 
@@ -315,7 +315,7 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
           value={body}
           onChange={e => setBody(e.target.value)}
           rows={6}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none font-mono"
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none font-mono"
         />
       </div>
 
@@ -338,7 +338,7 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
               if (Number.isNaN(v)) return;
               setNumWinners(Math.max(1, Math.min(options.length || 1, v)));
             }}
-            className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+            className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
           />
           <p className="text-xs text-gray-500 mt-1">
             1 winner = ranked-choice voting (IRV). More than 1 winner = single transferable vote (STV).
@@ -366,7 +366,7 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
                       type="checkbox"
                       checked={!!sel}
                       onChange={() => toggleTopic(t.id)}
-                      className="accent-[#2E75B6]"
+                      className="accent-[var(--brand-accent)]"
                     />
                     <span
                       className="inline-block w-3 h-3 rounded-full"
@@ -386,7 +386,7 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
                         max={100}
                         value={Math.round(sel.relevance * 100)}
                         onChange={e => setRelevance(t.id, parseInt(e.target.value) / 100)}
-                        className="w-24 accent-[#2E75B6]"
+                        className="w-24 accent-[var(--brand-accent)]"
                       />
                       <span className="text-xs text-gray-500 w-8">{Math.round(sel.relevance * 100)}%</span>
                     </div>
@@ -413,7 +413,7 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
               max={100}
               value={Math.round(passThreshold * 100)}
               onChange={e => setPassThreshold(parseInt(e.target.value) / 100)}
-              className="w-full accent-[#2E75B6]"
+              className="w-full accent-[var(--brand-accent)]"
             />
           </div>
           <div>
@@ -426,7 +426,7 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
               max={100}
               value={Math.round(quorumThreshold * 100)}
               onChange={e => setQuorumThreshold(parseInt(e.target.value) / 100)}
-              className="w-full accent-[#2E75B6]"
+              className="w-full accent-[var(--brand-accent)]"
             />
           </div>
         </div>
@@ -435,7 +435,7 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
         // of the prior "ask an Admin" copy. Numbers from the orgSettings
         // prop (= currentOrg.settings, 12.5 B2) with fallback to 0.50/0.40.
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <p className="text-sm font-medium text-[#1B3A5C] mb-1">Approval thresholds</p>
+          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">Approval thresholds</p>
           <p className="text-sm text-[#2C3E50]">
             This proposal will use the organization's defaults:{' '}
             <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>
@@ -467,14 +467,14 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
               type="checkbox"
               checked={smEnabled}
               onChange={e => setSmEnabled(e.target.checked)}
-              className="mt-0.5 accent-[#2E75B6]"
+              className="mt-0.5 accent-[var(--brand-accent)]"
             />
             <div>
               <p className="text-sm text-gray-700 font-medium">Sustained-majority voting</p>
               <p className="text-xs text-gray-500">
                 Requires the proposal to maintain support throughout the voting window.
                 Useful for binding decisions; overkill for routine matters.{' '}
-                <Link to="/help/sustained-majority" className="text-[#2E75B6] hover:underline">
+                <Link to="/help/sustained-majority" className="text-[var(--brand-accent)] hover:underline">
                   Learn more →
                 </Link>
               </p>
@@ -494,7 +494,7 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
         <button
           type="submit"
           disabled={saving || !title.trim() || !optionsValid || !numWinnersValid}
-          className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+          className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
         >
           {saving ? 'Creating...' : 'Create Proposal'}
         </button>
@@ -552,7 +552,7 @@ export default function ProposalManagement() {
   if (!currentOrg) return <div className="text-center py-16 text-gray-400">No organization selected</div>;
   if (loading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
 
@@ -602,12 +602,12 @@ export default function ProposalManagement() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold text-[#1B3A5C]">Proposal Management</h1>
+        <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Proposal Management</h1>
         {/* Phase 12.5 F2 — Create button gated on `proposal.create`. */}
         {!showCreate && canCreateProposal && (
           <button
             onClick={() => setShowCreate(true)}
-            className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
+            className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
           >
             Create Proposal
           </button>
@@ -669,7 +669,7 @@ export default function ProposalManagement() {
                       {canAdvancePhase && (
                         <button
                           onClick={() => handleAdvance(p.id)}
-                          className="text-xs px-3 py-1.5 bg-[#2E75B6] text-white rounded-lg hover:bg-[#1B3A5C]"
+                          className="text-xs px-3 py-1.5 bg-[var(--brand-accent)] text-white rounded-lg hover:bg-[var(--brand-primary)]"
                         >
                           Advance to Deliberation
                         </button>
@@ -685,7 +685,7 @@ export default function ProposalManagement() {
                   {p.status === 'deliberation' && canAdvancePhase && (
                     <button
                       onClick={() => handleAdvance(p.id)}
-                      className="text-xs px-3 py-1.5 bg-[#2E75B6] text-white rounded-lg hover:bg-[#1B3A5C]"
+                      className="text-xs px-3 py-1.5 bg-[var(--brand-accent)] text-white rounded-lg hover:bg-[var(--brand-primary)]"
                     >
                       Advance to Voting
                     </button>
@@ -693,7 +693,7 @@ export default function ProposalManagement() {
                   {p.status === 'voting' && canAdvancePhase && (
                     <button
                       onClick={() => handleAdvance(p.id)}
-                      className="text-xs px-3 py-1.5 bg-[#2E75B6] text-white rounded-lg hover:bg-[#1B3A5C]"
+                      className="text-xs px-3 py-1.5 bg-[var(--brand-accent)] text-white rounded-lg hover:bg-[var(--brand-primary)]"
                     >
                       Close Voting
                     </button>
@@ -742,7 +742,7 @@ function EscalationResolutionPanel({ proposalId, onResolve }) {
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => setAction('extend')}
-            className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-blue-50"
+            className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-blue-50"
           >
             Extend Window
           </button>
@@ -766,7 +766,7 @@ function EscalationResolutionPanel({ proposalId, onResolve }) {
           </button>
           <a
             href={`/admin/audit?target_id=${proposalId}`}
-            className="text-xs px-3 py-1.5 text-[#2E75B6] hover:underline"
+            className="text-xs px-3 py-1.5 text-[var(--brand-accent)] hover:underline"
           >
             View breach history →
           </a>
@@ -778,7 +778,7 @@ function EscalationResolutionPanel({ proposalId, onResolve }) {
   return (
     <div className="flex flex-col gap-2 w-full">
       <p className="text-xs text-gray-700">
-        Confirm: <strong className="text-[#1B3A5C]">{action.replace(/_/g, ' ')}</strong>
+        Confirm: <strong className="text-[var(--brand-primary)]">{action.replace(/_/g, ' ')}</strong>
         {requiresReason && <span className="text-red-600"> — reason required for override</span>}
       </p>
       {(requiresReason || action === 'extend') && (
@@ -787,14 +787,14 @@ function EscalationResolutionPanel({ proposalId, onResolve }) {
           onChange={e => setReason(e.target.value)}
           placeholder={requiresReason ? 'Why are you overriding the failure?' : 'Reason (optional)'}
           rows={2}
-          className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+          className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
         />
       )}
       <div className="flex gap-2">
         <button
           onClick={() => onResolve(proposalId, action, reason.trim())}
           disabled={requiresReason && !reason.trim()}
-          className="text-xs px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
+          className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50"
         >
           Confirm
         </button>

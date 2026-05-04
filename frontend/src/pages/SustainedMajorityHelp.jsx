@@ -5,10 +5,10 @@ export default function SustainedMajorityHelp() {
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
       <div>
         {/* Phase 11 — help pages are public/non-org-scoped. */}
-        <Link to="/orgs" className="text-sm text-[#2E75B6] hover:underline mb-4 inline-block">
+        <Link to="/orgs" className="text-sm text-[var(--brand-accent)] hover:underline mb-4 inline-block">
           ← Back
         </Link>
-        <h1 className="text-2xl font-bold text-[#1B3A5C]">Sustained-Majority Voting</h1>
+        <h1 className="text-2xl font-bold text-[var(--brand-primary)]">Sustained-Majority Voting</h1>
         <p className="text-sm text-gray-500 mt-1">
           A governance feature that requires support to <em>hold</em> through the
           voting window — not just at a single moment.
@@ -17,7 +17,7 @@ export default function SustainedMajorityHelp() {
 
       {/* When to use */}
       <section className="bg-blue-50 border border-blue-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">When should we use it?</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">When should we use it?</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Sustained-majority is opt-in and default-off. Most decisions don&apos;t need it:
           a routine vote on a meeting time, a non-binding poll, an internal sense-check —
@@ -46,20 +46,20 @@ export default function SustainedMajorityHelp() {
 
       {/* How it works (admin) */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">For org admins</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">For org admins</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           In <strong>Org Settings → Sustained-Majority Voting</strong>, you choose:
         </p>
         <dl className="text-sm text-gray-700 space-y-3 leading-relaxed">
           <div>
-            <dt className="font-medium text-[#1B3A5C]">Default on for new proposals</dt>
+            <dt className="font-medium text-[var(--brand-primary)]">Default on for new proposals</dt>
             <dd className="ml-4 text-gray-600">
               When checked, every new proposal uses sustained-majority unless the author
               opts out. When unchecked, proposals are normal unless the author opts in.
             </dd>
           </div>
           <div>
-            <dt className="font-medium text-[#1B3A5C]">Allow per-proposal override</dt>
+            <dt className="font-medium text-[var(--brand-primary)]">Allow per-proposal override</dt>
             <dd className="ml-4 text-gray-600">
               When checked, proposal authors can flip the toggle on or off for their own
               proposal. When unchecked, the org default applies to every proposal —
@@ -67,14 +67,14 @@ export default function SustainedMajorityHelp() {
             </dd>
           </div>
           <div>
-            <dt className="font-medium text-[#1B3A5C]">Required support level</dt>
+            <dt className="font-medium text-[var(--brand-primary)]">Required support level</dt>
             <dd className="ml-4 text-gray-600">
               The headline support percentage the proposal must reach to pass. Defaults
               to 50% — the same as the platform&apos;s normal pass threshold.
             </dd>
           </div>
           <div>
-            <dt className="font-medium text-[#1B3A5C]">Drop-below floor</dt>
+            <dt className="font-medium text-[var(--brand-primary)]">Drop-below floor</dt>
             <dd className="ml-4 text-gray-600">
               If support dips below this percentage during the voting window, the
               configured failure mode triggers. Set this 5–10 percentage points below
@@ -83,7 +83,7 @@ export default function SustainedMajorityHelp() {
             </dd>
           </div>
           <div>
-            <dt className="font-medium text-[#1B3A5C]">Failure mode</dt>
+            <dt className="font-medium text-[var(--brand-primary)]">Failure mode</dt>
             <dd className="ml-4 text-gray-600">
               <ul className="space-y-1 list-disc pl-5">
                 <li>
@@ -108,9 +108,9 @@ export default function SustainedMajorityHelp() {
 
       {/* Voter view */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">For voters and delegators</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">For voters and delegators</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
-          Sustained-majority proposals show a small <span className="text-xs bg-blue-50 text-[#2E75B6] border border-blue-200 px-1.5 py-0.5 rounded">⏳ Sustained</span>{' '}
+          Sustained-majority proposals show a small <span className="text-xs bg-blue-50 text-[var(--brand-accent)] border border-blue-200 px-1.5 py-0.5 rounded">⏳ Sustained</span>{' '}
           badge in the proposal list — a flag to check back during the window rather than
           fire-and-forget.
         </p>
@@ -132,7 +132,7 @@ export default function SustainedMajorityHelp() {
 
       {/* Multi-option */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">Approval and ranked-choice proposals</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Approval and ranked-choice proposals</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Floors don&apos;t map cleanly to multi-option votes (what does &quot;floor&quot;
           even mean when there are five options?). Instead, sustained-majority on
@@ -148,7 +148,7 @@ export default function SustainedMajorityHelp() {
 
       {/* What happens to delegators */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">What happens if my delegate votes against my preference?</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">What happens if my delegate votes against my preference?</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           The platform doesn&apos;t track preferences directly — it tracks votes and
           delegations. But if your delegate&apos;s vote on a sustained-majority proposal
@@ -165,7 +165,7 @@ export default function SustainedMajorityHelp() {
 
       {/* Audit */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">What gets logged?</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">What gets logged?</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Every state-changing event in this feature is recorded in the audit log:
           config changes (which keys changed, old → new), per-proposal toggles, window
