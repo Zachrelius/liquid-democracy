@@ -264,6 +264,11 @@ export default function Nav() {
                     <div className="absolute left-0 top-full mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden">
                       {[
                         isAdmin && { to: urlFor(parentSlugForLinks, 'admin-settings'), label: 'Org Settings' },
+                        // Phase 12 Stage 2 F1/D3 — Permissions matrix entry.
+                        // Tier shortcut: shown to admin+steward (default
+                        // DEFAULT_GRANTS for role_permissions.edit). Members
+                        // can still navigate directly for the read-only view.
+                        isAdmin && { to: urlFor(parentSlugForLinks, 'admin-permissions'), label: 'Permissions' },
                         { to: urlFor(parentSlugForLinks, 'admin-members'), label: 'Members' },
                         { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
                         { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
@@ -422,6 +427,8 @@ export default function Nav() {
               </div>
               {[
                 isAdmin && { to: urlFor(parentSlugForLinks, 'admin-settings'), label: 'Org Settings' },
+                // Phase 12 Stage 2 F1/D3 — mobile mirror of "Permissions".
+                isAdmin && { to: urlFor(parentSlugForLinks, 'admin-permissions'), label: 'Permissions' },
                 { to: urlFor(parentSlugForLinks, 'admin-members'), label: 'Members' },
                 { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
                 { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
