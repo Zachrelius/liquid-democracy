@@ -53,7 +53,7 @@ function DelegationRow({ delegation, topic, onChainChange, onChangeDelegate, onR
           value={delegation.chain_behavior}
           onChange={handleChainChange}
           disabled={saving}
-          className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-600 focus:outline-none focus:ring-1 focus:ring-[#2E75B6] disabled:opacity-50"
+          className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-600 focus:outline-none focus:ring-1 focus:ring-[var(--brand-accent)] disabled:opacity-50"
         >
           {CHAIN_OPTIONS.map(o => (
             <option key={o.value} value={o.value}>{o.label}</option>
@@ -62,7 +62,7 @@ function DelegationRow({ delegation, topic, onChainChange, onChangeDelegate, onR
       </td>
       <td className="py-3 px-4 text-right">
         <div className="flex gap-2 justify-end">
-          <button onClick={() => onChangeDelegate(delegation)} disabled={unverified} className="text-xs text-[#2E75B6] hover:underline disabled:opacity-50 disabled:no-underline">Change</button>
+          <button onClick={() => onChangeDelegate(delegation)} disabled={unverified} className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline">Change</button>
           <button onClick={() => onRemove(delegation)} disabled={unverified} className="text-xs text-red-500 hover:underline disabled:opacity-50 disabled:no-underline">Remove</button>
         </div>
       </td>
@@ -93,7 +93,7 @@ function DelegationCard({ delegation, topic, onChainChange, onChangeDelegate, on
       <div className="flex items-center justify-between">
         {topic ? <TopicBadge topic={topic} /> : <span className="text-xs italic text-gray-500">Global default</span>}
         <div className="flex gap-3">
-          <button onClick={() => onChangeDelegate(delegation)} disabled={unverified} className="text-xs text-[#2E75B6] hover:underline disabled:opacity-50 disabled:no-underline">Change</button>
+          <button onClick={() => onChangeDelegate(delegation)} disabled={unverified} className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline">Change</button>
           <button onClick={() => onRemove(delegation)} disabled={unverified} className="text-xs text-red-500 hover:underline disabled:opacity-50 disabled:no-underline">Remove</button>
         </div>
       </div>
@@ -105,7 +105,7 @@ function DelegationCard({ delegation, topic, onChainChange, onChangeDelegate, on
         value={delegation.chain_behavior}
         onChange={handleChainChange}
         disabled={saving}
-        className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-600 w-full focus:outline-none focus:ring-1 focus:ring-[#2E75B6]"
+        className="text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-600 w-full focus:outline-none focus:ring-1 focus:ring-[var(--brand-accent)]"
       >
         {CHAIN_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
@@ -218,7 +218,7 @@ export default function Delegations() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
-      <h1 className="text-2xl font-semibold text-[#1B3A5C]">My Delegations</h1>
+      <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">My Delegations</h1>
 
       {unverified && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
@@ -245,7 +245,7 @@ export default function Delegations() {
                 <button
                   onClick={() => setModal({ topicId: undefined, topicName: null, existingDelegation: globalDel })}
                   disabled={unverified}
-                  className="text-sm px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
+                  className="text-sm px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors disabled:opacity-50"
                 >
                   Change
                 </button>
@@ -266,7 +266,7 @@ export default function Delegations() {
               <button
                 onClick={() => setModal({ topicId: undefined, topicName: null, existingDelegation: null })}
                 disabled={unverified}
-                className="text-sm px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+                className="text-sm px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
               >
                 Set Default Delegate
               </button>
@@ -313,7 +313,7 @@ export default function Delegations() {
                     <button
                       onClick={() => setModal({ topicId: t.id, topicName: t.name, existingDelegation: null })}
                       disabled={unverified}
-                      className="text-xs text-[#2E75B6] hover:underline disabled:opacity-50 disabled:no-underline"
+                      className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline"
                     >
                       Set Delegate
                     </button>
@@ -346,7 +346,7 @@ export default function Delegations() {
               <button
                 onClick={() => setModal({ topicId: t.id, topicName: t.name, existingDelegation: null })}
                 disabled={unverified}
-                className="text-xs text-[#2E75B6] hover:underline disabled:opacity-50 disabled:no-underline"
+                className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline"
               >
                 Set Delegate
               </button>
@@ -384,7 +384,7 @@ export default function Delegations() {
                             {...provided.dragHandleProps}
                             className={`flex items-center gap-3 bg-white border rounded-xl px-4 py-3 cursor-grab transition-shadow ${
                               snapshot.isDragging
-                                ? 'shadow-lg border-[#2E75B6]'
+                                ? 'shadow-lg border-[var(--brand-accent)]'
                                 : 'border-gray-200'
                             }`}
                           >

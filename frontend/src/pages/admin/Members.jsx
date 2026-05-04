@@ -61,7 +61,7 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, pe
               <select
                 value={role}
                 onChange={e => setRole(e.target.value)}
-                className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[#2E75B6]"
+                className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--brand-accent)]"
               >
                 <option value="member">Member</option>
                 <option value="moderator">Moderator</option>
@@ -75,7 +75,7 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, pe
                   setExpanded(false);
                 }}
                 disabled={saving || role === member.role}
-                className="text-xs px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
+                className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50"
               >
                 {saving ? 'Saving...' : 'Update Role'}
               </button>
@@ -283,7 +283,7 @@ export default function Members() {
 
   if (loading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
 
@@ -295,7 +295,7 @@ export default function Members() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-10">
-      <h1 className="text-2xl font-semibold text-[#1B3A5C]">Member Management</h1>
+      <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Member Management</h1>
 
       {/* Pending Join Requests */}
       {pendingRequests.length > 0 && (
@@ -350,7 +350,7 @@ export default function Members() {
             placeholder="Search members..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-[#2E75B6] w-56"
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-[var(--brand-accent)] w-56"
           />
         </div>
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -392,7 +392,7 @@ export default function Members() {
               onChange={e => setInviteEmails(e.target.value)}
               rows={4}
               placeholder="alice@example.com&#10;bob@example.com"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
             />
           </div>
           <div className="flex items-center gap-4">
@@ -401,7 +401,7 @@ export default function Members() {
               <select
                 value={inviteRole}
                 onChange={e => setInviteRole(e.target.value)}
-                className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-[#2E75B6]"
+                className="text-sm border border-gray-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-[var(--brand-accent)]"
               >
                 <option value="member">Member</option>
                 <option value="admin">Admin</option>
@@ -411,7 +411,7 @@ export default function Members() {
               <button
                 onClick={handleInvite}
                 disabled={!inviteEmails.trim()}
-                className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+                className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
               >
                 Send Invitations
               </button>
@@ -456,7 +456,7 @@ export default function Members() {
                     <>
                       <button
                         onClick={() => handleResendInvite(inv.id)}
-                        className="text-xs text-[#2E75B6] hover:underline"
+                        className="text-xs text-[var(--brand-accent)] hover:underline"
                       >
                         Resend
                       </button>

@@ -519,7 +519,7 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
       .append('circle')
       .attr('r', (d) => nodeRadius(d))
       .attr('fill', (d) => colorForOption(d))
-      .attr('stroke', '#1B3A5C')
+      .attr('stroke', 'var(--brand-primary)')
       .attr('stroke-width', 1.5)
       .attr('opacity', 0.85);
 
@@ -530,7 +530,7 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
       .attr('dy', (d) => nodeRadius(d) + 14)
       .attr('font-size', 11)
       .attr('font-weight', 600)
-      .attr('fill', '#1B3A5C')
+      .attr('fill', 'var(--brand-primary)')
       .attr('pointer-events', 'none');
 
     // Voter visuals. Phase 7C.1: anonymous voters (label empty, not a
@@ -555,7 +555,7 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
         if (d.is_current_user) return '#F39C12';
         if (d.isAnonymous) return ANON_STROKE;
         if (d.isAbstainer || d.type === 'non_voter') return VOTE_COLORS.null;
-        return '#2E75B6';
+        return 'var(--brand-accent)';
       })
       .attr('stroke-width', (d) => {
         if (d.is_current_user) return 3;
@@ -582,7 +582,7 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
       .append('circle')
       .attr('r', (d) => nodeRadius(d) + 4)
       .attr('fill', 'none')
-      .attr('stroke', '#2E75B6')
+      .attr('stroke', 'var(--brand-accent)')
       .attr('stroke-width', 1)
       .attr('stroke-dasharray', '3,2')
       .attr('opacity', 0.5);
@@ -925,7 +925,7 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
         >
           {tooltip.node.type === 'option' ? (
             <>
-              <div className="font-semibold text-[#1B3A5C]">{tooltip.node.label}</div>
+              <div className="font-semibold text-[var(--brand-primary)]">{tooltip.node.label}</div>
               <div className="text-gray-500 mt-0.5">
                 {votingMethod === 'approval'
                   ? `${tooltip.node.approval_count} approval${
@@ -944,7 +944,7 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
                   shorter than the 7C.1 wall-of-text form. */}
               {tooltip.node.isAnonymous ? (
                 <>
-                  <div className="font-semibold text-[#1B3A5C]">
+                  <div className="font-semibold text-[var(--brand-primary)]">
                     Anonymous voter
                     {tooltip.node.isAbstainer
                       ? ''
@@ -975,7 +975,7 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
                 </>
               ) : (
                 <>
-                  <div className="font-semibold text-[#1B3A5C]">
+                  <div className="font-semibold text-[var(--brand-primary)]">
                     {tooltip.node.label}
                   </div>
                   {tooltip.node.is_public_delegate && (
@@ -1011,7 +1011,7 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
         <div className="absolute bottom-2 left-2 right-2 bg-white border border-gray-200 rounded-xl shadow-lg p-4 text-sm z-10 md:left-auto md:right-2 md:w-80 md:bottom-2">
           <div className="flex justify-between items-start mb-2">
             <div>
-              <div className="font-semibold text-[#1B3A5C]">
+              <div className="font-semibold text-[var(--brand-primary)]">
                 {selectedNode.isAnonymous ? 'Anonymous voter' : selectedNode.label}
               </div>
               {selectedNode.is_public_delegate && !selectedNode.isAnonymous && (
@@ -1047,12 +1047,12 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
               </p>
             )}
             {selectedNode.is_current_user && (
-              <p className="text-[#2E75B6] font-medium text-xs mt-2">This is you.</p>
+              <p className="text-[var(--brand-accent)] font-medium text-xs mt-2">This is you.</p>
             )}
             {selectedNode.label && !selectedNode.isAnonymous && profileLinkOrg && (
               <Link
                 to={urlFor(profileLinkOrg, 'user-profile', selectedNode.id)}
-                className="inline-block mt-2 text-xs text-[#2E75B6] hover:underline"
+                className="inline-block mt-2 text-xs text-[var(--brand-accent)] hover:underline"
               >
                 View Profile
               </Link>

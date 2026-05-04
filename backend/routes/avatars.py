@@ -51,7 +51,44 @@ router = APIRouter(prefix="/api/users/me/avatar", tags=["avatars"])
 # Module-level so tests can monkeypatch to a tmp_path. The corresponding
 # StaticFiles mount in main.py reads the same constant so they stay in sync.
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
-AVATARS_BASE_DIR: Path = _BACKEND_DIR / "uploads" / "avatars"
+
+
+def _resolve_uploads_base() -> Path:
+    """Phase 12.7 I2 — resolve the uploads base directory in 3 tiers.
+
+    1. ``UPLOADS_BASE_DIR`` env override. Used by tests + future
+       flexibility (point at a tmp_path, point at a different mount).
+    2. ``/data/uploads`` if the Railway Volume mount at ``/data`` exists
+       and is writable. This is the production target post-D1 (volume
+       provisioned via Railway dashboard, mount declared in railway.toml).
+    3. Local-dev fallback at ``backend/uploads``. Also kicks in on prod
+       if the Volume hasn't been provisioned yet — the
+       ship-with-fallback pattern keeps deploys safe regardless of
+       Volume state.
+
+    Resolution happens once at module import. Tests that need a custom
+    path monkeypatch ``AVATARS_BASE_DIR`` (and ``LOGOS_BASE_DIR``)
+    directly to a tmp_path, which works because every callsite reads
+    the module-level constant rather than recomputing.
+    """
+    explicit = os.environ.get("UPLOADS_BASE_DIR")
+    if explicit:
+        return Path(explicit)
+    railway_volume = Path("/data/uploads")
+    # The Volume is mounted at /data; the uploads/ subdir is ours to
+    # create. We only consider this tier viable when /data exists and
+    # is writable (i.e., the Volume actually mounted).
+    if railway_volume.parent.exists() and os.access(railway_volume.parent, os.W_OK):
+        return railway_volume
+    # Local dev fallback — also covers prod-without-volume.
+    return _BACKEND_DIR / "uploads"
+
+
+UPLOADS_BASE_DIR: Path = _resolve_uploads_base()
+AVATARS_BASE_DIR: Path = UPLOADS_BASE_DIR / "avatars"
+# Phase 12.7 B1 — org logos live alongside avatars on the same Volume.
+# Path scheme: LOGOS_BASE_DIR / {org_id} / {large|small}.{ext}
+LOGOS_BASE_DIR: Path = UPLOADS_BASE_DIR / "logos"
 
 ALLOWED_CONTENT_TYPES: frozenset[str] = frozenset({
     "image/jpeg",

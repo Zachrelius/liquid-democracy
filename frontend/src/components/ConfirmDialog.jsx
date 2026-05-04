@@ -82,7 +82,7 @@ export function ConfirmProvider({ children }) {
                 className={`text-sm px-4 py-2 rounded-lg text-white transition-colors ${
                   state.destructive
                     ? 'bg-red-600 hover:bg-red-700'
-                    : 'bg-[#1B3A5C] hover:bg-[#2E75B6]'
+                    : 'bg-[var(--brand-primary)] hover:bg-[var(--brand-accent)]'
                 }`}
               >
                 Confirm

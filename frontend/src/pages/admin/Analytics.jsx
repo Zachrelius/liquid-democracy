@@ -6,12 +6,12 @@ import {
   PieChart, Pie, Cell, Legend,
 } from 'recharts';
 
-const COLORS = ['#2E75B6', '#1B3A5C', '#64748b', '#94a3b8'];
+const COLORS = ['var(--brand-accent)', 'var(--brand-primary)', '#64748b', '#94a3b8'];
 
 function MetricCard({ label, value, sub }) {
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-5 text-center">
-      <p className="text-3xl font-bold text-[#1B3A5C]">{value}</p>
+      <p className="text-3xl font-bold text-[var(--brand-primary)]">{value}</p>
       <p className="text-sm text-gray-500 mt-1">{label}</p>
       {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
     </div>
@@ -38,7 +38,7 @@ export default function Analytics() {
   if (!currentOrg) return <div className="text-center py-16 text-gray-400">No organization selected</div>;
   if (loading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
   if (error) return <div className="max-w-3xl mx-auto px-4 py-8"><div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-lg">{error}</div></div>;
@@ -63,7 +63,7 @@ export default function Analytics() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
-      <h1 className="text-2xl font-semibold text-[#1B3A5C]">Analytics</h1>
+      <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Analytics</h1>
 
       {/* Proposal Outcomes Summary */}
       <section className="space-y-3">
@@ -110,7 +110,7 @@ export default function Analytics() {
                   formatter={(value) => [`${value}%`, 'Participation']}
                   contentStyle={{ fontSize: 12 }}
                 />
-                <Bar dataKey="rate" fill="#2E75B6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="rate" fill="var(--brand-accent)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

@@ -46,7 +46,7 @@ function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown, confirm 
             value={bio}
             onChange={e => setBio(e.target.value)}
             placeholder="Tell others why they should trust you on this topic (50-1000 chars)"
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
             rows={3}
           />
           <p className="text-xs text-gray-400">Your votes on {topic.name} proposals will become publicly visible.</p>
@@ -54,7 +54,7 @@ function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown, confirm 
             <button
               onClick={() => { onRegister(topic.id, bio); setRegistering(false); }}
               disabled={bio.length < 50}
-              className="text-xs px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+              className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
             >
               Register
             </button>
@@ -77,7 +77,7 @@ function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown, confirm 
         </div>
         <button
           onClick={() => setRegistering(true)}
-          className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors"
+          className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
         >
           Become a Delegate
         </button>
@@ -97,7 +97,7 @@ function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown, confirm 
           {!editing && (
             <button
               onClick={() => { setBio(profile.bio); setEditing(true); }}
-              className="text-xs text-[#2E75B6] hover:underline"
+              className="text-xs text-[var(--brand-accent)] hover:underline"
             >
               Edit Bio
             </button>
@@ -122,7 +122,7 @@ function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown, confirm 
           <textarea
             value={bio}
             onChange={e => setBio(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
             rows={3}
           />
           <div className="flex gap-2">
@@ -134,7 +134,7 @@ function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown, confirm 
                 setEditing(false);
               }}
               disabled={saving || bio.length < 50}
-              className="text-xs px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+              className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
             >
               {saving ? 'Saving...' : 'Save'}
             </button>
@@ -336,7 +336,7 @@ export default function Settings() {
 
   if (loading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
 
@@ -348,7 +348,7 @@ export default function Settings() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-10">
-      <h1 className="text-2xl font-semibold text-[#1B3A5C]">Settings</h1>
+      <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Settings</h1>
 
       {/* Section: Profile picture (Phase 9.8 W A2) */}
       <section className="space-y-3">
@@ -370,7 +370,7 @@ export default function Settings() {
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={avatarBusy}
-                className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+                className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
               >
                 {avatarBusy ? 'Working…' : (user?.avatar_url ? 'Replace' : 'Upload')}
               </button>
@@ -399,7 +399,7 @@ export default function Settings() {
               type="text"
               value={displayName}
               onChange={e => setDisplayName(e.target.value)}
-              className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
           </div>
           <div>
@@ -410,7 +410,7 @@ export default function Settings() {
             <button
               onClick={saveProfile}
               disabled={!displayName || displayName === user?.display_name}
-              className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+              className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
             >
               Save Changes
             </button>
@@ -432,7 +432,7 @@ export default function Settings() {
                 value={opt.value}
                 checked={policy === opt.value}
                 onChange={() => setPolicy(opt.value)}
-                className="mt-0.5 accent-[#2E75B6]"
+                className="mt-0.5 accent-[var(--brand-accent)]"
               />
               <div>
                 <p className="text-sm text-gray-700">{opt.label}</p>
@@ -444,7 +444,7 @@ export default function Settings() {
             <button
               onClick={savePolicy}
               disabled={policy === user?.default_follow_policy}
-              className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+              className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
             >
               Save Preferences
             </button>
@@ -490,28 +490,28 @@ export default function Settings() {
               value={pwCurrent}
               onChange={e => setPwCurrent(e.target.value)}
               placeholder="Current password"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
             <input
               type="password"
               value={pwNew}
               onChange={e => setPwNew(e.target.value)}
               placeholder="New password (min 8 chars)"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
             <input
               type="password"
               value={pwConfirm}
               onChange={e => setPwConfirm(e.target.value)}
               placeholder="Confirm new password"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
           </div>
           <div className="flex items-center gap-3">
             <button
               onClick={handleChangePassword}
               disabled={!pwCurrent || pwNew.length < 8}
-              className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+              className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
             >
               Change Password
             </button>

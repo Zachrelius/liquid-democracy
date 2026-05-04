@@ -126,7 +126,7 @@ export default function Polis() {
   if (loading) {
     return (
       <div className="flex justify-center items-center py-20">
-        <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+        <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
       </div>
     );
   }
@@ -136,9 +136,9 @@ export default function Polis() {
     // friendly placeholder so they see they're not in scope.
     return (
       <div className="max-w-2xl mx-auto px-4 py-16 text-center space-y-3">
-        <h1 className="text-xl font-semibold text-[#1B3A5C]">Deliberation not available</h1>
+        <h1 className="text-xl font-semibold text-[var(--brand-primary)]">Deliberation not available</h1>
         <p className="text-sm text-gray-600">{readOnlyReason}</p>
-        <Link to={parentSlug ? urlFor(parentSlug, 'proposals') : '/orgs'} className="text-sm text-[#2E75B6] hover:underline">
+        <Link to={parentSlug ? urlFor(parentSlug, 'proposals') : '/orgs'} className="text-sm text-[var(--brand-accent)] hover:underline">
           Back to proposals
         </Link>
       </div>
@@ -148,11 +148,11 @@ export default function Polis() {
   if (error || !polis) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-16 text-center space-y-3">
-        <h1 className="text-xl font-semibold text-[#1B3A5C]">Deliberation not found</h1>
+        <h1 className="text-xl font-semibold text-[var(--brand-primary)]">Deliberation not found</h1>
         <p className="text-sm text-gray-600">
           {error?.message || 'This Polis does not exist or is not visible to you.'}
         </p>
-        <Link to={parentSlug ? urlFor(parentSlug, 'proposals') : '/orgs'} className="text-sm text-[#2E75B6] hover:underline">
+        <Link to={parentSlug ? urlFor(parentSlug, 'proposals') : '/orgs'} className="text-sm text-[var(--brand-accent)] hover:underline">
           Back to proposals
         </Link>
       </div>
@@ -199,11 +199,11 @@ export default function Polis() {
 
       {/* Header — no admin controls; voter view */}
       <section className="space-y-3">
-        <Link to={parentSlug ? urlFor(parentSlug, 'proposals') : '/orgs'} className="text-sm text-[#2E75B6] hover:underline">
+        <Link to={parentSlug ? urlFor(parentSlug, 'proposals') : '/orgs'} className="text-sm text-[var(--brand-accent)] hover:underline">
           ← Back to proposals
         </Link>
         <div className="flex items-center gap-3 flex-wrap">
-          <h1 className="text-2xl font-semibold text-[#1B3A5C]">{polis.title}</h1>
+          <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">{polis.title}</h1>
           <span
             className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
               isArchived ? 'bg-gray-200 text-gray-600' : 'bg-green-100 text-green-700'
@@ -227,7 +227,7 @@ export default function Polis() {
           {creator ? <> by <span className="text-gray-600">{creator.display_name}</span></> : null}
         </p>
         <p className="text-xs text-gray-400">
-          New here? <Link to="/help/polis" className="text-[#2E75B6] hover:underline">Learn how Polis works</Link>.
+          New here? <Link to="/help/polis" className="text-[var(--brand-accent)] hover:underline">Learn how Polis works</Link>.
           Most participants only vote on others&apos; statements — you don&apos;t have to write your own.
         </p>
       </section>
@@ -244,15 +244,15 @@ export default function Polis() {
         <div className="bg-white border border-gray-200 rounded-xl p-5 grid grid-cols-3 gap-6">
           <div>
             <p className="text-xs text-gray-500">Participants</p>
-            <p className="text-xl font-semibold text-[#1B3A5C]">{statValue(stats?.participant_count)}</p>
+            <p className="text-xl font-semibold text-[var(--brand-primary)]">{statValue(stats?.participant_count)}</p>
           </div>
           <div>
             <p className="text-xs text-gray-500">Statements</p>
-            <p className="text-xl font-semibold text-[#1B3A5C]">{statValue(stats?.statement_count)}</p>
+            <p className="text-xl font-semibold text-[var(--brand-primary)]">{statValue(stats?.statement_count)}</p>
           </div>
           <div>
             <p className="text-xs text-gray-500">Votes</p>
-            <p className="text-xl font-semibold text-[#1B3A5C]">{statValue(stats?.vote_count)}</p>
+            <p className="text-xl font-semibold text-[var(--brand-primary)]">{statValue(stats?.vote_count)}</p>
           </div>
         </div>
         {liveStatsUnavailable && (

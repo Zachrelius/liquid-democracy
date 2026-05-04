@@ -90,10 +90,10 @@ export default function Demo() {
       <div className="max-w-6xl mx-auto px-6 py-16">
         {/* Intro */}
         <div className="max-w-3xl">
-          <p className="text-sm font-medium text-[#2E75B6] uppercase tracking-wider">
+          <p className="text-sm font-medium text-[var(--brand-accent)] uppercase tracking-wider">
             Demo
           </p>
-          <h1 className="mt-2 text-3xl sm:text-4xl font-semibold text-[#1B3A5C] tracking-tight">
+          <h1 className="mt-2 text-3xl sm:text-4xl font-semibold text-[var(--brand-primary)] tracking-tight">
             Try the platform
           </h1>
           <p className="mt-4 text-base text-[#2C3E50] leading-relaxed">
@@ -113,7 +113,7 @@ export default function Demo() {
 
         {/* Persona picker */}
         <section className="mt-12">
-          <h2 className="text-xl font-semibold text-[#1B3A5C] mb-5">
+          <h2 className="text-xl font-semibold text-[var(--brand-primary)] mb-5">
             Sign in as a persona
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -131,17 +131,17 @@ export default function Demo() {
 
         {/* Register-your-own */}
         <section className="mt-14 p-6 rounded-xl border border-gray-200 bg-white shadow-sm max-w-3xl">
-          <h2 className="text-lg font-semibold text-[#1B3A5C] mb-2">
-            Prefer to start fresh?
+          <h2 className="text-lg font-semibold text-[var(--brand-primary)] mb-2">
+            Prefer a clean slate?
           </h2>
           <p className="text-sm text-[#2C3E50] leading-relaxed">
             <Link
               to="/register"
-              className="text-[#2E75B6] font-medium hover:underline"
+              className="text-[var(--brand-accent)] font-medium hover:underline"
             >
-              Register your own demo account
+              Register an account
             </Link>{' '}
-            and walk through the full onboarding flow including email
+            — you'll go through the real onboarding flow including email
             verification.
           </p>
         </section>
@@ -152,13 +152,13 @@ export default function Demo() {
 
 function PersonaCard({ persona, loading, disabled, onClick }) {
   return (
-    <div className="flex flex-col p-5 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-[#2E75B6] transition-colors">
+    <div className="flex flex-col p-5 bg-white rounded-xl border border-gray-200 shadow-sm hover:border-[var(--brand-accent)] transition-colors">
       <div className="flex items-center gap-3 mb-3">
-        <div className="w-10 h-10 rounded-full bg-[#1B3A5C] text-white flex items-center justify-center text-sm font-bold">
+        <div className="w-10 h-10 rounded-full bg-[var(--brand-primary)] text-white flex items-center justify-center text-sm font-bold">
           {persona.displayName.charAt(0).toUpperCase()}
         </div>
         <div>
-          <div className="text-base font-semibold text-[#1B3A5C]">
+          <div className="text-base font-semibold text-[var(--brand-primary)]">
             {persona.displayName}
           </div>
           <div className="text-xs text-gray-500">{persona.role}</div>
@@ -170,7 +170,7 @@ function PersonaCard({ persona, loading, disabled, onClick }) {
       <button
         onClick={onClick}
         disabled={disabled || loading}
-        className="mt-4 w-full py-2 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="mt-4 w-full py-2 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {loading ? 'Signing in...' : `Sign in as ${persona.displayName}`}
       </button>

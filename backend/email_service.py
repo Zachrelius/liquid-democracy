@@ -151,21 +151,31 @@ async def send_password_reset_email(email: str, token: str, base_url: str) -> bo
 
 
 async def send_invitation_email(
-    email: str, token: str, org_name: str, org_slug: str, base_url: str
+    email: str,
+    token: str,
+    org_name: str,
+    org_slug: str,
+    base_url: str,
+    primary_color: str | None = None,
 ) -> bool:
     """Send an organization invitation email with a link to /invite/{token} —
     fired via BackgroundTasks from create_invitations + resend_invitation in
-    routes/organizations.py."""
+    routes/organizations.py.
+
+    Phase 12.7 E: when the org has configured a branding primary color, use it
+    for the heading + button; otherwise fall back to the platform default.
+    """
+    color = primary_color or "#1B3A5C"
     link = f"{base_url}/invite/{token}"
     subject = f"You're invited to join {org_name} — Liquid Democracy"
     html_body = f"""\
 <!DOCTYPE html>
 <html>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <h2 style="color: #1B3A5C;">You're invited!</h2>
+  <h2 style="color: {color};">You're invited!</h2>
   <p>You've been invited to join <strong>{org_name}</strong> on Liquid Democracy.</p>
   <p style="margin: 24px 0;">
-    <a href="{link}" style="background-color: #1B3A5C; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
+    <a href="{link}" style="background-color: {color}; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; display: inline-block;">
       Join {org_name}
     </a>
   </p>

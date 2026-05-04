@@ -19,10 +19,10 @@ export default function PolisHelp() {
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
       <div>
         {/* Phase 11 — help pages are public/non-org-scoped. */}
-        <Link to="/orgs" className="text-sm text-[#2E75B6] hover:underline mb-4 inline-block">
+        <Link to="/orgs" className="text-sm text-[var(--brand-accent)] hover:underline mb-4 inline-block">
           ← Back
         </Link>
-        <h1 className="text-2xl font-bold text-[#1B3A5C]">About Polis Deliberations</h1>
+        <h1 className="text-2xl font-bold text-[var(--brand-primary)]">About Polis Deliberations</h1>
         <p className="text-sm text-gray-500 mt-1">
           A structured way to surface where your group agrees and disagrees —
           before (or alongside) putting a question to a vote.
@@ -31,7 +31,7 @@ export default function PolisHelp() {
 
       {/* What it is */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">What is a Polis?</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">What is a Polis?</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           A Polis is an open conversation where members write short statements
           and vote agree / disagree / pass on the statements other members
@@ -49,7 +49,7 @@ export default function PolisHelp() {
 
       {/* When to use */}
       <section className="bg-blue-50 border border-blue-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">When should we use it?</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">When should we use it?</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           For proposals where the org would benefit from gathering input or
           exploring consensus before voting. Some examples where it helps:
@@ -80,7 +80,7 @@ export default function PolisHelp() {
 
       {/* Privacy framing */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">Privacy &amp; identity</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Privacy &amp; identity</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Polises are different from proposal votes. <strong>Your votes and
           statements in a Polis are visible to other participants.</strong>
@@ -107,7 +107,7 @@ export default function PolisHelp() {
 
       {/* How linked Polises work */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">How linked Polises work</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">How linked Polises work</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Proposals can reference Polises in two ways: pasting a pol.is URL
           into the proposal body, or attaching the Polis structurally via the
@@ -132,7 +132,7 @@ export default function PolisHelp() {
 
       {/* What to do here */}
       <section className="bg-blue-50 border border-blue-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[#1B3A5C]">What should I do as a participant?</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">What should I do as a participant?</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           <strong>Most participants only vote on existing statements — you
           don&apos;t have to write your own.</strong> Successful Polises run

@@ -18,7 +18,7 @@ from database import create_tables, get_db, SessionLocal
 from delegation_engine import graph_store
 from settings import settings
 from websocket import manager as ws_manager
-from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars, comments, permissions, role_permissions_routes
+from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars, comments, permissions, role_permissions_routes, org_logos
 
 
 # ---------------------------------------------------------------------------
@@ -193,20 +193,27 @@ app.include_router(comments.proposal_router)
 app.include_router(comments.comment_router)
 app.include_router(permissions.router)
 app.include_router(role_permissions_routes.router)
+# Phase 12.7 B1+B2 — org branding endpoints (logo upload/delete, color PATCH).
+# Mounted on /api/orgs/{slug}/logo + /branding; gated by org.edit_branding.
+app.include_router(org_logos.router)
 
 
 # ---------------------------------------------------------------------------
-# Static files — uploaded avatars (Phase 9.8 W A1)
+# Static files — uploaded user content (Phase 9.8 W A1; Phase 12.7 I2)
 # ---------------------------------------------------------------------------
-# Files written by routes/avatars.py to ``backend/uploads/avatars/{user_id}/...``.
-# Mounted via FastAPI's StaticFiles so the avatar URLs returned in user-shape
-# responses (``users.avatar_url``) resolve through the same uvicorn process.
-# Railway's filesystem is ephemeral — the deployment notes call this out as
-# tech debt; for friend-pilot scale (5-15 users) it's acceptable.
-import os as _os  # local alias to avoid shadowing higher-level imports
-_UPLOADS_DIR = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "uploads")
-_os.makedirs(_os.path.join(_UPLOADS_DIR, "avatars"), exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=_UPLOADS_DIR), name="uploads")
+# Files written by routes/avatars.py and routes/org_logos.py to the resolved
+# uploads base directory. Phase 12.7 I2 relocated the base from the in-image
+# ``backend/uploads/`` (ephemeral on Railway) to ``/data/uploads/`` on a
+# mounted Railway Volume — see ``routes/avatars.py::_resolve_uploads_base``
+# for the 3-tier fallback. We import the resolved constant rather than
+# recomputing so tests that monkeypatch the constant continue to work and
+# the StaticFiles mount stays in sync with where files are actually
+# written.
+from routes.avatars import UPLOADS_BASE_DIR as _UPLOADS_BASE_DIR
+_UPLOADS_BASE_DIR.mkdir(parents=True, exist_ok=True)
+(_UPLOADS_BASE_DIR / "avatars").mkdir(parents=True, exist_ok=True)
+(_UPLOADS_BASE_DIR / "logos").mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=str(_UPLOADS_BASE_DIR)), name="uploads")
 
 
 # ---------------------------------------------------------------------------

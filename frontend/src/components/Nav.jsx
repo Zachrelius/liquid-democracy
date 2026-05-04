@@ -79,12 +79,29 @@ function OrgSwitcher() {
     }
   }
 
+  // Phase 12.7 F5 — when the active org has a logo configured, render it
+  // to the left of the org-name label. Both visible (logo + text) per spec
+  // line 74; no logo-replaces-text mode in v1. For sub-org scope, the
+  // breadcrumb already includes the parent name, so we use the *parent's*
+  // logo (not the sub-org's, which doesn't have its own branding in v1).
+  const brandedOrgForLogo = currentOrg.parent_org_id
+    ? userOrgs.find(o => o.id === currentOrg.parent_org_id) || currentOrg
+    : currentOrg;
+  const logoUrl = brandedOrgForLogo?.branding?.logo_url || null;
+
   return (
     <div ref={ref} className="hidden sm:block relative">
       <button
         onClick={() => setOpen(!open)}
-        className="text-xs text-blue-200 hover:text-white transition-colors flex items-center gap-1"
+        className="text-xs text-blue-200 hover:text-white transition-colors flex items-center gap-2"
       >
+        {logoUrl && (
+          <img
+            src={logoUrl}
+            alt={`${brandedOrgForLogo.name} logo`}
+            className="h-6 w-auto max-w-[100px] object-contain"
+          />
+        )}
         {labelNode}
         <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l4-4 4 4m0 6l-4 4-4-4" />
@@ -104,7 +121,7 @@ function OrgSwitcher() {
                 <button
                   onClick={() => pickOrg(parent)}
                   className={`w-full text-left px-4 py-1.5 text-sm hover:bg-gray-50 transition-colors flex items-center justify-between ${
-                    isCurrentParent ? 'bg-blue-50 font-medium text-[#1B3A5C]' : 'text-gray-800'
+                    isCurrentParent ? 'bg-blue-50 font-medium text-[var(--brand-primary)]' : 'text-gray-800'
                   }`}
                 >
                   <span>{parent.name}</span>
@@ -122,7 +139,7 @@ function OrgSwitcher() {
                           <button
                             onClick={() => pickOrg(sub)}
                             className={`flex-1 text-left px-4 py-1.5 text-xs hover:bg-gray-50 transition-colors flex items-center gap-2 ${
-                              isCurrentSub ? 'bg-blue-50 font-medium text-[#1B3A5C]' : 'text-gray-700'
+                              isCurrentSub ? 'bg-blue-50 font-medium text-[var(--brand-primary)]' : 'text-gray-700'
                             }`}
                           >
                             <span className="text-blue-400">↳</span>
@@ -135,7 +152,7 @@ function OrgSwitcher() {
                             <Link
                               to={urlFor(parent, 'admin-sub-org-settings', sub.slug)}
                               onClick={() => setOpen(false)}
-                              className="text-[10px] text-[#2E75B6] hover:underline shrink-0"
+                              className="text-[10px] text-[var(--brand-accent)] hover:underline shrink-0"
                               title="Manage this sub-org"
                             >
                               manage
@@ -150,7 +167,7 @@ function OrgSwitcher() {
                   <Link
                     to={urlFor(parent, 'admin-sub-orgs')}
                     onClick={() => setOpen(false)}
-                    className="block px-4 py-1.5 text-xs text-[#2E75B6] hover:underline pl-8"
+                    className="block px-4 py-1.5 text-xs text-[var(--brand-accent)] hover:underline pl-8"
                   >
                     + manage sub-organizations
                   </Link>
@@ -164,7 +181,7 @@ function OrgSwitcher() {
             <Link
               to="/orgs/create"
               onClick={() => setOpen(false)}
-              className="block px-4 py-1.5 text-sm text-[#2E75B6] hover:bg-gray-50 transition-colors"
+              className="block px-4 py-1.5 text-sm text-[var(--brand-accent)] hover:bg-gray-50 transition-colors"
             >
               + Create new organization
             </Link>
@@ -273,7 +290,7 @@ export default function Nav() {
   }, []);
 
   return (
-    <nav className="bg-[#1B3A5C] text-white">
+    <nav className="bg-[var(--brand-primary)] text-white">
       <div className="max-w-6xl mx-auto px-4 flex items-center justify-between h-14">
         <div className="flex items-center gap-6">
           <Link
@@ -455,7 +472,7 @@ export default function Nav() {
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div className="md:hidden bg-[#152d4a] border-t border-blue-900 px-4 py-3 space-y-1">
+        <div className="md:hidden bg-[var(--brand-primary-dark)] border-t border-blue-900 px-4 py-3 space-y-1">
           {currentOrg && (
             <p className="text-xs text-blue-300 mb-2 pb-2 border-b border-blue-900">
               {currentOrg.parent_org_id

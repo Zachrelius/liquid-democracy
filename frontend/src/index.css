@@ -1,5 +1,21 @@
 @import "tailwindcss";
 
+/* Phase 12.7 F1 — brand color CSS variables.
+   Defaults match the legacy hardcoded platform palette so non-org-scoped
+   pages and org-scoped pages without configured branding render identically
+   to pre-12.7. The F2 theme-application hook (in App.jsx / OrgScopedLayout)
+   overrides these on document.documentElement when an org-scoped route is
+   active and the org has branding configured; cleanup on org-switch /
+   route-leave restores the defaults. The -primary-dark variant is used for
+   nav hover states + the mobile menu darker variant; auto-derived at
+   override time via deriveDarker() so stewards only configure primary +
+   accent, not the dark shade. */
+:root {
+  --brand-primary: #1B3A5C;
+  --brand-primary-dark: #152d4a;
+  --brand-accent: #2E75B6;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background-color: #F8F9FA;

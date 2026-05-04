@@ -29,7 +29,7 @@ function StepIndicator({ current, total }) {
               i < current
                 ? 'bg-[#2D8A56] text-white'
                 : i === current
-                ? 'bg-[#1B3A5C] text-white'
+                ? 'bg-[var(--brand-primary)] text-white'
                 : 'bg-gray-200 text-gray-500'
             }`}
           >
@@ -156,7 +156,7 @@ export default function SetupWizard() {
   return (
     <div className="max-w-2xl mx-auto px-4 py-12">
       <div className="text-center mb-6">
-        <h1 className="text-2xl font-semibold text-[#1B3A5C]">
+        <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">
           {step === 3 ? "You're All Set!" : 'Set Up Your Platform'}
         </h1>
         {step < 3 && (
@@ -179,7 +179,7 @@ export default function SetupWizard() {
       {/* Step 1: Create Organization */}
       {step === 0 && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-5">
-          <h2 className="text-lg font-semibold text-[#1B3A5C]">Create Your Organization</h2>
+          <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Create Your Organization</h2>
           <p className="text-sm text-gray-500">
             An organization is the group of people who will vote and delegate together.
           </p>
@@ -191,7 +191,7 @@ export default function SetupWizard() {
               value={orgName}
               onChange={e => handleOrgNameChange(e.target.value)}
               placeholder="My Organization"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
           </div>
 
@@ -203,7 +203,7 @@ export default function SetupWizard() {
                 type="text"
                 value={orgSlug}
                 onChange={e => { setOrgSlug(e.target.value); setSlugEdited(true); }}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
               />
             </div>
           </div>
@@ -215,7 +215,7 @@ export default function SetupWizard() {
               onChange={e => setOrgDescription(e.target.value)}
               rows={2}
               placeholder="What is this organization about?"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
             />
           </div>
 
@@ -234,7 +234,7 @@ export default function SetupWizard() {
                     value={opt.value}
                     checked={joinPolicy === opt.value}
                     onChange={() => setJoinPolicy(opt.value)}
-                    className="accent-[#2E75B6]"
+                    className="accent-[var(--brand-accent)]"
                   />
                   <span className="text-sm text-gray-700">{opt.label}</span>
                 </label>
@@ -246,7 +246,7 @@ export default function SetupWizard() {
             <button
               onClick={handleCreateOrg}
               disabled={saving || !orgName.trim() || !orgSlug.trim()}
-              className="text-sm px-6 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+              className="text-sm px-6 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
             >
               {saving ? 'Creating...' : 'Next: Topics'}
             </button>
@@ -257,7 +257,7 @@ export default function SetupWizard() {
       {/* Step 2: Topics */}
       {step === 1 && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-5">
-          <h2 className="text-lg font-semibold text-[#1B3A5C]">Create Topics</h2>
+          <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Create Topics</h2>
           <p className="text-sm text-gray-500">
             Topics help categorize proposals and let members delegate their votes per-topic.
           </p>
@@ -269,7 +269,7 @@ export default function SetupWizard() {
                   type="checkbox"
                   checked={t.checked}
                   onChange={() => toggleTopic(i)}
-                  className="accent-[#2E75B6]"
+                  className="accent-[var(--brand-accent)]"
                 />
                 <span
                   className="w-4 h-4 rounded-full flex-shrink-0"
@@ -286,7 +286,7 @@ export default function SetupWizard() {
               value={customTopic}
               onChange={e => setCustomTopic(e.target.value)}
               placeholder="Add custom topic..."
-              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
               onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addCustomTopic())}
             />
             <input
@@ -298,7 +298,7 @@ export default function SetupWizard() {
             <button
               onClick={addCustomTopic}
               disabled={!customTopic.trim()}
-              className="text-sm px-3 py-2 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
+              className="text-sm px-3 py-2 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors disabled:opacity-50"
             >
               Add
             </button>
@@ -321,7 +321,7 @@ export default function SetupWizard() {
               <button
                 onClick={handleCreateTopics}
                 disabled={saving || topics.filter(t => t.checked).length === 0}
-                className="text-sm px-6 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+                className="text-sm px-6 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
               >
                 {saving ? 'Creating...' : 'Next: Invite Members'}
               </button>
@@ -333,7 +333,7 @@ export default function SetupWizard() {
       {/* Step 3: Invite Members */}
       {step === 2 && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-5">
-          <h2 className="text-lg font-semibold text-[#1B3A5C]">Invite Members</h2>
+          <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Invite Members</h2>
           <p className="text-sm text-gray-500">
             Enter email addresses to invite people to your organization (one per line).
           </p>
@@ -343,7 +343,7 @@ export default function SetupWizard() {
             onChange={e => setEmails(e.target.value)}
             rows={5}
             placeholder={"alice@example.com\nbob@example.com\ncarol@example.com"}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
           />
 
           {inviteMsg && (
@@ -369,7 +369,7 @@ export default function SetupWizard() {
               <button
                 onClick={handleSendInvites}
                 disabled={saving}
-                className="text-sm px-6 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+                className="text-sm px-6 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
               >
                 {saving ? 'Sending...' : 'Send Invitations'}
               </button>
@@ -382,7 +382,7 @@ export default function SetupWizard() {
       {step === 3 && (
         <div className="bg-white border border-gray-200 rounded-xl p-8 text-center space-y-6">
           <div className="text-5xl">&#127881;</div>
-          <h2 className="text-xl font-semibold text-[#1B3A5C]">Your platform is ready!</h2>
+          <h2 className="text-xl font-semibold text-[var(--brand-primary)]">Your platform is ready!</h2>
           <p className="text-sm text-gray-500 max-w-md mx-auto">
             {createdOrg?.name || 'Your organization'} has been created. Here are some next steps:
           </p>
@@ -390,21 +390,21 @@ export default function SetupWizard() {
           <div className="grid gap-3 max-w-sm mx-auto">
             <button
               onClick={() => navigate(urlFor(createdOrg, 'admin-topics'))}
-              className="w-full text-sm px-4 py-3 border border-gray-200 rounded-lg hover:border-[#2E75B6] hover:bg-blue-50/30 transition-all text-left"
+              className="w-full text-sm px-4 py-3 border border-gray-200 rounded-lg hover:border-[var(--brand-accent)] hover:bg-blue-50/30 transition-all text-left"
             >
-              <span className="font-medium text-[#1B3A5C]">Manage Topics</span>
+              <span className="font-medium text-[var(--brand-primary)]">Manage Topics</span>
               <span className="block text-xs text-gray-400 mt-0.5">Add or edit topic categories</span>
             </button>
             <button
               onClick={() => navigate(urlFor(createdOrg, 'admin-settings'))}
-              className="w-full text-sm px-4 py-3 border border-gray-200 rounded-lg hover:border-[#2E75B6] hover:bg-blue-50/30 transition-all text-left"
+              className="w-full text-sm px-4 py-3 border border-gray-200 rounded-lg hover:border-[var(--brand-accent)] hover:bg-blue-50/30 transition-all text-left"
             >
-              <span className="font-medium text-[#1B3A5C]">Admin Settings</span>
+              <span className="font-medium text-[var(--brand-primary)]">Admin Settings</span>
               <span className="block text-xs text-gray-400 mt-0.5">Configure voting rules, thresholds, and more</span>
             </button>
             <button
               onClick={() => navigate(urlFor(createdOrg, 'proposals'))}
-              className="w-full text-sm px-4 py-3 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
+              className="w-full text-sm px-4 py-3 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
             >
               Go to Proposals
             </button>

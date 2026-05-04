@@ -135,6 +135,21 @@ def _org_to_out(
             if has_permission(db, user_id, org.id, perm_def.key):
                 user_permissions.append(perm_def.key)
 
+    # Phase 12.7 B4 — always emit a branding object on org responses.
+    # Reads from Organization.settings.branding (a JSON sub-dict written
+    # by the PATCH /branding and POST /logo endpoints). Absent or partial
+    # values become explicit nulls in the response so the frontend's
+    # branding-application logic doesn't have to handle "key missing"
+    # vs. "value None" separately. accent_auto_derived defaults to False
+    # for type consistency when no branding is configured.
+    branding_dict = (org.settings or {}).get("branding") or {}
+    branding_out = schemas.BrandingOut(
+        logo_url=branding_dict.get("logo_url"),
+        primary_color=branding_dict.get("primary_color"),
+        accent_color=branding_dict.get("accent_color"),
+        accent_auto_derived=bool(branding_dict.get("accent_auto_derived", False)),
+    )
+
     return schemas.OrgOut(
         id=org.id,
         name=org.name,
@@ -146,6 +161,7 @@ def _org_to_out(
         member_count=member_count,
         user_role=user_role,
         user_permissions=user_permissions,
+        branding=branding_out,
     )
 
 
@@ -802,10 +818,14 @@ def create_invitations(
     db.commit()
 
     # Phase 9.6 W1: actually send the emails (was missing in Phase 4c).
+    # Phase 12.7 E: pass the org's branded primary color when configured so
+    # the invitation email matches the org's identity (heading + button).
+    org_primary = (org.settings or {}).get("branding", {}).get("primary_color")
     for inv in invitations:
         background_tasks.add_task(
             send_invitation_email,
             inv.email, inv.token, org.name, org.slug, app_settings.base_url,
+            org_primary,
         )
 
     return [schemas.InvitationOut(
@@ -889,9 +909,12 @@ def resend_invitation(
     inv.expires_at = _now() + timedelta(days=7)
     inv.status = "pending"
     db.commit()
+    # Phase 12.7 E: pass the org's branded primary color for header/button.
+    org_primary = (org.settings or {}).get("branding", {}).get("primary_color")
     background_tasks.add_task(
         send_invitation_email,
         inv.email, inv.token, org.name, org.slug, app_settings.base_url,
+        org_primary,
     )
     return {"message": "Invitation resent"}
 

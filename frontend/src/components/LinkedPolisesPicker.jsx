@@ -101,7 +101,7 @@ export default function LinkedPolisesPicker({
           <button
             type="button"
             onClick={() => setShowCreate(true)}
-            className="text-xs text-[#2E75B6] hover:underline"
+            className="text-xs text-[var(--brand-accent)] hover:underline"
           >+ Create new Polis</button>
         )}
       </div>
@@ -119,7 +119,7 @@ export default function LinkedPolisesPicker({
             <button
               type="button"
               onClick={() => setShowCreate(true)}
-              className="text-[#2E75B6] hover:underline"
+              className="text-[var(--brand-accent)] hover:underline"
             >Create one →</button>
           )}
         </p>
@@ -136,7 +136,7 @@ export default function LinkedPolisesPicker({
                   type="checkbox"
                   checked={checked}
                   onChange={() => toggle(p.id)}
-                  className="mt-0.5 accent-[#2E75B6]"
+                  className="mt-0.5 accent-[var(--brand-accent)]"
                 />
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-gray-800 truncate">{p.title}</p>
@@ -234,7 +234,7 @@ function InlineCreatePolis({ parentSlug, scopeSubOrgId, onCreated, onCancel }) {
           value={title}
           onChange={e => setTitle(e.target.value)}
           placeholder="Title"
-          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
         />
       </div>
       <div>
@@ -243,7 +243,7 @@ function InlineCreatePolis({ parentSlug, scopeSubOrgId, onCreated, onCancel }) {
           onChange={e => setPrompt(e.target.value)}
           placeholder="Prompt — the central question this deliberation explores"
           rows={3}
-          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
         />
       </div>
       <div className="space-y-1">
@@ -256,13 +256,13 @@ function InlineCreatePolis({ parentSlug, scopeSubOrgId, onCreated, onCancel }) {
             onChange={e => updateSeed(i, e.target.value)}
             placeholder={`Statement ${i + 1}`}
             maxLength={997}
-            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+            className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
           />
         ))}
         <button
           type="button"
           onClick={addSeed}
-          className="text-xs text-[#2E75B6] hover:underline"
+          className="text-xs text-[var(--brand-accent)] hover:underline"
         >+ Add statement</button>
       </div>
       <div>
@@ -272,7 +272,7 @@ function InlineCreatePolis({ parentSlug, scopeSubOrgId, onCreated, onCancel }) {
           onChange={e => setPastedConversationId(e.target.value)}
           placeholder="conversation_id (manual-fallback only — paste from pol.is/admin)"
           maxLength={300}
-          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+          className="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
         />
         <p className="text-[10px] text-gray-400 mt-1">
           Leave empty if your platform has the pol.is API token configured.
@@ -283,7 +283,7 @@ function InlineCreatePolis({ parentSlug, scopeSubOrgId, onCreated, onCancel }) {
           type="button"
           onClick={handleSubmit}
           disabled={submitting || !title.trim() || !prompt.trim()}
-          className="text-xs px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
+          className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50"
         >
           {submitting ? 'Creating…' : 'Create & link'}
         </button>

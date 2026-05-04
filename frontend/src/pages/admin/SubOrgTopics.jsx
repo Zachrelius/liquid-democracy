@@ -10,7 +10,7 @@ import SubOrgErrorState from '../../components/SubOrgErrorState';
 const PRESET_COLORS = [
   '#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
   '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6',
-  '#1B3A5C', '#2E75B6', '#64748b', '#78716c',
+  'var(--brand-primary)', 'var(--brand-accent)', '#64748b', '#78716c',
 ];
 
 /**
@@ -47,7 +47,7 @@ export default function SubOrgTopics() {
 
   if (subLoading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
   if (error || !subOrg) return <SubOrgErrorState error={error} />;
@@ -108,11 +108,11 @@ export default function SubOrgTopics() {
           <Link to={urlFor(parentSlug, 'admin-sub-org-settings', subSlug)} className="hover:underline">{subOrg.name}</Link>
         </p>
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold text-[#1B3A5C]">{subOrg.name} — Topics</h1>
+          <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">{subOrg.name} — Topics</h1>
           {!showCreate && (
             <button
               onClick={() => setShowCreate(true)}
-              className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
+              className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
             >
               Create Topic
             </button>
@@ -133,7 +133,7 @@ export default function SubOrgTopics() {
               value={name}
               onChange={e => setName(e.target.value)}
               required
-              className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
           </div>
           <div>
@@ -142,7 +142,7 @@ export default function SubOrgTopics() {
               type="text"
               value={description}
               onChange={e => setDescription(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
           </div>
           <div>
@@ -163,7 +163,7 @@ export default function SubOrgTopics() {
             <button
               type="submit"
               disabled={!name.trim()}
-              className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
+              className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50"
             >
               Create
             </button>
@@ -198,7 +198,7 @@ export default function SubOrgTopics() {
               <div className="flex gap-3 text-xs">
                 <button
                   onClick={() => handlePromote(t)}
-                  className="text-[#2E75B6] hover:underline"
+                  className="text-[var(--brand-accent)] hover:underline"
                   title="Make this topic visible to the whole parent org"
                 >
                   Promote to org-wide

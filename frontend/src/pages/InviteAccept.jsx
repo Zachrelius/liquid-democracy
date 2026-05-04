@@ -101,7 +101,7 @@ export default function InviteAccept() {
     return (
       <CenteredCard>
         <div className="flex justify-center py-8">
-          <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full" />
+          <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full" />
         </div>
       </CenteredCard>
     );
@@ -110,13 +110,13 @@ export default function InviteAccept() {
   if (fetchError) {
     return (
       <CenteredCard>
-        <h1 className="text-2xl font-semibold text-[#1B3A5C] mb-3">Invitation unavailable</h1>
+        <h1 className="text-2xl font-semibold text-[var(--brand-primary)] mb-3">Invitation unavailable</h1>
         <div className="mb-6 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
           {fetchError.message}
         </div>
         <Link
           to="/login"
-          className="inline-block px-6 py-2.5 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors"
+          className="inline-block px-6 py-2.5 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
         >
           Go to sign in
         </Link>
@@ -135,7 +135,7 @@ export default function InviteAccept() {
       // State 4: email mismatch.
       return (
         <CenteredCard>
-          <h1 className="text-2xl font-semibold text-[#1B3A5C] mb-3">
+          <h1 className="text-2xl font-semibold text-[var(--brand-primary)] mb-3">
             Wrong account for this invitation
           </h1>
           <p className="text-sm text-gray-600 mb-6">
@@ -158,7 +158,7 @@ export default function InviteAccept() {
               sessionStorage.removeItem('refreshToken');
               window.location.assign(`/invite/${token}`);
             }}
-            className="inline-block px-6 py-2.5 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors"
+            className="inline-block px-6 py-2.5 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
           >
             Sign out
           </button>
@@ -169,7 +169,7 @@ export default function InviteAccept() {
     // State 3: matches — show accept-invitation card.
     return (
       <CenteredCard>
-        <h1 className="text-2xl font-semibold text-[#1B3A5C] mb-2">
+        <h1 className="text-2xl font-semibold text-[var(--brand-primary)] mb-2">
           You're invited to join {meta.org_name}
         </h1>
         <p className="text-sm text-gray-600 mb-6">
@@ -205,7 +205,7 @@ export default function InviteAccept() {
               setSubmitting(false);
             }
           }}
-          className="inline-block px-6 py-2.5 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+          className="inline-block px-6 py-2.5 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
         >
           {submitting ? 'Accepting…' : `Accept invitation to ${meta.org_name}`}
         </button>
@@ -301,7 +301,7 @@ export default function InviteAccept() {
 
   return (
     <CenteredCard>
-      <h1 className="text-2xl font-semibold text-[#1B3A5C] mb-1">
+      <h1 className="text-2xl font-semibold text-[var(--brand-primary)] mb-1">
         Join {meta.org_name}
       </h1>
       <p className="text-sm text-gray-500 mb-6">
@@ -328,7 +328,7 @@ export default function InviteAccept() {
               required
               minLength={3}
               maxLength={50}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
               placeholder="your_username"
             />
             <p className="mt-1 text-xs text-gray-400">3-50 characters</p>
@@ -340,7 +340,7 @@ export default function InviteAccept() {
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               required
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
               placeholder="Your Name"
             />
           </div>
@@ -352,7 +352,7 @@ export default function InviteAccept() {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={8}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
               placeholder="••••••••"
             />
             <p className="mt-1 text-xs text-gray-400">Minimum 8 characters</p>
@@ -360,21 +360,21 @@ export default function InviteAccept() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full py-2.5 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+            className="w-full py-2.5 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
           >
             {submitting ? 'Creating account…' : `Create account & join ${meta.org_name}`}
           </button>
           <p className="text-xs text-gray-400 text-center">
             By creating an account, you agree to our{' '}
-            <Link to="/terms" className="text-[#2E75B6] hover:underline">Terms</Link>{' '}and{' '}
-            <Link to="/privacy" className="text-[#2E75B6] hover:underline">Privacy Policy</Link>.
+            <Link to="/terms" className="text-[var(--brand-accent)] hover:underline">Terms</Link>{' '}and{' '}
+            <Link to="/privacy" className="text-[var(--brand-accent)] hover:underline">Privacy Policy</Link>.
           </p>
           <p className="text-xs text-center text-gray-500">
             Already have an account?{' '}
             <button
               type="button"
               onClick={() => { setMode('login'); setSubmitError(''); }}
-              className="text-[#2E75B6] hover:underline"
+              className="text-[var(--brand-accent)] hover:underline"
             >
               Sign in instead
             </button>
@@ -390,7 +390,7 @@ export default function InviteAccept() {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
               placeholder="your_username"
               autoFocus
             />
@@ -402,14 +402,14 @@ export default function InviteAccept() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
               placeholder="••••••••"
             />
           </div>
           <button
             type="submit"
             disabled={submitting}
-            className="w-full py-2.5 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+            className="w-full py-2.5 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
           >
             {submitting ? 'Signing in…' : `Sign in & join ${meta.org_name}`}
           </button>
@@ -418,7 +418,7 @@ export default function InviteAccept() {
             <button
               type="button"
               onClick={() => { setMode('register'); setSubmitError(''); }}
-              className="text-[#2E75B6] hover:underline"
+              className="text-[var(--brand-accent)] hover:underline"
             >
               Create one
             </button>
@@ -433,7 +433,7 @@ function CenteredCard({ children }) {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#F8F9FA] px-4 py-10">
       <div className="mb-8 text-center">
-        <h1 className="text-3xl font-semibold text-[#1B3A5C] tracking-tight">
+        <h1 className="text-3xl font-semibold text-[var(--brand-primary)] tracking-tight">
           Liquid Democracy
         </h1>
         <p className="mt-1 text-[#64748b] text-sm">

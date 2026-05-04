@@ -158,7 +158,7 @@ export default function Comment({
                 value={editBody}
                 onChange={(e) => setEditBody(e.target.value)}
                 disabled={saving}
-                className="w-full min-h-[80px] rounded-lg border border-gray-300 p-3 text-sm text-[#2C3E50] resize-y focus:outline-none focus:border-[#2E75B6] focus:ring-1 focus:ring-[#2E75B6]/30 disabled:bg-gray-50"
+                className="w-full min-h-[80px] rounded-lg border border-gray-300 p-3 text-sm text-[#2C3E50] resize-y focus:outline-none focus:border-[var(--brand-accent)] focus:ring-1 focus:ring-[var(--brand-accent)]/30 disabled:bg-gray-50"
               />
               <div className="flex justify-end gap-2">
                 <button
@@ -176,7 +176,7 @@ export default function Comment({
                   type="button"
                   onClick={handleSaveEdit}
                   disabled={saving || !editBody.trim()}
-                  className="text-sm px-4 py-1.5 rounded-lg bg-[#1B3A5C] text-white hover:bg-[#2E75B6] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="text-sm px-4 py-1.5 rounded-lg bg-[var(--brand-primary)] text-white hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {saving ? 'Saving…' : 'Save'}
                 </button>
@@ -197,7 +197,7 @@ export default function Comment({
                 <button
                   type="button"
                   onClick={() => setShowReplyComposer((v) => !v)}
-                  className="hover:text-[#2E75B6] hover:underline"
+                  className="hover:text-[var(--brand-accent)] hover:underline"
                 >
                   {showReplyComposer ? 'Cancel reply' : 'Reply'}
                 </button>
@@ -209,7 +209,7 @@ export default function Comment({
                     setEditing(true);
                     setEditBody(comment.body || '');
                   }}
-                  className="hover:text-[#2E75B6] hover:underline"
+                  className="hover:text-[var(--brand-accent)] hover:underline"
                 >
                   Edit
                 </button>

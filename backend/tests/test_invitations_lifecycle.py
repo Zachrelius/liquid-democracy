@@ -74,11 +74,16 @@ def client(test_db):
 def captured_invitation_calls(monkeypatch):
     """Capture calls to send_invitation_email so the BackgroundTask
     side-effect is observable. Route imports it from email_service so we
-    monkeypatch the route-module binding."""
+    monkeypatch the route-module binding.
+
+    Phase 12.7 E added an optional `primary_color` 6th argument; capture
+    it positionally so existing tests that index c[0..4] keep working
+    while a new test can read c[5] for the branded color.
+    """
     calls: list[tuple] = []
 
-    async def _fake_send(email, token, org_name, org_slug, base_url):
-        calls.append((email, token, org_name, org_slug, base_url))
+    async def _fake_send(email, token, org_name, org_slug, base_url, primary_color=None):
+        calls.append((email, token, org_name, org_slug, base_url, primary_color))
         return True
 
     monkeypatch.setattr(org_route, "send_invitation_email", _fake_send)
@@ -180,6 +185,34 @@ def test_create_invitations_schedules_email_per_invitee(
         assert c[1] == inv.token
         assert c[2] == org.name
         assert c[3] == org.slug
+
+
+def test_create_invitations_threads_org_branding_primary_color(
+    client, test_db, captured_invitation_calls,
+):
+    """Phase 12.7 E: when the org has a configured branding primary color,
+    the invitation email send is invoked with that color so the templated
+    heading + button match the org's identity. When no branding is
+    configured (covered by the prior test), the color arg is None and the
+    template falls back to the platform default."""
+    admin = _make_user(test_db, "branded_admin")
+    org = _make_org(test_db, slug="branded", name="Branded Org")
+    org.settings = {"branding": {"primary_color": "#4A90E2"}}
+    _join(test_db, admin, org, role="admin")
+    test_db.commit()
+
+    resp = client.post(
+        f"/api/orgs/{org.slug}/invitations",
+        json={"emails": ["c@x.example"], "role": "member"},
+        headers=_auth(admin),
+    )
+    assert resp.status_code == 201, resp.text
+
+    assert len(captured_invitation_calls) == 1
+    c = captured_invitation_calls[0]
+    # c = (email, token, org_name, org_slug, base_url, primary_color)
+    assert c[0] == "c@x.example"
+    assert c[5] == "#4A90E2"
 
 
 # ---------------------------------------------------------------------------

@@ -57,7 +57,7 @@ export default function SubOrgProposals() {
 
   if (subLoading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
   if (error || !subOrg) return <SubOrgErrorState error={error} />;
@@ -82,12 +82,12 @@ export default function SubOrgProposals() {
           <Link to={urlFor(parentSlug, 'admin-sub-org-settings', subSlug)} className="hover:underline">{subOrg.name}</Link>
         </p>
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-semibold text-[#1B3A5C]">{subOrg.name} — Proposals</h1>
+          <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">{subOrg.name} — Proposals</h1>
           {/* Phase 12.5 F2 — Create button gated on `proposal.create`. */}
           {!showCreate && canCreateProposal && (
             <button
               onClick={() => setShowCreate(true)}
-              className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
+              className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
             >
               Create Proposal
             </button>
@@ -217,16 +217,16 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
         <label className="block text-xs text-gray-500 mb-2">Voting Method</label>
         <div className="flex gap-3 flex-wrap">
           <label className="flex items-center gap-2 cursor-pointer">
-            <input type="radio" name="vm" value="binary" checked={votingMethod === 'binary'} onChange={() => setVotingMethod('binary')} className="accent-[#2E75B6]" />
+            <input type="radio" name="vm" value="binary" checked={votingMethod === 'binary'} onChange={() => setVotingMethod('binary')} className="accent-[var(--brand-accent)]" />
             <span className="text-sm text-gray-700">Binary (Yes/No)</span>
           </label>
           <label className={`flex items-center gap-2 ${approvalAllowed ? 'cursor-pointer' : 'opacity-50'}`}>
-            <input type="radio" name="vm" value="approval" checked={votingMethod === 'approval'} disabled={!approvalAllowed} onChange={() => approvalAllowed && setVotingMethod('approval')} className="accent-[#2E75B6]" />
+            <input type="radio" name="vm" value="approval" checked={votingMethod === 'approval'} disabled={!approvalAllowed} onChange={() => approvalAllowed && setVotingMethod('approval')} className="accent-[var(--brand-accent)]" />
             <span className="text-sm text-gray-700">Approval</span>
             {!approvalAllowed && <span className="text-xs text-amber-600">(not enabled)</span>}
           </label>
           <label className={`flex items-center gap-2 ${rcAllowed ? 'cursor-pointer' : 'opacity-50'}`}>
-            <input type="radio" name="vm" value="ranked_choice" checked={votingMethod === 'ranked_choice'} disabled={!rcAllowed} onChange={() => rcAllowed && setVotingMethod('ranked_choice')} className="accent-[#2E75B6]" />
+            <input type="radio" name="vm" value="ranked_choice" checked={votingMethod === 'ranked_choice'} disabled={!rcAllowed} onChange={() => rcAllowed && setVotingMethod('ranked_choice')} className="accent-[var(--brand-accent)]" />
             <span className="text-sm text-gray-700">Ranked Choice</span>
             {!rcAllowed && <span className="text-xs text-amber-600">(not enabled)</span>}
           </label>
@@ -235,12 +235,12 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
 
       <div>
         <label className="block text-xs text-gray-500 mb-1">Title</label>
-        <input type="text" value={title} onChange={e => setTitle(e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]" />
+        <input type="text" value={title} onChange={e => setTitle(e.target.value)} required className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]" />
       </div>
 
       <div>
         <label className="block text-xs text-gray-500 mb-1">Body (markdown supported)</label>
-        <textarea value={body} onChange={e => setBody(e.target.value)} rows={6} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none font-mono" />
+        <textarea value={body} onChange={e => setBody(e.target.value)} rows={6} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none font-mono" />
       </div>
 
       {isMultiOption && (
@@ -253,14 +253,14 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
                 value={o.label}
                 onChange={e => setOptions(prev => prev.map((p, j) => j === i ? { ...p, label: e.target.value } : p))}
                 placeholder={`Option ${i + 1}`}
-                className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
               />
               {options.length > 2 && (
                 <button type="button" onClick={() => setOptions(prev => prev.filter((_, j) => j !== i))} className="text-red-500 text-xs">remove</button>
               )}
             </div>
           ))}
-          <button type="button" onClick={() => setOptions(prev => [...prev, { label: '', description: '' }])} className="text-xs text-[#2E75B6] hover:underline">
+          <button type="button" onClick={() => setOptions(prev => [...prev, { label: '', description: '' }])} className="text-xs text-[var(--brand-accent)] hover:underline">
             + Add option
           </button>
           {votingMethod === 'ranked_choice' && (
@@ -272,7 +272,7 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
                 max={options.length}
                 value={numWinners}
                 onChange={e => setNumWinners(Math.max(1, Math.min(options.length, parseInt(e.target.value, 10) || 1)))}
-                className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+                className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
               />
             </div>
           )}
@@ -289,7 +289,7 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
               const sel = selectedTopics.find(s => s.topic_id === t.id);
               return (
                 <label key={t.id} className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={!!sel} onChange={() => toggleTopic(t.id)} className="accent-[#2E75B6]" />
+                  <input type="checkbox" checked={!!sel} onChange={() => toggleTopic(t.id)} className="accent-[var(--brand-accent)]" />
                   <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: t.color }} />
                   <span className="text-sm text-gray-700">{t.name}</span>
                   {t.sub_org_id && (
@@ -307,11 +307,11 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Pass Threshold: {Math.round(passThreshold * 100)}%</label>
-            <input type="range" min={0} max={100} value={Math.round(passThreshold * 100)} onChange={e => setPassThreshold(parseInt(e.target.value, 10) / 100)} className="w-full accent-[#2E75B6]" />
+            <input type="range" min={0} max={100} value={Math.round(passThreshold * 100)} onChange={e => setPassThreshold(parseInt(e.target.value, 10) / 100)} className="w-full accent-[var(--brand-accent)]" />
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-1">Quorum Threshold: {Math.round(quorumThreshold * 100)}%</label>
-            <input type="range" min={0} max={100} value={Math.round(quorumThreshold * 100)} onChange={e => setQuorumThreshold(parseInt(e.target.value, 10) / 100)} className="w-full accent-[#2E75B6]" />
+            <input type="range" min={0} max={100} value={Math.round(quorumThreshold * 100)} onChange={e => setQuorumThreshold(parseInt(e.target.value, 10) / 100)} className="w-full accent-[var(--brand-accent)]" />
           </div>
         </div>
       ) : (
@@ -320,7 +320,7 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
         // walks the parent chain (per get_org_config), so the displayed
         // numbers are whatever applies to this sub-org's proposals.
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <p className="text-sm font-medium text-[#1B3A5C] mb-1">Approval thresholds</p>
+          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">Approval thresholds</p>
           <p className="text-sm text-[#2C3E50]">
             This proposal will use the organization's defaults:{' '}
             <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>
@@ -344,7 +344,7 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       <div className="flex gap-2">
-        <button type="submit" disabled={saving || !title.trim()} className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50">
+        <button type="submit" disabled={saving || !title.trim()} className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50">
           {saving ? 'Creating...' : 'Create Proposal'}
         </button>
         <button type="button" onClick={onCancel} className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50">

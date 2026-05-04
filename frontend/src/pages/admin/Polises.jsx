@@ -68,7 +68,7 @@ export default function Polises() {
   if (currentOrg && currentOrg.parent_org_id) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-16 text-center">
-        <h1 className="text-xl font-semibold text-[#1B3A5C] mb-3">Switch to parent org</h1>
+        <h1 className="text-xl font-semibold text-[var(--brand-primary)] mb-3">Switch to parent org</h1>
         <p className="text-sm text-gray-600 mb-4">
           Polises at the parent-org level are managed here. To manage this
           sub-org's Polises, use the sub-org admin route instead.
@@ -110,7 +110,7 @@ export default function Polises() {
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-[#1B3A5C]">Polises</h1>
+          <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Polises</h1>
           <p className="text-xs text-gray-500 mt-1">
             Pol.is deliberations linked to <strong>{currentOrg.name}</strong>.
           </p>
@@ -119,7 +119,7 @@ export default function Polises() {
         {canCreatePolis && (
           <Link
             to={urlFor(parentSlug, 'admin-polises-create')}
-            className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
+            className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
           >
             Create Polis
           </Link>
@@ -133,7 +133,7 @@ export default function Polises() {
           <select
             value={scopeFilter}
             onChange={e => setScopeFilter(e.target.value)}
-            className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+            className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
           >
             <option value="all">All</option>
             <option value="orgwide">Org-wide</option>
@@ -147,7 +147,7 @@ export default function Polises() {
           <select
             value={statusFilter}
             onChange={e => setStatusFilter(e.target.value)}
-            className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+            className="px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
           >
             <option value="active">Active</option>
             <option value="archived">Archived</option>
@@ -158,7 +158,7 @@ export default function Polises() {
 
       {loading ? (
         <div className="flex justify-center items-center py-20">
-          <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+          <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
         </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-12 text-gray-400 text-sm">

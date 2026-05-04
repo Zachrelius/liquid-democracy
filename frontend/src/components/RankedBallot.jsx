@@ -214,7 +214,7 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
           <button
             onClick={startBallot}
             disabled={unverified}
-            className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
+            className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors disabled:opacity-50"
           >
             {isDirect ? 'Change Ballot' : 'Override — Vote Directly'}
           </button>
@@ -259,7 +259,7 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
         <button
           onClick={startBallot}
           disabled={unverified}
-          className="text-sm px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+          className="text-sm px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
         >
           Cast Ballot
         </button>
@@ -292,7 +292,7 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
                 {...provided.droppableProps}
                 ref={provided.innerRef}
                 className={`space-y-2 min-h-[3rem] p-2 rounded-lg border-2 border-dashed transition-colors ${
-                  snapshot.isDraggingOver ? 'border-[#2E75B6] bg-blue-50' : 'border-gray-300 bg-white'
+                  snapshot.isDraggingOver ? 'border-[var(--brand-accent)] bg-blue-50' : 'border-gray-300 bg-white'
                 }`}
               >
                 {ranking.length === 0 && !snapshot.isDraggingOver && (
@@ -311,11 +311,11 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
                           {...prov.draggableProps}
                           {...prov.dragHandleProps}
                           className={`flex items-start gap-3 bg-white border rounded-lg px-3 py-2 cursor-grab transition-shadow ${
-                            snap.isDragging ? 'shadow-lg border-[#2E75B6]' : 'border-gray-200'
+                            snap.isDragging ? 'shadow-lg border-[var(--brand-accent)]' : 'border-gray-200'
                           }`}
                         >
                           <span className="text-gray-300 text-sm select-none mt-0.5">⠿</span>
-                          <span className="text-sm font-bold text-[#1B3A5C] w-10 shrink-0">{ordinal(index + 1)}</span>
+                          <span className="text-sm font-bold text-[var(--brand-primary)] w-10 shrink-0">{ordinal(index + 1)}</span>
                           <div className="flex-1 min-w-0">
                             <span className="text-sm font-medium text-gray-800">{opt.label}</span>
                             {opt.description && <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>}
@@ -349,7 +349,7 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
                 {...provided.droppableProps}
                 ref={provided.innerRef}
                 className={`space-y-2 min-h-[3rem] p-2 rounded-lg border-2 border-dashed transition-colors ${
-                  snapshot.isDraggingOver ? 'border-[#2E75B6] bg-blue-50' : 'border-gray-200 bg-gray-50'
+                  snapshot.isDraggingOver ? 'border-[var(--brand-accent)] bg-blue-50' : 'border-gray-200 bg-gray-50'
                 }`}
               >
                 {unranked.length === 0 && (
@@ -368,7 +368,7 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
                           {...prov.draggableProps}
                           {...prov.dragHandleProps}
                           className={`flex items-start gap-3 bg-white border rounded-lg px-3 py-2 cursor-grab transition-shadow ${
-                            snap.isDragging ? 'shadow-lg border-[#2E75B6]' : 'border-gray-200'
+                            snap.isDragging ? 'shadow-lg border-[var(--brand-accent)]' : 'border-gray-200'
                           }`}
                         >
                           <span className="text-gray-300 text-sm select-none mt-0.5">⠿</span>
@@ -379,7 +379,7 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
                           <button
                             type="button"
                             onClick={() => moveToRanking(oid)}
-                            className="text-xs text-[#2E75B6] hover:underline"
+                            className="text-xs text-[var(--brand-accent)] hover:underline"
                             title="Add to ranking"
                           >
                             Rank
@@ -400,7 +400,7 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
         <button
           onClick={submitBallot}
           disabled={casting || unverified}
-          className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+          className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
         >
           {casting
             ? 'Submitting...'

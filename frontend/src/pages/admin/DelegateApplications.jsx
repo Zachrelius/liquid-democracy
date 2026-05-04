@@ -35,7 +35,7 @@ export default function DelegateApplications() {
   if (policy !== 'admin_approval') {
     return (
       <div className="max-w-3xl mx-auto px-4 py-8">
-        <h1 className="text-2xl font-semibold text-[#1B3A5C] mb-4">Delegate Applications</h1>
+        <h1 className="text-2xl font-semibold text-[var(--brand-primary)] mb-4">Delegate Applications</h1>
         <div className="bg-blue-50 border border-blue-200 text-blue-700 p-4 rounded-lg text-sm">
           Public delegate registration is set to "Open" -- no admin approval required.
           Change this in Organization Settings to enable application review.
@@ -46,7 +46,7 @@ export default function DelegateApplications() {
 
   if (loading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
 
@@ -74,7 +74,7 @@ export default function DelegateApplications() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
-      <h1 className="text-2xl font-semibold text-[#1B3A5C]">Delegate Applications</h1>
+      <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Delegate Applications</h1>
 
       {applications.length === 0 ? (
         <div className="text-center py-12 text-gray-400 text-sm">No pending applications</div>
@@ -113,7 +113,7 @@ export default function DelegateApplications() {
                     onChange={e => setFeedback(e.target.value)}
                     rows={2}
                     placeholder="Reason for denial..."
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] resize-none"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
                   />
                   <div className="flex gap-2">
                     <button

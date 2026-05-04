@@ -47,7 +47,7 @@ export default function SubOrgMembers() {
 
   if (subLoading) return (
     <div className="flex justify-center items-center py-20">
-      <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+      <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
   if (error || !subOrg) return <SubOrgErrorState error={error} />;
@@ -116,7 +116,7 @@ export default function SubOrgMembers() {
           {' / '}
           <Link to={urlFor(parentSlug, 'admin-sub-org-settings', subSlug)} className="hover:underline">{subOrg.name}</Link>
         </p>
-        <h1 className="text-2xl font-semibold text-[#1B3A5C]">{subOrg.name} — Members</h1>
+        <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">{subOrg.name} — Members</h1>
       </div>
 
       {/* Pending */}
@@ -247,7 +247,7 @@ function DirectAddSection({ parentMembers, existingIds, onAdd }) {
             value={userId}
             onChange={e => setUserId(e.target.value)}
             disabled={candidates.length === 0}
-            className="flex-1 min-w-[16rem] px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] disabled:bg-gray-50 disabled:text-gray-400"
+            className="flex-1 min-w-[16rem] px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] disabled:bg-gray-50 disabled:text-gray-400"
           >
             <option value="">
               {candidates.length === 0
@@ -273,7 +273,7 @@ function DirectAddSection({ parentMembers, existingIds, onAdd }) {
             type="button"
             onClick={handleSubmit}
             disabled={!userId || submitting}
-            className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] disabled:opacity-50"
+            className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50"
           >
             {submitting ? 'Adding…' : 'Add'}
           </button>
@@ -313,7 +313,7 @@ function ActiveRow({ member, onRoleChange, onRemove }) {
         {!isOwner && role !== member.role && (
           <button
             onClick={() => onRoleChange(member.user_id, role)}
-            className="text-xs px-2 py-1 bg-[#1B3A5C] text-white rounded hover:bg-[#2E75B6]"
+            className="text-xs px-2 py-1 bg-[var(--brand-primary)] text-white rounded hover:bg-[var(--brand-accent)]"
           >
             Save
           </button>
@@ -362,7 +362,7 @@ function InviteSection({ parentMembers, existingIds, onInvite }) {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search parent-org members..."
-            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6]"
+            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
           />
           <select
             value={role}
@@ -390,7 +390,7 @@ function InviteSection({ parentMembers, existingIds, onInvite }) {
               </div>
               <button
                 onClick={() => onInvite(p.user_id, role)}
-                className="text-xs px-3 py-1 bg-[#1B3A5C] text-white rounded hover:bg-[#2E75B6]"
+                className="text-xs px-3 py-1 bg-[var(--brand-primary)] text-white rounded hover:bg-[var(--brand-accent)]"
               >
                 Invite
               </button>

@@ -25,7 +25,7 @@ export default function ForgotPassword() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#F8F9FA] px-4">
       <div className="w-full max-w-md bg-white rounded-xl shadow-sm border border-gray-200 p-8">
-        <h1 className="text-2xl font-semibold text-[#1B3A5C] mb-2">Forgot Password</h1>
+        <h1 className="text-2xl font-semibold text-[var(--brand-primary)] mb-2">Forgot Password</h1>
 
         {submitted ? (
           <div>
@@ -34,7 +34,7 @@ export default function ForgotPassword() {
             </p>
             <Link
               to="/login"
-              className="inline-block px-6 py-2.5 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors"
+              className="inline-block px-6 py-2.5 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
             >
               Back to Login
             </Link>
@@ -59,21 +59,21 @@ export default function ForgotPassword() {
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#2E75B6] focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
                   placeholder="you@example.com"
                 />
               </div>
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full py-2.5 bg-[#1B3A5C] text-white text-sm font-medium rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+                className="w-full py-2.5 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
               >
                 {submitting ? 'Sending...' : 'Send Reset Link'}
               </button>
             </form>
 
             <div className="mt-4 text-center">
-              <Link to="/login" className="text-sm text-[#2E75B6] hover:underline">
+              <Link to="/login" className="text-sm text-[var(--brand-accent)] hover:underline">
                 Back to Login
               </Link>
             </div>

@@ -34,7 +34,7 @@ export default function UserLink({ user, userId, displayName, className = '' }) 
   return (
     <Link
       to={urlFor(parentSlug, 'user-profile', id)}
-      className={`text-[#2E75B6] hover:underline font-medium ${className}`}
+      className={`text-[var(--brand-accent)] hover:underline font-medium ${className}`}
     >
       {name}
     </Link>

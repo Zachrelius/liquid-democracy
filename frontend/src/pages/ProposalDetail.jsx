@@ -209,7 +209,7 @@ function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerif
             <button
               onClick={() => { setSelected(isDirect ? [...myVote.approvals] : []); setShowBallot(true); }}
               disabled={unverified}
-              className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
+              className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors disabled:opacity-50"
             >
               {isDirect ? 'Change Ballot' : 'Override \u2014 Vote Directly'}
             </button>
@@ -229,7 +229,7 @@ function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerif
           <button
             onClick={() => { setSelected([]); setShowBallot(true); }}
             disabled={unverified}
-            className="text-sm px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+            className="text-sm px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
           >
             Cast Ballot
           </button>
@@ -246,7 +246,7 @@ function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerif
                 checked={selected.includes(opt.id)}
                 onChange={() => toggleOption(opt.id)}
                 disabled={unverified}
-                className="mt-0.5 accent-[#2E75B6]"
+                className="mt-0.5 accent-[var(--brand-accent)]"
               />
               <div>
                 <span className="text-sm font-medium text-gray-800">{opt.label}</span>
@@ -258,7 +258,7 @@ function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerif
             <button
               onClick={submitBallot}
               disabled={casting || unverified}
-              className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+              className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
             >
               {casting ? 'Submitting...' : `Submit Ballot${selected.length > 0 ? ` (${selected.length} selected)` : ''}`}
             </button>
@@ -401,7 +401,7 @@ function ApprovalResultsPanel({ tally, proposal }) {
               </div>
               <div className="w-full bg-gray-200 rounded-full h-4">
                 <div
-                  className={`h-4 rounded-full transition-all ${isWinner || isSelectedWinner ? 'bg-[#2D8A56]' : 'bg-[#2E75B6]'}`}
+                  className={`h-4 rounded-full transition-all ${isWinner || isSelectedWinner ? 'bg-[#2D8A56]' : 'bg-[var(--brand-accent)]'}`}
                   style={{ width: `${pct}%`, minWidth: count > 0 ? '4px' : '0' }}
                 />
               </div>
@@ -494,7 +494,7 @@ function VoteStatusBox({ myVote, proposalId, onVoteChange, emailVerified }) {
               <button
                 onClick={() => setShowButtons(true)}
                 disabled={unverified}
-                className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors disabled:opacity-50"
+                className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors disabled:opacity-50"
               >
                 {isDirect ? 'Change Vote' : 'Override — Vote Directly'}
               </button>
@@ -519,7 +519,7 @@ function VoteStatusBox({ myVote, proposalId, onVoteChange, emailVerified }) {
             <button
               onClick={() => setShowButtons(true)}
               disabled={unverified}
-              className="text-sm px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50"
+              className="text-sm px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
             >
               Vote Now
             </button>
@@ -980,7 +980,7 @@ export default function ProposalDetail() {
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       {/* Back link */}
-      <Link to={linkOrg ? urlFor(linkOrg, 'proposals') : '/orgs'} className="text-sm text-[#2E75B6] hover:underline mb-4 inline-block">
+      <Link to={linkOrg ? urlFor(linkOrg, 'proposals') : '/orgs'} className="text-sm text-[var(--brand-accent)] hover:underline mb-4 inline-block">
         ← Back to Proposals
       </Link>
 
@@ -1012,7 +1012,7 @@ export default function ProposalDetail() {
                 <TopicBadge key={pt.topic_id} topic={pt.topic} relevance={pt.relevance} />
               ))}
             </div>
-            <h1 className="text-2xl font-bold text-[#1B3A5C] leading-tight mb-2">
+            <h1 className="text-2xl font-bold text-[var(--brand-primary)] leading-tight mb-2">
               {proposal.title}
             </h1>
             <p className="text-sm text-gray-400">
@@ -1193,7 +1193,7 @@ export default function ProposalDetail() {
               <div className="flex gap-3 text-xs">
                 <Link
                   to={linkOrg ? urlFor(linkOrg, 'delegations') : '/orgs'}
-                  className="text-[#2E75B6] hover:underline"
+                  className="text-[var(--brand-accent)] hover:underline"
                 >
                   Set a specific delegate
                 </Link>
@@ -1203,7 +1203,7 @@ export default function ProposalDetail() {
                     const el = document.getElementById('vote-panel');
                     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                   }}
-                  className="text-[#2E75B6] hover:underline"
+                  className="text-[var(--brand-accent)] hover:underline"
                 >
                   Vote directly
                 </button>

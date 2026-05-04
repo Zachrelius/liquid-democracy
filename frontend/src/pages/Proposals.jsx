@@ -134,7 +134,7 @@ function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly, linkOr
       </div>
     );
     const voteLine = (
-      <p className="text-xs text-[#2E75B6]">{yourVoteLine(proposal, myVote)}</p>
+      <p className="text-xs text-[var(--brand-accent)]">{yourVoteLine(proposal, myVote)}</p>
     );
 
     if (method === 'binary') {
@@ -162,7 +162,7 @@ function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly, linkOr
       bodyBlock = (
         <div className="space-y-2">
           {heading && (
-            <p className="text-sm font-semibold text-[#1B3A5C]">{heading}</p>
+            <p className="text-sm font-semibold text-[var(--brand-primary)]">{heading}</p>
           )}
           <MultiOptionResultBar options={bars} />
           {metaLine}
@@ -175,10 +175,10 @@ function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly, linkOr
   return (
     <Link
       to={linkOrg ? urlFor(linkOrg, 'proposal-detail', proposal.id) : '#'}
-      className="block bg-white border border-gray-200 rounded-xl p-5 hover:border-[#2E75B6] hover:shadow-sm transition-all"
+      className="block bg-white border border-gray-200 rounded-xl p-5 hover:border-[var(--brand-accent)] hover:shadow-sm transition-all"
     >
       <div className="flex items-start justify-between gap-3 mb-3">
-        <span className="text-[#1B3A5C] font-semibold text-lg leading-snug">
+        <span className="text-[var(--brand-primary)] font-semibold text-lg leading-snug">
           {proposal.title}
           {/* Phase 8 — sustained-majority indicator. Shown when the proposal
               has it explicitly enabled OR when results call back active=true. */}
@@ -186,7 +186,7 @@ function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly, linkOr
             tally?.sustained_majority?.active) && (
             <span
               title="Sustained-majority voting: support must hold throughout the window"
-              className="ml-2 inline-flex items-center text-xs bg-blue-50 text-[#2E75B6] border border-blue-200 px-1.5 py-0.5 rounded"
+              className="ml-2 inline-flex items-center text-xs bg-blue-50 text-[var(--brand-accent)] border border-blue-200 px-1.5 py-0.5 rounded"
             >
               ⏳ Sustained
             </span>
@@ -336,7 +336,7 @@ export default function Proposals() {
     <div className="max-w-4xl mx-auto px-4 py-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-[#1B3A5C]">Proposals</h1>
+        <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Proposals</h1>
       </div>
 
       {/* Filters */}
@@ -349,7 +349,7 @@ export default function Proposals() {
               onClick={() => setStatusFilter(s)}
               className={`px-3 py-1.5 text-sm capitalize transition-colors ${
                 statusFilter === s
-                  ? 'bg-[#1B3A5C] text-white'
+                  ? 'bg-[var(--brand-primary)] text-white'
                   : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
@@ -363,7 +363,7 @@ export default function Proposals() {
           <select
             value={topicFilter}
             onChange={e => setTopicFilter(e.target.value)}
-            className="bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-600 focus:outline-none focus:ring-1 focus:ring-[#2E75B6]"
+            className="bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-600 focus:outline-none focus:ring-1 focus:ring-[var(--brand-accent)]"
           >
             <option value="">All Topics</option>
             {topics.map(t => (
@@ -381,7 +381,7 @@ export default function Proposals() {
               onClick={() => setScopeFilter('all')}
               className={`px-3 py-1.5 text-sm transition-colors ${
                 scopeFilter === 'all'
-                  ? 'bg-[#1B3A5C] text-white'
+                  ? 'bg-[var(--brand-primary)] text-white'
                   : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
@@ -391,7 +391,7 @@ export default function Proposals() {
               onClick={() => setScopeFilter('current')}
               className={`px-3 py-1.5 text-sm transition-colors ${
                 scopeFilter === 'current'
-                  ? 'bg-[#1B3A5C] text-white'
+                  ? 'bg-[var(--brand-primary)] text-white'
                   : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
@@ -420,7 +420,7 @@ export default function Proposals() {
                 Try a different filter, or{' '}
                 <button
                   onClick={() => { setStatusFilter('all'); setTopicFilter(''); }}
-                  className="text-[#2E75B6] hover:underline"
+                  className="text-[var(--brand-accent)] hover:underline"
                 >
                   clear all filters
                 </button>

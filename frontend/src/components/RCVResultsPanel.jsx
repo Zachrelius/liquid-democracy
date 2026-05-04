@@ -188,7 +188,7 @@ export default function RCVResultsPanel({ tally, proposal }) {
               className="bg-white border border-gray-200 rounded-lg p-3 space-y-2"
             >
               <div className="flex items-center justify-between">
-                <h4 className="text-sm font-semibold text-[#1B3A5C]">
+                <h4 className="text-sm font-semibold text-[var(--brand-primary)]">
                   Round {round.round_number + 1}
                 </h4>
                 {round.transferred_from && (
@@ -222,7 +222,7 @@ export default function RCVResultsPanel({ tally, proposal }) {
                       <div className="w-full bg-gray-100 rounded-full h-2">
                         <div
                           className={`h-2 rounded-full ${
-                            isElected ? 'bg-[#2D8A56]' : isEliminated ? 'bg-[#C0392B]' : 'bg-[#2E75B6]'
+                            isElected ? 'bg-[#2D8A56]' : isEliminated ? 'bg-[#C0392B]' : 'bg-[var(--brand-accent)]'
                           }`}
                           style={{ width: `${pct}%`, minWidth: count > 0 ? '3px' : '0' }}
                         />

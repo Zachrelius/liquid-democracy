@@ -248,7 +248,7 @@ export default function RolePermissionsPage() {
   if (loading) {
     return (
       <div className="flex justify-center items-center py-20">
-        <div className="animate-spin w-8 h-8 border-4 border-[#2E75B6] border-t-transparent rounded-full"></div>
+        <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
       </div>
     );
   }
@@ -268,7 +268,7 @@ export default function RolePermissionsPage() {
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
       {/* Header (D1 verbatim copy) */}
       <div className="space-y-3">
-        <h1 className="text-2xl font-semibold text-[#1B3A5C]">
+        <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">
           Role Permissions for {currentOrg.name}{headerSuffix}
         </h1>
         <div className="bg-white border border-gray-200 rounded-xl p-5 text-sm text-gray-700 space-y-3">
@@ -335,7 +335,7 @@ export default function RolePermissionsPage() {
           <button
             onClick={handleSave}
             disabled={saving || pendingCount === 0}
-            className="px-6 py-2 bg-[#1B3A5C] text-white text-sm rounded-lg hover:bg-[#2E75B6] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-6 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving ? 'Saving...' : 'Save changes'}
           </button>
@@ -408,7 +408,7 @@ function CategorySection({
                       disabled
                       readOnly
                       aria-label={`${role.name || role.system_key} — ${perm.label} (locked)`}
-                      className="accent-[#2E75B6] cursor-not-allowed"
+                      className="accent-[var(--brand-accent)] cursor-not-allowed"
                     />
                     <span aria-hidden="true">🔒</span>
                   </span>
@@ -424,7 +424,7 @@ function CategorySection({
                       disabled={!canEdit}
                       onChange={() => onToggle(role.system_key, perm.key)}
                       aria-label={`${role.name || role.system_key} — ${perm.label}`}
-                      className="accent-[#2E75B6]"
+                      className="accent-[var(--brand-accent)]"
                     />
                   </span>
                 )}

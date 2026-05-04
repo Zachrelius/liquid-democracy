@@ -186,14 +186,14 @@ export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemov
       .attr('fill', d => {
         // Phase 9.8 W A2 — avatar pattern wins when present.
         if (d.avatar_url) return `url(#net-avatar-${d.id})`;
-        if (d._isCenter) return '#1B3A5C';
+        if (d._isCenter) return 'var(--brand-primary)';
         if (d.relationship === 'delegate') return '#EBF5FB';
         return '#FEF9E7';
       })
       .attr('stroke', d => {
         if (d._isCenter) return '#F39C12';
         if (d.is_public_delegate) return '#2D8A56';
-        if (d.relationship === 'delegate') return '#2E75B6';
+        if (d.relationship === 'delegate') return 'var(--brand-accent)';
         return '#F39C12';
       })
       .attr('stroke-width', d => d._isCenter ? 3 : 2);
@@ -220,7 +220,7 @@ export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemov
       .attr('dy', d => nodeRadius(d) + 14)
       .attr('font-size', d => d._isCenter ? 11 : 9)
       .attr('font-weight', d => d._isCenter ? 700 : 400)
-      .attr('fill', d => d._isCenter ? '#1B3A5C' : '#2C3E50')
+      .attr('fill', d => d._isCenter ? 'var(--brand-primary)' : '#2C3E50')
       .attr('pointer-events', 'none');
 
     // Center label inside the node — only show "You" text when there's no
@@ -324,7 +324,7 @@ export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemov
           className="absolute pointer-events-none bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 text-xs z-10"
           style={{ left: tooltip.x + 12, top: tooltip.y - 8, maxWidth: 200 }}
         >
-          <div className="font-semibold text-[#1B3A5C]">{tooltip.node.label}</div>
+          <div className="font-semibold text-[var(--brand-primary)]">{tooltip.node.label}</div>
           {tooltip.node.is_public_delegate && (
             <div className="text-green-600 text-[10px]">Public Delegate</div>
           )}
@@ -346,7 +346,7 @@ export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemov
         <div className="absolute bottom-2 left-2 right-2 bg-white border border-gray-200 rounded-xl shadow-lg p-4 text-sm z-10 md:left-auto md:right-2 md:w-72 md:bottom-2">
           <div className="flex justify-between items-start mb-2">
             <div>
-              <div className="font-semibold text-[#1B3A5C]">{selectedNode.label}</div>
+              <div className="font-semibold text-[var(--brand-primary)]">{selectedNode.label}</div>
               {selectedNode.is_public_delegate && (
                 <span className="text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded">Public Delegate</span>
               )}
@@ -367,7 +367,7 @@ export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemov
             <div className="flex gap-2 mt-2">
               <button
                 onClick={() => { setSelectedNode(null); onChangeDelegate?.(selectedNode); }}
-                className="text-xs px-3 py-1.5 border border-[#2E75B6] text-[#2E75B6] rounded-lg hover:bg-[#2E75B6] hover:text-white transition-colors"
+                className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
               >
                 Change delegate
               </button>
@@ -385,7 +385,7 @@ export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemov
           {profileLinkOrg && (
             <Link
               to={urlFor(profileLinkOrg, 'user-profile', selectedNode.id)}
-              className="inline-block mt-2 text-xs text-[#2E75B6] hover:underline"
+              className="inline-block mt-2 text-xs text-[var(--brand-accent)] hover:underline"
             >
               View Profile
             </Link>

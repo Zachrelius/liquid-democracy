@@ -80,7 +80,7 @@ export default function LinkedPolisCard({
   return (
     <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[10px] uppercase tracking-wide text-[#2E75B6] font-semibold">
+        <span className="text-[10px] uppercase tracking-wide text-[var(--brand-accent)] font-semibold">
           Linked deliberation
         </span>
         {isArchived ? (
@@ -93,7 +93,7 @@ export default function LinkedPolisCard({
           </span>
         )}
       </div>
-      <h3 className="text-sm font-semibold text-[#1B3A5C] leading-snug">
+      <h3 className="text-sm font-semibold text-[var(--brand-primary)] leading-snug">
         {polis.title}
       </h3>
       {truncatedPrompt && (
@@ -108,7 +108,7 @@ export default function LinkedPolisCard({
         {detailHref && (
           <Link
             to={detailHref}
-            className="text-xs px-3 py-1.5 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"
+            className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
           >
             Open
           </Link>
