@@ -113,11 +113,12 @@ def test_default_grants_counts_match_spec():
     """Sanity-check the DEFAULT_GRANTS table itself (not the seed call).
 
     Stage 1 shipped at 23/23/8/0. Phase 12 Stage 2 added the
-    `role_permissions.edit` meta-permission which is in DEFAULT_GRANTS for
-    steward and admin (both go to 24); moderator and member don't get it
-    by default (still 8/0). New totals: 24/24/8/0.
+    `role_permissions.edit` meta-permission (steward/admin both go to 24).
+    Phase 12.5 adds `proposal.set_thresholds` (steward/admin both go to
+    25; moderator/member get it absent per Q2: reserved for Steward and
+    maybe Admin). New totals: 25/25/8/0.
     """
-    assert len(DEFAULT_GRANTS["steward"]) == 24
-    assert len(DEFAULT_GRANTS["admin"]) == 24
+    assert len(DEFAULT_GRANTS["steward"]) == 25
+    assert len(DEFAULT_GRANTS["admin"]) == 25
     assert len(DEFAULT_GRANTS["moderator"]) == 8
     assert len(DEFAULT_GRANTS["member"]) == 0
