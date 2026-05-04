@@ -1180,8 +1180,13 @@ def _seed_demo(db: Session) -> dict:
     )
 
     # ── Phase 3b: Delegation intents + frank ──────────────────────────────
+    # Phase 12.6 D1 — frank is now the demo persona-picker's Moderator entry
+    # (alongside voter02 from 12.5 D1). _add_org_membership is "never
+    # overwrite role/status" — for prod the existing membership row is
+    # promoted via direct SQL UPDATE in the closeout. For fresh-DB seeds
+    # this line lands frank as Moderator from the start.
     frank = _get_or_create_user(db, "frank", "Frank Unknown")
-    _add_org_membership(db, frank, demo_org, "member")
+    _add_org_membership(db, frank, demo_org, "moderator")
 
     # Create a delegation intent: voter10 wants to delegate Economy to carol,
     # but carol isn't a public delegate and voter10 doesn't follow her.
