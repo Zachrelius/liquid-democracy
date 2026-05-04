@@ -1235,3 +1235,102 @@ slug=demo org_id=835bc570-e3ae-4e05-a8b8-ed4b1b22ebdf name=Demo Organization cre
 ### Pass-summary
 
 **Phase 12.6 shipped clean in a single session** — 3 commits + closeout, no hot-fixes, no Railway incident. The load-bearing route-guard bug (a Member granted `proposal.create` via matrix can now actually navigate to `/{slug}/admin/proposals` and the page renders) is verified end-to-end on prod via matrix grant → API user_permissions check → revert. Threshold-form copy now shows actual default percentages instead of unhelpful "ask an Admin" boilerplate. Frank is the demo persona-picker's Moderator entry alongside voter02 (data preserved end-to-end via direct DB UPDATE). Backend untouched. Bundle gzip +0.24 kB. **The "matrix lies" gap is now fully closed across all three layers (nav visibility from 12.5 F1 + in-page controls from 12.5 F2 + route guards from 12.6 G).** Stage 3 of Greater Phase 12 (org branding) remains the natural next pass when prioritized.
+
+---
+
+## Phase 12.7 — Org Branding (Logo + Color) + Copy Polish — 2026-05-04
+
+**Stage 3 of Greater Phase 12 — completes the arc.** 12 commits on `phase-12-7/org-branding` no-ff merged to master at `141b10c` + closeout. **LIVE on prod**, bundle `index-Dq7QQXBf.js`. Steward-configurable per-org logo + primary color, applied across the org-scoped UI surface (nav, OrgSelector cards, admin shell, theming hook on org-scoped routes) and into the org-scoped invitation email. Three landing/demo copy fixes locked with Z. Persistent uploads via Railway Volume (declaration shipped; provisioning + migration are post-merge Z-decision items). **Backend tests 820 → 847 (+27).** **No schema migration** (branding lives in the existing `Organization.settings` JSON column).
+
+### What shipped
+
+**Cluster I — Persistent uploads infra (Railway Volume + path constants):**
+- `railway.toml` declares `[[volumes]] mountPath = "/data"`. Once provisioned via Railway dashboard, the container mounts at `/data` and uploaded logos/avatars persist across redeploys.
+- 3-tier path resolver: `_resolve_uploads_base()` checks env override → Railway Volume `/data/uploads` (writable) → local-dev fallback `backend/uploads/`. **Deploy is safe regardless of Volume provisioning state** — falls back to ephemeral container path if `/data` not mounted, which is fine for testing the end-to-end flow but doesn't persist.
+- `backend/scripts/phase12_7_migrate_uploads.py` — idempotent one-shot migration of legacy `backend/uploads/avatars/*` → `/data/uploads/avatars/*`. Source-equals-destination check exits cleanly on local dev. Z runs once via `railway ssh "cd /app && python scripts/phase12_7_migrate_uploads.py"` after Volume mount.
+
+**Cluster B — Logo upload + branding settings + response shape + 26 new tests:**
+- `POST /api/orgs/{slug}/logo` (multipart upload, content-type whitelist for PNG/JPEG/WebP, 6 MB cap, Pillow resize to 400×160 + 200×80, format-preserving so PNG transparency survives).
+- `DELETE /api/orgs/{slug}/logo` (removes file + clears settings ref).
+- `PATCH /api/orgs/{slug}/branding` (`primary_color`, `accent_color`, `accent_auto_derived`; validated hex colors).
+- All org-returning endpoints (`GET /api/orgs`, `GET /api/orgs/{slug}`, `PATCH /api/orgs/{slug}`, `POST /api/orgs`, `PATCH /branding`, `POST/DELETE /logo`) now serialize via the centralized `_org_to_out` helper which always emits a consistent `BrandingOut` shape (logo_url, primary_color, accent_color, accent_auto_derived). Frontend logic doesn't have to handle "key missing" and "key explicitly null" as distinct cases.
+- New `BrandingOut`, `BrandingUpdate`, `_validate_hex_color`. `OrgOut.branding` field added.
+- Tests: `test_phase12_7_org_branding.py` adds 26 cases covering upload validation, content-type rejection, size cap, dimension cap, file-overwrite cleanup, color validation, branding round-trip, response-shape consistency. **Backend suite 820 → 846.**
+
+**Cluster F — Frontend theming + Settings UI + Nav logo + OrgSelector cards:**
+- **F1**: Migrated 65 files / 678 sites from hardcoded brand colors (`#1B3A5C` etc.) to CSS variables (`--brand-primary`, `--brand-primary-dark`, `--brand-accent`) via `var(--brand-primary)` and Tailwind arbitrary-value syntax `bg-[var(--brand-primary)]`. Default values defined in `:root` in `index.css`. **Bundle delta only +2.96 kB gzipped** (CSS variables are textually small).
+- **F2**: `BrandingThemeApplier` component mounted in `OrgScopedLayout` (all 3 branches in App.jsx). useEffect on `currentOrg.branding` sets `--brand-primary`/`--brand-accent` CSS vars on `document.documentElement`. Cleared when leaving org-scoped routes (so the public landing page never inherits an org's branding).
+- **F3**: `utils/color_derive.js` — `deriveLighter`, `deriveDarker`, `getDerivedAccent` via HSL roundtrip. Used by F4 for the auto-derive checkbox's live preview.
+- **F4**: `OrgSettings` Branding section — logo upload (preview thumbnail, drag-or-click, 6 MB visible cap), color pickers for primary + accent, "auto-derive accent from primary" checkbox with live recompute via `getDerivedAccent`, Save + Reset buttons. **Gated by `useHasPermission('org.edit_branding')`** so non-Steward users don't see the section. Hydration fix (commit `b6d2b62`): default auto-derive ON for unconfigured orgs (primary_color null) and respect backend's `accent_auto_derived` flag only when org has actually configured a primary.
+- **F5**: Nav bar — when `currentOrg.branding.logo_url` is set, shows the logo `<img>` to the left of the org name. Sub-org views inherit the parent org's logo.
+- **F6**: OrgSelector cards — per-card branding via inline styles (NOT global CSS vars, so each card can show its own org's identity without theme bleed across cards). 4px left border in `primary_color` + colored heading + logo at top of card.
+
+**Cluster E — Email theming (best-effort, only the org-scoped invitation email):**
+- `send_invitation_email` gains optional `primary_color` kwarg. When provided, replaces the hardcoded `#1B3A5C` in the heading color and CTA button background. Falls back to platform default when None.
+- Both call sites (`create_invitations` + `resend_invitation` in `routes/organizations.py`) read `org.settings.branding.primary_color` and pass it through.
+- Verification + password-reset emails are user-scoped (no org affiliation at signup) and stay on platform default — explicitly out of scope per spec.
+- 1 new test (`test_create_invitations_threads_org_branding_primary_color`). **Backend suite 846 → 847.**
+
+**Cluster C — Three locked copy fixes:**
+- **Landing accountability tile**: "Every delegate's voting history is public; trust is earned, not assumed." → "Public delegates have public voting records; trust is earned, not assumed." (corrects the over-broad "every delegate" framing — only public delegates have public records).
+- **Landing voting methods tile**: drop "(soon)" from the ranked-choice mention since RCV/STV shipped in Phase 7.
+- **Demo register-your-own**: "Prefer to start fresh? Register your own demo account and walk through the full onboarding flow..." → "Prefer a clean slate? Register an account — you'll go through the real onboarding flow..." (drops misleading "demo account" wording — registration creates a real account, not a demo persona).
+
+**Backend tests: 820 → 847 (+27).**
+**Frontend bundle: ~345.67 → 348.62 kB gzipped (+2.95 kB).**
+**No schema migration; PG smoke run anyway (Volume mount path change in StaticFiles): PASS both modes.**
+
+### Production verification
+
+| Check | Result | Evidence |
+|---|---|---|
+| Smoke (post-deploy auto-run via `poll_deploy.py`) | **5/5 PASS** | Bundle flipped at 61s; smoke ran in 2.01s |
+| Cluster C copy 1 (Landing accountability) | **PASS** | Prod bundle includes "Public delegates have public voting records"; old "Every delegate's voting history" is gone (grep 0 hits) |
+| Cluster C copy 2 (Landing voting methods, no "(soon)") | **PASS** | Prod bundle includes "Binary, approval, and ranked-choice voting"; old "(soon) ranked-choice" is gone (grep 0 hits) |
+| Cluster C copy 3 (Demo register-your-own) | **PASS** | Prod bundle includes "Prefer a clean slate" + "Register an account"; old "Register your own demo" is gone (grep 0 hits) |
+| Cluster B logo endpoint registered | PASS-by-source | `GET /api/orgs/demo/logo` returns 405 Method Not Allowed (POST/DELETE are registered, GET correctly is not — endpoint wired) |
+| Cluster F theming code in bundle | PASS-by-source | Prod bundle has 9 hits for branding markers (BrandingThemeApplier / brand-primary / currentOrg.branding / brand-accent) |
+| Cluster F load-bearing UI flow (logo upload → theme application → nav logo → OrgSelector cards → permission gate → clear-on-leave) | **NOT VERIFIED — browser extension not connected this session** | Flagged as a Z-decision item below; PASS-by-source only. Source review confirms the F1-F6 implementation matches the spec; F7 visual flow needs out-of-band verification by Z |
+| Cluster B branding response shape | PASS-by-source | Verified by 26 unit tests; live API probe of `/api/orgs/demo` requires auth and wasn't exercised this session |
+| Cluster E invitation-email primary_color threading | PASS-by-source | Verified by `test_create_invitations_threads_org_branding_primary_color` unit test; not exercised against prod Resend (would have sent a real test invitation email) |
+
+### Phase 12.7 commit list
+
+- `bf2a784` I1+I2: railway.toml volume mount + 3-tier uploads path resolver
+- `95663e7` I3: one-shot migration script for legacy uploads → Volume
+- `5078add` F1: migrate brand colors to CSS variables (65 files / 678 sites)
+- `8775994` F3: color derivation utility for org branding
+- `70e59d8` B1+B2+B3+B4: org logo + branding endpoints + response shape
+- `8a94291` F2: theme application hook on org-scoped routes
+- `333d844` F4: Org Settings — Branding section (logo + colors)
+- `65df1d0` F5: Nav bar — show org logo to the left of org name
+- `22f5d06` F6: OrgSelector cards — per-org branding
+- `b6d2b62` F4 hydration fix — default auto-derive on for unconfigured orgs
+- `122d9c2` C: Copy fixes — landing accountability tile, voting methods, demo register link
+- `33baf47` E: Email theming — invitation email uses org's branded primary color
+- `141b10c` Merge to master
+
+### Z-decision items (post-merge, requiring Z action)
+
+1. **Provision `/data` Volume via Railway dashboard.** Until provisioned, logo uploads fall back to ephemeral container storage (lost on redeploy). Avatars are also affected — Phase 12.5/12.6 avatar uploads currently live in the legacy `backend/uploads/` ephemeral path.
+2. **Run `scripts/phase12_7_migrate_uploads.py` via `railway ssh` after Volume mount** to copy any legacy `backend/uploads/avatars/*` files to `/data/uploads/avatars/*`. Idempotent — safe to run multiple times.
+3. **F7 visual browser verification** — out-of-band check needed for the load-bearing UI flow (logo upload → theme application → nav logo → OrgSelector cards → permission gate). Browser extension wasn't connected this session so this PASS is by-source only. Recommended quick check: log in as Steward on demo org, open `/admin/settings`, scroll to Branding section, upload a small PNG, set a non-default primary color, save, navigate to `/{slug}/proposals` and confirm the nav shows the logo + the brand-primary buttons match the configured color. Then go to `/orgs` and confirm the demo card shows the same branding inline. Then leave to `/` and confirm the public landing page renders with the platform-default colors (no theme bleed).
+4. **(Optional) Send a test invitation from the demo org** to confirm the Cluster E email theming reaches Resend with the org's branded primary color in the rendered HTML.
+
+### Process notes
+
+1. **Greater Phase 12 arc complete** — Stage 1 (configurable role permissions backend, 2026-05-03) → Stage 2 (permission matrix UI, 2026-05-03) → Stage 2.5 (permission system completeness, 2026-05-04) → Stage 2.6 (route guard refactor + demo polish, 2026-05-04) → Stage 3 (org branding + copy polish, 2026-05-04). The org now has Steward-tier configurable role permissions AND configurable identity (logo + color), end-to-end.
+2. **`poll_deploy.py` auto-smoke at 61s** — fastest deploy of the 12.x arc. Bundle flipped clean, smoke 5/5 PASS in 2.01s.
+3. **Browser verification gap** — chrome extension not connected this session, so F7 visual verification is PASS-by-source only. Flagged as a Z-decision item; everything else (copy fixes, API endpoints, theming code presence) was verified via the deployed bundle and unit tests.
+4. **F1 mojibake recovery** — first F1 pass corrupted UTF-8 em-dashes when a PowerShell-driven bulk replace re-encoded files as Win-1252. Frontend agent reset F1 commits and redid via Python with explicit `.decode("utf-8") / .encode("utf-8")` and BOM preservation. No artifacts in shipped bundle.
+5. **Single-source-of-truth for branding shape** — `_org_to_out` helper centralizes the BrandingOut emission across 6 org-returning endpoints. New endpoints will inherit consistent shape automatically.
+
+### New tech debt
+
+1. **Browser verification gap is real** — F7 (logo upload + theming + nav logo + OrgSelector cards + permission gate + clear-on-leave) needs an out-of-band visual check. If the browser extension is reliably available next session, run the F7 checklist. If issues surface, file as Phase 12.7.1 hot-fix.
+2. **Volume provisioning is a manual Z step** — once provisioned, the migration script runs once. Until then, ephemeral container storage means uploaded logos disappear on redeploy. Worth a Phase 12.7.1 follow-up to add a backend startup log line that warns "Uploads dir is on ephemeral storage" when `/data/uploads/` doesn't exist, so the state is visible in Railway logs.
+3. **Cluster E email theming is invitation-only.** Verification + password-reset emails are user-scoped and weren't themed. If a future flow grows org-scoped emails (e.g. weekly digest, member-removed notification), they'll want the same `primary_color` threading. Helper function in `email_service.py` could centralize the color resolution so call sites don't each reach into `org.settings.branding`.
+
+### Pass-summary
+
+**Phase 12.7 shipped clean in a single session** — 12 commits + merge + closeout, no hot-fixes, no Railway incident. Greater Phase 12 arc is now complete. Backend test count 820 → 847 (+27). Bundle 348.62 kB gzipped (+2.95 kB). The platform now supports Steward-tier configurable per-org branding (logo + primary color) applied consistently across nav, OrgSelector cards, admin UI, in-page chrome, and the org-scoped invitation email. Three locked copy fixes shipped on landing + demo. Load-bearing F7 visual verification is the one outstanding item (chrome extension wasn't connected this session); flagged as a Z-decision item with a 90-second checklist. Volume provisioning + migration script run remain Z-decision items for upload persistence.
