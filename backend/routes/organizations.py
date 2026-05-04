@@ -17,6 +17,7 @@ from audit_utils import log_audit_event
 from database import get_db
 from email_service import send_invitation_email
 from org_config import get_default_proposal_thresholds, get_org_config
+from permission_registry import PERMISSION_REGISTRY
 from reserved_slugs import RESERVED_SLUGS
 from role_permissions import has_permission
 from role_seed import seed_default_roles_for_org
@@ -110,6 +111,7 @@ def _org_to_out(
     ).count()
 
     user_role = None
+    membership = None
     if user_id:
         membership = db.query(models.OrgMembership).filter(
             models.OrgMembership.org_id == org.id,
@@ -119,6 +121,19 @@ def _org_to_out(
         # Phase 12 — emit role.system_key (stable string, e.g. 'steward')
         # rather than the dropped string column. Frontend reads this.
         user_role = membership_role_system_key(membership)
+
+    # Phase 12.5 — resolved permission set for the current user on this
+    # org. Stage 1's per-request cache makes the 25 has_permission calls
+    # cheap: the first call loads the full grant set (1 SELECT against
+    # role_permissions); the remaining 24 are dict lookups. Non-members
+    # get []; the Decision-6 implicit-power path is handled inside
+    # has_permission so a parent-org admin viewing a sub-org enumerates
+    # the full set as expected.
+    user_permissions: list[str] = []
+    if user_id and membership is not None:
+        for perm_def in PERMISSION_REGISTRY:
+            if has_permission(db, user_id, org.id, perm_def.key):
+                user_permissions.append(perm_def.key)
 
     return schemas.OrgOut(
         id=org.id,
@@ -130,6 +145,7 @@ def _org_to_out(
         created_at=org.created_at,
         member_count=member_count,
         user_role=user_role,
+        user_permissions=user_permissions,
     )
 
 

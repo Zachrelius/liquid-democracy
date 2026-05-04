@@ -1125,6 +1125,11 @@ class OrgOut(BaseModel):
     created_at: datetime
     member_count: Optional[int] = None
     user_role: Optional[str] = None
+    # Phase 12.5 — resolved permission keys the current user holds on this
+    # org (computed via the per-request cache; one DB load for all 25 keys).
+    # Empty list for non-members. Frontend uses this to drive admin-nav and
+    # in-page control gating without an extra round-trip.
+    user_permissions: list[str] = []
     model_config = ConfigDict(from_attributes=True)
 
 
