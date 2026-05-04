@@ -411,8 +411,40 @@ def update_organization(
         org.join_policy = body.join_policy
     if body.settings is not None:
         from sustained_majority_service import diff_sustained_majority_settings
+        # Phase 12.5 — validate default-threshold keys (F4 backend support).
+        # Range 0.0-1.0 inclusive; no hard floor per spec Q2 decision. The
+        # check happens BEFORE the merge so an invalid value fails the
+        # whole PATCH cleanly, matching how Pydantic field-level validation
+        # would reject other settings keys.
+        threshold_keys = {
+            "default_pass_threshold", "default_quorum_threshold",
+        }
+        for tkey in threshold_keys & set(body.settings.keys()):
+            tval = body.settings[tkey]
+            if not isinstance(tval, (int, float)) or isinstance(tval, bool):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{tkey} must be a number between 0.0 and 1.0",
+                )
+            if tval < 0.0 or tval > 1.0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{tkey} must be between 0.0 and 1.0 inclusive",
+                )
+
         # Diff BEFORE merging so we capture the actual transition.
         sm_diff = diff_sustained_majority_settings(org.settings, body.settings)
+        # Phase 12.5 — capture default-threshold transitions for the audit
+        # log. Only emit when the value actually changes (no spurious
+        # events on no-op patches).
+        threshold_diff: dict[str, dict] = {}
+        old_settings = org.settings or {}
+        for tkey in threshold_keys & set(body.settings.keys()):
+            old_val = old_settings.get(tkey)
+            new_val = body.settings[tkey]
+            if old_val != new_val:
+                threshold_diff[tkey] = {"old": old_val, "new": new_val}
+
         org.settings = {**(org.settings or {}), **body.settings}
         if sm_diff:
             log_audit_event(
@@ -422,6 +454,16 @@ def update_organization(
                 target_id=org.id,
                 actor_id=current_user.id,
                 details={"changes": sm_diff},
+                ip_address=request.client.host if request.client else None,
+            )
+        if threshold_diff:
+            log_audit_event(
+                db,
+                action="org.default_thresholds_changed",
+                target_type="organization",
+                target_id=org.id,
+                actor_id=current_user.id,
+                details={"changes": threshold_diff},
                 ip_address=request.client.host if request.client else None,
             )
 
