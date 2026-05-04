@@ -126,15 +126,22 @@ export default function OrgSettings() {
       // Branding state hydration. Backend B4 returns currentOrg.branding
       // as an object with possibly-null fields; missing object is treated
       // as "all unconfigured" -> use platform defaults in the pickers.
+      //
+      // accent_auto_derived UX policy: for orgs that have NEVER configured
+      // branding (no primary set), default the checkbox to ON regardless
+      // of what the backend reports — auto-derive is the recommended path
+      // per spec D3. For orgs that HAVE configured a primary, respect the
+      // backend's stored flag (true if they accepted the auto-derive when
+      // they last saved, false if they explicitly set a custom accent).
       const b = currentOrg.branding || {};
       setPrimaryColor(b.primary_color || PLATFORM_PRIMARY_DEFAULT);
-      // accent_auto_derived defaults true when the org hasn't opted in to
-      // a custom accent. If primary is set + accent_auto_derived is true,
-      // the displayed accent is the derived value (so the disabled picker
-      // shows what would be saved).
-      const autoDer = b.accent_auto_derived !== false;
+      const autoDer = b.primary_color
+        ? b.accent_auto_derived !== false
+        : true;
       setAutoDeriveAccent(autoDer);
       if (autoDer && b.primary_color) {
+        // Show the derived accent so the disabled picker is truthful
+        // about what would be saved.
         setAccentColor(getDerivedAccent(b.primary_color));
       } else {
         setAccentColor(b.accent_color || PLATFORM_ACCENT_DEFAULT);
