@@ -16,9 +16,10 @@ from delegation_engine import (
     RCVTally,
     eligible_voter_ids_for_proposal,
 )
-from org_config import get_org_config
+from org_config import get_default_proposal_thresholds, get_org_config
 from permissions import can_see_votes
 from polis_engine import eligible_viewers_for_polis
+from role_permissions import has_permission as _has_permission
 
 router = APIRouter(prefix="/api/proposals", tags=["proposals"])
 
@@ -226,6 +227,61 @@ def _emit_polis_link_diff_audits(
         )
 
 
+def _enforce_threshold_permission(
+    db: Session,
+    user_id: str,
+    org: Optional[models.Organization],
+    requested_pass: Optional[float],
+    requested_quorum: Optional[float],
+) -> None:
+    """Phase 12.5 — gate threshold overrides on `proposal.set_thresholds`.
+
+    The check is "differs from defaults," NOT "is present" (spec line 133):
+    a Member who explicitly passes `pass_threshold=0.50` (matching the org
+    default) succeeds; only a Member trying `pass_threshold=0.10` fails.
+
+    Args:
+      requested_pass: the value from the request body, or None for "use
+        whatever the route would otherwise default to". Falsy/None values
+        are treated as "not setting this threshold" — the route uses the
+        org default in that case.
+      requested_quorum: same shape as requested_pass.
+
+    For global (non-org) proposals — org is None — falls through to the
+    platform-wide defaults (0.50 / 0.40) via the helper. There is no
+    permission check possible without an org context, so global proposals
+    use the existing free-form behavior. Org-scoped routes always pass org.
+
+    Raises HTTPException(400) on permission denial with the spec's exact
+    error message (line 130).
+    """
+    default_pass, default_quorum = get_default_proposal_thresholds(org)
+
+    pass_diverges = (
+        requested_pass is not None and requested_pass != default_pass
+    )
+    quorum_diverges = (
+        requested_quorum is not None and requested_quorum != default_quorum
+    )
+    if not (pass_diverges or quorum_diverges):
+        return
+
+    # Only enforce the permission gate when there's an org context. Global
+    # proposals (no org_id) keep their pre-12.5 behavior.
+    if org is None:
+        return
+
+    if not _has_permission(db, user_id, org.id, "proposal.set_thresholds"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "You do not have permission to override the organization's "
+                "default thresholds. Submit the proposal with default values "
+                "or ask an Admin or Steward to set custom thresholds."
+            ),
+        )
+
+
 def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[models.Organization] = None):
     """Validate voting_method and options for proposal creation."""
     # Check org allowed_voting_methods. Ranked-choice in particular is
@@ -385,6 +441,16 @@ def create_proposal(
 ):
     _validate_proposal_creation(body)
 
+    # Phase 12.5 — global (non-org) proposals have no org context for the
+    # threshold-permission gate, so the helper short-circuits and the
+    # caller-supplied values are honored. Kept as a single call site for
+    # symmetry with org-scoped POST (organizations.py::create_org_proposal).
+    _enforce_threshold_permission(
+        db, current_user.id, None,
+        body.pass_threshold if "pass_threshold" in body.model_fields_set else None,
+        body.quorum_threshold if "quorum_threshold" in body.model_fields_set else None,
+    )
+
     # Phase 8 — global (non-org) proposals: per-proposal override is always
     # ignored at create time because there is no org config to honor it
     # against. Store as null.
@@ -463,6 +529,25 @@ def update_proposal(
         raise HTTPException(status_code=400, detail="Only draft or deliberation proposals can be edited")
     if proposal.author_id != current_user.id and not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Not the proposal author")
+
+    # Phase 12.5 — threshold-override gate. Resolved BEFORE the field
+    # writes below so a permission-denied PATCH leaves the proposal
+    # untouched. Org context comes from the existing proposal (per spec
+    # B3 step 1: "from existing proposal for PATCH").
+    if "pass_threshold" in body.model_fields_set or "quorum_threshold" in body.model_fields_set:
+        org_for_thresh = (
+            db.get(models.Organization, proposal.org_id)
+            if proposal.org_id else None
+        )
+        _enforce_threshold_permission(
+            db, current_user.id, org_for_thresh,
+            body.pass_threshold if "pass_threshold" in body.model_fields_set else None,
+            body.quorum_threshold if "quorum_threshold" in body.model_fields_set else None,
+        )
+        if "pass_threshold" in body.model_fields_set and body.pass_threshold is not None:
+            proposal.pass_threshold = body.pass_threshold
+        if "quorum_threshold" in body.model_fields_set and body.quorum_threshold is not None:
+            proposal.quorum_threshold = body.quorum_threshold
 
     if body.title is not None:
         proposal.title = body.title
