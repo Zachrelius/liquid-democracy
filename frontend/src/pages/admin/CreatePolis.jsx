@@ -9,9 +9,7 @@ import useSubOrg from '../../useSubOrg';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
 
 /**
- * Phase 9 Session 3 — Polis creation flow with dual-path UX.
- *
- * One form, two success states:
+ * Polis creation flow with dual-path UX. One form, two success states:
  *
  *   - Programmatic path (`programmatic_path: true`): server called pol.is
  *     for us. Brief success + "Go to Polis →"; render any `partial_seed_failures`
@@ -23,9 +21,10 @@ import SubOrgErrorState from '../../components/SubOrgErrorState';
  *     admin UI. The verbatim copy is in `phase9_spec.md` Session 3 brief
  *     and is load-bearing — preserved exactly below.
  *
- * The "Save conversation_id" handler in the manual-fallback success state
- * is a TODO until the API gap is closed (Session 2 PATCH only accepts
- * `title?` and `status?` — see Session 3 closeout report).
+ * Both paths now wire end-to-end: the manual-fallback success state's "Save
+ * conversation_id" handler calls PATCH .../polises/{id} with
+ * `polis_conversation_id`. The PATCH-API gap noted in the original Session 3
+ * comment was closed in Session 4.
  */
 export default function CreatePolis() {
   const navigate = useNavigate();

@@ -246,6 +246,20 @@ def startup() -> None:
     finally:
         db.close()
 
+    # Phase 12.8 audit Tier 1, Item 1 — surface ephemeral-uploads fallback.
+    # The 3-tier path resolver in routes/avatars.py silently falls back to
+    # backend/uploads/ when the Railway Volume isn't mounted. Without this
+    # warning the deploy looks healthy but uploaded logos/avatars vanish
+    # on the next redeploy. Logging makes the misconfiguration visible.
+    if not str(_UPLOADS_BASE_DIR).startswith("/data/"):
+        log.warning(
+            "UPLOADS storage is on ephemeral container path %s — "
+            "uploaded logos/avatars will be lost on the next redeploy. "
+            "Provision a Railway Volume at /data and run "
+            "scripts/phase12_7_migrate_uploads.py to migrate legacy files.",
+            _UPLOADS_BASE_DIR,
+        )
+
     log.info("Startup complete.")
 
 
