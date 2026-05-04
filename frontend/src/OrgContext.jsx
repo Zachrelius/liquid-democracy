@@ -147,8 +147,11 @@ export function OrgProvider({ children }) {
     }
   }, []);
 
-  const isAdmin = !!(currentOrg && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'owner'));
-  const isOwner = !!(currentOrg && currentOrg.user_role === 'owner');
+  // Phase 12 Stage 1: 'owner' system_key renamed to 'steward'. The legacy
+  // 'owner' check is preserved to safely handle any cached stale API
+  // responses during the deploy cutover; new responses always send 'steward'.
+  const isAdmin = !!(currentOrg && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'steward' || currentOrg.user_role === 'owner'));
+  const isOwner = !!(currentOrg && (currentOrg.user_role === 'steward' || currentOrg.user_role === 'owner'));
   const isModerator = !!(currentOrg && currentOrg.user_role === 'moderator');
   const isModeratorOrAdmin = isAdmin || isModerator;
 

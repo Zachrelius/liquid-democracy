@@ -41,9 +41,9 @@ const PERSONAS = [
   {
     username: 'admin',
     displayName: 'Admin',
-    role: 'Owner',
+    role: 'Steward',
     description:
-      'Full org owner. Create proposals, manage members, view analytics.',
+      'Full org steward. Create proposals, manage members, view analytics.',
   },
 ];
 

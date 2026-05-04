@@ -76,11 +76,11 @@ export default function OrgSelector() {
               {org.member_count != null && <span>{org.member_count} members</span>}
               {org.user_role && (
                 <span className={`px-2 py-0.5 rounded font-medium ${
-                  org.user_role === 'owner' ? 'bg-purple-50 text-purple-700' :
+                  (org.user_role === 'steward' || org.user_role === 'owner') ? 'bg-purple-50 text-purple-700' :
                   org.user_role === 'admin' ? 'bg-blue-50 text-blue-700' :
                   'bg-gray-50 text-gray-600'
                 }`}>
-                  {org.user_role}
+                  {org.user_role === 'owner' ? 'steward' : org.user_role}
                 </span>
               )}
             </div>

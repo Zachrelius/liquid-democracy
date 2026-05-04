@@ -97,7 +97,7 @@ function OrgSwitcher() {
           {parentOrgs.map(parent => {
             const subs = subOrgsByParent[parent.slug] || [];
             const isCurrentParent = currentOrg.id === parent.id;
-            const isParentAdmin = parent.user_role === 'admin' || parent.user_role === 'owner';
+            const isParentAdmin = parent.user_role === 'admin' || parent.user_role === 'steward' || parent.user_role === 'owner';
             return (
               <div key={parent.id} className="border-b border-gray-100 last:border-0 pb-2 mb-1 last:mb-0">
                 <button
@@ -115,7 +115,7 @@ function OrgSwitcher() {
                   <div className="pl-4">
                     {subs.map(sub => {
                       const isCurrentSub = currentOrg.id === sub.id;
-                      const subAdmin = sub.user_role === 'admin' || sub.user_role === 'owner';
+                      const subAdmin = sub.user_role === 'admin' || sub.user_role === 'steward' || sub.user_role === 'owner';
                       return (
                         <div key={sub.id} className="flex items-center justify-between gap-2 pr-2">
                           <button
@@ -246,7 +246,7 @@ export default function Nav() {
                 My Delegations
               </NavLink>
 
-              {/* Admin dropdown — visible to moderators, admins, owners on parent-org scope */}
+              {/* Admin dropdown — visible to moderators, admins, stewards on parent-org scope */}
               {showLegacyAdminDropdown && parentSlugForLinks && (
                 <div ref={adminRef} className="relative">
                   <button
@@ -289,7 +289,7 @@ export default function Nav() {
               )}
 
               {/* Sub-org scope shortcut — link back to managing this sub-org if user has admin power */}
-              {isSubOrgScope && parentSlugForLinks && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'owner') && (
+              {isSubOrgScope && parentSlugForLinks && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'steward' || currentOrg.user_role === 'owner') && (
                 <NavLink
                   to={urlFor(parentSlugForLinks, 'admin-sub-org-settings', currentOrg.slug)}
                   className={({ isActive }) =>
@@ -441,7 +441,7 @@ export default function Nav() {
               ))}
             </>
           )}
-          {isSubOrgScope && parentSlugForLinks && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'owner') && (
+          {isSubOrgScope && parentSlugForLinks && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'steward' || currentOrg.user_role === 'owner') && (
             <Link
               to={urlFor(parentSlugForLinks, 'admin-sub-org-settings', currentOrg.slug)}
               onClick={() => setMobileOpen(false)}
