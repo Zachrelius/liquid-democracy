@@ -252,8 +252,10 @@ def test_upgrade_downgrade_upgrade_cycle():
         assert roles_per_org_a == 4
         assert roles_per_org_b == 4
 
-        # 2. Downgrade -1 -> roles tables gone, legacy `role` restored
-        _run_alembic(db_url, "downgrade", "-1")
+        # 2. Downgrade -2 -> roles tables gone, legacy `role` restored
+        # (Phase 12 Stage 2 added a second migration: -1 reverses only the
+        # Stage 2 row inserts; -2 reverses the full Stage 1 schema change.)
+        _run_alembic(db_url, "downgrade", "-2")
         engine = sa.create_engine(db_url)
         assert not _table_exists(engine, "roles")
         assert not _table_exists(engine, "role_permissions")
@@ -303,13 +305,22 @@ def test_upgrade_downgrade_upgrade_cycle():
 
 
 def test_role_permissions_seeded_per_preset_role():
-    """After upgrade: each preset role has the expected number of
-    role_permissions rows (steward/admin = 23, moderator = 8, member = 0).
+    """After running the FULL migration chain to head (Stage 1 + Stage 2):
+    each preset role has the expected number of role_permissions rows.
 
-    The dispatch's expected counts ("23/21/10/0") are stale relative to the
-    spec's permission registry; the actual spec table at
-    phase12_configurable_role_permissions_stage1_spec.md lines 106-145
-    yields 23/23/8/0. This test asserts what the spec actually says.
+    Stage 1 seeded 23/23/8/0 (only TRUE grants are inserted). Stage 2's
+    migration inserts a `role_permissions.edit` row for ALL FOUR preset
+    roles per spec lines 162-164: steward=True, admin=True, moderator=False,
+    member=False. So:
+      - steward: 23 (Stage 1 trues) + 1 (Stage 2 true) = 24
+      - admin:   23 (Stage 1 trues) + 1 (Stage 2 true) = 24
+      - moderator: 8 (Stage 1 trues) + 1 (Stage 2 false) = 9
+      - member:    0 (Stage 1 trues) + 1 (Stage 2 false) = 1
+
+    has_permission falls through to False on missing rows so the False rows
+    are functionally indistinguishable from the absence of a row at the
+    permission-resolution layer; they're inserted explicitly so the matrix
+    GET endpoint can echo the cell state from the DB without inferring it.
     """
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
@@ -334,20 +345,25 @@ def test_role_permissions_seeded_per_preset_role():
                     {"org_id": org_id},
                 ).fetchall()
                 counts = {sk: cnt for sk, cnt in rows}
-                assert counts.get("steward") == 23, (
-                    f"org {org_id}: steward should have 23 permissions, "
+                assert counts.get("steward") == 24, (
+                    f"org {org_id}: steward should have 24 permissions "
+                    f"(Stage 1's 23 + Stage 2's role_permissions.edit), "
                     f"got {counts.get('steward')}"
                 )
-                assert counts.get("admin") == 23, (
-                    f"org {org_id}: admin should have 23 permissions, "
+                assert counts.get("admin") == 24, (
+                    f"org {org_id}: admin should have 24 permissions "
+                    f"(Stage 1's 23 + Stage 2's role_permissions.edit), "
                     f"got {counts.get('admin')}"
                 )
-                assert counts.get("moderator") == 8, (
-                    f"org {org_id}: moderator should have 8 permissions, "
-                    f"got {counts.get('moderator')}"
+                assert counts.get("moderator") == 9, (
+                    f"org {org_id}: moderator should have 9 permissions "
+                    f"(Stage 1's 8 trues + Stage 2's role_permissions.edit "
+                    f"row [enabled=False]), got {counts.get('moderator')}"
                 )
-                assert counts.get("member") == 0, (
-                    f"org {org_id}: member should have 0 permissions, "
+                assert counts.get("member") == 1, (
+                    f"org {org_id}: member should have 1 permission row "
+                    f"(Stage 2's role_permissions.edit [enabled=False] — "
+                    f"Stage 1 inserted no rows for member), "
                     f"got {counts.get('member')}"
                 )
         engine.dispose()
