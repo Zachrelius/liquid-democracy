@@ -3,6 +3,7 @@ import { NavLink, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 import { urlFor } from '../utils/urls';
+import { ADMIN_NAV_SUBSECTION_PERMISSIONS } from '../constants/admin_nav_permissions';
 import Avatar from './Avatar';
 import NotificationBadge from './NotificationBadge';
 
@@ -176,7 +177,7 @@ function OrgSwitcher() {
 
 export default function Nav() {
   const { user, logout } = useAuth();
-  const { currentOrg, userOrgs, isAdmin, isModeratorOrAdmin } = useOrg();
+  const { currentOrg, userOrgs } = useOrg();
   const [menuOpen, setMenuOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -188,7 +189,67 @@ export default function Nav() {
   // pages target the parent org's slug. Sub-org admin pages have their own
   // route family.
   const isSubOrgScope = !!currentOrg?.parent_org_id;
-  const showLegacyAdminDropdown = isModeratorOrAdmin && !isSubOrgScope;
+
+  // Phase 12.5 F1 — permission-driven admin nav gating.
+  //
+  // Top-level Admin tab visibility was previously gated on `isModeratorOrAdmin`
+  // (a role-tier check). It is now gated on whether the user holds ANY
+  // resolved permission key on the active org. A Member granted a single
+  // admin-tier permission (e.g., `proposal.create`) via the matrix sees the
+  // Admin tab and the matching subsection only. A Member with no grants sees
+  // no Admin tab, same as before.
+  //
+  // Per-subsection visibility uses ADMIN_NAV_SUBSECTION_PERMISSIONS — each
+  // subsection appears iff the user has at least one of its mapped keys. The
+  // legacy isAdmin role-tier shortcut is preserved only as a defensive
+  // membership-fallback check inside the permission lookup (cached pre-12.5
+  // responses without `user_permissions` get a one-time grace render via
+  // role-tier).
+  const userPerms = Array.isArray(currentOrg?.user_permissions)
+    ? currentOrg.user_permissions
+    : null;
+
+  // Cache-safety fallback: if the response predates Phase 12.5 and lacks
+  // user_permissions, fall back to the legacy isAdmin role check so the
+  // admin tab doesn't disappear during the deploy cutover. Once the bundle
+  // and backend both ship, every response carries user_permissions and this
+  // fallback is unused.
+  const legacyIsAdmin = !!(
+    currentOrg &&
+    (currentOrg.user_role === 'admin' ||
+      currentOrg.user_role === 'steward' ||
+      currentOrg.user_role === 'owner' ||
+      currentOrg.user_role === 'moderator')
+  );
+
+  function hasAny(keys) {
+    if (userPerms) return keys.some((k) => userPerms.includes(k));
+    return legacyIsAdmin;
+  }
+
+  // Top-level admin tab: any permission at all.
+  const hasAnyAdminPerm = userPerms ? userPerms.length > 0 : legacyIsAdmin;
+  const showLegacyAdminDropdown = hasAnyAdminPerm && !isSubOrgScope;
+
+  // Per-subsection visibility flags.
+  const showProposals = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.proposals);
+  const showTopics = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.topics);
+  const showMembers = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.members);
+  const showSubOrgs = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.subOrgs);
+  const showDelegates = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.delegates);
+  const showPolises = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.polises);
+  const showSettings = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.settings);
+  const showPermissions = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.permissions);
+  const showAnalytics = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.analytics);
+
+  // Sub-org admin shortcut still relies on role-tier (sub-org user_role
+  // hasn't been fully ported to permission-driven gating; that's tracked
+  // as out-of-scope for 12.5 since sub-org settings UI is its own surface).
+  const subOrgUserIsAdmin = !!(currentOrg && (
+    currentOrg.user_role === 'admin' ||
+    currentOrg.user_role === 'steward' ||
+    currentOrg.user_role === 'owner'
+  ));
 
   // Phase 11 — resolve parent slug for org-scoped link construction. When
   // the user is scoped to a sub-org, walk up to the parent for parent-org
@@ -263,19 +324,19 @@ export default function Nav() {
                   {adminOpen && (
                     <div className="absolute left-0 top-full mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden">
                       {[
-                        isAdmin && { to: urlFor(parentSlugForLinks, 'admin-settings'), label: 'Org Settings' },
-                        // Phase 12 Stage 2 F1/D3 — Permissions matrix entry.
-                        // Tier shortcut: shown to admin+steward (default
-                        // DEFAULT_GRANTS for role_permissions.edit). Members
-                        // can still navigate directly for the read-only view.
-                        isAdmin && { to: urlFor(parentSlugForLinks, 'admin-permissions'), label: 'Permissions' },
-                        { to: urlFor(parentSlugForLinks, 'admin-members'), label: 'Members' },
-                        { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
-                        { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
-                        { to: urlFor(parentSlugForLinks, 'admin-polises'), label: 'Polises' },
-                        isAdmin && { to: urlFor(parentSlugForLinks, 'admin-delegates'), label: 'Delegate Applications' },
-                        isAdmin && { to: urlFor(parentSlugForLinks, 'admin-analytics'), label: 'Analytics' },
-                        isAdmin && { to: urlFor(parentSlugForLinks, 'admin-sub-orgs'), label: 'Sub-Organizations' },
+                        // Phase 12.5 F1 — each subsection gates on the
+                        // ADMIN_NAV_SUBSECTION_PERMISSIONS mapping, not on
+                        // role tier. A Member granted a single key sees
+                        // only the matching subsection.
+                        showSettings && { to: urlFor(parentSlugForLinks, 'admin-settings'), label: 'Org Settings' },
+                        showPermissions && { to: urlFor(parentSlugForLinks, 'admin-permissions'), label: 'Permissions' },
+                        showMembers && { to: urlFor(parentSlugForLinks, 'admin-members'), label: 'Members' },
+                        showProposals && { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
+                        showTopics && { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
+                        showPolises && { to: urlFor(parentSlugForLinks, 'admin-polises'), label: 'Polises' },
+                        showDelegates && { to: urlFor(parentSlugForLinks, 'admin-delegates'), label: 'Delegate Applications' },
+                        showAnalytics && { to: urlFor(parentSlugForLinks, 'admin-analytics'), label: 'Analytics' },
+                        showSubOrgs && { to: urlFor(parentSlugForLinks, 'admin-sub-orgs'), label: 'Sub-Organizations' },
                       ].filter(Boolean).map((item, i) => (
                         <Link
                           key={item.to}
@@ -294,7 +355,7 @@ export default function Nav() {
               )}
 
               {/* Sub-org scope shortcut — link back to managing this sub-org if user has admin power */}
-              {isSubOrgScope && parentSlugForLinks && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'steward' || currentOrg.user_role === 'owner') && (
+              {isSubOrgScope && parentSlugForLinks && subOrgUserIsAdmin && (
                 <NavLink
                   to={urlFor(parentSlugForLinks, 'admin-sub-org-settings', currentOrg.slug)}
                   className={({ isActive }) =>
@@ -426,16 +487,17 @@ export default function Nav() {
                 <p className="text-xs text-blue-300 mb-1">Admin</p>
               </div>
               {[
-                isAdmin && { to: urlFor(parentSlugForLinks, 'admin-settings'), label: 'Org Settings' },
-                // Phase 12 Stage 2 F1/D3 — mobile mirror of "Permissions".
-                isAdmin && { to: urlFor(parentSlugForLinks, 'admin-permissions'), label: 'Permissions' },
-                { to: urlFor(parentSlugForLinks, 'admin-members'), label: 'Members' },
-                { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
-                { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
-                { to: urlFor(parentSlugForLinks, 'admin-polises'), label: 'Polises' },
-                isAdmin && { to: urlFor(parentSlugForLinks, 'admin-delegates'), label: 'Delegate Apps' },
-                isAdmin && { to: urlFor(parentSlugForLinks, 'admin-analytics'), label: 'Analytics' },
-                isAdmin && { to: urlFor(parentSlugForLinks, 'admin-sub-orgs'), label: 'Sub-Orgs' },
+                // Phase 12.5 F1 — mobile mirror of the desktop dropdown,
+                // using the same per-subsection permission flags.
+                showSettings && { to: urlFor(parentSlugForLinks, 'admin-settings'), label: 'Org Settings' },
+                showPermissions && { to: urlFor(parentSlugForLinks, 'admin-permissions'), label: 'Permissions' },
+                showMembers && { to: urlFor(parentSlugForLinks, 'admin-members'), label: 'Members' },
+                showProposals && { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
+                showTopics && { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
+                showPolises && { to: urlFor(parentSlugForLinks, 'admin-polises'), label: 'Polises' },
+                showDelegates && { to: urlFor(parentSlugForLinks, 'admin-delegates'), label: 'Delegate Apps' },
+                showAnalytics && { to: urlFor(parentSlugForLinks, 'admin-analytics'), label: 'Analytics' },
+                showSubOrgs && { to: urlFor(parentSlugForLinks, 'admin-sub-orgs'), label: 'Sub-Orgs' },
               ].filter(Boolean).map(item => (
                 <Link
                   key={item.to}
@@ -448,7 +510,7 @@ export default function Nav() {
               ))}
             </>
           )}
-          {isSubOrgScope && parentSlugForLinks && (currentOrg.user_role === 'admin' || currentOrg.user_role === 'steward' || currentOrg.user_role === 'owner') && (
+          {isSubOrgScope && parentSlugForLinks && subOrgUserIsAdmin && (
             <Link
               to={urlFor(parentSlugForLinks, 'admin-sub-org-settings', currentOrg.slug)}
               onClick={() => setMobileOpen(false)}
