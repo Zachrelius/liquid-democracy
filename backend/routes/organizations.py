@@ -818,10 +818,14 @@ def create_invitations(
     db.commit()
 
     # Phase 9.6 W1: actually send the emails (was missing in Phase 4c).
+    # Phase 12.7 E: pass the org's branded primary color when configured so
+    # the invitation email matches the org's identity (heading + button).
+    org_primary = (org.settings or {}).get("branding", {}).get("primary_color")
     for inv in invitations:
         background_tasks.add_task(
             send_invitation_email,
             inv.email, inv.token, org.name, org.slug, app_settings.base_url,
+            org_primary,
         )
 
     return [schemas.InvitationOut(
@@ -905,9 +909,12 @@ def resend_invitation(
     inv.expires_at = _now() + timedelta(days=7)
     inv.status = "pending"
     db.commit()
+    # Phase 12.7 E: pass the org's branded primary color for header/button.
+    org_primary = (org.settings or {}).get("branding", {}).get("primary_color")
     background_tasks.add_task(
         send_invitation_email,
         inv.email, inv.token, org.name, org.slug, app_settings.base_url,
+        org_primary,
     )
     return {"message": "Invitation resent"}
 
