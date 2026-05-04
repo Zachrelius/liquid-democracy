@@ -4,6 +4,8 @@ import { useOrg } from '../../OrgContext';
 import { urlFor } from '../../utils/urls';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
+// Phase 12.5 F2 — per-control permission gating.
+import { useHasPermission } from '../../hooks/useHasPermission';
 
 /**
  * Phase 8.5 — Sub-Organizations list (parent-org admin entry point).
@@ -16,7 +18,12 @@ import { useToast } from '../../components/Toast';
  * always reach this list and create sub-orgs even without sub-org membership.
  */
 export default function SubOrgList() {
-  const { currentOrg, isAdmin, fetchSubOrgsFor, invalidateSubOrgs } = useOrg();
+  const { currentOrg, fetchSubOrgsFor, invalidateSubOrgs } = useOrg();
+  // Phase 12.5 F2 — Create sub-org gated on `sub_org.create`. (Sub-org
+  // delete itself remains correctly matrix-routed via sub_org.delete on
+  // the SubOrgSettings surface — see Phase 12 Stage 2 F7 — and is
+  // intentionally LEFT ALONE here.)
+  const canCreateSubOrg = useHasPermission('sub_org.create');
   const toast = useToast();
   const [subOrgs, setSubOrgs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -96,7 +103,8 @@ export default function SubOrgList() {
             Manage scoped governance groups inside <strong>{currentOrg.name}</strong>.
           </p>
         </div>
-        {isAdmin && !showCreate && (
+        {/* Phase 12.5 F2 — Create gated on `sub_org.create`. */}
+        {canCreateSubOrg && !showCreate && (
           <button
             onClick={() => setShowCreate(true)}
             className="text-sm px-4 py-2 bg-[#1B3A5C] text-white rounded-lg hover:bg-[#2E75B6] transition-colors"

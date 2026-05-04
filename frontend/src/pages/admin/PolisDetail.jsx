@@ -8,6 +8,8 @@ import api from '../../api';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 import useSubOrg from '../../useSubOrg';
+// Phase 12.5 F2 — per-control permission gating.
+import { useHasPermission } from '../../hooks/useHasPermission';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
 import PolisEmbed from '../../components/PolisEmbed';
 import PolisDisclosureModal from '../../components/PolisDisclosureModal';
@@ -34,10 +36,14 @@ export default function PolisDetail() {
   const params = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { currentOrg, isModeratorOrAdmin, userOrgs } = useOrg();
+  const { currentOrg, userOrgs } = useOrg();
   const toast = useToast();
   const confirm = useConfirm();
   const publicConfig = usePublicConfig();
+  // Phase 12.5 F2 — Admin controls (Edit title, Archive, Export) gated on
+  // `polis.manage`. Hook called here at the top so it runs every render
+  // (rules-of-hooks); the resolved value flows into showAdminControls below.
+  const canManagePolis = useHasPermission('polis.manage');
 
   // Sub-org dispatch — only present when path contains :sub_slug.
   const subOrgCtx = useSubOrg();
@@ -159,14 +165,15 @@ export default function PolisDetail() {
   }
 
   // is_polis_admin is computed server-side; backend 403s on PATCH/export
-  // when the caller doesn't qualify. Client-side proxy: show admin controls
-  // if (a) viewer created it OR (b) viewer is admin/moderator of the parent
-  // org OR (c) we're on a sub-org route and viewer is sub-org admin (covers
-  // Decision 6 implicit power, since parent admins always pass through too).
+  // when the caller doesn't qualify. Phase 12.5 F2 — gate the client-side
+  // proxy on `polis.manage` (resolved at the top of the function above) plus
+  // the creator-visibility fallback and the sub-org admin role-tier check
+  // (Decision-6 implicit power; sub-org permission system is out of scope
+  // for 12.5).
   const viewerCreated = polis.created_by === user?.id;
   const subOrgUserRole = isSubOrgRoute ? subOrgCtx.subOrg?.user_role : null;
   const isSubOrgAdmin = subOrgUserRole === 'admin' || subOrgUserRole === 'steward' || subOrgUserRole === 'owner';
-  const showAdminControls = !!(viewerCreated || isModeratorOrAdmin || isSubOrgAdmin);
+  const showAdminControls = !!(viewerCreated || canManagePolis || isSubOrgAdmin);
 
   const isArchived = polis.status === 'archived';
   const conversationId = polis.polis_conversation_id;
