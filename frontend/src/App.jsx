@@ -7,6 +7,7 @@ import { ConfirmProvider } from './components/ConfirmDialog';
 import ProtectedRoute from './ProtectedRoute';
 import AdminRoute from './AdminRoute';
 import AdminOnlyRoute from './AdminOnlyRoute';
+import { ADMIN_NAV_SUBSECTION_PERMISSIONS } from './constants/admin_nav_permissions';
 import Nav from './components/Nav';
 import EmailVerificationBanner from './components/EmailVerificationBanner';
 // Phase 10.1 W3 — gentle, mobile-only PWA install affordance. Mounted once
@@ -285,7 +286,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <AdminOnlyRoute>
+                <AdminOnlyRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.settings}>
                   <OrgScopedLayout><OrgSettings /></OrgScopedLayout>
                 </AdminOnlyRoute>
               </OrgProvider>
@@ -310,7 +311,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <AdminRoute>
+                <AdminRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.members}>
                   <OrgScopedLayout><Members /></OrgScopedLayout>
                 </AdminRoute>
               </OrgProvider>
@@ -322,7 +323,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <AdminRoute>
+                <AdminRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.proposals}>
                   <OrgScopedLayout><ProposalManagement /></OrgScopedLayout>
                 </AdminRoute>
               </OrgProvider>
@@ -334,7 +335,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <AdminRoute>
+                <AdminRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.topics}>
                   <OrgScopedLayout><Topics /></OrgScopedLayout>
                 </AdminRoute>
               </OrgProvider>
@@ -346,7 +347,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <AdminOnlyRoute>
+                <AdminOnlyRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.delegates}>
                   <OrgScopedLayout><DelegateApplications /></OrgScopedLayout>
                 </AdminOnlyRoute>
               </OrgProvider>
@@ -358,7 +359,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <AdminOnlyRoute>
+                <AdminOnlyRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.analytics}>
                   <OrgScopedLayout><Analytics /></OrgScopedLayout>
                 </AdminOnlyRoute>
               </OrgProvider>
@@ -370,7 +371,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <AdminRoute>
+                <AdminRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.polises}>
                   <OrgScopedLayout><Polises /></OrgScopedLayout>
                 </AdminRoute>
               </OrgProvider>
@@ -382,7 +383,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <AdminRoute>
+                <AdminRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.polises}>
                   <OrgScopedLayout><CreatePolis /></OrgScopedLayout>
                 </AdminRoute>
               </OrgProvider>
@@ -394,7 +395,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <AdminRoute>
+                <AdminRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.polises}>
                   <OrgScopedLayout><PolisDetail /></OrgScopedLayout>
                 </AdminRoute>
               </OrgProvider>
@@ -406,7 +407,7 @@ export default function App() {
           element={
             <ProtectedRoute>
               <OrgProvider>
-                <AdminOnlyRoute>
+                <AdminOnlyRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.subOrgs}>
                   <OrgScopedLayout><SubOrgList /></OrgScopedLayout>
                 </AdminOnlyRoute>
               </OrgProvider>

@@ -315,9 +315,18 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
           </div>
         </div>
       ) : (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-xs text-blue-900">
-          Proposals will use this organization's default approval thresholds.
-          Ask an Admin or Steward if you need different thresholds for this proposal.
+        // Phase 12.6 C1 — show actual default percentages read-only.
+        // For sub-orgs the orgSettings prop is `effectiveSettings`, which
+        // walks the parent chain (per get_org_config), so the displayed
+        // numbers are whatever applies to this sub-org's proposals.
+        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+          <p className="text-sm font-medium text-[#1B3A5C] mb-1">Approval thresholds</p>
+          <p className="text-sm text-[#2C3E50]">
+            This proposal will use the organization's defaults:{' '}
+            <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>
+            {' / '}
+            <strong>{Math.round((orgSettings?.default_quorum_threshold ?? 0.40) * 100)}% quorum</strong>.
+          </p>
         </div>
       )}
 

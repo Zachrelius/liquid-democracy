@@ -33,10 +33,14 @@ const PERSONAS = [
       'Delegates everything to alice via global delegation. Shows how chains resolve.',
   },
   {
+    // Phase 12.6 D2 — frank promoted from "New Voter" to Moderator so the
+    // demo persona-picker exposes the four-tier role system. Underlying
+    // OrgMembership.role_id flipped on prod via direct DB UPDATE (D1).
     username: 'frank',
     displayName: 'Frank',
-    role: 'New Voter',
-    description: 'No delegations or follows yet. Start fresh.',
+    role: 'Moderator',
+    description:
+      "A trusted member with limited admin powers. Can create proposals, manage topics, approve member join requests, and moderate comments — but can't change settings or remove members.",
   },
   {
     username: 'admin',
