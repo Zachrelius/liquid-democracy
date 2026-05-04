@@ -18,7 +18,7 @@
 
 **PASS - Org-scoped endpoints:** All org-scoped endpoints in `routes/organizations.py` use `require_org_membership` or `require_org_admin` dependencies. The middleware in `org_middleware.py` correctly checks that the user has an active membership in the target organization before allowing access.
 
-**PASS - Admin endpoints:** All admin endpoints in `routes/admin.py` use `get_current_admin` which checks `user.is_admin`. Org-level admin endpoints in `routes/organizations.py` use `require_org_admin` which checks the membership role is `admin` or `owner`.
+**PASS - Admin endpoints:** All admin endpoints in `routes/admin.py` use `get_current_admin` which checks `user.is_admin`. Org-level admin endpoints in `routes/organizations.py` use `require_org_admin` which checks the membership role's `system_key` is `'admin'` or `'steward'` (Phase 12 Stage 1 — formerly `'admin'` or `'owner'`).
 
 **PASS - Private data:** Vote visibility is controlled by the `permissions.py` module (`can_see_votes`). Delegations are scoped to the current user in `list_my_delegations`. The vote flow graph uses privacy-aware node labeling, only revealing identities for public delegates, followed users, and users who delegate to the viewer.
 
@@ -268,11 +268,24 @@ The platform's privacy claim, after Phase 7C.1: **we hide who voted what, not wh
 
 ---
 
-## Privileged Access Tiers (Phase 7.5, 2026-04-26)
+## Privileged Access Tiers (Phase 7.5, 2026-04-26; updated Phase 12 Stage 1, 2026-05-03)
 
 Three roles can view data they don't own. This section pins what each tier
 is permitted to do, what it explicitly is not, and where the boundary is
 enforced in code.
+
+> **Phase 12 Stage 1 update (2026-05-03):** the per-org `'owner'` role
+> renamed to `'steward'`. The four preset role system_keys are now
+> `steward`, `admin`, `moderator`, `member` — code references roles by
+> `Role.system_key`, not by string equality on a column. Per-action
+> permission checks now go through `has_permission(db, user_id, org_id,
+> permission_key)` (see `backend/role_permissions.py`) which loads
+> `OrgMembership → Role → RolePermission` and caches results per request.
+> The Tier 2 boundary description below is unchanged in semantics — what
+> changed is only the implementation. Two operations remain hardcoded
+> outside the permission system: `org.delete` and `org.transfer_stewardship`
+> (if it exists) require `role.system_key == 'steward'` and cannot be
+> re-granted via the matrix UI Stage 2 will introduce.
 
 ### Tier 1 — Authenticated user
 

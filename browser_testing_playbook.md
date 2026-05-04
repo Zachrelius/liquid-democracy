@@ -759,7 +759,7 @@ Demo data: Pre-loaded
 **Goal:** Verify the delegate application admin page loads and shows correct state based on policy.
 
 **Steps:**
-1. Login as admin (owner)
+1. Login as admin (steward) <!-- Phase 12 Stage 1: 'owner' role renamed to 'steward' -->
 2. Navigate to Admin > Delegate Applications
 3. Observe the page
 
