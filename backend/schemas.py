@@ -1115,6 +1115,77 @@ class OrgUpdate(BaseModel):
         return v
 
 
+# Phase 12.7 B3+B4 — branding section of Organization.settings JSON.
+# Always present in /api/orgs responses with all-null fields when no
+# branding has been configured (frontend uses platform defaults in that
+# case). Persisted to ``Organization.settings.branding``; absent on
+# fresh org creation, populated as stewards opt in via the UI.
+
+# Hex format: #RRGGBB or #RGB. Backend just validates the shape; the
+# auto-derive logic for accent_color is frontend-only (frontend computes
+# the lighter shade and submits it explicitly with accent_auto_derived=True).
+_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def _validate_hex_color(value: Optional[str]) -> Optional[str]:
+    """Hex-color validator shared by BrandingUpdate fields.
+
+    Accepts ``None`` (means "leave unchanged" / "clear" depending on the
+    PATCH semantics in the route handler), or a hex string in ``#RRGGBB``
+    or ``#RGB`` form. Anything else raises a ValueError that Pydantic
+    surfaces as a 422 — the route handler converts to 400 if it wants
+    that shape.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or not _HEX_COLOR_RE.match(value):
+        raise ValueError(
+            "color must be a hex string in #RRGGBB or #RGB form"
+        )
+    return value
+
+
+class BrandingOut(BaseModel):
+    """Always-present branding shape on org responses.
+
+    All fields are nullable; when null, the frontend falls back to
+    platform defaults. ``accent_auto_derived`` defaults to False on
+    unconfigured orgs (no semantic meaning when accent_color is None,
+    but a consistent type makes the frontend's life easier).
+    """
+    logo_url: Optional[str] = None
+    primary_color: Optional[str] = None
+    accent_color: Optional[str] = None
+    accent_auto_derived: bool = False
+
+
+class BrandingUpdate(BaseModel):
+    """PATCH body for /api/orgs/{slug}/branding.
+
+    Partial-update semantics: keys NOT present in the request body are
+    left unchanged; keys present with ``null`` clear the value (frontend
+    will then use platform defaults). The route handler distinguishes
+    "key absent" from "key present and null" via ``model_dump(exclude_unset=True)``.
+
+    The logo_url is NOT settable here — logos are managed via
+    POST/DELETE /api/orgs/{slug}/logo which sets the URL as a side
+    effect of file upload.
+    """
+    primary_color: Optional[str] = None
+    accent_color: Optional[str] = None
+    accent_auto_derived: Optional[bool] = None
+
+    @field_validator("primary_color")
+    @classmethod
+    def validate_primary(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_hex_color(v)
+
+    @field_validator("accent_color")
+    @classmethod
+    def validate_accent(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_hex_color(v)
+
+
 class OrgOut(BaseModel):
     id: str
     name: str
@@ -1130,6 +1201,11 @@ class OrgOut(BaseModel):
     # Empty list for non-members. Frontend uses this to drive admin-nav and
     # in-page control gating without an extra round-trip.
     user_permissions: list[str] = []
+    # Phase 12.7 B4 — always-present branding object. Centralized via
+    # the _org_to_out helper in routes/organizations.py so every org-
+    # returning endpoint emits the same shape. All-null fields when the
+    # org hasn't configured branding.
+    branding: BrandingOut = BrandingOut()
     model_config = ConfigDict(from_attributes=True)
 
 
