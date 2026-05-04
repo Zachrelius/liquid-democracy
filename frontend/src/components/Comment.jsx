@@ -6,6 +6,7 @@ import Avatar from './Avatar';
 import UserLink from './UserLink';
 import CommentComposer from './CommentComposer';
 import renderMarkdown from '../utils/renderMarkdown';
+import { timeAgo } from '../utils/timeAgo';
 
 /**
  * Phase 10 W3 — single-comment renderer.
@@ -38,20 +39,6 @@ import renderMarkdown from '../utils/renderMarkdown';
  */
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
-
-function timeAgo(dateStr) {
-  if (!dateStr) return '';
-  const ms = Date.now() - new Date(dateStr).getTime();
-  if (ms < 60_000) return 'just now';
-  const mins = Math.floor(ms / 60_000);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  // Older than ~a month — show the date instead of "60d ago"
-  return new Date(dateStr).toLocaleDateString();
-}
 
 export default function Comment({
   comment,

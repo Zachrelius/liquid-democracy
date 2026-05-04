@@ -33,6 +33,7 @@ from sustained_majority import (
     is_approaching_floor,
     is_proposal_sustained_majority_active,
     should_trigger_failure,
+    support_ever_established,
 )
 
 
@@ -139,16 +140,24 @@ def build_status(
 
     extension_count = count_extensions(db, proposal.id)
 
-    # Pull the latest snapshot (if any).
-    latest_snap = (
+    # Phase 12.8 audit Tier 1, Item 5 — for binary, load all snapshots in
+    # the window so we can ask `support_ever_established` whether the
+    # floor should activate at all. Pre-12.8 the read path used only the
+    # latest snapshot and a bare `support < floor` check, so the UI banner
+    # reported "floor breached" the moment a non-zero vote dropped below
+    # the floor — even before any threshold-meeting consensus had ever
+    # existed in the window. The Phase 9.8 C1 worker fix already gates
+    # breach on `support_ever_established`; this aligns the read path.
+    all_snaps = (
         db.query(models.VoteSnapshot)
         .filter(models.VoteSnapshot.proposal_id == proposal.id)
-        .order_by(models.VoteSnapshot.simulated_time.desc())
-        .first()
+        .order_by(models.VoteSnapshot.simulated_time.asc())
+        .all()
     )
+    latest_snap = all_snaps[-1] if all_snaps else None
 
     if proposal.voting_method == "binary":
-        if latest_snap is None:
+        if not all_snaps:
             return schemas.SustainedMajorityStatus(
                 active=True,
                 threshold=config.threshold,
@@ -157,16 +166,23 @@ def build_status(
                 extension_count=extension_count,
                 voting_end=proposal.voting_end,
             )
-        sample = BinarySnapshotPoint(
-            simulated_time=latest_snap.simulated_time,
-            yes=latest_snap.yes_count,
-            no=latest_snap.no_count,
-            abstain=latest_snap.abstain_count,
-            total_eligible=latest_snap.total_eligible,
-        )
+        history = [
+            BinarySnapshotPoint(
+                simulated_time=s.simulated_time,
+                yes=s.yes_count,
+                no=s.no_count,
+                abstain=s.abstain_count,
+                total_eligible=s.total_eligible,
+            )
+            for s in all_snaps
+        ]
+        sample = history[-1]
         support = sample.support_fraction
+        established = support_ever_established(history, config)
         breached = (
-            sample.votes_cast > 0 and support < config.floor
+            established
+            and sample.votes_cast > 0
+            and support < config.floor
         )
         approaching = is_approaching_floor(sample, config)
         return schemas.SustainedMajorityStatus(

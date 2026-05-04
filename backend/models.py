@@ -150,17 +150,16 @@ class OrgMembership(Base):
     # ``roles.id``. The legacy string column is dropped by the
     # phase_12_role_permissions migration; code must reference the role's
     # ``system_key`` (via the ``role`` relationship) rather than this FK
-    # directly. Nullable in the model temporarily so the migration can
-    # backfill before flipping NOT NULL — production schema is NOT NULL.
-    role_id: Mapped[Optional[str]] = mapped_column(
-        String, ForeignKey("roles.id"), nullable=True, index=True,
+    # directly.
+    role_id: Mapped[str] = mapped_column(
+        String, ForeignKey("roles.id"), nullable=False, index=True,
     )
     status: Mapped[str] = mapped_column(String, default="active")  # active, suspended, pending_approval
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
     user: Mapped["User"] = relationship("User", back_populates="org_memberships")
     organization: Mapped["Organization"] = relationship("Organization", back_populates="memberships")
-    role: Mapped[Optional["Role"]] = relationship("Role", foreign_keys=[role_id])
+    role: Mapped["Role"] = relationship("Role", foreign_keys=[role_id])
 
 
 class SubOrgMembership(Base):

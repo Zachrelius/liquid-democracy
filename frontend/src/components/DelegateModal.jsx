@@ -7,17 +7,7 @@ import useScopeCoverage from '../hooks/useScopeCoverage';
 import { urlFor } from '../utils/urls';
 import Avatar from './Avatar';
 import VerifyEmailInlineNote from './VerifyEmailInlineNote';
-
-function timeAgo(dateStr) {
-  if (!dateStr) return '';
-  const ms = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
+import { timeAgo } from '../utils/timeAgo';
 
 // Decision 10 helper — map persisted chain_behavior values to the human-
 // readable phrasing called out in the cross-scope disclosure copy.
