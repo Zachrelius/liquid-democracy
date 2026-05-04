@@ -252,10 +252,11 @@ def test_upgrade_downgrade_upgrade_cycle():
         assert roles_per_org_a == 4
         assert roles_per_org_b == 4
 
-        # 2. Downgrade -2 -> roles tables gone, legacy `role` restored
-        # (Phase 12 Stage 2 added a second migration: -1 reverses only the
-        # Stage 2 row inserts; -2 reverses the full Stage 1 schema change.)
-        _run_alembic(db_url, "downgrade", "-2")
+        # 2. Downgrade -3 -> roles tables gone, legacy `role` restored
+        # (Phase 12.5 added a third migration on top of Stage 1+2: -1
+        # reverses only the Phase 12.5 row inserts; -2 reverses Stage 2's
+        # row inserts; -3 reverses the full Stage 1 schema change.)
+        _run_alembic(db_url, "downgrade", "-3")
         engine = sa.create_engine(db_url)
         assert not _table_exists(engine, "roles")
         assert not _table_exists(engine, "role_permissions")
@@ -345,24 +346,28 @@ def test_role_permissions_seeded_per_preset_role():
                     {"org_id": org_id},
                 ).fetchall()
                 counts = {sk: cnt for sk, cnt in rows}
-                assert counts.get("steward") == 24, (
-                    f"org {org_id}: steward should have 24 permissions "
-                    f"(Stage 1's 23 + Stage 2's role_permissions.edit), "
+                assert counts.get("steward") == 25, (
+                    f"org {org_id}: steward should have 25 permissions "
+                    f"(Stage 1's 23 + Stage 2's role_permissions.edit + "
+                    f"Phase 12.5's proposal.set_thresholds), "
                     f"got {counts.get('steward')}"
                 )
-                assert counts.get("admin") == 24, (
-                    f"org {org_id}: admin should have 24 permissions "
-                    f"(Stage 1's 23 + Stage 2's role_permissions.edit), "
+                assert counts.get("admin") == 25, (
+                    f"org {org_id}: admin should have 25 permissions "
+                    f"(Stage 1's 23 + Stage 2's role_permissions.edit + "
+                    f"Phase 12.5's proposal.set_thresholds), "
                     f"got {counts.get('admin')}"
                 )
-                assert counts.get("moderator") == 9, (
-                    f"org {org_id}: moderator should have 9 permissions "
+                assert counts.get("moderator") == 10, (
+                    f"org {org_id}: moderator should have 10 permissions "
                     f"(Stage 1's 8 trues + Stage 2's role_permissions.edit "
+                    f"row [enabled=False] + Phase 12.5's proposal.set_thresholds "
                     f"row [enabled=False]), got {counts.get('moderator')}"
                 )
-                assert counts.get("member") == 1, (
-                    f"org {org_id}: member should have 1 permission row "
-                    f"(Stage 2's role_permissions.edit [enabled=False] — "
+                assert counts.get("member") == 2, (
+                    f"org {org_id}: member should have 2 permission rows "
+                    f"(Stage 2's role_permissions.edit [enabled=False] + "
+                    f"Phase 12.5's proposal.set_thresholds [enabled=False] — "
                     f"Stage 1 inserted no rows for member), "
                     f"got {counts.get('member')}"
                 )

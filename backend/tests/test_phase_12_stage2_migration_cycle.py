@@ -224,8 +224,12 @@ def test_stage2_upgrade_downgrade_upgrade_cycle():
                 f"role_permissions.edit=False; got {by_role.get('member')!r}"
             )
 
-        # 2. Downgrade -1: reverse Stage 2 only.
-        _run_alembic(db_url, "downgrade", "-1")
+        # 2. Downgrade -2: reverse Phase 12.5 + Stage 2 (i.e., back to
+        # Stage 1's head). Phase 12.5 added a third migration on top of
+        # Stage 1+2; this test asserts Stage 2's effect specifically, so
+        # we need to step back two revisions to undo both Phase 12.5 and
+        # Stage 2 row inserts.
+        _run_alembic(db_url, "downgrade", "-2")
         engine = sa.create_engine(db_url)
         with engine.connect() as conn:
             tables = set(sa.inspect(conn).get_table_names())
