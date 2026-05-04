@@ -1005,3 +1005,86 @@ slug=demo org_id=835bc570-e3ae-4e05-a8b8-ed4b1b22ebdf name=Demo Organization cre
 ### Pass-summary
 
 **Phase 12 Stage 1 shipped clean in a single session** — 12 commits + closeout, no hot-fixes, no Railway incident, migration ran cleanly against prod's 40 OrgMembership rows. Backend foundation for the configurable permission matrix is now in place: `roles` + `role_permissions` tables, `has_permission(db, user_id, org_id, key)` helper with per-request cache, 23-key registry consumed via `GET /api/permissions/registry`. Every hardcoded role-string check across the backend now goes through the helper (or remains intentionally hardcoded for the two D4 owner-only operations). The "Owner" role label is now "Steward" — verified on prod that the 2 users who pre-migration had `role='owner'` (admin@demo, ZacharyPetertam@gamenights) now have `system_key='steward'` with no data lost. Backend tests 680 → 740 (+60). PG smoke PASS both modes. Multi-agent staging discipline held cleanly for the fourth pass running. **Stage 2 (permission matrix UI) and Stage 3 (org branding) are the natural next passes** — Stage 2 will be "frontend on a clean API" since Stage 1 already shipped the registry + helper.
+
+---
+
+## Phase 12 Stage 2 — Configurable Role Permissions: Permission Matrix UI — 2026-05-03
+
+**Single-session pass.** 7 commits on `phase-12/role-permissions-stage-2` no-ff merged to master at `495c928` + closeout. **LIVE on prod**, bundle `index-Bkxsy4xy.js`. Stage 2 of three-stage Greater Phase 12 arc — the user-facing payoff that builds on Stage 1's backend foundation. Per-org permission matrix at `/{org-slug}/admin/settings/permissions`: roles as columns, permissions as rows, checkbox per cell, save flow with audit logging. **PG smoke MANDATORY both modes PASS** (prior `c8f4a9d712e6`).
+
+### What shipped
+
+**Cluster B — Backend matrix endpoints + audit + lockout + 24th key:**
+- **B3 new permission key `role_permissions.edit`** (24th key, default Steward+Admin) added to `permission_registry.py` with category "Organization". DEFAULT_GRANTS counts updated: steward=24, admin=24, moderator=8, member=0. Migration `e6371e56e860` (prior `c8f4a9d712e6`): inserts 1 role_permissions row per existing org's 4 preset roles, idempotent (ON CONFLICT DO NOTHING semantics), reversible (downgrade DELETEs the inserted rows). Cycle test on SQLite passes upgrade→downgrade→re-upgrade.
+- **B4 STEWARD_LOCKED_PERMISSIONS frozenset** at `backend/role_permissions.py`: `{member.change_role, org.edit_settings, role_permissions.edit}` — three permissions that prevent self-lockout (without `member.change_role` Stewards can't promote new admins; without `org.edit_settings` they can't change basic org config; without `role_permissions.edit` they can't UNDO any matrix change). New `is_locked(role_system_key, permission_key)` helper. **`has_permission` belt-and-suspenders short-circuit**: Steward + locked key → return TRUE always, even if the underlying RolePermission row is corrupted to enabled=False or missing entirely. Cheap defense (one comparison) against direct DB tampering or migration mistakes.
+- **B1 `GET /api/orgs/{slug}/role-permissions`** at `backend/routes/role_permissions_routes.py` — any active org member (no permission gate; reading the matrix is open to all). Returns `{org_id, org_slug, roles[4 ordered by display_order], permissions{key:{role:bool}} for all 24 keys, locked: {steward: [3 protected keys]}}`. Frontend joins with the registry endpoint client-side.
+- **B2 `PATCH /api/orgs/{slug}/role-permissions`** — gated by `has_permission(user, org, "role_permissions.edit")`. Body `{changes: [{role_system_key, permission_key, enabled}]}`. Validates each cell against locked set, registry keys, role system_keys (4 presets only). Atomic transaction — invalid cell rejects the whole patch. **No-op (all changes already match) returns `{changes_applied: 0}` and skips audit insert** per Q3. Real changes produce **ONE audit event** `role_permissions.updated` with full structured `changes` payload (each entry has role_system_key, permission_key, old, new). Returns full new matrix in B1 shape so frontend doesn't need a follow-up GET. Last-writer-wins on concurrent edits (acceptable for friend-pilot scale per spec).
+- **B5 39 new tests**: 11 lockout/belt-and-suspenders + 26 endpoint coverage (happy/no-op/4 × locked-cell rejection/invalid-key/invalid-role/401/403/404 × 2/atomicity) + 2 migration cycle.
+
+**Cluster F — Frontend matrix UI + F7 D4 UI hiding:**
+- **F1 new route** `/{org_slug}/admin/settings/permissions` in `App.jsx`. NOT wrapped in AdminRoute — members get internal read-only mode (F6) rather than 403. New `'admin-permissions'` kind in urlFor helper. New "Permissions" link in Nav.jsx admin dropdown (desktop + mobile mirror), gated on `isAdmin` (steward+admin tier — tech-debt acknowledged that explicit non-tier grants of role_permissions.edit won't surface the link, but members can navigate directly).
+- **F2 `RolePermissionsPage.jsx`** (438 lines) renders matrix with all 24 permissions across 4 roles, 9 category section headers (Proposals / Topics / Members / Sub-organizations / Delegate applications / Polis (deliberation) / Comments / Organization / Audit and analytics), permissions in registry-defined order, roles ordered by display_order. Each cell: `<input type="checkbox" checked disabled?>`. Locked Steward cells render disabled+checked with a 🔒 glyph and `title="Required for Stewards — cannot be changed."` Pending changes visually marked with amber ring. Internal state: `serverMatrix` + `pendingChanges Map<"role:perm", boolean>` + derived `displayMatrix`. Toggle+untoggle returns to clean state (entry deleted from map when value matches server).
+- **F3 save flow**: Save button enabled only when `pendingChanges.size > 0`. Click → confirmation modal "You are about to change N role permission(s) in {org name}. X will be granted, Y will be revoked. Continue?" → PATCH `{changes}` → on 200, replace `serverMatrix` from response, clear `pendingChanges`, success toast "Permissions updated. {N} change(s) saved." On error: preserve pendingChanges + toast.error. 400 with locked-permission gets explicit "Some changes were rejected by the server: ..." defense-in-depth message. Discard flow: `useConfirm` "Discard {N} unsaved change(s)?" → clear pendingChanges (no server call).
+- **F6 read-only mode** for non-edit users: `currentOrg.user_role` not in (steward/admin/legacy owner) → all checkboxes disabled, Save+Discard not rendered, header text " (read-only)". Members navigate directly via URL; route is wrapped only in OrgScopedLayout (not AdminRoute).
+- **F4 last-writer-wins** per spec — no periodic refetch, no WebSocket. If two admins edit concurrently, second save's changes overwrite first's; acceptable for friend-pilot scale.
+- **F7 D4 hardcoded-gate UI hiding (audit + gate)**: AUDIT FOUND exactly 1 org-level delete-org control (`OrgSettings.jsx`); 4 matrix-routed delete controls correctly LEFT ALONE (sub-org delete via `sub_org.delete`, member remove via `member.remove`, invitation revocation, topic delete via `topic.delete`); transfer-stewardship endpoint doesn't exist yet (no UI to hide). `OrgSettings.jsx` was previously gated on `isOwner` (which already covered steward+legacy-owner so admins were already excluded); switched to explicit local `isSteward` with documented F7 rationale + retained legacy `'owner'` acceptance for cached-response safety during deploy cutover.
+
+**Cluster D — Docs + nav:**
+- **D1 on-page header copy** (frontend dev included verbatim from spec): explains role tiers + Steward lockout + audit logging at the top of RolePermissionsPage.
+- **D2 NEW `RolePermissionsHelp.jsx`** at `/help/role-permissions` (96 lines). Covers: the four preset roles + their defaults; common configurations ("Want moderators to delete proposals?" etc.); why three Steward permissions are locked; where audit log entries appear; and an EXPLICIT amber-bordered section explaining what is NOT in the matrix and why (org.delete + transfer-stewardship are Steward-only, live outside the matrix because they're load-bearing protections against self-lockout, UI hidden from non-Stewards as defense-in-depth on top of server 403).
+- **D3 nav link**: Permissions link added to admin nav (desktop dropdown + mobile mirror) gated on isAdmin tier.
+- **D4 SECURITY_REVIEW.md update**: new Phase 12 Stage 2 paragraph in Privileged Access Tiers section covering editability surface (any member reads, role_permissions.edit gates writes, Steward lockout protection set + belt-and-suspenders enforcement, per-save audit, F7 D4 UI hiding pattern, last-writer-wins concurrency posture).
+
+**Backend tests: 740 → 779 (+39).** Full suite green. **PG smoke PASS both modes.**
+**Bundle: 340.77 → 344.52 kB gzipped (+3.75 kB)** — under the 5-10 kB target (matrix page + help page + nav link).
+
+### Production verification
+
+| Check | Result | Evidence |
+|---|---|---|
+| Smoke (post-deploy auto-run via `poll_deploy.py`) | **5/5 PASS** | Bundle flipped at 41s; smoke ran in 1.72s |
+| **Migration count check on prod** | **PASS** | 232 total role_permissions rows (216 Stage 1 + 16 Stage 2 for `role_permissions.edit`); 16 = 4 orgs × 4 preset roles each gets the 24th key row |
+| **Registry endpoint** | **PASS** | `GET /api/permissions/registry` (auth) → 24 permissions / 9 categories (was 23 pre-Stage-2). |
+| **B1 GET matrix as alice (admin)** | **PASS** | 200, returns 4 roles + 24 permissions + `locked.steward = ['member.change_role', 'org.edit_settings', 'role_permissions.edit']`. Role system_keys all 4 presets present. |
+| **B1 GET matrix as carol (member, F6 read-only)** | **PASS** | 200 — members can read the matrix; the page renders read-only when they navigate to it. |
+| **B2 PATCH no-op (Q3 no-audit)** | **PASS** | `changes_applied: 0` returned + no audit row written. |
+| **B2 PATCH locked-cell rejection** | **PASS** | Attempt to set `(steward, role_permissions.edit, false)` → 400 with explicit error: *"Cannot change 'role_permissions.edit' for the Steward role: this permission is locked for the Steward role and cannot be changed."* |
+| **B2 PATCH 403 as member without role_permissions.edit** | **PASS** | carol PATCH → 403 (defaulted FALSE for member tier). |
+| **B2 PATCH real change end-to-end** | **PASS** | alice PATCH `(moderator, proposal.delete, true)` → 200 + `changes_applied: 1` + new matrix returned with the flip. Reverted via second PATCH (cleanup; prod state clean). |
+| F2 matrix render | PASS-by-source | Bundle deployed; frontend dev's commits include all 24 permissions × 4 roles + 9 category groupings + locked-cell tooltips. |
+| F3 save flow + confirmation modal + success toast | PASS-by-source | Bundle deployed; spec-verbatim copy + diff-counter logic in `RolePermissionsPage.jsx`. |
+| F6 read-only mode for moderator/member | PASS-by-source | Bundle deployed; F6 logic in `RolePermissionsPage.jsx` checks `currentOrg.user_role`. |
+| **F7 audit + UI hiding** | PASS-by-source + audit findings documented | OrgSettings.jsx delete-org button gated on `isSteward`. Matrix-routed delete controls (sub-org, members, topics, invitations) correctly LEFT ALONE. |
+| F7 backend defense-in-depth | **PASS-from-Stage-1** | DELETE /api/orgs/demo as alice (admin) → 403 (verified during Stage 1 closeout; unchanged). |
+
+### Phase 12 Stage 2 commit list
+
+- `c7f5794` F1 route + nav + urlFor for permissions matrix
+- `95006d5` F2/F3/F6 RolePermissionsPage matrix + save flow + read-only mode
+- `e3aeca7` F7 hide org-delete UI from non-Steward
+- `19e7042` B3 add `role_permissions.edit` (24th key) + migration `e6371e56e860`
+- `14c107c` B4 STEWARD_LOCKED_PERMISSIONS + is_locked + has_permission belt-and-suspenders
+- `304a01f` B1+B2 per-org matrix endpoints (read + write)
+- `29362c8` D help page (RolePermissionsHelp.jsx) + SECURITY_REVIEW.md editability surface
+- `495c928` Merge to master
+- closeout commit follows
+
+### Process notes
+
+1. **Multi-agent staging discipline held cleanly for the FIFTH pass running.** B + F ran fully parallel with explicit per-agent file ownership; lead handled D + closeout serially. All 7 workstream commits clean, no rewrites needed.
+2. **`poll_deploy.py` auto-smoke worked end-to-end again** — bundle flipped at 41s (Phase 11 was also 41s; Phase 12 Stage 1 was a fast 20s with warm cache). The W-FIX-D infrastructure from Phase 10.2 is now load-bearing for every JS-changing deploy.
+3. **F7 audit produced exactly the right discrimination** — frontend dev correctly identified that sub-org delete + member remove + topic delete + invitation revocation are matrix-routed and should NOT be tier-gated; only the org-level delete in OrgSettings.jsx needed the F7 gate. This is the kind of audit discipline the spec called out as the "most important non-mechanical piece" of F7, and it landed cleanly.
+4. **Cross-validation between B and F** — F built against the spec'd response shape before B's endpoints landed; once B committed, F's existing client code worked end-to-end without integration friction. Speaks to the value of locked spec contracts.
+
+### New tech debt
+
+1. **Tier shortcut for "Permissions" nav link visibility** (acknowledged in spec): if a moderator or member is later granted `role_permissions.edit` explicitly via the matrix, the nav link won't show even though they could navigate directly. Spec calls this acceptable Stage-2 tradeoff. A future pass could expose `has_permission` as a per-permission API endpoint or include the user's effective permission set in the org GET payload.
+2. **F6 read-only detection uses tier shortcut too** — same caveat. A moderator with explicit `role_permissions.edit` would see read-only even though the backend would let them save. Same future-fix as above.
+3. **F7 legacy `'owner'` acceptance** in OrgSettings.jsx kept defensively to avoid lockout during deploy cutover when cached `/api/orgs` payloads may still report `'owner'`. Once Stage 1 + Stage 2 are fully cut over and cached responses age out (~1 week post-deploy), the gate can tighten to strict `'steward'`.
+4. **`role_seed.py` only inserts True grants** so freshly-seeded orgs have no row for moderator/member × `role_permissions.edit` while migrated orgs do (the migration explicitly inserts False rows). Functionally identical (B1 endpoint defaults missing rows to False), but a future pass could update the seed helper to insert explicit False rows for any (preset role, registry key) pair not in DEFAULT_GRANTS for tidiness.
+5. **No "reset to defaults" button** — a natural follow-up. Single button that reverts the org's matrix to the registry's default-grant table; needs confirmation modal (destructive). Spec called it out as out-of-scope but worth a future ~half-session pass.
+6. **No bulk operations** (copy column to column, "give Moderator the same permissions as Admin"). Useful for orgs setting up custom configs; not urgent without that demand signal.
+
+### Pass-summary
+
+**Phase 12 Stage 2 shipped clean in a single session** — 7 commits + closeout, no hot-fixes, no Railway incident. The Greater Phase 12 arc's user-facing payoff is now live: any org with a Steward or Admin can navigate to `/{org-slug}/admin/settings/permissions` and edit the per-role permission matrix through a checkbox UI, with audit logging on every save, and three Steward permissions hardcoded TRUE to prevent self-lockout. The matrix is read-only-viewable by all org members for accountability. The D4 hardcoded gates (`org.delete` and the future `transfer-stewardship`) are now hidden from non-Steward UI as defense-in-depth on top of Stage 1's existing 403s. Backend tests 740 → 779 (+39). Bundle gzip +3.75 kB. PG smoke PASS both modes. Multi-agent staging discipline held for the fifth pass running. Stage 3 (org branding — logo upload, color picker, dynamic theming) is the natural final stage of the Greater Phase 12 arc and the next planning conversation.
