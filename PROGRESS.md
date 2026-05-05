@@ -1630,3 +1630,128 @@ The Railway log access runbook (commit `052fa7b`) was committed to `phase-13-1/s
 ### Pass-summary
 
 **Phase 13.1 W-DEPLOY-1 attempted, failed the same way Phase 13 did, reverted.** The bisection successfully ruled out emission, email, and scheduler as causes — all three were held back from this deploy and prod still failed. The remaining surface (storage, endpoints, frontend, migration) cannot be split further without artificial surgery. The actual root cause is in that surface but not observable without Railway log access. **Two prod deploys, two reverts, ~75 minutes of cumulative prod-down across both incidents.** Phase 13.1 is paused pending Z's decision on log access (W-DEPLOY-2 and W-DEPLOY-3 are NOT attempted — W-DEPLOY-1 covers the smallest possible surface and proves further bisection won't help). The `phase-13/notifications` branch + Phase 13.1 W-RUNBOOK content (in git history) are preserved for whatever path Z chooses.
+
+---
+
+## Phase 13.2 — Notifications Redeploy with Log Observability — SHIPPED 2026-05-05
+
+**The Phase 13 storage layer is finally live.** Z provisioned a Railway Hobby plan and project token; with log access in place the team caught the actual prod failure mode (a Postgres `BOOLEAN DEFAULT 0` `DatatypeMismatch` in the migration), fixed it (`sa.text("0")` → `sa.false()`), re-shipped, and verified end-to-end within the same session. **Master `8192836`, prod bundle `index-Bz7dC8k8.js`, smoke 5/5 PASS, /api/notifications/registry returns 401 (auth gate working), /help/notifications 200.** Three deploy attempts in this pass: first attempt failed with the boolean default error, was reverted; the migration fix was applied but the merge was botched (only the migration file came over, 17 other files missing) — also reverted; the corrected merge shipped clean. ~30 minutes of cumulative prod-down across the two failed attempts.
+
+### What's live on prod (W-DEPLOY-1 scope only)
+
+This deploy ships the lowest-risk Phase 13 surface — storage + endpoints + frontend UI + help article. **Emission sites, email infrastructure, and the digest scheduler are STILL HELD BACK** for follow-up deploys (W-DEPLOY-2 and W-DEPLOY-3 patterns from `phase13_1_notifications_redeploy_spec.md`).
+
+Live:
+- `Notification` + `NotificationPreference` tables + 4 user columns (`timezone`, `digest_cadence`, `quiet_hours_enabled`, `notification_intro_dismissed`)
+- Migration `f1a3c8d92e60` applied successfully (prior attempts had this transactionally rolled back due to the boolean default error)
+- `EVENT_REGISTRY` (12 events / 5 categories) at `GET /api/notifications/registry`
+- 6 notification endpoints (GET list / POST {id}/read / POST mark-all-read / GET preferences / PATCH preferences / GET registry). All account-scoped, no role-tier gates (Item 30).
+- `emit_notification` helper (defined; not called from any emission site yet — that's W-DEPLOY-2)
+- 90-day cleanup helper (defined; scheduler that runs it lands in W-DEPLOY-3)
+- Notification center frontend (`NotificationBadge.jsx` rewritten; legacy polling removed; `polis_last_seen_*` localStorage cleanup hook)
+- `/notifications` full feed page
+- `/settings/notifications` matrix UI with 12-event x 2-channel grid + digest cadence + quiet hours + timezone + first-time banner
+- Settings nav link to /settings/notifications
+- `/help/notifications` help article
+- `formatNotification.js` with Item 22 routing (uses `notification.org_slug`, never first-parent fallback)
+- Phase 13.1 W-RUNBOOK + Phase 13.2 W-RUNBOOK-ADDENDUM merged into DEPLOYMENT.md
+
+NOT live (held for W-DEPLOY-2 / W-DEPLOY-3):
+- 12 emission sites (Cluster B emission, commit 602b005 on `phase-13/notifications`)
+- `send_org_email` helper + 15 email templates + asyncio digest scheduler + quiet-hours queue (Cluster E, commit a65d156)
+- HMAC-signed unsubscribe tokens + endpoint
+- SECURITY_REVIEW.md notification-privacy section
+- Item 22 retirement (audit doc + roadmap edits) — confirmed bundled with email-and-scheduler deploy per spec
+
+### Sequence
+
+**W-OBSERVABILITY-CHECK PASS (pre-deploy):** `RAILWAY_TOKEN` set from `.env`. `railway status` returned `Project: keen-learning / Environment: production / Service: backend`. Sampled 25 seconds of healthy production logs from the pre-13 master container. Captured the `--workers 4` startup-side-effect multiplication — each worker independently runs the FastAPI startup hook (4× `Creating database tables` / `Rebuilding delegation graphs` / `Startup complete` lines). Confirmed log line shape (structured JSON wrapped in stdout text, format `[INFO] {...json...} timestamp= logger=`). This is the unfamiliar variance that made Phase 13's prod failure unobservable to local single-worker tests.
+
+**Pre-merge gates (all PASS) on `phase-13-2/storage-and-ui`:**
+- Backend test suite: 850 → **879 (+29)**
+- PG smoke: PASS both modes (prior=41694d86821f). Note: pg_smoke MISSED the actual prod failure mode — see "pg_smoke gap" below.
+- W-START-CHECK PASS: uvicorn --workers 1 health 200 at +1s
+- Frontend bundle: 348.53 → **353.89 kB gzipped** (+5.36 kB; same as the failed Phase 13 attempt because Cluster F is identical)
+
+**Deploy attempt 1 (commit 320793b at 22:15Z):** Push triggered Railway redeploy. Bundle flipped to `index-Bz7dC8k8.js`. Backend went 502 sustained — same pattern as Phase 13 / Phase 13.1. **With logs visible this time**, captured the failure within ~2 minutes:
+
+```
+psycopg2.errors.DatatypeMismatch: column "quiet_hours_enabled" is of type boolean
+but default expression is of type integer
+HINT:  You will need to rewrite or cast the expression.
+[SQL: ALTER TABLE users ADD COLUMN quiet_hours_enabled BOOLEAN DEFAULT 0 NOT NULL]
+```
+
+The migration's `add_column(..., server_default=sa.text("0"))` for boolean columns. PostgreSQL strict-types BOOLEAN and rejects `0` as a default — needs `FALSE`. Reverted at `d2c9589`.
+
+**Critical implication:** Phase 13's original closeout claim that "the migration ran successfully on prod before backend failed" was wrong — based on inference, not observation. The migration failed at this exact `ADD COLUMN` step every prior attempt; the transaction rolled back; alembic_version stayed at `41694d86821f`. The new tables + columns were NEVER actually on prod. So this Phase 13.2 deploy is the FIRST time the Phase 13 schema additions actually land.
+
+**Diagnosis + fix:** Migration's `_NEW_USER_COLUMNS` metadata tuple + both `add_column` call sites changed `sa.text("0")` → `sa.false()` (which renders to dialect-correct `FALSE` on PG, accepted on SQLite). One commit, three replacements. Re-ran PG smoke: still PASS (the gap that made it miss originally is documented below). Frontend build clean.
+
+**Deploy attempt 2 (commit f508527):** Merge of the corrected branch. Hit a "delete in HEAD, modify in branch" conflict on the migration file (master had it deleted from the prior revert; branch had the fix). Resolved the conflict for that one file, committed, pushed. **The merge was incomplete** — only the migration file came over; the 17 other branch files (router, models, frontend pages, etc.) were silent casualties of the same prior-revert deletion. Build succeeded but produced the OLD frontend bundle (`index-BYwI_Jxw.js`) because no Cluster F changes made it into the merge. Reverted at `bfffbae`.
+
+**Deploy attempt 3 (commit 160999f):** Re-applied the full branch via explicit `git checkout phase-13-2/storage-and-ui -- <18 files>` + commit. All 18 files now in master. Pushed.
+
+**Result:** Bundle flipped to `index-Bz7dC8k8.js` at +50s (no smoke gap this time). `backend_ok=True` from the start of polling. Smoke 5/5 PASS in 6.95s. Healthy-startup log signature captured (4 workers, each reaching `Application startup complete`). New endpoints reachable: `/api/notifications/registry` returns 401 (auth gate working — the schema is live and the endpoint validates auth before returning 200).
+
+### Phase 13.2 commit list
+
+- `bb47836` Phase 13.2 D1 — NotificationsHelp at /help/notifications
+- `5080e6d 76147f2 a739ebc e87342f` Cluster B foundation cherry-picks
+- `00ad390 ebd6154` Cluster F cherry-picks
+- `98cdd8b` Migration fix sa.text("0") → sa.false() (Phase 13.2 W-DEPLOY-1-RETRY fix)
+- `320793b` Merge attempt 1 — REVERTED at d2c9589
+- `f508527` Merge attempt 2 (incomplete; only migration file) — REVERTED at bfffbae
+- `160999f` Merge attempt 3 (corrected; all 18 files) — LIVE on prod
+- `8192836` W-RUNBOOK + W-RUNBOOK-ADDENDUM in DEPLOYMENT.md
+
+### W-RUNBOOK-ADDENDUM
+
+DEPLOYMENT.md gains a comprehensive "Reading Railway logs during a 502 incident" section (~135 lines) covering: dashboard + CLI access, healthy-startup log baseline (the actual capture from this deploy), the failure-mode → diagnosis cheatsheet (8 entries from the 13.2 root-cause analysis), the start.sh ordering invariant, when-to-revert-vs-hot-fix guidance, the pg_smoke gap explanation, and the 60-day token rotation procedure. The healthy-startup baseline documents the `--workers 4` startup-side-effect multiplication that was unfamiliar variance during the Phase 13 diagnosis.
+
+### pg_smoke gap (logged for follow-up)
+
+Phase 13.1 and Phase 13.2's first attempt both passed `pg_smoke --mode both` against the migration that ultimately failed in production. The miss path:
+
+- pg_smoke's "upgrade-from-prior" mode runs `create_all` first (using model defs which have `server_default="0"` as a string literal that SQLAlchemy somehow accepts on PG when emitted via `metadata.create_all`) BEFORE running `alembic upgrade head`. By the time alembic upgrade runs, the columns already exist; the migration's idempotent skip-path is hit; the failing `add_column(..., server_default=sa.text("0"))` is never exercised against a fresh PG schema.
+- pg_smoke's "fresh-DB" mode is `create_all + stamp head`; the migration body is never run.
+
+A better pg_smoke pattern (queued as tech debt for a follow-up): stamp at the prior revision with the prior schema (no Phase-13 columns), then run `alembic upgrade head` directly. That would exercise the actual add_column path against a fresh PG. Until that lands, any pass that adds boolean columns to existing tables should add a manual smoke: spin fresh PG, apply prior migration head, run new migration directly via alembic.
+
+### Browser verification
+
+Did NOT run F7 browser-verify checklist this session — chrome-in-Claude state from prior sessions was unavailable. The functional smoke (5/5 prod smoke + curl probes of `/api/notifications/registry` + `/help/notifications` + `/api/health` × 5) covers the load-bearing surfaces. Visual verification of the preferences UI matrix + first-time banner + localStorage cleanup is queued as a Z_ACTION_PENDING item alongside the prior Phase 12.7 F7 visual gap.
+
+### Z-decision items / queued
+
+1. **W-DEPLOY-2 (emission sites) is queued.** Per `phase13_1_notifications_redeploy_spec.md` W-DEPLOY-2 section. Cherry-pick `602b005` from `phase-13/notifications`, apply defensive-import pattern to `sustained_majority_worker.py` (try/except around `from notification_emit import emit_notification`), W-START-CHECK + log-stream gates, deploy with logs visible, browser-verify the Item 22 multi-org routing test.
+
+2. **W-DEPLOY-3 (email + scheduler) is queued.** Per `phase13_1_notifications_redeploy_spec.md` W-DEPLOY-3 section. Cherry-pick `a65d156` + held SECURITY_REVIEW.md update + Item 22 retirement edits. Apply defensive-scheduler-launch pattern to main.py startup. Browser-verify the email + digest + quiet-hours flows.
+
+3. **F7 visual verification gap** carries forward (alongside Phase 12.7's): when chrome-in-Claude is reliably available, run the preferences-UI checklist + the multi-org routing test (W-DEPLOY-2's primary verification).
+
+4. **pg_smoke "actual upgrade path" tech debt:** add a new mode that exercises `alembic upgrade head` against a real prior-schema PG without `create_all` bootstrapping. Audit doc Item 8 (the `_resolve_linked_polises` N+1) is the closest analogy in style; this is its own item.
+
+5. **Item 22 retirement still pending.** Per spec, ships with W-DEPLOY-3 (the email + scheduler deploy). The audit doc + roadmap edits will land in that closeout.
+
+### Counts
+
+- **Backend tests: 850 → 879 (+29)** on `phase-13-2/storage-and-ui`. Foundation tests only.
+- **Frontend bundle: 348.53 → 353.89 kB gzipped (+5.36 kB).**
+- **Migration: f1a3c8d92e60 successfully applied to prod for the first time.** Two new tables + four user columns now exist.
+- **Smoke: 5/5 PASS** post-final-deploy.
+- **Prod health stability sample: 5/5 health=200** with response times <0.21s.
+
+### Process notes
+
+1. **Log access turned what had been three blind reverts into one observable diagnose-fix-redeploy cycle.** The total cycle time for the boolean-default fix was about 15 minutes from the failing deploy log to the corrected redeploy. Without log access, the same root cause would have required code surgery to bisect down to the schema layer + a careful migration audit + speculative fixes — easily 2-3 sessions of work. **The unblocking decision was correct.** The Railway Hobby plan + project token are now ongoing infrastructure; rotation reminder is in the runbook (60-day cycle).
+
+2. **The "delete in HEAD, modify in branch" merge conflict pattern is a real footgun.** When master has had a recent revert that removed files from HEAD, a subsequent merge from a branch that carries those files only flags the file that's BOTH deleted-and-modified — the files that were just deleted (not modified on the branch since deletion) silently don't come over. Lesson: after any post-revert merge, verify the file count makes sense vs `git diff master <branch> --stat` before pushing. Phase 13.2 burned one deploy attempt + revert cycle (~10 minutes prod-down) on this footgun; documenting here so the next post-revert merge avoids it.
+
+3. **Phase 13's original closeout was wrong about "migration ran successfully."** The closeout inferred from "no observed alembic error" that the migration succeeded; in fact, the alembic error was unobserved (no logs) and the transaction rolled back every time. This is the second documented case of "inference vs. observation" in the recent stream of incidents (the first was Phase 9.6's missing send_invitation_email call, where tests asserted 201 but never asserted the side effect). Different layer, same shape: pre-deploy verification was thorough but didn't actually exercise the failing path. The pg_smoke gap above is the structural fix for this specific case.
+
+4. **The bisection plan from Phase 13.1 worked correctly.** It correctly localized the failure to W-DEPLOY-1's surface (storage + endpoints + frontend) and ruled out emission, email, and scheduler. It just needed observability to find the root cause within that surface.
+
+### Pass-summary
+
+**Phase 13.2 W-DEPLOY-1-RETRY shipped after three attempts, two of which failed at the merge layer (one for the boolean-default bug caught by Railway log streaming; one for an incomplete merge that missed 17 of 18 branch files post-revert).** The Phase 13 storage layer is finally live on prod: tables, columns, endpoints, frontend UI, help article — all reachable, all responding correctly. Backend tests 879. Bundle 353.89 kB gzipped. Smoke 5/5 PASS. Two follow-up deploys queued per Phase 13.1's spec: W-DEPLOY-2 (emission sites) and W-DEPLOY-3 (email + scheduler + Item 22 retirement). The DEPLOYMENT.md runbook is comprehensive enough that the next 502 incident should be diagnose-and-fix-forward, not blind-revert. The Railway log access provisioning was the unblocking change; the pg_smoke gap is the next structural improvement.
