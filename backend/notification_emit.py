@@ -233,9 +233,21 @@ def emit_notification(
         if user.quiet_hours_enabled and _in_quiet_hours(_user_local_hour(user)):
             log.debug(
                 "emit_notification: suppressing real-time email for user=%s "
-                "event=%s — inside quiet hours; Cluster E queue will deliver",
+                "event=%s — inside quiet hours; flagging payload so the "
+                "9am-local digest tick flushes the queued email",
                 user_id, event_type,
             )
+            # Tag the in-app row so digest_scheduler.flush_quiet_hours_queue
+            # can pick it up at 9am local. If in_app was disabled (no row
+            # was inserted) we skip — the user opted out of in-app, so
+            # there's nothing to attach the flag to and the email is
+            # forfeited; this matches spec §E4 (quiet hours is an email-
+            # channel feature; in-app is the SoT feed).
+            if notification is not None:
+                merged = dict(payload or {})
+                merged["queued_for_quiet_hours_end"] = True
+                notification.payload = merged
+                db.flush()
         else:
             _queue_email_for_event(
                 background_tasks, user_id, event_type, payload,

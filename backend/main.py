@@ -240,7 +240,7 @@ async def proposal_websocket(websocket: WebSocket, proposal_id: str):
 # ---------------------------------------------------------------------------
 
 @app.on_event("startup")
-def startup() -> None:
+async def startup() -> None:
     log.info("Creating database tables…")
     create_tables()
 
@@ -264,6 +264,22 @@ def startup() -> None:
             "scripts/phase12_7_migrate_uploads.py to migrate legacy files.",
             _UPLOADS_BASE_DIR,
         )
+
+    # Phase 13 E3 — digest scheduler. Wakes hourly, processes daily/
+    # weekly digests + quiet-hours flush + 90-day cleanup. Gated on
+    # DISABLE_DIGEST_SCHEDULER env var so tests don't accidentally launch
+    # the loop. See backend/digest_scheduler.py for implementation choice
+    # rationale + DEPLOYMENT.md for the ops note.
+    from digest_scheduler import digest_loop, is_disabled
+    if is_disabled():
+        log.info(
+            "Digest scheduler disabled via DISABLE_DIGEST_SCHEDULER; "
+            "skipping startup task."
+        )
+    else:
+        import asyncio
+        asyncio.create_task(digest_loop())
+        log.info("Digest scheduler launched.")
 
     log.info("Startup complete.")
 
