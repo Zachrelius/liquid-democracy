@@ -522,6 +522,86 @@ def test_patch_preferences_idempotent_upsert(client, test_db):
 
 
 # ---------------------------------------------------------------------------
+# Phase 13 E2 — Unsubscribe via signed token
+# ---------------------------------------------------------------------------
+
+def test_unsubscribe_via_token_flips_email_pref_off(client, test_db):
+    from email_service import generate_unsubscribe_token
+
+    user = _make_user(test_db, "unsub_user")
+    # Pre-set email pref ON so we can confirm flip to OFF.
+    test_db.add(models.NotificationPreference(
+        user_id=user.id, event_type="comment.replied",
+        channel="email", enabled=True,
+    ))
+    test_db.commit()
+
+    token = generate_unsubscribe_token(user.id, "comment.replied")
+    resp = client.get(f"/api/notifications/unsubscribe/{token}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["success"] is True
+    assert body["event_type"] == "comment.replied"
+
+    pref = (
+        test_db.query(models.NotificationPreference)
+        .filter(
+            models.NotificationPreference.user_id == user.id,
+            models.NotificationPreference.event_type == "comment.replied",
+            models.NotificationPreference.channel == "email",
+        )
+        .first()
+    )
+    assert pref is not None
+    assert pref.enabled is False
+
+
+def test_unsubscribe_via_token_creates_row_when_absent(client, test_db):
+    from email_service import generate_unsubscribe_token
+
+    user = _make_user(test_db, "unsub_no_row_user")
+    test_db.commit()
+
+    token = generate_unsubscribe_token(user.id, "follow.requested")
+    resp = client.get(f"/api/notifications/unsubscribe/{token}")
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+
+    pref = (
+        test_db.query(models.NotificationPreference)
+        .filter(
+            models.NotificationPreference.user_id == user.id,
+            models.NotificationPreference.event_type == "follow.requested",
+            models.NotificationPreference.channel == "email",
+        )
+        .first()
+    )
+    assert pref is not None
+    assert pref.enabled is False
+
+
+def test_unsubscribe_invalid_token_returns_user_friendly_failure(client, test_db):
+    resp = client.get("/api/notifications/unsubscribe/totally-bogus")
+    assert resp.status_code == 200
+    assert resp.json()["success"] is False
+    assert "invalid" in resp.json()["message"].lower() or "expired" in resp.json()["message"].lower()
+
+
+def test_unsubscribe_unknown_event_type_returns_failure(client, test_db):
+    """A token signed for an event_type no longer in the registry should
+    fail gracefully."""
+    from email_service import generate_unsubscribe_token
+
+    user = _make_user(test_db, "unsub_bad_event_user")
+    test_db.commit()
+    # Hand-craft a token pointing at a nonexistent event_type.
+    token = generate_unsubscribe_token(user.id, "totally.fake_event")
+    resp = client.get(f"/api/notifications/unsubscribe/{token}")
+    assert resp.status_code == 200
+    assert resp.json()["success"] is False
+
+
+# ---------------------------------------------------------------------------
 # GET /api/notifications/registry
 # ---------------------------------------------------------------------------
 

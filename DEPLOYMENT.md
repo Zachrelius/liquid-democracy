@@ -1042,3 +1042,26 @@ The Railway project token has a 60-day lifetime. Rotation procedure:
 5. **Don't** commit the new token. Don't paste it into spec files, closeouts, or commit messages.
 
 Set a reminder ~50 days out to rotate proactively rather than waiting for the token to expire mid-incident.
+
+---
+
+## Phase 13 — Notification digest scheduler
+
+**Implementation choice: in-process asyncio loop.**
+
+Phase 13 ships a notification digest system (daily/weekly digests + quiet-hours queue flush + 90-day cleanup). The scheduler is a single `asyncio.create_task(digest_loop())` started in `backend/main.py`'s startup hook. The loop sleeps `digest_scheduler.TICK_SECONDS` (3600s = 1 hour) between ticks; each tick scans all users, evaluates their local time against 9am-local boundaries, and dispatches digests / flushes quiet-hours queues / runs the 90-day cleanup.
+
+**Why asyncio in-process over Railway cron:**
+- Zero infrastructure config — no separate Railway service, no cron config, no shared-secret webhook auth.
+- Survives restarts cleanly: on a Railway redeploy the loop simply restarts and resumes scanning at the next tick boundary.
+- The scheduler logic is pure DB reads + email sends; no per-tick state needs to persist outside the DB rows themselves (delivered tracking lives in `Notification.payload["delivered_in_digest"]`).
+- Tradeoff: dies if the FastAPI worker dies. Acceptable at v1 — Railway restarts the process automatically; the only effect is that a digest scheduled for the missed tick window may be delivered at the next available 9am local boundary instead.
+
+**Multi-worker behavior (Phase 13.2 W-DEPLOY-3 design decision — Option C):**
+With `--workers 4`, every worker independently runs the FastAPI startup hook → 4 `digest_loop` tasks running simultaneously. We **accept the N-worker launch** and rely on row-level idempotency (atomic UPDATE-with-WHERE-clause-on-not-yet-delivered + rowcount check) to prevent duplicate digest sends. Other workers see zero rows to process and their tick is a fast no-op. This is more robust than lock-based first-worker-only coordination — any single worker's death doesn't stall the scheduler, and the per-tick query cost is small at friend-pilot scale.
+
+**How to disable:**
+Set `DISABLE_DIGEST_SCHEDULER=1` in Railway env vars and redeploy. The startup hook reads the env var and skips the `asyncio.create_task(...)` call entirely (the FastAPI process stays up; only the scheduler is suppressed). The full backend test suite also sets this env var via `tests/conftest.py` so test runs never accidentally launch the loop.
+
+**How to verify in prod:**
+Log line `digest_loop: tick complete {daily: N, weekly: N, quiet: N, cleaned: N}` appears every hour in Railway logs. After a known opt-in user has fresh notifications and the local 9am tick fires, expect `daily >= 1`. The 90-day cleanup count surfaces every tick; that line is the heartbeat. With 4 workers, expect 4× `tick complete` lines per hour (one per worker); only one will show non-zero `daily`/`weekly` counts (the worker whose UPDATE landed first); the other three log all-zeros.
