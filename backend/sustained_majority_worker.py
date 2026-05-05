@@ -50,7 +50,26 @@ from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
-from notification_emit import emit_notification
+# Phase 13.2 W-DEPLOY-2 defensive-import pattern: the worker is launched
+# as a side-process by start.sh BEFORE uvicorn (`python -m
+# sustained_majority_worker &`). If notification_emit's transitive imports
+# crash at module load, the worker process dies — which by itself is
+# survivable (the `&` decouples it from start.sh) but obscures any
+# downstream signal. Wrapping the import here means the worker keeps
+# running even if the emit module is broken; floor-approached
+# notifications silently no-op via the NOTIFICATION_EMIT_AVAILABLE guard
+# at each call site. Per phase13_1_notifications_redeploy_spec.md.
+try:
+    from notification_emit import emit_notification
+    NOTIFICATION_EMIT_AVAILABLE = True
+except Exception as e:  # noqa: BLE001
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "notification_emit unavailable, sustained-majority notifications disabled: %s",
+        e,
+    )
+    NOTIFICATION_EMIT_AVAILABLE = False
+    emit_notification = None  # type: ignore[assignment]
 from settings import settings
 from sustained_majority import (
     BinarySnapshotPoint,
@@ -221,25 +240,29 @@ def _maybe_emit_floor_approached(
         # real-time email path. Worker context isn't a request, so we
         # construct an empty BackgroundTasks; the digest scheduler will
         # pick up email delivery for recipients with email-channel enabled.
-        bt = BackgroundTasks()
-        for uid in recipients:
-            emit_notification(
-                db,
-                bt,
-                event_type="sustained_majority.floor_approached",
-                user_id=uid,
-                org_id=proposal.org_id,
-                actor_id=None,  # system event
-                target_type="proposal",
-                target_id=proposal.id,
-                payload={
-                    "proposal_id": proposal.id,
-                    "proposal_title": proposal.title,
-                    "org_id": proposal.org_id,
-                    "support_fraction": float(latest.support_fraction),
-                    "floor": float(config.floor),
-                },
-            )
+        # Phase 13.2 W-DEPLOY-2 defensive guard: skip the emit if the
+        # import failed (NOTIFICATION_EMIT_AVAILABLE=False); the worker
+        # keeps running and the floor-approached signal silently no-ops.
+        if NOTIFICATION_EMIT_AVAILABLE:
+            bt = BackgroundTasks()
+            for uid in recipients:
+                emit_notification(
+                    db,
+                    bt,
+                    event_type="sustained_majority.floor_approached",
+                    user_id=uid,
+                    org_id=proposal.org_id,
+                    actor_id=None,  # system event
+                    target_type="proposal",
+                    target_id=proposal.id,
+                    payload={
+                        "proposal_id": proposal.id,
+                        "proposal_title": proposal.title,
+                        "org_id": proposal.org_id,
+                        "support_fraction": float(latest.support_fraction),
+                        "floor": float(config.floor),
+                    },
+                )
     except Exception as e:  # noqa: BLE001 — never break the worker
         log.warning(
             "floor_approached emit failed for proposal %s: %s: %s",
@@ -311,7 +334,7 @@ def evaluate_proposal(
     # 5. Phase 13 B-emit — proposal.closed when the failure-mode flips
     # voting -> failed. Author + everyone who voted (deduped). Wrapped per
     # spec §B3.
-    if old_status == "voting" and new_status == "failed":
+    if old_status == "voting" and new_status == "failed" and NOTIFICATION_EMIT_AVAILABLE:
         try:
             recipients: set[str] = set()
             if proposal.author_id:
