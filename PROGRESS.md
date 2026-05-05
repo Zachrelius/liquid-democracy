@@ -1531,3 +1531,102 @@ After the merge `71c5684` was pushed and Railway redeployed:
 ### Pass-summary
 
 **Phase 13 implementation is complete; the prod deploy failed; the revert restored service.** No code is live on prod from this pass. Backend tests, PG smoke, frontend build, and local startup all PASS — the prod failure mode is environment-specific and not reproducible locally without log access. Phase 13.1 is queued: diagnose the prod failure (likely via narrower cluster-by-cluster deploys or with `DISABLE_DIGEST_SCHEDULER=1`), re-ship the same implementation. The branch + 9 commits + 924-test suite are preserved on `phase-13/notifications` for re-use. Item 22 retirement and the corresponding roadmap edit will land in Phase 13.1's closeout.
+
+---
+
+## Phase 13.1 — Notifications Redeploy — W-DEPLOY-1 ATTEMPTED 2026-05-05 (REVERTED, bisection escalated to NEEDS_Z_INPUT)
+
+**Phase 13.1 attempted bisected re-ship. W-DEPLOY-1 (the smallest possible deploy — storage + endpoints + frontend UI, no emission, no email, no scheduler) failed on prod with the same 502 pattern as Phase 13.** Reverted at master `c571920`; prod recovered, healthy on `index-BYwI_Jxw.js`. The bisection plan as designed is exhausted — there is no smaller cluster split that would localize the failure further without artificial surgery. **Recommendation: pause Phase 13.1 redeploy attempts, escalate to Z for either Railway log access OR a decision on Phase 13's product future.**
+
+### Sequence
+
+**W-DIAG (offline diagnostic):** Ran on `phase-13/notifications` branch with prod-like env. Cheapest tests first.
+- `python -c "import sustained_majority_worker"` — **PASS.** All Phase 13 dependencies import cleanly.
+- `python -m sustained_majority_worker --once` — **PASS.** One tick + clean exit.
+- `uvicorn --workers 1` boot probe — **PASS.** /api/health returned 200 in 1s with the full Phase 13 startup path including digest scheduler launch.
+- `uvicorn --workers 4` boot probe — **FAIL** locally (no /api/health in 30s). Almost certainly a Windows multiprocessing artifact (uvicorn's --workers flag uses gunicorn-style fork-equivalent on Linux but has known Windows limitations); not directly translatable to Linux/Railway.
+- `uvicorn --workers 4 + DISABLE_DIGEST_SCHEDULER=1` — still FAIL locally. Confirms the multi-worker Windows failure is independent of the scheduler — Windows-specific.
+- **The side-process-import-crash hypothesis is NOT confirmed at the local-import level.** The original spec hypothesis (sustained_majority_worker.py crashes at import time because Phase 13 added `from notification_emit import emit_notification`) is wrong — local import works clean. The prod failure is something else.
+
+**W-DEPLOY-1 (storage + endpoints + frontend UI, no emission/email/scheduler):**
+
+- Branch: `phase-13-1/storage-and-ui`, branched from `ba431b9` (Phase 13 incident closeout, post-revert state).
+- Cherry-picked: Cluster B foundation (4 commits) + Cluster F (2 commits) + D1 NotificationsHelp + W-RUNBOOK Railway-log-access section in DEPLOYMENT.md.
+- Held: Cluster B emission, Cluster E, SECURITY_REVIEW.md notification-privacy section, Item 22 retirement edits.
+- Confirmed via grep: `sustained_majority_worker.py` does NOT import `notification_emit` on this branch (cherry-pick was clean — that import lives in commit 602b005 which was held).
+- Backend tests: 850 → **879 (+29)** on the deploy branch. Foundation tests only.
+- Frontend bundle: 348.53 → **353.89 kB gzipped** (+5.36 kB). Identical to the failed Phase 13 attempt because Cluster F is the same.
+- **W-START-CHECK PASS** — `uvicorn --workers 1` startup probe on `phase-13-1/storage-and-ui` returned `/api/health` 200 at +1s. Full local startup chain ran clean.
+- **PG smoke PASS both modes** (prior=41694d86821f). Migration f1a3c8d92e60 applied cleanly on a fresh PG.
+
+**Deploy result:**
+
+- Push at master `c85fa82`. Railway redeployed.
+- Initial poll: bundle flipped to `index-Bz7dC8k8.js` at +0s with `backend_ok=True`. Smoke ran 5/5 PASS at +1.4s post-flip.
+- **Within ~30 seconds of the smoke PASS, backend went 502 sustained.** All `/api/*` endpoints returned 502 "Application failed to respond" with 15-second Cloudflare/Railway upstream timeouts. Static `/` continued to serve 200 (frontend bundle). Same exact failure mode as Phase 13.
+- The brief "smoke PASS" window appears to have caught a transient state where uvicorn was still listening (possibly the OLD container during traffic-switch overlap, or the new container in its first few seconds before crashing).
+- **Reverted via `git revert -m 1 c85fa82`** at master `c571920`. Smoke 5/5 PASS post-revert; backend healthy on the pre-Phase-13 bundle `index-BYwI_Jxw.js`.
+
+### Why the bisection is exhausted
+
+W-DEPLOY-1 ships the smallest coherent unit — storage tables + 6 endpoints + frontend UI + a help page. Any further split would be artificial:
+
+- "Schema only" — would require shipping just the migration + model class definitions without any router, but the existing model code is imported via `from main import app` which transitively imports everything.
+- "Endpoints only" — same problem; routes/notifications.py imports notification_emit, notification_events, etc.
+- "Frontend only" — that's already what most of Cluster F is, but the deploy MUST include backend matching changes for the endpoints to exist (else the frontend's API calls 404 and the page is broken).
+
+So the bisection has localized the failure to W-DEPLOY-1's surface, but cannot localize further without log access. The remaining hypotheses (none confirmed):
+
+1. **Migration application on prod's actual PG state.** The Phase 13 migration ran successfully on prod pre-revert, then prod's alembic_version was reset to `41694d86821f` by the revert deploy's else-branch (`create_all + stamp head`). When W-DEPLOY-1's alembic upgrade head re-applies f1a3c8d92e60, the migration's idempotency checks should skip the existing tables/columns. But something in this re-application path could be failing in a way local PG smoke (against a fresh container) doesn't replicate.
+2. **Module-import-time issue under Linux + 4 workers.** Some module in W-DEPLOY-1's import chain (notification_emit, notification_events, routes/notifications.py) may have an import-time side-effect that misbehaves under Linux fork() + 4 worker processes simultaneously initializing. Local --workers 1 worked; Linux --workers 4 might surface a race.
+3. **Railway environmental specifics.** Container memory ceiling, Python version, dependency versions, network-config quirks. The new code adds ~3500 lines of backend Python; if Railway's Hobby-tier memory is tight, the additional module loading could push us over.
+4. **alembic_version table state.** If the revert's else-branch (create_all + stamp head) didn't properly reset the version, prod might still report `f1a3c8d92e60` as current — and applying the migration when current==head could behave differently than pg_smoke's "stamp prior, upgrade to head" pattern.
+
+None of these are testable without Railway log access. The Phase 13.1 W-RUNBOOK section that was in this deploy's commit list would have been the canonical reference for the next time this happens — but the runbook itself is now reverted with the rest.
+
+### What changed vs. didn't change between Phase 13 and W-DEPLOY-1
+
+**Same in both:**
+- Frontend bundle hash (`index-Bz7dC8k8.js`).
+- Cluster B foundation (models, migration, helper, endpoints).
+- Cluster F (frontend).
+- D1 (NotificationsHelp).
+- Migration application — **expected** to be no-op on prod (since Phase 13's migration ran successfully and the schema is dormant), but actual prod behavior unobserved.
+
+**Held in W-DEPLOY-1 but in Phase 13:**
+- 12 emission sites in routes/comments.py, follows.py, etc.
+- `from notification_emit import emit_notification` in sustained_majority_worker.py.
+- Cluster E entirely (send_org_email helper, 15 templates, digest_scheduler.py asyncio loop, quiet hours queue).
+- async startup hook (Cluster E added the change from `def startup()` to `async def startup()` in main.py).
+- SECURITY_REVIEW.md notification-privacy section, Item 22 retirement edits.
+
+The fact that **W-DEPLOY-1 still failed despite holding all of Cluster E and emission** means the original Phase 13 closeout's hypothesis list was wrong — the cause is not the digest scheduler, not the worker import chain, not the async startup. It's something in the storage layer (model definitions, migration application, or new endpoint module imports) interacting with the prod environment in a way that doesn't reproduce locally.
+
+### W-RUNBOOK status
+
+The Railway log access runbook (commit `052fa7b`) was committed to `phase-13-1/storage-and-ui` and merged into master via `c85fa82` — then reverted with the rest at `c571920`. The runbook content is preserved in git history; a follow-up pass should re-apply just that section (cherry-pick from the reverted merge or copy from the diff) since the runbook itself doesn't depend on Phase 13 code shipping.
+
+### Z-decision items
+
+1. **Railway log access for the next attempt.** The fundamental blocker is observability. Two Phase-13 deploys have failed, both reverted blind. Without log access, the third attempt is likely to fail the same way. Options: (a) Z provisions Railway CLI access for the team or shares a session-bound token; (b) Z runs `railway logs --service backend --tail` during the next deploy and pastes the output; (c) Z adds a non-Railway logging surface (e.g., ship logs to a free Sentry tier or a logflare instance) so the team can see startup failures live. **This is the unblocking decision.**
+
+2. **Phase 13's product future.** If log access is hard to arrange and the prod failure remains opaque, alternative paths: (a) accept that Phase 13 as-implemented can't ship to this Railway environment and re-design the storage layer (e.g., simpler migration, no new module imports at startup, integrate notification routes into existing files); (b) defer Phase 13 entirely and ship something cheaper (e.g., a minimal email-only digest with no in-app feed, no model changes); (c) park Phase 13 indefinitely and pivot to the calendar-gated cleanup pass + smaller wins. **This is the strategic decision if (1) doesn't happen.**
+
+3. **What's still preserved.** The `phase-13/notifications` branch + 9 commits + 924/924 tests in CI remain intact and untouched. Any of the three Z-decision paths can re-use this work — re-deploy isn't blocked by the implementation, it's blocked by understanding the prod failure.
+
+### W-DEPLOY-1 commit list (live briefly on master, then reverted)
+
+- `5080e6d` Phase 13 B1+M (cherry-pick of 219b508)
+- `76147f2` Phase 13 B2 EVENT_REGISTRY (cherry-pick of 2c0b84f)
+- `a739ebc` Phase 13 B3+B5 emit helper (cherry-pick of c189bee)
+- `b7cd775` Phase 13 B4 router + tests (cherry-pick of c25f17d)
+- `00ad390` Phase 13 F1+F6 notification center (cherry-pick of cb79699)
+- `8b4f33f` Phase 13 F2+F3+F4 pages (cherry-pick of 648da71)
+- `7138d70` Phase 13.1 W-DEPLOY-1 D1 — NotificationsHelp only (held SECURITY+audit+roadmap)
+- `052fa7b` Phase 13.1 W-RUNBOOK — DEPLOYMENT.md "Reading Railway logs" section
+- `c85fa82` Merge phase-13-1/storage-and-ui (REVERTED)
+- `c571920` Revert "Merge phase-13-1/storage-and-ui" — LIVE on master
+
+### Pass-summary
+
+**Phase 13.1 W-DEPLOY-1 attempted, failed the same way Phase 13 did, reverted.** The bisection successfully ruled out emission, email, and scheduler as causes — all three were held back from this deploy and prod still failed. The remaining surface (storage, endpoints, frontend, migration) cannot be split further without artificial surgery. The actual root cause is in that surface but not observable without Railway log access. **Two prod deploys, two reverts, ~75 minutes of cumulative prod-down across both incidents.** Phase 13.1 is paused pending Z's decision on log access (W-DEPLOY-2 and W-DEPLOY-3 are NOT attempted — W-DEPLOY-1 covers the smallest possible surface and proves further bisection won't help). The `phase-13/notifications` branch + Phase 13.1 W-RUNBOOK content (in git history) are preserved for whatever path Z chooses.
