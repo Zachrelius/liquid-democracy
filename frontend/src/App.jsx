@@ -25,6 +25,9 @@ import ProposalDetail from './pages/ProposalDetail';
 import Delegations from './pages/Delegations';
 import UserProfile from './pages/UserProfile';
 import Settings from './pages/Settings';
+// Phase 13 F2/F3 — account-scoped notifications surfaces.
+import NotificationsPage from './pages/NotificationsPage';
+import NotificationsPreferences from './pages/NotificationsPreferences';
 import VerifyEmail from './pages/VerifyEmail';
 import ForgotPassword from './pages/ForgotPassword';
 import ResetPassword from './pages/ResetPassword';
@@ -284,6 +287,29 @@ export default function App() {
             <ProtectedRoute>
               <OrgProvider>
                 <Layout><Settings /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 13 F3 — notification preferences page (account-scoped, NOT
+            wrapped in OrgScopedLayout per spec). */}
+        <Route
+          path="/settings/notifications"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><NotificationsPreferences /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 13 F2 — full notifications page (account-scoped). */}
+        <Route
+          path="/notifications"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><NotificationsPage /></Layout>
               </OrgProvider>
             </ProtectedRoute>
           }
