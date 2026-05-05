@@ -252,11 +252,11 @@ def test_upgrade_downgrade_upgrade_cycle():
         assert roles_per_org_a == 4
         assert roles_per_org_b == 4
 
-        # 2. Downgrade to b2d5f1a3c7e4 (Phase 10) -> roles tables gone,
-        # legacy `role` restored. Targeting an explicit revision rather
-        # than a relative offset so this test stays correct as new
-        # migrations are appended on top of Stage 1.
-        _run_alembic(db_url, "downgrade", "b2d5f1a3c7e4")
+        # 2. Downgrade -3 -> roles tables gone, legacy `role` restored
+        # (Phase 12.5 added a third migration on top of Stage 1+2: -1
+        # reverses only the Phase 12.5 row inserts; -2 reverses Stage 2's
+        # row inserts; -3 reverses the full Stage 1 schema change.)
+        _run_alembic(db_url, "downgrade", "-3")
         engine = sa.create_engine(db_url)
         assert not _table_exists(engine, "roles")
         assert not _table_exists(engine, "role_permissions")

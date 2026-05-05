@@ -1,8 +1,7 @@
-import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -17,14 +16,10 @@ from delegation_engine import (
     RCVTally,
     eligible_voter_ids_for_proposal,
 )
-from notification_emit import emit_notification
 from org_config import get_default_proposal_thresholds, get_org_config
 from permissions import can_see_votes
 from polis_engine import eligible_viewers_for_polis
 from role_permissions import has_permission as _has_permission
-
-
-log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/proposals", tags=["proposals"])
 
@@ -642,93 +637,11 @@ def update_proposal(
     return _build_proposal_out(proposal, db)
 
 
-def _emit_proposal_status_notifications(
-    db,
-    background_tasks: BackgroundTasks,
-    proposal: models.Proposal,
-    old_status: str,
-    new_status: str,
-    actor_id: Optional[str],
-) -> None:
-    """Phase 13 B-emit — fire proposal.entered_voting and proposal.closed.
-
-    Always wrapped by the caller in try/except so a notification failure
-    never sinks the originating advance/close request (spec §B3).
-
-    Routing:
-      - old != "voting" -> "voting": proposal.entered_voting -> all
-        eligible voters (org-scope-aware).
-      - "voting" -> "passed"/"failed": proposal.closed -> author + every
-        user who voted (deduplicated).
-
-    Author-self-vote dedup: a single user_id appears at most once per
-    event regardless of how many roles (author, voter) they hold.
-    """
-    payload_base = {
-        "proposal_id": proposal.id,
-        "proposal_title": proposal.title,
-        "org_id": proposal.org_id,
-        "old_status": old_status,
-        "new_status": new_status,
-    }
-
-    if old_status != "voting" and new_status == "voting":
-        try:
-            voter_ids = eligible_voter_ids_for_proposal(db, proposal)
-        except Exception as e:  # noqa: BLE001
-            log.warning(
-                "proposal.entered_voting eligible-voters lookup failed: %s",
-                e,
-            )
-            return
-        for uid in voter_ids:
-            emit_notification(
-                db,
-                background_tasks,
-                event_type="proposal.entered_voting",
-                user_id=uid,
-                org_id=proposal.org_id,
-                actor_id=actor_id,
-                target_type="proposal",
-                target_id=proposal.id,
-                payload=payload_base,
-            )
-
-    if old_status == "voting" and new_status in ("passed", "failed"):
-        recipients: set[str] = set()
-        if proposal.author_id:
-            recipients.add(proposal.author_id)
-        # Everyone who cast a direct vote on this proposal.
-        vote_rows = (
-            db.query(models.Vote.user_id)
-            .filter(models.Vote.proposal_id == proposal.id)
-            .all()
-        )
-        for r in vote_rows:
-            recipients.add(r.user_id)
-        for uid in recipients:
-            emit_notification(
-                db,
-                background_tasks,
-                event_type="proposal.closed",
-                user_id=uid,
-                org_id=proposal.org_id,
-                actor_id=actor_id,
-                target_type="proposal",
-                target_id=proposal.id,
-                payload={
-                    **payload_base,
-                    "outcome": new_status,
-                },
-            )
-
-
 @router.post("/{proposal_id}/advance", response_model=schemas.ProposalOut)
 def advance_proposal(
     proposal_id: str,
     body: schemas.AdvanceProposalRequest,
     request: Request,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
@@ -812,24 +725,6 @@ def advance_proposal(
 
     db.commit()
     db.refresh(proposal)
-
-    # Phase 13 B-emit — proposal.entered_voting / proposal.closed.
-    try:
-        _emit_proposal_status_notifications(
-            db, background_tasks, proposal, old_status, next_status,
-            actor_id=current_user.id,
-        )
-        db.commit()
-    except Exception as e:  # noqa: BLE001
-        log.warning(
-            "proposal status emit failed (%s -> %s): %s: %s",
-            old_status, next_status, type(e).__name__, e,
-        )
-        try:
-            db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
-
     return _build_proposal_out(proposal)
 
 

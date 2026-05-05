@@ -43,20 +43,17 @@ import os
 import signal
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import BackgroundTasks
 from sqlalchemy.orm import Session
 
 from database import SessionLocal
-from notification_emit import emit_notification
 from settings import settings
 from sustained_majority import (
     BinarySnapshotPoint,
     MultiOptionSnapshotPoint,
     get_sustained_majority_config,
-    is_approaching_floor,
     is_proposal_sustained_majority_active,
     should_trigger_failure,
 )
@@ -66,16 +63,6 @@ from sustained_majority_service import (
     count_extensions,
 )
 import models
-
-
-# Phase 13 B7 — dedup window for sustained_majority.floor_approached.
-# We don't want to spam recent voters with one notification per worker tick
-# while a proposal sits near the floor. Suppress further floor_approached
-# notifications for the same proposal within this window.
-FLOOR_APPROACHED_DEDUP_HOURS: int = 24
-
-# How far back to scan for "recent voters" on the floor_approached fan-out.
-FLOOR_APPROACHED_RECENT_VOTER_DAYS: int = 7
 
 log = logging.getLogger("sustained_majority_worker")
 
@@ -157,96 +144,6 @@ def _snapshot_points_for(
     return points
 
 
-def _maybe_emit_floor_approached(
-    db: Session,
-    proposal: models.Proposal,
-    snapshots: list,
-    config,
-) -> None:
-    """Phase 13 B-emit (#7) — emit sustained_majority.floor_approached.
-
-    Idempotency: suppress further notifications for this proposal if any
-    floor_approached notification fired within the past
-    ``FLOOR_APPROACHED_DEDUP_HOURS``. Audience: the proposal author + all
-    users who cast a direct vote within the last
-    ``FLOOR_APPROACHED_RECENT_VOTER_DAYS``.
-
-    Always wrapped in try/except — a notification failure must not break
-    the worker tick (the failure-mode application is the load-bearing piece).
-    """
-    try:
-        if proposal.voting_method != "binary" or not snapshots:
-            return
-        latest = snapshots[-1]
-        if not isinstance(latest, BinarySnapshotPoint):
-            return
-        if not is_approaching_floor(latest, config):
-            return
-
-        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
-            hours=FLOOR_APPROACHED_DEDUP_HOURS,
-        )
-        recent = (
-            db.query(models.Notification)
-            .filter(
-                models.Notification.event_type == "sustained_majority.floor_approached",
-                models.Notification.target_type == "proposal",
-                models.Notification.target_id == proposal.id,
-                models.Notification.created_at >= cutoff,
-            )
-            .first()
-        )
-        if recent is not None:
-            return  # already emitted in the dedup window; nothing to do.
-
-        # Audience: author + recent voters (last 7 days).
-        recipients: set[str] = set()
-        if proposal.author_id:
-            recipients.add(proposal.author_id)
-        voter_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
-            days=FLOOR_APPROACHED_RECENT_VOTER_DAYS,
-        )
-        recent_votes = (
-            db.query(models.Vote.user_id)
-            .filter(
-                models.Vote.proposal_id == proposal.id,
-                models.Vote.cast_at >= voter_cutoff,
-            )
-            .all()
-        )
-        for r in recent_votes:
-            recipients.add(r.user_id)
-
-        # The emit_notification helper expects a BackgroundTasks for the
-        # real-time email path. Worker context isn't a request, so we
-        # construct an empty BackgroundTasks; the digest scheduler will
-        # pick up email delivery for recipients with email-channel enabled.
-        bt = BackgroundTasks()
-        for uid in recipients:
-            emit_notification(
-                db,
-                bt,
-                event_type="sustained_majority.floor_approached",
-                user_id=uid,
-                org_id=proposal.org_id,
-                actor_id=None,  # system event
-                target_type="proposal",
-                target_id=proposal.id,
-                payload={
-                    "proposal_id": proposal.id,
-                    "proposal_title": proposal.title,
-                    "org_id": proposal.org_id,
-                    "support_fraction": float(latest.support_fraction),
-                    "floor": float(config.floor),
-                },
-            )
-    except Exception as e:  # noqa: BLE001 — never break the worker
-        log.warning(
-            "floor_approached emit failed for proposal %s: %s: %s",
-            proposal.id, type(e).__name__, e,
-        )
-
-
 def evaluate_proposal(
     db: Session,
     proposal: models.Proposal,
@@ -296,60 +193,12 @@ def evaluate_proposal(
     )
 
     if not decision.should_fire:
-        # No failure mode triggered — but if support is hovering near the
-        # floor, emit the floor_approached warning notification. Idempotent
-        # via the 24h dedup window inside the helper.
-        _maybe_emit_floor_approached(db, proposal, snapshots, config)
         return None
 
     # 4. Apply (status mutation + audit event in the same transaction).
-    old_status = proposal.status
     new_status = apply_failure_mode(
         db, proposal, decision=decision, actor_id=None,  # system actor
     )
-
-    # 5. Phase 13 B-emit — proposal.closed when the failure-mode flips
-    # voting -> failed. Author + everyone who voted (deduped). Wrapped per
-    # spec §B3.
-    if old_status == "voting" and new_status == "failed":
-        try:
-            recipients: set[str] = set()
-            if proposal.author_id:
-                recipients.add(proposal.author_id)
-            vote_rows = (
-                db.query(models.Vote.user_id)
-                .filter(models.Vote.proposal_id == proposal.id)
-                .all()
-            )
-            for r in vote_rows:
-                recipients.add(r.user_id)
-            bt = BackgroundTasks()
-            for uid in recipients:
-                emit_notification(
-                    db,
-                    bt,
-                    event_type="proposal.closed",
-                    user_id=uid,
-                    org_id=proposal.org_id,
-                    actor_id=None,
-                    target_type="proposal",
-                    target_id=proposal.id,
-                    payload={
-                        "proposal_id": proposal.id,
-                        "proposal_title": proposal.title,
-                        "org_id": proposal.org_id,
-                        "old_status": old_status,
-                        "new_status": new_status,
-                        "outcome": new_status,
-                        "trigger": "sustained_majority",
-                    },
-                )
-        except Exception as e:  # noqa: BLE001
-            log.warning(
-                "proposal.closed emit (sustained_majority) failed for %s: %s: %s",
-                proposal.id, type(e).__name__, e,
-            )
-
     return new_status
 
 

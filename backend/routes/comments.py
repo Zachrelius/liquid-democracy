@@ -52,11 +52,10 @@ Audit events
 """
 from __future__ import annotations
 
-import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -64,10 +63,6 @@ import models
 import schemas
 from audit_utils import log_audit_event
 from database import get_db
-from notification_emit import emit_notification
-
-
-log = logging.getLogger(__name__)
 
 
 # Two routers wired into a single module — the proposal-scoped GET/POST and
@@ -264,7 +259,6 @@ def create_comment(
     proposal_id: str,
     body: schemas.CommentCreate,
     request: Request,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
@@ -347,67 +341,6 @@ def create_comment(
 
     db.commit()
     db.refresh(comment)
-
-    # Phase 13 B-emit — fire notification(s) for new comment.
-    # Both events are wrapped so a notification failure never sinks the
-    # comment-create request (spec §B3 "Critical try/except").
-    try:
-        body_excerpt = (cleaned[:160] + "...") if len(cleaned) > 160 else cleaned
-        actor_display = current_user.display_name or current_user.username
-        if parent_comment_id is not None:
-            # comment.replied -> emit to parent comment's author
-            parent = db.get(models.Comment, parent_comment_id)
-            if parent is not None and parent.author_id != current_user.id:
-                emit_notification(
-                    db,
-                    background_tasks,
-                    event_type="comment.replied",
-                    user_id=parent.author_id,
-                    org_id=proposal.org_id,
-                    actor_id=current_user.id,
-                    target_type="comment",
-                    target_id=comment.id,
-                    payload={
-                        "proposal_id": proposal.id,
-                        "proposal_title": proposal.title,
-                        "comment_id": comment.id,
-                        "parent_comment_id": parent_comment_id,
-                        "body_excerpt": body_excerpt,
-                        "actor_display_name": actor_display,
-                    },
-                )
-                db.commit()
-        else:
-            # comment.posted_on_your_proposal -> emit to proposal author
-            if proposal.author_id != current_user.id:
-                emit_notification(
-                    db,
-                    background_tasks,
-                    event_type="comment.posted_on_your_proposal",
-                    user_id=proposal.author_id,
-                    org_id=proposal.org_id,
-                    actor_id=current_user.id,
-                    target_type="comment",
-                    target_id=comment.id,
-                    payload={
-                        "proposal_id": proposal.id,
-                        "proposal_title": proposal.title,
-                        "comment_id": comment.id,
-                        "body_excerpt": body_excerpt,
-                        "actor_display_name": actor_display,
-                    },
-                )
-                db.commit()
-    except Exception as e:  # noqa: BLE001 — spec §B3 priority: never block primary action
-        log.warning(
-            "comment notification emit failed: %s: %s",
-            type(e).__name__, e,
-        )
-        try:
-            db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
-
     return _build_comment_out(comment)
 
 

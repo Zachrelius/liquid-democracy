@@ -908,23 +908,3 @@ A failing smoke check after a successful deploy returns the pytest exit code, so
 ### Adding a new smoke check
 
 Add a new test function to either `test_proxy.py` (nginx / proxy layer) or `test_sw.py` (service worker / PWA), or create a new `test_<boundary>.py` file. Each test takes the `target_url` fixture, hits the URL with `httpx`, and asserts on the response. Keep them independent — no shared state, no fixtures beyond `target_url`.
-
-
-## Phase 13 — Notification digest scheduler
-
-**Implementation choice: in-process asyncio loop.**
-
-Phase 13 ships a notification digest system (daily/weekly digests + quiet-hours queue flush + 90-day cleanup). The scheduler is a single `asyncio.create_task(digest_loop())` started in `backend/main.py`'s startup hook. The loop sleeps `digest_scheduler.TICK_SECONDS` (3600s = 1 hour) between ticks; each tick scans all users, evaluates their local time against 9am-local boundaries, and dispatches digests / flushes quiet-hours queues / runs the 90-day cleanup.
-
-**Why asyncio in-process over Railway cron:**
-- Zero infrastructure config — no separate Railway service, no cron config, no shared-secret webhook auth.
-- Survives restarts cleanly: on a Railway redeploy the loop simply restarts and resumes scanning at the next tick boundary.
-- The scheduler logic is pure DB reads + email sends; no per-tick state needs to persist outside the DB rows themselves (delivered tracking lives in `Notification.payload["delivered_in_digest"]`).
-- Tradeoff: dies if the FastAPI worker dies. Acceptable at v1 — Railway restarts the process automatically; the only effect is that a digest scheduled for the missed tick window may be delivered at the next available 9am local boundary instead.
-
-**How to disable:**
-Set `DISABLE_DIGEST_SCHEDULER=1` in Railway env vars and redeploy. The startup hook reads the env var and skips the `asyncio.create_task(...)` call entirely (the FastAPI process stays up; only the scheduler is suppressed). The full backend test suite also sets this env var via `tests/conftest.py` so test runs never accidentally launch the loop.
-
-**How to verify in prod:**
-Log line `digest_loop: tick complete {daily: N, weekly: N, quiet: N, cleaned: N}` appears every hour in Railway logs. After a known opt-in user has fresh notifications and the local 9am tick fires, expect `daily >= 1`. The 90-day cleanup count surfaces every tick; that line is the heartbeat.
-
