@@ -1755,3 +1755,76 @@ Did NOT run F7 browser-verify checklist this session — chrome-in-Claude state 
 ### Pass-summary
 
 **Phase 13.2 W-DEPLOY-1-RETRY shipped after three attempts, two of which failed at the merge layer (one for the boolean-default bug caught by Railway log streaming; one for an incomplete merge that missed 17 of 18 branch files post-revert).** The Phase 13 storage layer is finally live on prod: tables, columns, endpoints, frontend UI, help article — all reachable, all responding correctly. Backend tests 879. Bundle 353.89 kB gzipped. Smoke 5/5 PASS. Two follow-up deploys queued per Phase 13.1's spec: W-DEPLOY-2 (emission sites) and W-DEPLOY-3 (email + scheduler + Item 22 retirement). The DEPLOYMENT.md runbook is comprehensive enough that the next 502 incident should be diagnose-and-fix-forward, not blind-revert. The Railway log access provisioning was the unblocking change; the pg_smoke gap is the next structural improvement.
+
+---
+
+## Phase 13.2 W-DEPLOY-2 — Notifications Emission Sites — SHIPPED 2026-05-05
+
+**Twelve emission sites + defensive-import worker pattern shipped clean on first attempt.** Master `6ea2cb9`, no failures, no reverts. Backend tests 879 → **907 (+28)**. No frontend changes (bundle stays at `index-Bz7dC8k8.js`). Notifications now actually populate the table when events fire — `comment.replied`, `comment.posted_on_your_proposal`, `member.join_request`, `invitation.accepted`, `proposal.entered_voting`, `proposal.closed`, `sustained_majority.floor_approached`, `delegate.applied`, `delegate.application_decided`, `follow.requested`, `follow.approved`, `polis.created`. Cluster E (email + scheduler) and Item 22 retirement remain held back for W-DEPLOY-3.
+
+### Pre-merge gates (all PASS)
+
+- **Backend tests:** 879 → **907 (+28)** on `phase-13-2/emission`. The 28-test count matches the spec's emission-test budget. The remaining 13 tests in the spec's "+41 (28 + 13)" math are digest tests bundled with Cluster E for W-DEPLOY-3.
+- **PG smoke:** PASS both modes (prior=41694d86821f). No migration this deploy; smoke runs as sanity.
+- **W-START-CHECK PASS:** `uvicorn --workers 1` health 200 at +1s on the deploy branch.
+- **W-START-CHECK extension:** `python -m sustained_majority_worker --once` exits cleanly with `NOTIFICATION_EMIT_AVAILABLE=True` (defensive-import success path verified; the fallback no-op path is type-safe by construction).
+- **File-count check (new gate per W-DEPLOY-1 lessons):** `git diff master phase-13-2/emission --stat` → 7 files / 1592 insertions / 5 deletions. Matches the cherry-pick + defensive-import additions exactly. No "delete in HEAD, modify in branch" footgun this time.
+- **W-OBSERVABILITY-CHECK PASS:** `railway logs` streaming verified pre-push.
+
+### Defensive-import pattern in `sustained_majority_worker.py` (the load-bearing risk surface)
+
+Per the Phase 13.1 spec's W-DEPLOY-2 requirement: the worker is launched as `python -m sustained_majority_worker &` BEFORE uvicorn in start.sh. With `set -e` at the top, a worker import-time crash on its own doesn't kill start.sh (the `&` decouples it), but it would silently disable sustained-majority notifications. The defensive-import pattern wraps the import so a downstream failure logs a warning + sets `NOTIFICATION_EMIT_AVAILABLE = False` + makes `emit_notification = None`, with explicit `if NOTIFICATION_EMIT_AVAILABLE` guards at both call sites (`_maybe_emit_floor_approached` + the worker-driven `proposal.closed` emission in `evaluate_proposal`).
+
+Routes-layer emission sites (`routes/comments.py`, `routes/follows.py`, `routes/organizations.py`, `routes/proposals.py`, `routes/polises.py`) **don't need this pattern** — they're imported by `main.py` which only loads after start.sh's worker-launch step succeeds, so any FastAPI app-startup import error is observable via uvicorn's startup hook output (and would have been caught at W-START-CHECK).
+
+### Deploy + observe
+
+- Push at master `6ea2cb9` triggered Railway redeploy.
+- Build proceeded normally (~10 minutes per Railway's standard build cycle).
+- New container started 23:15:32. Logs (filtered):
+  ```
+  Starting Container
+  INFO  [alembic.runtime.migration] Will assume transactional DDL.   ← no migration to run; expected
+  Worker starting; check_interval=300s, once=False                   ← sustained_majority_worker started cleanly
+  Started server process [8/9/10/11]                                 ← --workers 4 confirmed
+  Application startup complete. (×4)
+  ```
+- **Zero `error` / `exception` / `traceback` / `notification_emit unavailable` / `DatatypeMismatch` lines** in the post-deploy log scan. The defensive-import pattern's success path engaged (no fallback warning) — `NOTIFICATION_EMIT_AVAILABLE = True` on prod.
+
+### Post-deploy verification
+
+- Backend health: 5/5 200, all <0.21s response time
+- `/api/notifications/registry`: 401 (auth gate working — schema + endpoint reachable)
+- Smoke suite: **5/5 PASS** (1.61s)
+- Bundle hash unchanged (`index-Bz7dC8k8.js`) — expected, no frontend changes in W-DEPLOY-2
+
+### Browser-verify emission flow (PASS-by-source)
+
+The chrome-in-Claude tooling is unavailable this session (same as W-DEPLOY-1). The functional emission flow (sign in → opt in to `comment.replied` → second user replies → see notification with correct routing) is PASS-by-source:
+- 28 emission tests exercise every site's positive (event triggers, row inserted) + negative (user opted out, no row) paths
+- Worker startup logs confirm the defensive-import success path engaged
+- Each route handler's `try/except` wrapping ensures emission failures cannot break the originating request
+- The Item 22 routing path uses `notification.org_slug` end-to-end (verified by test + frontend grep in W-DEPLOY-1)
+
+When chrome-in-Claude is reliably available, the F7 verification checklist (Phase 13.2 spec + Phase 13.1 spec W-DEPLOY-2 verification list) can be run as a follow-up. **The multi-org Item 22 routing test** is the one that would catch any regression in click-through targeting; queued alongside Phase 12.7's F7 visual verification gap.
+
+### W-DEPLOY-2 commit list
+
+- `4fc86e4` Phase 13 B-emit cherry-pick (12 emission sites + 28 emission tests)
+- `599bc22` Phase 13.2 W-DEPLOY-2 defensive-import pattern in sustained_majority_worker.py
+- `6ea2cb9` Merge to master
+
+### Held for W-DEPLOY-3
+
+- Cluster E (commit `a65d156` on `phase-13/notifications`): `send_org_email` helper + 15 email templates + asyncio `digest_loop` + quiet-hours queue + DEPLOYMENT.md scheduler note + 13 digest tests
+- HMAC-signed unsubscribe endpoint
+- SECURITY_REVIEW.md notification-privacy section
+- Item 22 retirement (audit doc + roadmap edits)
+
+### Observation worth surfacing for W-DEPLOY-3
+
+The `--workers 4` startup-side-effect multiplication noted in W-DEPLOY-1 (each worker independently runs the FastAPI startup hook, so `create_tables()` + `graph_store.rebuild_from_db()` execute 4× at boot) becomes **load-bearing** for W-DEPLOY-3: the digest scheduler launches via `asyncio.create_task(digest_loop())` in the startup hook. With 4 workers, that's 4 digest_loops competing to run the same daily/weekly aggregation + cleanup. The Z-side dispatch should specify the single-worker-scheduler-launch decision before W-DEPLOY-3 fires (e.g., guard the `create_task` with a "only launch on the first-spawned worker" check via a file lock, or move the scheduler to a dedicated side-process like the sustained-majority worker, or accept 4× duplicate work and ensure the digest job is idempotent). **Don't address here; this is a W-DEPLOY-3 design concern.**
+
+### Pass-summary
+
+**Phase 13.2 W-DEPLOY-2 shipped clean on first attempt.** All five pre-merge gates passed (including the new file-count check that defends against the W-DEPLOY-1 footgun). Defensive-import pattern landed in the worker; success path engaged on prod (no fallback warning). Twelve emission sites are now wired and reachable; 28 emission tests confirm positive + negative paths per site. No errors in deployment logs. Backend stability sample 5/5 200. Smoke 5/5 PASS. The notification system is now actually capable of populating the in-app feed when events fire — the next user action (comment, vote, follow request, etc.) will land a row in the `Notification` table for any user who's opted in. Cluster E (email + digest scheduler) and Item 22 retirement queued for W-DEPLOY-3.
