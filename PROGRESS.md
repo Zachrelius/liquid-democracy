@@ -1334,3 +1334,88 @@ slug=demo org_id=835bc570-e3ae-4e05-a8b8-ed4b1b22ebdf name=Demo Organization cre
 ### Pass-summary
 
 **Phase 12.7 shipped clean in a single session** — 12 commits + merge + closeout, no hot-fixes, no Railway incident. Greater Phase 12 arc is now complete. Backend test count 820 → 847 (+27). Bundle 348.62 kB gzipped (+2.95 kB). The platform now supports Steward-tier configurable per-org branding (logo + primary color) applied consistently across nav, OrgSelector cards, admin UI, in-page chrome, and the org-scoped invitation email. Three locked copy fixes shipped on landing + demo. Load-bearing F7 visual verification is the one outstanding item (chrome extension wasn't connected this session); flagged as a Z-decision item with a 90-second checklist. Volume provisioning + migration script run remain Z-decision items for upload persistence.
+
+---
+
+## Phase 12.8 — Tech Debt Audit + Cleanup — 2026-05-04
+
+**Coherence pass — same shape as Phase 10.2** (audit-then-fix-in-same-merge). 3 commits on `phase-12-8/tech-debt-audit-and-cleanup` no-ff merged to master at `df6fe60` + closeout. **LIVE on prod**, bundle `index-BYwI_Jxw.js`. Audit doc at `docs/tech_debt_audit_2026-05.md` becomes the canonical reference for what's accumulated through Phase 12.7. **Backend tests 847 → 850 (+3).** Bundle 348.62 → 348.53 kB gzipped (-0.09 kB; helper consolidation). **No migration; no PG smoke required.**
+
+### What shipped
+
+**Cluster A — Audit doc (`docs/tech_debt_audit_2026-05.md`, 41 items consolidated):**
+- Inputs: PROGRESS.md sweep from Phase 9 onward; backend codebase TODO/FIXME/HACK/XXX/BUG/NOTE grep (1 REAL_DEBT — Polis stats N+1 — and 5 INTENTIONAL); frontend codebase grep (1 STALE TODO in CreatePolis.jsx); roadmap Known Issues sweep (5 items, 4 already-resolved).
+- Three-lane classification per spec §A1.5 prevents Z-action items polluting the team's fix queue: TECH_DEBT 32 / Z_ACTION_PENDING 4 / MANUAL_VERIFICATION_GAP 1.
+- TECH_DEBT tier breakdown: 5 Tier-1 fix-in-12.8 (Items 1-5), 14 Tier-2 deferred (Items 6-19), 6 Tier-3 deferred (Items 20-25), 4 calendar-gated (Items 26-29), 2 EXTENDS_10_2_AUDIT (Items 30-31).
+- 4 NEEDS_Z_INPUT items (32-35) flagged with the specific question Z needs to answer.
+- 4 Z_ACTION_PENDING items (36-39 — Volume provisioning, migration script run, F7 visual verify, Phase 10.2 W-DIAG run on prod).
+- 1 MANUAL_VERIFICATION_GAP (Item 40 — 12.7 F7 surface).
+- 5 already-resolved entries flagged for Cluster R removal (Items 41a-e).
+
+**Cluster F — Five Tier-1 fixes:**
+1. **Item 1 — backend startup log warning for ephemeral uploads** (spec F.1 #2): `backend/main.py` startup hook now emits `logging.warning(...)` when the resolved uploads base dir doesn't start with `/data/` (i.e., the Railway Volume isn't mounted and the 3-tier path resolver fell back to the in-image path). Makes the misconfiguration loud at deploy time.
+2. **Item 2 — stale TODO removal in CreatePolis.jsx** (frontend audit STALE; the only frontend code-comment debt found): the Phase 9 Session 2 PATCH-API gap noted in the original comment was closed in Session 4 via commit `95af3ff`. Comment block updated to reflect the current state where both manual + programmatic paths wire end-to-end.
+3. **Item 3 — `OrgMembership.role_id` model nullable alignment** (Phase 12 Stage 1 tech debt #1): `backend/models.py:155` declared `Mapped[Optional[str]]` with `nullable=True` "temporarily so the migration can backfill before flipping NOT NULL." The Phase 12 Stage 1 migration shipped 2026-05-03; the temporary should be removed. Now `Mapped[str]`, `nullable=False`, with `role` relationship typed strict. Verified no production code path constructs `OrgMembership` without `role_id`; tests use the `make_org_membership` conftest helper which always sets it.
+4. **Item 4 — `timeAgo` helper extraction** (Phase 10 tech debt #4): `Comment.jsx` + `FollowRequests.jsx` + `DelegateModal.jsx` had three slightly-different inline `timeAgo` implementations. The Comment.jsx variant (just-now + 30d-fallback) was the strictly-most-complete superset and is preserved as the canonical form in `frontend/src/utils/timeAgo.js`. The other two now import from it. Bundle delta: 348.62 → 348.53 kB gzipped (-0.09 kB).
+5. **Item 5 — sustained-majority `floor_breached` read-path consistency** (Phase 9.8 tech debt #2): `sustained_majority_service.build_status` pre-12.8 used only the latest snapshot and a bare `support < floor` check, so the `/results` UI banner reported "floor breached" the moment a non-zero vote dropped below the floor — even before any threshold-meeting consensus had ever existed in the window. The Phase 9.8 C1 worker fix already gates breach on `support_ever_established`; this aligns the read path. Now loads all snapshots in window, computes `support_ever_established(history, config)`, and gates the breach flag on it. Three new tests in `test_phase12_8_floor_breach_read_path.py`: (a) no breach when never established, (b) breach when established then dropped, (c) no breach when above floor after establishment.
+
+**Spec F.1 item 1 (cache-safety role-tier fallback removal) DEFERRED per the calendar gate.** Phase 12.5 shipped 2026-05-03; the 7-day age-out window closes 2026-05-10; today is 2026-05-04. Reclassified as DEFER_WITH_ESTIMATE per spec instruction. Bundled with audit Items 26-29 for a single ~30-minute follow-up cleanup pass after 2026-05-10 (Nav.jsx fallback + AdminRoute/AdminOnlyRoute fallback + OrgSettings.jsx legacy 'owner' acceptance + Permissions tier-shortcuts).
+
+**Spec F.1 item 3 (email theming centralization helper) DEFERRED with estimate** per pre-registered spec note. Currently invitation-only; ~1-2 hours when there's a second org-scoped email. Logged in audit doc + roadmap.
+
+**Cluster R — Roadmap Known Issues curation:**
+- 5 already-resolved entries removed (sustained-majority floor — read path also fixed in this pass; invitation email-send wiring; avatar storage; test-depth audit; Stub-for-Phase-4c docstring).
+- 24 deferred items added with effort estimates + cross-references to audit-doc rows: 1 calendar-gated cleanup bundle, 15 Tier 2, 6 Tier 3, 2 EXTENDS_10_2_AUDIT.
+- Intro paragraph cross-references `docs/tech_debt_audit_2026-05.md`.
+
+**Backend tests: 847 → 850 (+3).** Frontend bundle: 348.62 → 348.53 kB gzipped (-0.09 kB). **No migration; no PG smoke required.**
+
+### Production verification
+
+| Check | Result | Evidence |
+|---|---|---|
+| Smoke (post-deploy auto-run via `poll_deploy.py`) | **5/5 PASS** | Bundle flipped at 41s; smoke ran in 1.72s |
+| F-Item 1 startup warning | PASS-by-source | Warning in `backend/main.py` startup hook; will fire next time Railway redeploys an env without `/data/` mount. (No prod log probe — Z's Volume is currently un-provisioned, so the warning IS expected to fire on next deploy and would be visible in Railway logs.) |
+| F-Item 5 floor_breached read-path | PASS via 3 new tests + smoke | All 3 unit tests PASS asserting (a) no breach without establishment, (b) breach after establishment-then-drop, (c) no breach above floor; full backend suite 850/850 green |
+| Audit doc structure | **PASS** | `docs/tech_debt_audit_2026-05.md` exists with all sections covered per spec §A6 (Tier 1/2/3, Needs-Z-input, Z-action-pending, Manual-verification-gap, Stale, Already-resolved, Intentional) |
+| Roadmap delta | **PASS** | 5 entries removed (resolved); 24 entries added (deferred with estimates); intro cross-references audit doc |
+
+### Phase 12.8 commit list
+
+- `2dfd59d` A: Tech debt audit doc — consolidates 41 items
+- `2b9dddd` F: Five Tier-1 fixes from the audit doc
+- `3609844` R: Roadmap Known Issues curation — sync with audit doc
+- `df6fe60` Merge to master
+- closeout commit follows
+
+### Z-decision items (post-merge, requiring Z action)
+
+These are surfaced in `docs/tech_debt_audit_2026-05.md` and persist beyond Phase 12.8. Listed here for visibility:
+
+**Z_ACTION_PENDING (audit Items 36-39):**
+1. **Provision `/data` Volume via Railway dashboard** (carried from Phase 12.7). Until provisioned, logo + avatar uploads fall back to ephemeral container storage. The Phase 12.8 F-Item 1 startup warning makes the misconfiguration visible in Railway logs.
+2. **Run `scripts/phase12_7_migrate_uploads.py` via railway ssh** (carried from Phase 12.7) after Volume provisioning.
+3. **F7 visual browser verification** of Phase 12.7's logo upload + theming flow (carried from Phase 12.7).
+4. **Run `scripts/phase10_2_diagnose_pre_fix_vote_leak.py` on prod** via `railway run` (carried from Phase 10.2 — long-pending). Output may motivate Phase 10.3.
+
+**NEEDS_Z_INPUT (audit Items 32-35):**
+1. Demo-org slug=`demo` collision — rename via direct DB UPDATE or document the harmless intent in DEPLOYMENT.md?
+2. Help page back-link target — `/orgs` (current) or `history.back()` with fallback?
+3. Old flat URL catch-all behavior — current `/` redirect or smarter "you tried `/proposals` — pick an org" fallback?
+4. Platform admin (`is_admin=True`) sub-org-admin power scope — global override or stay scoped to org families they're a member of?
+
+### Process notes
+
+1. **Multi-agent staging discipline N/A this pass.** Two parallel Explore agents handled backend codebase grep + frontend codebase grep + roadmap sweep. Lead handled PROGRESS.md sweep and consolidation. Then lead implemented all 5 Tier-1 fixes in serial since the autonomous-mode lead bandwidth was the constraint and the fixes are small.
+2. **Codebase comment density is exceptionally low.** Backend: 6 markers total (1 REAL_DEBT, 5 INTENTIONAL). Frontend: 1 marker total (1 STALE). Disciplined avoidance of marker inflation; inline comments are brief and architectural comments are tied to specs/phases.
+3. **F-Item 5 (sustained-majority read-path fix) was borderline Tier 1/2** but stayed in scope because the test infrastructure was well-established (existing `_voting_proposal` + `VoteSnapshot` patterns in `test_sustained_majority_worker.py`) and the fix required only one helper-call addition + a snapshot-loading change. Borderline calls like this are exactly what the Tier 2 escape-hatch is for if they balloon — this one didn't.
+4. **`poll_deploy.py` auto-smoke worked again** — bundle flipped at 41s, smoke 5/5 PASS in 1.72s. Same fast-deploy pattern as Phase 12.7 (61s) and Phase 11 (20s).
+5. **Audit-then-fix-in-same-merge pattern matches Phase 10.2.** The audit doc is the durable artifact (Phase 10.2's `docs/test_depth_audit_2026-05.md` is its sibling); the fix work is what gets merged. Future planners reading the audit can see what's done + what's deferred + what's Z's, without re-spelunking PROGRESS.md.
+
+### New tech debt
+
+None surfaced during the fixes. The audit was the surface; the fixes were narrow.
+
+### Pass-summary
+
+**Phase 12.8 shipped clean in a single session** — 4 commits + closeout, no hot-fixes, no Railway incident. The accumulated tech-debt landscape across Phase 9-12.7 is now consolidated into `docs/tech_debt_audit_2026-05.md` (41 items, three-lane classification, tiered with effort estimates). Five Tier-1 fixes landed (backend startup-warning, stale-TODO removal, model nullable alignment, helper consolidation, sustained-majority read-path consistency); 24 deferred items added to roadmap Known Issues with estimates + audit-doc cross-references. Backend tests 847 → 850 (+3). Bundle -0.09 kB gzipped. Spec F.1 item 1 (cache-safety role-tier fallback removal) deferred per calendar gate (7-day window closes 2026-05-10); bundled with audit Items 26-29 for a small follow-up cleanup pass after that date. Z's checklist: 4 Z_ACTION_PENDING items + 4 NEEDS_Z_INPUT planning conversations queued for the next session.
