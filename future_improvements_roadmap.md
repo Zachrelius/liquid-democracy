@@ -585,7 +585,6 @@ For the comprehensive working list (resolved + deferred + Z-action items + manua
 **Tier 3 deferred (real work; needs proper specing)**
 - **`User.email_verified_at` column gap** (Phase 9.5 #1, audit Item 20) — schema change + backfill + migration + audit query update. Estimated ~3 hours.
 - **Fresh-deploy seed mirror in `database.create_tables()` band-aid** (Phase 9.5 #3, audit Item 21) — workaround for create_all+stamp-head asymmetry from Phase 8.6's start.sh ordering fix. Worth revisiting when the alembic chain gets squashed. Estimated ~6 hours.
-- **NotificationBadge default-org coarse routing** (Phase 11 #2, audit Item 22) — schema migration adding `notifications.org_slug` + producer-side updates + frontend cutover. Estimated ~4 hours.
 - **`routes/proposals.py:578-580` flat path duplicates org-scoped advance endpoint** (Phase 12 Stage 1 #5, audit Item 23) — caller audit + deprecation period decision + cutover + tests. Estimated ~3 hours.
 - **`org_middleware.py` coarse-tier dependencies retire candidate** (Phase 12 Stage 1 #3, audit Item 24) — call-site audit + gradual replacement + permission-key additions where needed. Estimated ~3 hours.
 - **"Reset to defaults" button on permissions matrix** (Phase 12 Stage 2 #5, audit Item 25) — modal + bulk-PATCH semantics + audit event design + tests. Estimated ~3 hours.

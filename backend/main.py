@@ -240,7 +240,7 @@ async def proposal_websocket(websocket: WebSocket, proposal_id: str):
 # ---------------------------------------------------------------------------
 
 @app.on_event("startup")
-def startup() -> None:
+async def startup() -> None:
     log.info("Creating database tables…")
     create_tables()
 
@@ -263,6 +263,36 @@ def startup() -> None:
             "Provision a Railway Volume at /data and run "
             "scripts/phase12_7_migrate_uploads.py to migrate legacy files.",
             _UPLOADS_BASE_DIR,
+        )
+
+    # Phase 13 E3 — digest scheduler. Wakes hourly, processes daily/
+    # weekly digests + quiet-hours flush + 90-day cleanup. Gated on
+    # DISABLE_DIGEST_SCHEDULER env var so tests don't accidentally launch
+    # the loop. See backend/digest_scheduler.py for implementation choice
+    # rationale + DEPLOYMENT.md for the ops note.
+    #
+    # Phase 13.2 W-DEPLOY-3 defensive-launch pattern: wrapping in try/
+    # except so a scheduler launch failure (import error in
+    # digest_scheduler, asyncio loop misconfig, etc.) cannot crash
+    # startup. Endpoints stay up; in-app notifications continue to flow;
+    # only the scheduled digest job goes silent. This is the graceful-
+    # degradation contract spec'd in phase13_1_notifications_redeploy_spec.md.
+    try:
+        from digest_scheduler import digest_loop, is_disabled
+        if is_disabled():
+            log.info(
+                "Digest scheduler disabled via DISABLE_DIGEST_SCHEDULER; "
+                "skipping startup task."
+            )
+        else:
+            import asyncio
+            asyncio.create_task(digest_loop())
+            log.info("Digest scheduler launched.")
+    except Exception:  # noqa: BLE001 — never let scheduler issues kill startup
+        log.exception(
+            "Failed to start digest scheduler — falling back to in-app "
+            "notifications only; digest emails + quiet-hours flush + "
+            "90-day cleanup will not run until next deploy fixes this."
         )
 
     log.info("Startup complete.")

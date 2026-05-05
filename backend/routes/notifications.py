@@ -523,3 +523,80 @@ def get_registry(
         ],
         categories=list(CATEGORIES),
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/notifications/unsubscribe/{token}  (PUBLIC — no auth)
+# ---------------------------------------------------------------------------
+#
+# Phase 13 E2 — one-click unsubscribe links in event emails. The link's
+# signed token encodes (user_id, event_type) so we can flip the email
+# channel preference to False without forcing the recipient to log in.
+# Token TTL is 30 days (see ``email_service.UNSUBSCRIBE_TOKEN_TTL_DAYS``).
+
+class UnsubscribeOut(BaseModel):
+    success: bool
+    event_type: Optional[str] = None
+    message: str
+
+
+@router.get("/unsubscribe/{token}", response_model=UnsubscribeOut)
+def unsubscribe_via_token(
+    token: str,
+    db: Session = Depends(get_db),
+):
+    """Public unsubscribe endpoint — flips ``(user_id, event_type, "email")``
+    preference to False after verifying the signed token.
+
+    Returns a JSON body for v1; the frontend can render a polished page
+    in a follow-up pass. Idempotent: repeat calls succeed silently.
+    """
+    from email_service import decode_unsubscribe_token
+
+    decoded = decode_unsubscribe_token(token)
+    if decoded is None:
+        # Don't 401 — return a body the user-friendly redirect page can
+        # render. The token may simply be expired (30-day TTL).
+        return UnsubscribeOut(
+            success=False,
+            event_type=None,
+            message=(
+                "This unsubscribe link is invalid or has expired. Please "
+                "manage your preferences at /settings/notifications."
+            ),
+        )
+    user_id, event_type = decoded
+    if not is_known_event_type(event_type):
+        return UnsubscribeOut(
+            success=False,
+            event_type=event_type,
+            message=(
+                f"Unknown event type {event_type!r}. The notification system "
+                "may have changed since this email was sent."
+            ),
+        )
+
+    # Upsert the (user, event_type, email) preference to enabled=False.
+    pref = (
+        db.query(models.NotificationPreference)
+        .filter(
+            models.NotificationPreference.user_id == user_id,
+            models.NotificationPreference.event_type == event_type,
+            models.NotificationPreference.channel == "email",
+        )
+        .first()
+    )
+    if pref is None:
+        pref = models.NotificationPreference(
+            user_id=user_id, event_type=event_type, channel="email",
+            enabled=False,
+        )
+        db.add(pref)
+    else:
+        pref.enabled = False
+    db.commit()
+    return UnsubscribeOut(
+        success=True,
+        event_type=event_type,
+        message=f"You have been unsubscribed from {event_type} emails.",
+    )
