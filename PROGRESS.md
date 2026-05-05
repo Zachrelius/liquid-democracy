@@ -1419,3 +1419,115 @@ None surfaced during the fixes. The audit was the surface; the fixes were narrow
 ### Pass-summary
 
 **Phase 12.8 shipped clean in a single session** — 4 commits + closeout, no hot-fixes, no Railway incident. The accumulated tech-debt landscape across Phase 9-12.7 is now consolidated into `docs/tech_debt_audit_2026-05.md` (41 items, three-lane classification, tiered with effort estimates). Five Tier-1 fixes landed (backend startup-warning, stale-TODO removal, model nullable alignment, helper consolidation, sustained-majority read-path consistency); 24 deferred items added to roadmap Known Issues with estimates + audit-doc cross-references. Backend tests 847 → 850 (+3). Bundle -0.09 kB gzipped. Spec F.1 item 1 (cache-safety role-tier fallback removal) deferred per calendar gate (7-day window closes 2026-05-10); bundled with audit Items 26-29 for a small follow-up cleanup pass after that date. Z's checklist: 4 Z_ACTION_PENDING items + 4 NEEDS_Z_INPUT planning conversations queued for the next session.
+
+---
+
+## Phase 13 — Notifications — REVERTED 2026-05-05 (incident report)
+
+**Phase 13 implementation complete; deploy failed; reverted to restore prod service.** Implementation merged at `71c5684`, pushed, deployed to prod bundle `index-Bz7dC8k8.js` — frontend bundle flipped successfully but the backend container went 502 immediately after the deploy and stayed down for ~35 minutes. With no Railway log access available this session and local startup confirmed working with all imports + DISABLE_DIGEST_SCHEDULER both on and off, the team was unable to identify the prod-specific failure. Reverted the merge at `017028c` to restore service. Backend recovered; smoke 5/5 PASS post-revert. Phase 13.1 is queued to diagnose the prod startup failure offline, then re-attempt deploy.
+
+**This entry documents the incident and what was BUILT (kept on the `phase-13/notifications` branch for re-use) vs. what is LIVE on prod (= pre-Phase-13, master at `017028c`).**
+
+### What was implemented (intact on `phase-13/notifications` branch, NOT in master)
+
+The full Phase 13 spec landed in 9 commits across 5 clusters before the deploy. Backend tests **850 → 924 (+74)** in CI; full suite passed 924/924. Frontend bundle 348.53 → 353.89 kB gzipped (+5.36 kB; well under the 8-12 kB budget).
+
+**Cluster B foundation (commits 219b508, 2c0b84f, c189bee, c25f17d):**
+- `Notification` table (id, user_id CASCADE, event_type, org_id, actor_id, target_type, target_id, payload JSON, read_at, created_at) and `NotificationPreference` table (UQ user_id+event_type+channel, opt-in default = enabled defaults False).
+- 4 new User columns: `timezone`, `digest_cadence` (default "real_time"), `quiet_hours_enabled` (default False), `notification_intro_dismissed` (default False).
+- `EVENT_REGISTRY` in `notification_events.py` with 12 entries across 5 categories (Comments / Proposals / Membership / Delegation / Polis).
+- `emit_notification(...)` helper with per-channel preference check (absent row = false, opt-in default), in_app row insert when enabled, real-time email queue when enabled + cadence=real_time + not in quiet hours.
+- 6 endpoints in `routes/notifications.py` (GET list, POST {id}/read, POST mark-all-read, GET preferences, PATCH preferences with audit, GET registry). All account-scoped, no role-tier gates (Item 30 confirmation).
+- 90-day `cleanup_expired_notifications` helper.
+- Migration `f1a3c8d92e60` (reversible, idempotent, batch_alter_table for SQLite). PG smoke PASS both modes against prior=41694d86821f.
+
+**Cluster B emission (commit 602b005):** 12 emission sites wired in routes/comments.py, routes/follows.py, routes/organizations.py, routes/proposals.py, routes/polises.py, sustained_majority_worker.py. Each call wrapped in try/except so emission failures never block originating requests. org_id passed at every org-scoped site. 28 emission tests + 13 digest tests.
+
+**Cluster E (commit a65d156):**
+- `send_org_email(template_key, template_vars)` helper generalizes 12.7's invitation theming. Resolves org branding, renders template, sends via existing transport.
+- `send_event_email(user_id, event_type, payload)` is the function `notification_emit` lazy-imports.
+- 15 templates in `backend/email_templates/` (12 events + invitation extracted + digest_daily + digest_weekly).
+- HMAC-signed unsubscribe tokens (30-day expiry) + `GET /api/notifications/unsubscribe/{token}` endpoint.
+- `digest_scheduler.py` asyncio in-process loop wakes hourly. Wired into main.py startup hook, gated on `DISABLE_DIGEST_SCHEDULER`. Choice + kill switch documented in DEPLOYMENT.md.
+- Quiet hours queue logic: real-time email suppressed at emit when in 21-09 window, flushed by digest_loop at 9am local.
+- Backward compat: `send_invitation_email` external signature preserved unchanged.
+
+**Cluster F (commits cb79699, 648da71):**
+- `NotificationBadge.jsx` fully rewritten — bell + count + dropdown + mark-all-read + view-all link. localStorage cleanup hook for legacy `polis_last_seen_*` keys. Click-through routing via `formatNotification.js::notificationHref` using `notification.org_slug` (Item 22 routing — never falls back to first-parent-org).
+- `NotificationsPage.jsx` at `/notifications` with category filter chips, date grouping, pagination, mark-unread.
+- `NotificationsPreferences.jsx` at `/settings/notifications` with 12-event by 2-channel matrix UI, digest cadence radio, quiet hours checkbox, timezone dropdown, first-time banner.
+- `Settings.jsx` adds Notifications section linking to `/settings/notifications`.
+- `App.jsx` registers both as top-level account-scoped routes.
+
+**Cluster D + Item 22 retirement (commit 642759c):**
+- `NotificationsHelp.jsx` at `/help/notifications`.
+- SECURITY_REVIEW.md "Notification Privacy (Phase 13)" section with threat model + token format + retention + channel-control posture + deferred items.
+- Item 22 marked RESOLVED in audit doc; corresponding entry removed from roadmap Known Issues.
+
+### What broke at prod deploy
+
+After the merge `71c5684` was pushed and Railway redeployed:
+
+- **Frontend bundle flipped at +41s** (`index-BYwI_Jxw.js` → `index-Bz7dC8k8.js`). Static assets serve correctly post-deploy.
+- **Backend went 502 at +41s and stayed down for ~35 minutes.** All `/api/*` endpoints returned 502 "Application failed to respond" (Cloudflare/Railway upstream-unreachable). The `/api/health` endpoint same. Root path `/` (static) served 200 throughout, confirming the Railway proxy + frontend container were healthy.
+
+### Diagnostic steps taken before revert
+
+- **Local import test PASS:** `from main import app` succeeds.
+- **Local startup hook PASS** with both `DISABLE_DIGEST_SCHEDULER=1` and the scheduler enabled. Five log lines + "Startup complete" emitted; `digest_loop` launched without crashing the app. (The first tick of `digest_loop` crashes locally — caught by its own try/except — because there's no real DB content; this is benign and was confirmed during initial CI testing too.)
+- **Local sustained_majority_worker import PASS.**
+- **PG smoke PASS both modes** pre-deploy (prior=41694d86821f). Migration runs cleanly on a fresh PG container.
+- **Backend pytest suite PASS** (924/924) on the merge commit.
+- **Without Railway log access this session**, the specific failure mode on the prod container could not be observed. Hypotheses worth investigating in 13.1: (a) the async-startup change (sync→async in `@app.on_event("startup")`) interacting with uvicorn `--workers 4`; (b) `asyncio.create_task(digest_loop())` behaving differently when launched from each of 4 worker startup hooks vs once in a single-worker scenario; (c) the modified `sustained_majority_worker.py` (now imports `notification_emit`) crashing as a side process and somehow tying up the parent uvicorn through shared resources; (d) a Railway-specific environment difference (PORT binding, shutdown signal handling, container memory, Resend API call at startup); (e) the migration succeeding but the post-migration startup making a sync DB call that hangs. None confirmed without log access.
+
+### The revert
+
+`git revert -m 1 71c5684 --no-edit` produced commit `017028c`. Pushed at +35min. Railway redeployed at the new HEAD. Backend `/api/health` returned 200 within ~2 minutes of the push; smoke 5/5 PASS via auto-poll.
+
+**Important:** the revert undoes the CODE but the **prod database schema is post-Phase-13** — the migration `f1a3c8d92e60` ran successfully on prod (added 2 tables + 4 user columns) before the backend started failing. After revert, the reverted code doesn't include the Phase 13 model definitions, so the new tables and columns are dormant on prod. SQLAlchemy doesn't error on extra columns in SELECT * (the model definition lists what to populate; extra DB columns are ignored). The `alembic_version` table on prod is in an unusual state (stamped at a revision whose file no longer exists in the codebase) — Railway's start.sh likely fell into the else-branch on next boot via `alembic current` returning non-zero on the unknown revision, and stamped at `41694d86821f`. This is consistent with the smoke PASS post-revert.
+
+**Phase 13.1 implications:** the migration is idempotent and re-applying it against the post-revert state will be a no-op (introspect-and-skip on tables + columns). When Phase 13.1 ships, the migration will run cleanly because it already did, and the alembic stamp will catch up.
+
+### What's preserved + what's lost
+
+**Preserved (intact on `phase-13/notifications` branch):**
+- All 9 commits, full implementation, 924/924 tests passing in CI, PG smoke PASS both modes, frontend build clean.
+- The branch ref `phase-13/notifications` still points at the reverted-from work; `git log phase-13/notifications` shows the full history. Phase 13.1 will branch from this point or cherry-pick selectively.
+- Audit doc Item 22 status was reverted to "DEFER_WITH_ESTIMATE" (the resolution edit was undone with the merge revert). Roadmap Known Issues still lists Item 22 as deferred. **Item 22 will be retired again in Phase 13.1's closeout** — same shape, same diff.
+
+**Lost (effectively zero):**
+- ~35 minutes of prod-down on Sunday afternoon. Friend pilot impact: minimal (no user activity observed during that window). No data corruption — the migration succeeded; subsequent endpoint requests just 502'd.
+- A clean Phase 13 entry in PROGRESS.md. This entry replaces it.
+
+### Z-decision items
+
+1. **Phase 13.1 dispatch readiness.** The next planning conversation should specify (a) whether to disable the asyncio digest_loop on prod via `DISABLE_DIGEST_SCHEDULER=1` for the first 13.1 deploy as a diagnostic isolation step, (b) whether to bisect the merge into smaller deploys (e.g., schema + B foundation + endpoints only first; emission + email + scheduler in a follow-up) to narrow which cluster causes the failure, or (c) whether to add Railway log access (or a short-term equivalent) to make this kind of diagnosis tractable.
+2. **Prod schema state.** No action required — the schema is forward-compatible and dormant. But if a future planner wants to roll the schema back to a strictly-pre-Phase-13 state, that requires a manual migration (the migration file is gone from the codebase; manual SQL DROP is the path).
+
+### Process notes
+
+1. **Multi-agent coordination on this scale worked well at the build layer.** Backend dev #1 (foundation), backend dev #2 (emission + email), frontend dev #1 (notification center + preferences) — three parallel agents handled their clusters cleanly with no merge conflicts. Each closeout was clear about its scope boundaries; lead consolidation + Cluster D came together in serial without friction.
+2. **Pre-deploy verification was thorough and still missed this.** Backend suite 924 PASS, PG smoke both modes PASS, local startup PASS in two configurations, frontend build clean. The failure mode is something only prod's runtime environment exposes. This is the lesson Phase 9.6/9.7/9.8/9.9/10.1 kept teaching at smaller scales — a feature can pass every local + CI gate and still hit a prod-specific issue. Phase 10.2 covered the test-depth side of this; **the deploy-runtime side (what fails on Railway specifically that doesn't fail in CI) is now a documented gap.**
+3. **Railway log access during a live incident would have changed the outcome.** With visibility into why the container was 502'ing, the team could have hot-fixed forward in minutes instead of reverting. Adding a "during an incident, here's how to read Railway logs" runbook to DEPLOYMENT.md is a worthwhile follow-up.
+4. **The revert pattern worked correctly** — `git revert -m 1` of a no-ff merge cleanly undoes all 9 underlying commits as a single revert commit, and Railway redeployed cleanly. CLAUDE.md's "create new commits, don't rewrite history" stance held under fire.
+
+### Phase 13 commit list (on `phase-13/notifications` branch; not in master)
+
+- `219b508` B1+M: Notification + NotificationPreference tables + User columns
+- `2c0b84f` B2: EVENT_REGISTRY with 12 event types
+- `c189bee` B3+B5: emit_notification helper + 90-day cleanup
+- `c25f17d` B4: notifications router with 6 endpoints + tests
+- `cb79699` F1+F6: notification center replaces legacy badge + localStorage cleanup
+- `648da71` F2+F3+F4: notifications page + preferences page + Settings link
+- `602b005` B-emit: 12 emission sites wired with tests
+- `a65d156` E1-E4: send_org_email + 12 templates + digest scheduler + quiet hours
+- `642759c` D + Item 22 retirement: help article + SECURITY_REVIEW + audit doc + roadmap edits
+
+### Master commit list (live on prod, post-revert)
+
+- `71c5684` Merge phase-13/notifications: Notification system (Phase 13) — REVERTED
+- `017028c` Revert "Merge phase-13/notifications: Notification system (Phase 13)" — LIVE on prod
+
+### Pass-summary
+
+**Phase 13 implementation is complete; the prod deploy failed; the revert restored service.** No code is live on prod from this pass. Backend tests, PG smoke, frontend build, and local startup all PASS — the prod failure mode is environment-specific and not reproducible locally without log access. Phase 13.1 is queued: diagnose the prod failure (likely via narrower cluster-by-cluster deploys or with `DISABLE_DIGEST_SCHEDULER=1`), re-ship the same implementation. The branch + 9 commits + 924-test suite are preserved on `phase-13/notifications` for re-use. Item 22 retirement and the corresponding roadmap edit will land in Phase 13.1's closeout.
