@@ -260,6 +260,32 @@ class User(Base):
     # (frontend renders the initials-on-colored-background fallback). Set by
     # POST /api/users/me/avatar; cleared by DELETE.
     avatar_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Phase 13 — notification-related per-user preferences. ``timezone`` is
+    # an IANA name (e.g. "America/Los_Angeles"); NULL = unknown, treated as
+    # UTC by the digest job. ``digest_cadence`` controls when email-channel
+    # notifications are delivered ("real_time" | "daily" | "weekly" |
+    # "off"). ``quiet_hours_enabled`` toggles the 9pm-9am local-time email
+    # suppression. ``notification_intro_dismissed`` records whether the
+    # F5 first-time banner has been dismissed.
+    #
+    # The server_default values mirror the migration's column-add defaults
+    # so raw-SQL INSERTs that omit these columns (test fixtures, the
+    # migration-cycle tests' seed paths) still satisfy the NOT NULL
+    # constraint. SQLAlchemy default= covers ORM inserts; server_default=
+    # covers the rest.
+    timezone: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    digest_cadence: Mapped[str] = mapped_column(
+        String, nullable=False, default="real_time",
+        server_default="real_time",
+    )
+    quiet_hours_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False,
+        server_default="0",
+    )
+    notification_intro_dismissed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False,
+        server_default="0",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
     proposals: Mapped[list["Proposal"]] = relationship("Proposal", back_populates="author")
@@ -876,3 +902,105 @@ class PolisXid(Base):
     organization: Mapped["Organization"] = relationship(
         "Organization", foreign_keys=[org_id],
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 13 — Notifications
+# ---------------------------------------------------------------------------
+
+class Notification(Base):
+    """Phase 13 — a single notification row delivered to a user.
+
+    A row is inserted by ``backend/notification_emit.emit_notification`` when
+    the recipient has the (event_type, "in_app") preference enabled (opt-in
+    default = absent row treated as False). Email-channel delivery is a
+    parallel path; rows here are the in-app feed source-of-truth.
+
+    ``org_id`` is the load-bearing field for click-through routing — see
+    Item 22 in ``docs/tech_debt_audit_2026-05.md``. The legacy
+    NotificationBadge defaulted to "first parent org"; the new system uses
+    this column to resolve the correct ``org_slug`` for the click target.
+    Account-level notifications (``follow.approved``, etc.) carry NULL
+    ``org_id`` and route to the account-level full feed instead.
+
+    ``actor_id`` is the user who *caused* the event (the commenter, the
+    inviter, etc.) — distinct from ``user_id`` (the recipient). Nullable
+    for system-originated events. ``target_type`` + ``target_id`` together
+    identify the entity the event references (e.g. ("comment", "<uuid>"),
+    ("proposal", "<uuid>")) so the frontend can build deep-link URLs.
+    ``payload`` carries event-specific context (comment body excerpt,
+    proposal title, etc.) — kept as JSON so adding event types doesn't
+    require a schema change.
+
+    Rows expire after 90 days via the cleanup function in
+    ``backend/notification_emit.cleanup_expired_notifications``.
+    """
+    __tablename__ = "notifications"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    event_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id"),
+        nullable=True, index=True,
+    )
+    actor_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id"), nullable=True,
+    )
+    target_type: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    target_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    read_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False, index=True,
+    )
+
+    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
+    actor: Mapped[Optional["User"]] = relationship("User", foreign_keys=[actor_id])
+    organization: Mapped[Optional["Organization"]] = relationship(
+        "Organization", foreign_keys=[org_id],
+    )
+
+
+class NotificationPreference(Base):
+    """Phase 13 — per-user-per-event-per-channel notification preference.
+
+    Opt-in by default: absent rows are treated as ``enabled=False`` by
+    ``emit_notification``. Stored explicitly only when a user has actively
+    flipped a switch in the preferences UI (``PATCH /api/notifications/
+    preferences``). The unique constraint enforces one row per
+    (user, event_type, channel) triple.
+
+    ``channel`` is one of ``"in_app" | "email"``; ``event_type`` is one of
+    the keys from ``backend/notification_events.EVENT_REGISTRY``. Neither
+    is checked at the DB layer (no enums) — the route layer and the
+    EVENT_REGISTRY are the source of truth, matching the lightweight
+    posture used elsewhere (proposal status, etc.).
+    """
+    __tablename__ = "notification_preferences"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "event_type", "channel",
+            name="uq_notif_pref_user_event_channel",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    channel: Mapped[str] = mapped_column(String, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, onupdate=_now, nullable=False,
+    )
+
+    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])

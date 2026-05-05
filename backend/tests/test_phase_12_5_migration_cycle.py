@@ -224,8 +224,11 @@ def test_phase_12_5_upgrade_downgrade_upgrade_cycle():
                 f"proposal.set_thresholds=False; got {by_role.get('member')!r}"
             )
 
-        # 2. Downgrade -1: reverse Phase 12.5 only.
-        _run_alembic(db_url, "downgrade", "-1")
+        # 2. Downgrade to Stage 2 (e6371e56e860): undoes Phase 12.5 plus
+        # any later revisions (e.g. Phase 13). Targeting an explicit
+        # revision rather than a relative offset so this test stays
+        # correct as new migrations are appended.
+        _run_alembic(db_url, "downgrade", "e6371e56e860")
         engine = sa.create_engine(db_url)
         with engine.connect() as conn:
             tables = set(sa.inspect(conn).get_table_names())
@@ -307,10 +310,12 @@ def test_phase_12_5_idempotent_when_re_applied_with_existing_rows():
             ).scalar()
         engine.dispose()
 
-        # Second invocation: downgrade -1 then upgrade head re-applies the
-        # 12.5 migration; subsequent upgrade head with already-at-head is
-        # a no-op. Both forms should leave row counts identical.
-        _run_alembic(db_url, "downgrade", "-1")
+        # Second invocation: downgrade to Stage 2 then upgrade head
+        # re-applies Phase 12.5 (and any later revisions). Subsequent
+        # upgrade head with already-at-head is a no-op. Both forms should
+        # leave row counts identical. Targeting an explicit revision so
+        # this stays correct as new migrations are appended.
+        _run_alembic(db_url, "downgrade", "e6371e56e860")
         _run_alembic(db_url, "upgrade", "head")
         _run_alembic(db_url, "upgrade", "head")
 
