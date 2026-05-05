@@ -1,9 +1,10 @@
 """
 Follow request and relationship endpoints.
 """
+import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -12,6 +13,10 @@ import schemas
 from audit_utils import log_audit_event
 from database import get_db
 from delegation_engine import graph_store
+from notification_emit import emit_notification
+
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/follows", tags=["follows"])
 
@@ -78,6 +83,7 @@ def _revoke_dependent_delegations(
 def send_follow_request(
     body: schemas.FollowRequestCreate,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
@@ -159,6 +165,52 @@ def send_follow_request(
 
     db.commit()
     db.refresh(freq)
+
+    # Phase 13 B-emit — follow.requested -> target user. Auto-approve cases
+    # ALSO emit follow.approved -> requester.
+    actor_display = current_user.display_name or current_user.username
+    try:
+        emit_notification(
+            db,
+            background_tasks,
+            event_type="follow.requested",
+            user_id=body.target_id,
+            org_id=None,  # account-level event
+            actor_id=current_user.id,
+            target_type="follow_request",
+            target_id=freq.id,
+            payload={
+                "requester_id": current_user.id,
+                "actor_display_name": actor_display,
+                "message": body.message,
+            },
+        )
+        if freq.status == "approved":
+            target_display = target.display_name or target.username
+            emit_notification(
+                db,
+                background_tasks,
+                event_type="follow.approved",
+                user_id=current_user.id,
+                org_id=None,
+                actor_id=body.target_id,
+                target_type="follow_request",
+                target_id=freq.id,
+                payload={
+                    "target_id": body.target_id,
+                    "actor_display_name": target_display,
+                    "permission_level": freq.permission_level,
+                    "auto_approved": True,
+                },
+            )
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        log.warning("follow.requested emit failed: %s: %s", type(e).__name__, e)
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
     return freq
 
 
@@ -195,6 +247,7 @@ def outgoing_requests(
 def respond_to_request(
     request_id: str,
     body: schemas.FollowRequestRespond,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
@@ -250,6 +303,34 @@ def respond_to_request(
 
     db.commit()
     db.refresh(freq)
+
+    # Phase 13 B-emit — follow.approved -> requester (only on approval).
+    if freq.status == "approved":
+        try:
+            actor_display = current_user.display_name or current_user.username
+            emit_notification(
+                db,
+                background_tasks,
+                event_type="follow.approved",
+                user_id=freq.requester_id,
+                org_id=None,
+                actor_id=current_user.id,
+                target_type="follow_request",
+                target_id=freq.id,
+                payload={
+                    "target_id": current_user.id,
+                    "actor_display_name": actor_display,
+                    "permission_level": freq.permission_level,
+                },
+            )
+            db.commit()
+        except Exception as e:  # noqa: BLE001
+            log.warning("follow.approved emit failed: %s: %s", type(e).__name__, e)
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+
     return freq
 
 

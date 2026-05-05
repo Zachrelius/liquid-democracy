@@ -12,10 +12,11 @@ to topics and proposals); putting it in its own router keeps Decision
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -25,10 +26,14 @@ import polis_service
 import schemas
 from audit_utils import log_audit_event
 from database import get_db
+from notification_emit import emit_notification
 from org_middleware import require_org_membership
 from permissions import is_polis_admin, is_sub_org_admin
 from polis_engine import eligible_viewers_for_polis
 from settings import settings as app_settings
+
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/orgs", tags=["polises"])
 
@@ -132,6 +137,7 @@ def create_polis(
     org_slug: str,
     body: schemas.PolisCreate,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_membership),
@@ -254,6 +260,44 @@ def create_polis(
 
     db.commit()
     db.refresh(polis)
+
+    # Phase 13 B-emit — polis.created -> all org members in scope. For
+    # org-wide Polises this is every parent-org member; for sub-org-scoped
+    # Polises the eligible_viewers_for_polis helper handles parent-admin
+    # implicit power + Decision-7 default visibility. Wrapped per spec §B3.
+    try:
+        viewer_ids = eligible_viewers_for_polis(db, polis)
+        actor_display = current_user.display_name or current_user.username
+        for uid in viewer_ids:
+            if uid == current_user.id:
+                continue  # don't notify the creator
+            emit_notification(
+                db,
+                background_tasks,
+                event_type="polis.created",
+                user_id=uid,
+                org_id=parent.id,
+                actor_id=current_user.id,
+                target_type="polis",
+                target_id=polis.id,
+                payload={
+                    "polis_id": polis.id,
+                    "org_id": parent.id,
+                    "org_slug": parent.slug,
+                    "sub_org_id": polis.sub_org_id,
+                    "title": polis.title,
+                    "actor_display_name": actor_display,
+                },
+            )
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "polis.created emit failed: %s: %s", type(e).__name__, e,
+        )
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
 
     return schemas.PolisCreateResponse(
         polis=_polis_to_out(polis),
