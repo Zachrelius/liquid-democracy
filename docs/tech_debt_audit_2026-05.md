@@ -2,17 +2,20 @@
 
 Audit date: 2026-05-04 (Phase 12.8). Scope: PROGRESS.md from Phase 9 forward, codebase TODO/FIXME/HACK/XXX/BUG/NOTE comment grep (backend + frontend), `future_improvements_roadmap.md` Known Issues. Per spec §A1.5, items are classified into three lanes (TECH_DEBT / Z_ACTION_PENDING / MANUAL_VERIFICATION_GAP) before tier-assignment.
 
+**Edit history:**
+- 2026-05-04 (Phase 13 closeout): Item 22 (NotificationBadge default-org coarse routing) marked RESOLVED — Phase 13 ships a real `Notification` table with `org_id` as a first-class column and routes click-through on `notification.org_slug` rather than first-parent fallback. Entry retained with RESOLVED status for traceability rather than deleted; `future_improvements_roadmap.md` Known Issues had its corresponding bullet removed.
+
 ## Summary
 
 - Total items audited: 41 (after deduplication)
-- TECH_DEBT lane: 32 (Tier 1: 5 fix-in-12.8, Tier 2: 14, Tier 3: 6, calendar-gated: 4, EXTENDS_10_2_AUDIT: 2, INTENTIONAL/STALE: 1)
+- TECH_DEBT lane: 32 (Tier 1: 5 fix-in-12.8, Tier 2: 14, Tier 3: 5 + 1 RESOLVED in 13, calendar-gated: 4, EXTENDS_10_2_AUDIT: 2, INTENTIONAL/STALE: 1)
 - Z_ACTION_PENDING lane: 4
 - MANUAL_VERIFICATION_GAP lane: 1
 - NEEDS_Z_INPUT items: 4
 - Items recommended for fix in 12.8: **5** (Tier 1) + **1 stale comment removal**
-- Items deferred with estimate: 22 (Tier 2/3 + calendar-gated)
+- Items deferred with estimate: 21 (Tier 2/3 + calendar-gated; was 22 pre-13, Item 22 resolved)
 - Items flagged for Z input: 4
-- Items already resolved (remove stale references): 5
+- Items already resolved (remove stale references): 5 + 1 (Item 22 resolved in Phase 13)
 
 ## Tier 1 — Fix in 12.8 (trivial)
 
@@ -172,12 +175,10 @@ Audit date: 2026-05-04 (Phase 12.8). Scope: PROGRESS.md from Phase 9 forward, co
 - Effort: ~6 hours (alembic chain audit + squash design + migration test cycle on real DB)
 - Rationale: Chain-wide refactor; needs careful PG smoke + a reset/re-deploy plan.
 
-### Item 22: NotificationBadge default-org coarse routing
+### Item 22: NotificationBadge default-org coarse routing — RESOLVED in Phase 13 (2026-05-04)
 - Source: PROGRESS.md Phase 11 tech debt #2
-- Description: Notifications use the first parent org's slug as a landing because notification rows don't carry an org_slug field. Multi-org users may land in the "wrong" org.
-- Recommendation: DEFER_WITH_ESTIMATE
-- Effort: ~4 hours (schema migration adding `notifications.org_slug` + backfill + producer-side updates + frontend cutover)
-- Rationale: Schema migration + producer-side audit + backfill. Tier 3.
+- Description: Pre-13 the legacy `NotificationBadge.jsx` polled follow-requests / voting-proposals / new-Polises and routed click-through using the first parent org's slug because there were no real notification rows carrying org context. Multi-org users could land in the wrong org.
+- Status: **RESOLVED.** Phase 13 ships a real `Notification` table with `org_id` as a first-class column from day one (B1 schema). The new notification center (`NotificationBadge.jsx` rewritten in Cluster F1) routes click-through purely on `notification.org_slug` (resolved server-side from `org_id`) — never on first-parent-org. Account-level notifications without an `org_id` route to `/notifications` rather than guessing an org. Verified end-to-end via the F7 multi-org routing test (a notification on Gloomhaven routes to `/gloomhaven/...`, not to GameNights).
 
 ### Item 23: `routes/proposals.py:578-580` flat path duplicates org-scoped advance endpoint
 - Source: PROGRESS.md Phase 12 Stage 1 tech debt #5

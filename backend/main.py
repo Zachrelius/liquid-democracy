@@ -18,7 +18,7 @@ from database import create_tables, get_db, SessionLocal
 from delegation_engine import graph_store
 from settings import settings
 from websocket import manager as ws_manager
-from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars, comments, permissions, role_permissions_routes, org_logos
+from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars, comments, permissions, role_permissions_routes, org_logos, notifications
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +196,11 @@ app.include_router(role_permissions_routes.router)
 # Phase 12.7 B1+B2 — org branding endpoints (logo upload/delete, color PATCH).
 # Mounted on /api/orgs/{slug}/logo + /branding; gated by org.edit_branding.
 app.include_router(org_logos.router)
+# Phase 13 B4 — notification feed + preferences endpoints. Mounted on
+# /api/notifications/*; account-scoped (every authenticated user accesses
+# their own notifications and preferences — no role-tier gates per spec
+# Item 30 audit guidance).
+app.include_router(notifications.router)
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +240,7 @@ async def proposal_websocket(websocket: WebSocket, proposal_id: str):
 # ---------------------------------------------------------------------------
 
 @app.on_event("startup")
-def startup() -> None:
+async def startup() -> None:
     log.info("Creating database tables…")
     create_tables()
 
@@ -259,6 +264,22 @@ def startup() -> None:
             "scripts/phase12_7_migrate_uploads.py to migrate legacy files.",
             _UPLOADS_BASE_DIR,
         )
+
+    # Phase 13 E3 — digest scheduler. Wakes hourly, processes daily/
+    # weekly digests + quiet-hours flush + 90-day cleanup. Gated on
+    # DISABLE_DIGEST_SCHEDULER env var so tests don't accidentally launch
+    # the loop. See backend/digest_scheduler.py for implementation choice
+    # rationale + DEPLOYMENT.md for the ops note.
+    from digest_scheduler import digest_loop, is_disabled
+    if is_disabled():
+        log.info(
+            "Digest scheduler disabled via DISABLE_DIGEST_SCHEDULER; "
+            "skipping startup task."
+        )
+    else:
+        import asyncio
+        asyncio.create_task(digest_loop())
+        log.info("Digest scheduler launched.")
 
     log.info("Startup complete.")
 
