@@ -8,7 +8,6 @@ import TopicBadge from '../components/TopicBadge';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 import AccessHistory from '../components/AccessHistory';
-import { Link } from 'react-router-dom';
 
 const POLICY_OPTIONS = [
   {
@@ -451,28 +450,6 @@ export default function Settings() {
             </button>
             {policyMsg && <span className={`text-xs ${policyMsg === 'Saved' ? 'text-green-600' : 'text-red-600'}`}>{policyMsg}</span>}
           </div>
-        </div>
-      </section>
-
-      {/* Section: Notifications (Phase 13 F4) */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Notifications</h2>
-        <div className="bg-white border border-gray-200 rounded-xl p-5 flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex-1 min-w-0">
-            <p className="text-sm text-gray-700">
-              Choose which events generate in-app and email notifications.
-            </p>
-            <p className="text-xs text-gray-500 mt-1">
-              Notifications are off by default. Pick the ones you want, set a digest cadence,
-              and configure quiet hours.
-            </p>
-          </div>
-          <Link
-            to="/settings/notifications"
-            className="text-sm px-4 py-2 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
-          >
-            Manage notifications
-          </Link>
         </div>
       </section>
 

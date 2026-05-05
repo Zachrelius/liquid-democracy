@@ -1,118 +1,139 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api';
-import { timeAgo } from '../utils/timeAgo';
-import { formatNotification, notificationHref } from '../utils/formatNotification';
 
 /**
- * Phase 13 F1 — notification center.
+ * Phase 9 Session 4 — Polis-created notifications.
  *
- * Replaces the legacy listings-polled badge (Phase 9 NotificationBadge) with
- * a real, server-backed feed. The component name is preserved so Nav.jsx's
- * existing import keeps working; the implementation is a full rewrite.
+ * The platform doesn't have a generic notification feed (`/api/notifications`
+ * does not exist as of Session 4); the existing badge is composed from
+ * listing-endpoint polls — follow-requests + voting-status proposals.
+ * Decision 10 calls for a single in-app badge bump when a new Polis
+ * appears in the viewer's scope.
  *
- * Behavior:
- * - Bell icon in nav.
- * - On mount + on every route change, fetches the unread feed
- *   (`GET /api/notifications?unread=true&limit=20`). The response's
- *   `items.length` drives the badge count; if `has_more` is true, the
- *   badge renders "20+".
- * - Click bell → dropdown opens. Dropdown shows up to 5 most recent unread
- *   rows. Each row click POSTs /read and navigates to the routing target
- *   computed by `notificationHref` (Item 22: uses notification.org_slug,
- *   never falls back to first-parent-org).
- * - "Mark all as read" button at top of dropdown.
- * - "View all" link at bottom of dropdown → /notifications.
- * - First-time banner (F5): when the user has zero notifications AND
- *   `notification_intro_dismissed === false`, the dropdown shows a banner
- *   pointing at /settings/notifications instead of "All caught up."
+ * Client-side approach (matches existing pattern): poll the user's orgs +
+ * each org's `/api/orgs/{slug}/polises` list, compare against a localStorage
+ * "last seen" timestamp keyed per (user, org). Polises with `created_at`
+ * after the last-seen mark are surfaced as notifications. The user "clears"
+ * a Polis notification by clicking through (we update the per-org last-seen
+ * on dropdown open, mirroring how the existing notifications track click-
+ * through implicitly).
  *
- * F6 — localStorage cleanup. On mount, removes legacy keys written by the
- * old polling badge (`polis_last_seen_*`). Idempotent.
- *
- * Item 22 / 30 audit notes:
- *   - Item 22: routing path is computed by notificationHref(notif), which
- *     uses notif.org_slug (resolved server-side from notif.org_id). There
- *     is no "default org" or "first parent org" fallback anywhere in this
- *     file.
- *   - Item 30: this surface is account-scoped. There is no role-tier check
- *     gating visibility — every authenticated user gets their own bell.
+ * This is a single-shot notification per Polis — not ongoing updates — per
+ * the spec ("Single notification per Polis, not ongoing updates").
  */
 
-// Phase 13 F6 — keys written by the legacy NotificationBadge polling logic.
-// Run-once cleanup on first mount post-deploy. Idempotent: once the keys
-// are gone, subsequent runs are no-ops.
-const LEGACY_LOCALSTORAGE_PREFIXES = ['polis_last_seen_'];
+const POLIS_LAST_SEEN_PREFIX = 'polis_last_seen_';
 
-function cleanupLegacyLocalStorage() {
+function readLastSeen(orgSlug) {
   try {
-    const toRemove = [];
-    for (let i = 0; i < window.localStorage.length; i += 1) {
-      const key = window.localStorage.key(i);
-      if (!key) continue;
-      if (LEGACY_LOCALSTORAGE_PREFIXES.some(p => key.startsWith(p))) {
-        toRemove.push(key);
-      }
-    }
-    toRemove.forEach(k => window.localStorage.removeItem(k));
-  } catch {
-    // localStorage may be unavailable (private mode, quota); ignore.
-  }
+    const raw = window.localStorage.getItem(POLIS_LAST_SEEN_PREFIX + orgSlug);
+    return raw ? Number(raw) : 0;
+  } catch { return 0; }
+}
+function writeLastSeen(orgSlug, ts) {
+  try {
+    window.localStorage.setItem(POLIS_LAST_SEEN_PREFIX + orgSlug, String(ts));
+  } catch { /* best-effort */ }
 }
 
 export default function NotificationBadge() {
-  const navigate = useNavigate();
-  const location = useLocation();
+  const [count, setCount] = useState(0);
   const [items, setItems] = useState([]);
-  const [hasMore, setHasMore] = useState(false);
   const [open, setOpen] = useState(false);
-  const [introDismissed, setIntroDismissed] = useState(true);
   const ref = useRef(null);
 
-  const load = useCallback(async () => {
-    try {
-      // The unread feed drives both the badge count and the dropdown rows.
-      // We pull up to 20 to power the count; the dropdown shows the first
-      // 5 and links to /notifications for "View all."
-      const res = await api.get('/api/notifications?unread=true&limit=20');
-      setItems(Array.isArray(res?.items) ? res.items : []);
-      setHasMore(!!res?.has_more);
-    } catch {
-      // Soft-fail — a notification fetch failure shouldn't break the page.
-      setItems([]);
-      setHasMore(false);
-    }
-  }, []);
-
-  // Mount: cleanup + initial fetch + intro-dismissed lookup. Then refetch on
-  // every route change so the badge stays roughly fresh as the user navigates.
-  useEffect(() => {
-    cleanupLegacyLocalStorage();
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load, location.pathname]);
-
-  // Pull the intro-dismissed flag once on mount. Cheap; the preferences
-  // GET also returns this and the F3 page will refresh it locally.
   useEffect(() => {
     let mounted = true;
-    (async () => {
+    async function load() {
       try {
-        const prefs = await api.get('/api/notifications/preferences');
-        if (mounted) setIntroDismissed(!!prefs?.notification_intro_dismissed);
-      } catch {
-        // If the prefs lookup fails, fall back to "dismissed" so we don't
-        // accidentally show the banner everywhere. The F3 page is the
-        // canonical place to discover the banner.
-        if (mounted) setIntroDismissed(true);
-      }
-    })();
+        const [incoming, proposals, orgs] = await Promise.all([
+          api.get('/api/follows/requests/incoming'),
+          api.get('/api/proposals?status=voting'),
+          api.get('/api/orgs').catch(() => []),
+        ]);
+
+        const notifs = [];
+        // Phase 11 — these notifications need an org slug to land on the
+        // right page. Pick a default parent-org slug from the user's orgs
+        // (first one, or null if zero orgs); for the polis-specific notifs
+        // below we use the polis's org slug directly. For the follow/vote
+        // notifs we route to the first org's pages — these are coarse
+        // notifications and a user with multiple orgs can switch from there.
+        const parentOrgs = (orgs || []).filter(o => !o.parent_org_id);
+        const defaultOrgSlug = parentOrgs[0]?.slug || null;
+        const linkOr = (path) => defaultOrgSlug ? `/${defaultOrgSlug}${path}` : '/orgs';
+        if (incoming.length > 0) {
+          notifs.push({
+            text: `${incoming.length} follow request${incoming.length > 1 ? 's' : ''} pending`,
+            link: linkOr('/delegations'),
+          });
+        }
+
+        // Check for unresolved votes
+        const myVotes = await Promise.allSettled(
+          proposals.slice(0, 5).map(p => api.get(`/api/proposals/${p.id}/my-vote`))
+        );
+        const unresolved = myVotes.filter(
+          r => r.status === 'fulfilled' && r.value.vote_value == null
+        ).length;
+        if (unresolved > 0) {
+          notifs.push({
+            text: `${unresolved} proposal${unresolved > 1 ? 's' : ''} need your vote`,
+            link: linkOr('/proposals'),
+          });
+        }
+
+        // Phase 9 — new-Polis notifications. Poll each parent org the user
+        // belongs to and surface Polises created after the per-org
+        // "last seen" timestamp. Sub-orgs are reached via their parent's
+        // polises endpoint (the backend visibility filter handles which
+        // ones the viewer sees). To avoid noise on first sign-in, treat a
+        // missing last-seen as "now" (no historical bump).
+        const polisCalls = await Promise.allSettled(
+          parentOrgs.slice(0, 10).map(o =>
+            api.get(`/api/orgs/${o.slug}/polises`).then(list => ({ org: o, list }))
+          ),
+        );
+        for (const r of polisCalls) {
+          if (r.status !== 'fulfilled') continue;
+          const { org, list } = r.value;
+          const lastSeen = readLastSeen(org.slug);
+          if (lastSeen === 0) {
+            // Initialize without bumping the badge; the next poll will
+            // surface anything created after this moment.
+            writeLastSeen(org.slug, Date.now());
+            continue;
+          }
+          const fresh = (list || []).filter(p => {
+            if (!p?.created_at) return false;
+            return new Date(p.created_at).getTime() > lastSeen;
+          });
+          fresh.forEach(p => {
+            notifs.push({
+              text: `New deliberation: ${p.title}`,
+              // Phase 11 D3 — drop the /orgs/ prefix.
+              link: `/${org.slug}/polises/${p.id}`,
+              // Used when the dropdown is opened to clear this notif.
+              _polisOrgSlug: org.slug,
+            });
+          });
+        }
+
+        if (mounted) {
+          setItems(notifs);
+          setCount(notifs.reduce((acc, n) => {
+            const num = parseInt(n.text);
+            return acc + (isNaN(num) ? 1 : num);
+          }, 0));
+        }
+      } catch { /* ignore */ }
+    }
+    load();
     return () => { mounted = false; };
   }, []);
 
-  // Outside-click closes dropdown.
+  // Close dropdown on outside click
   useEffect(() => {
     function handleClick(e) {
       if (ref.current && !ref.current.contains(e.target)) setOpen(false);
@@ -120,36 +141,6 @@ export default function NotificationBadge() {
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
-
-  const count = items.length;
-  const badgeText = count === 0 ? null : (hasMore ? '20+' : (count > 9 ? '9+' : String(count)));
-
-  async function handleRowClick(notif) {
-    setOpen(false);
-    const href = notificationHref(notif);
-    // Optimistically remove from local list so the badge updates immediately.
-    setItems(prev => prev.filter(n => n.id !== notif.id));
-    try {
-      await api.post(`/api/notifications/${notif.id}/read`);
-    } catch {
-      // Best-effort; if the read POST fails the row will reappear on next
-      // refetch and the user can click again.
-    }
-    navigate(href);
-  }
-
-  async function handleMarkAllRead() {
-    try {
-      await api.post('/api/notifications/mark-all-read', {});
-      setItems([]);
-      setHasMore(false);
-    } catch {
-      // Soft-fail.
-    }
-  }
-
-  // Show the dropdown's 5 most recent unread.
-  const dropdownItems = items.slice(0, 5);
 
   return (
     <div ref={ref} className="relative">
@@ -163,78 +154,42 @@ export default function NotificationBadge() {
             d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
           />
         </svg>
-        {badgeText && (
-          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold min-w-[1rem] h-4 px-1 rounded-full flex items-center justify-center">
-            {badgeText}
+        {count > 0 && (
+          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold w-4 h-4 rounded-full flex items-center justify-center">
+            {count > 9 ? '9+' : count}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-80 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
-          {dropdownItems.length > 0 && (
-            <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between bg-gray-50">
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                Notifications
-              </span>
-              <button
-                onClick={handleMarkAllRead}
-                className="text-xs text-[var(--brand-accent)] hover:underline"
-              >
-                Mark all as read
-              </button>
+        <div className="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-200 rounded-xl shadow-lg z-50">
+          {items.length === 0 ? (
+            <div className="p-4 text-sm text-gray-400 text-center">
+              All caught up
             </div>
-          )}
-
-          {dropdownItems.length === 0 ? (
-            // F5: when the user hasn't dismissed the intro, surface the
-            // opt-in banner instead of the empty state.
-            !introDismissed ? (
-              <div className="p-4 space-y-2 text-center">
-                <p className="text-sm text-gray-700">
-                  Notifications are off by default.
-                </p>
-                <p className="text-xs text-gray-500">
-                  Choose what you want to be notified about, then save.
-                </p>
-                <Link
-                  to="/settings/notifications"
-                  onClick={() => setOpen(false)}
-                  className="inline-block mt-2 px-4 py-1.5 text-xs bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
-                >
-                  Manage preferences
-                </Link>
-              </div>
-            ) : (
-              <div className="p-4 text-sm text-gray-400 text-center">
-                All caught up
-              </div>
-            )
           ) : (
-            <ul className="divide-y divide-gray-100 max-h-80 overflow-y-auto">
-              {dropdownItems.map(notif => (
-                <li key={notif.id}>
-                  <button
-                    onClick={() => handleRowClick(notif)}
-                    className="block w-full text-left px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+            <ul className="divide-y divide-gray-100">
+              {items.map((item, i) => (
+                <li key={i}>
+                  <Link
+                    to={item.link}
+                    onClick={() => {
+                      setOpen(false);
+                      // Phase 9 — clicking a Polis notification updates the
+                      // per-org last-seen so the same Polis doesn't keep
+                      // bumping the badge after the user has visited it.
+                      if (item._polisOrgSlug) {
+                        writeLastSeen(item._polisOrgSlug, Date.now());
+                      }
+                    }}
+                    className="block px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
                   >
-                    <p className="line-clamp-2">{formatNotification(notif)}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">{timeAgo(notif.created_at)}</p>
-                  </button>
+                    {item.text}
+                  </Link>
                 </li>
               ))}
             </ul>
           )}
-
-          <div className="border-t border-gray-100 bg-gray-50">
-            <Link
-              to="/notifications"
-              onClick={() => setOpen(false)}
-              className="block px-4 py-2 text-xs text-center text-[var(--brand-accent)] hover:underline"
-            >
-              View all
-            </Link>
-          </div>
         </div>
       )}
     </div>
