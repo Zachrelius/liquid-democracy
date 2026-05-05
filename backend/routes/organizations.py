@@ -2,6 +2,7 @@
 Organization management endpoints — CRUD, membership, invitations,
 delegate applications, topics, proposals, and analytics.
 """
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -16,6 +17,7 @@ import schemas
 from audit_utils import log_audit_event
 from database import get_db
 from email_service import send_invitation_email
+from notification_emit import emit_notification
 from org_config import get_default_proposal_thresholds, get_org_config
 from permission_registry import PERMISSION_REGISTRY
 from reserved_slugs import RESERVED_SLUGS
@@ -30,6 +32,34 @@ from org_middleware import (
     require_org_admin,
     require_org_owner,
 )
+
+
+log = logging.getLogger(__name__)
+
+
+def _users_with_permission_in_org(
+    db: Session, org_id: str, permission_key: str,
+) -> list[str]:
+    """Return user_ids of all active org members holding ``permission_key``.
+
+    Phase 13 B-emit helper for fan-out events (member.join_request,
+    delegate.applied) — those notifications must reach every user with
+    approval rights, regardless of role tier. Iterates active memberships
+    and consults ``has_permission`` so the result tracks any custom
+    role_permission grants (matrix is the source of truth).
+    """
+    member_rows = (
+        db.query(models.OrgMembership.user_id)
+        .filter(
+            models.OrgMembership.org_id == org_id,
+            models.OrgMembership.status == "active",
+        )
+        .all()
+    )
+    return [
+        r.user_id for r in member_rows
+        if has_permission(db, r.user_id, org_id, permission_key)
+    ]
 
 
 def _resolve_role_id_by_system_key(
@@ -669,6 +699,7 @@ def reactivate_member(
 @router.post("/{org_slug}/join", status_code=200)
 def request_join(
     org_slug: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
@@ -720,6 +751,44 @@ def request_join(
         )
         db.add(membership)
         db.commit()
+
+        # Phase 13 B-emit — member.join_request -> all org members holding
+        # the member.approve_join permission. Fan-out wrapped per spec
+        # §B3: notification failure must not sink the join request.
+        try:
+            actor_display = current_user.display_name or current_user.username
+            approver_ids = _users_with_permission_in_org(
+                db, org.id, "member.approve_join",
+            )
+            for approver_id in approver_ids:
+                emit_notification(
+                    db,
+                    background_tasks,
+                    event_type="member.join_request",
+                    user_id=approver_id,
+                    org_id=org.id,
+                    actor_id=current_user.id,
+                    target_type="user",
+                    target_id=current_user.id,
+                    payload={
+                        "org_id": org.id,
+                        "org_slug": org.slug,
+                        "org_name": org.name,
+                        "requester_id": current_user.id,
+                        "actor_display_name": actor_display,
+                    },
+                )
+            db.commit()
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "member.join_request emit failed: %s: %s",
+                type(e).__name__, e,
+            )
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+
         return {"message": "Join request submitted, awaiting admin approval", "status": "pending_approval"}
 
 
@@ -924,6 +993,7 @@ def resend_invitation(
 def accept_invitation(
     token: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: Optional[models.User] = Depends(auth_utils.get_optional_user),
 ):
@@ -998,6 +1068,40 @@ def accept_invitation(
     db.commit()
 
     org = db.get(models.Organization, inv.org_id)
+
+    # Phase 13 B-emit — invitation.accepted -> the inviter (Invitation.invited_by).
+    if inv.invited_by and inv.invited_by != current_user.id:
+        try:
+            actor_display = current_user.display_name or current_user.username
+            emit_notification(
+                db,
+                background_tasks,
+                event_type="invitation.accepted",
+                user_id=inv.invited_by,
+                org_id=inv.org_id,
+                actor_id=current_user.id,
+                target_type="invitation",
+                target_id=inv.id,
+                payload={
+                    "org_id": inv.org_id,
+                    "org_slug": org.slug,
+                    "org_name": org.name,
+                    "invited_email": inv.email,
+                    "accepting_user_id": current_user.id,
+                    "actor_display_name": actor_display,
+                },
+            )
+            db.commit()
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "invitation.accepted emit failed: %s: %s",
+                type(e).__name__, e,
+            )
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+
     return {"message": f"You have joined {org.name}", "org_slug": org.slug}
 
 
@@ -1009,6 +1113,7 @@ def accept_invitation(
 def submit_delegate_application(
     org_slug: str,
     body: schemas.DelegateApplicationCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_membership),
@@ -1041,6 +1146,47 @@ def submit_delegate_application(
     db.add(app)
     db.commit()
     db.refresh(app)
+
+    # Phase 13 B-emit — delegate.applied -> all org members holding the
+    # delegate_application.approve permission.
+    try:
+        actor_display = current_user.display_name or current_user.username
+        approver_ids = _users_with_permission_in_org(
+            db, org.id, "delegate_application.approve",
+        )
+        for approver_id in approver_ids:
+            if approver_id == current_user.id:
+                continue  # don't notify the applicant if they happen to be approver
+            emit_notification(
+                db,
+                background_tasks,
+                event_type="delegate.applied",
+                user_id=approver_id,
+                org_id=org.id,
+                actor_id=current_user.id,
+                target_type="delegate_application",
+                target_id=app.id,
+                payload={
+                    "org_id": org.id,
+                    "org_slug": org.slug,
+                    "org_name": org.name,
+                    "topic_id": app.topic_id,
+                    "topic_name": topic.name,
+                    "applicant_id": current_user.id,
+                    "actor_display_name": actor_display,
+                },
+            )
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "delegate.applied emit failed: %s: %s",
+            type(e).__name__, e,
+        )
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
     return schemas.DelegateApplicationOut(
         id=app.id,
         user_id=app.user_id,
@@ -1096,6 +1242,7 @@ def list_delegate_applications(
 def approve_delegate_application(
     org_slug: str,
     app_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     admin_membership: models.OrgMembership = Depends(require_org_admin),
@@ -1146,6 +1293,41 @@ def approve_delegate_application(
         details={"user_id": app.user_id, "topic_id": app.topic_id},
     )
     db.commit()
+
+    # Phase 13 B-emit — delegate.application_decided -> the applicant.
+    try:
+        topic = db.get(models.Topic, app.topic_id)
+        actor_display = current_user.display_name or current_user.username
+        emit_notification(
+            db,
+            background_tasks,
+            event_type="delegate.application_decided",
+            user_id=app.user_id,
+            org_id=org.id,
+            actor_id=current_user.id,
+            target_type="delegate_application",
+            target_id=app.id,
+            payload={
+                "org_id": org.id,
+                "org_slug": org.slug,
+                "org_name": org.name,
+                "topic_id": app.topic_id,
+                "topic_name": topic.name if topic else None,
+                "decision": "approved",
+                "actor_display_name": actor_display,
+            },
+        )
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "delegate.application_decided (approved) emit failed: %s: %s",
+            type(e).__name__, e,
+        )
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
     return {"message": "Application approved, delegate profile activated"}
 
 
@@ -1154,6 +1336,7 @@ def deny_delegate_application(
     org_slug: str,
     app_id: str,
     body: schemas.DelegateApplicationReview,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     admin_membership: models.OrgMembership = Depends(require_org_admin),
@@ -1185,6 +1368,42 @@ def deny_delegate_application(
         details={"user_id": app.user_id, "topic_id": app.topic_id, "feedback": body.feedback},
     )
     db.commit()
+
+    # Phase 13 B-emit — delegate.application_decided -> the applicant.
+    try:
+        topic = db.get(models.Topic, app.topic_id)
+        actor_display = current_user.display_name or current_user.username
+        emit_notification(
+            db,
+            background_tasks,
+            event_type="delegate.application_decided",
+            user_id=app.user_id,
+            org_id=org.id,
+            actor_id=current_user.id,
+            target_type="delegate_application",
+            target_id=app.id,
+            payload={
+                "org_id": org.id,
+                "org_slug": org.slug,
+                "org_name": org.name,
+                "topic_id": app.topic_id,
+                "topic_name": topic.name if topic else None,
+                "decision": "denied",
+                "feedback": body.feedback,
+                "actor_display_name": actor_display,
+            },
+        )
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "delegate.application_decided (denied) emit failed: %s: %s",
+            type(e).__name__, e,
+        )
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
     return {"message": "Application denied"}
 
 
@@ -1679,6 +1898,7 @@ def advance_org_proposal(
     proposal_id: str,
     body: schemas.AdvanceProposalRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
@@ -1753,6 +1973,25 @@ def advance_org_proposal(
 
     db.commit()
     db.refresh(proposal)
+
+    # Phase 13 B-emit — proposal.entered_voting / proposal.closed.
+    try:
+        from routes.proposals import _emit_proposal_status_notifications
+        _emit_proposal_status_notifications(
+            db, background_tasks, proposal, old_status, next_status,
+            actor_id=current_user.id,
+        )
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "proposal status emit failed (%s -> %s): %s: %s",
+            old_status, next_status, type(e).__name__, e,
+        )
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
     from routes.proposals import _build_proposal_out
     return _build_proposal_out(proposal)
 
