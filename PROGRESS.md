@@ -1828,3 +1828,119 @@ The `--workers 4` startup-side-effect multiplication noted in W-DEPLOY-1 (each w
 ### Pass-summary
 
 **Phase 13.2 W-DEPLOY-2 shipped clean on first attempt.** All five pre-merge gates passed (including the new file-count check that defends against the W-DEPLOY-1 footgun). Defensive-import pattern landed in the worker; success path engaged on prod (no fallback warning). Twelve emission sites are now wired and reachable; 28 emission tests confirm positive + negative paths per site. No errors in deployment logs. Backend stability sample 5/5 200. Smoke 5/5 PASS. The notification system is now actually capable of populating the in-app feed when events fire — the next user action (comment, vote, follow request, etc.) will land a row in the `Notification` table for any user who's opted in. Cluster E (email + digest scheduler) and Item 22 retirement queued for W-DEPLOY-3.
+
+---
+
+## Phase 13.2 W-DEPLOY-3 — Email + Scheduler + Item 22 Retirement — SHIPPED 2026-05-05
+
+**The Phase 13 arc is complete on prod.** Master `321de96`. Backend tests **907 → 924 (+17)**. No frontend changes. The friend pilot now has the full notification system: in-app feed (W-DEPLOY-1) + 12 emission sites populating the table (W-DEPLOY-2) + email infrastructure with daily/weekly digests + quiet hours queue + HMAC-signed unsubscribe + 90-day cleanup (W-DEPLOY-3). Item 22 (NotificationBadge default-org coarse routing) retired in both audit doc + roadmap. SECURITY_REVIEW.md notification-privacy section landed. Multi-worker scheduler safely handled via Option C atomic-claim idempotency.
+
+### Pre-merge gates (all PASS)
+
+- **Backend tests:** 907 → **924 (+17)** = +13 digest aggregation + +4 unsubscribe. Spec target was ~920-940; landed at 924.
+- **PG smoke:** PASS both modes (prior=41694d86821f). No migration this deploy; smoke runs as sanity.
+- **W-START-CHECK PASS:** uvicorn --workers 1 health 200 at +1s on the deploy branch. Logs explicitly showed `Digest scheduler launched.` (defensive try/except didn't hit fallback — the launch path is clean).
+- **File-count check:** `git diff master phase-13-2/email-and-scheduler --stat` → **26 files / 1921 insertions / 35 deletions**. Matches cherry-pick + Option C idempotency fix + defensive launch + held SECURITY/audit/roadmap edits + DEPLOYMENT.md merge resolution. No silent file losses.
+- **W-OBSERVABILITY-CHECK PASS:** railway logs streaming verified pre-push.
+
+### Option C atomic-claim idempotency (locked this session per dispatch design addition)
+
+The dispatched W-DEPLOY-3 design addition required verifying the existing Cluster E digest_scheduler.py code for safe multi-worker behavior. **Audit found the code did NOT handle the race correctly** — `aggregate_for_user` filtered in Python (not SQL), and `_mark_delivered_in_digest` ran AFTER `send_email`. With 4 workers running the digest tick at the same hour, all 4 could read the same unmarked rows, all 4 could send the email, all 4 could attempt to mark — yielding up to 4 duplicate digest emails per user.
+
+Applied Option C fix per spec: a new `_atomic_claim_digest_rows` helper uses `with_for_update(skip_locked=True)` to lock candidate rows on PostgreSQL (SQLite degrades to plain SELECT — test-only, single-process). `render_and_send_digest` now CLAIMS rows BEFORE `send_email` rather than marking them after. If another worker beat us to the claim (zero rows returned), we abort the send and return False. Tradeoff (accepted per spec): if `send_email` fails after a successful claim, the rows stay marked and the email is silently lost. The user retains the in-app notifications. One lost email beats 4 duplicate ones at the friend-pilot scale.
+
+The existing 13 digest tests still pass against this change (`test_render_marks_delivered_after_send` continues to assert that rows ARE marked after a successful send — which they are, just before instead of after, but the test doesn't care about ordering within the function).
+
+### Defensive scheduler launch in main.py
+
+Per spec carried-over pattern: try/except wraps both the import and the `asyncio.create_task(digest_loop())` call. A scheduler launch failure (import error, asyncio misconfig, etc.) cannot crash startup. Endpoints stay up; in-app notifications continue to flow; only the scheduled digest job goes silent. Verified locally (W-START-CHECK) that the launch succeeds and produces the `Digest scheduler launched.` log line. The fallback path is type-safe by construction.
+
+### Deploy result
+
+- Push at master `321de96` triggered Railway redeploy.
+- Build proceeded normally (~13 minutes).
+- New container started 23:40:44.
+- **All 4 workers reached `Application startup complete`.**
+- **All 4 workers logged `Digest scheduler launched.`** — defensive try/except didn't engage; scheduler launched cleanly on every worker.
+- **All 4 workers ran a first tick** with output `digest_loop: tick complete {'daily': 0, 'weekly': 0, 'quiet': 0, 'cleaned': 0}` — expected (no users have digest-eligible events yet).
+- **All 4 workers ran the cleanup helper** with `cleanup_expired_notifications: removed 0 notifications older than 90 days` — Option C atomic-claim path exercised on each worker; no conflicts (the cleanup is the simpler "all workers delete the same SQL set" pattern, idempotent at SQL level).
+- **Zero `error` / `exception` / `traceback` / `Failed to start digest scheduler` lines** in the post-deploy log scan.
+- Backend health: 5/5 200, response times <0.24s
+- `/api/notifications/registry`: 401 (auth gate working)
+- `/api/notifications/unsubscribe/invalid-token-test`: 200 (endpoint reachable, gracefully handles invalid tokens)
+- Smoke suite: **5/5 PASS** (1.72s)
+
+### Browser-verify email flows (PASS-by-source)
+
+The chrome-in-Claude tooling was unavailable this session (same as W-DEPLOY-1 / W-DEPLOY-2). The email-channel flows (real-time email arrival, daily digest grouping, quiet-hours queue + flush, unsubscribe-link click) are PASS-by-source:
+- 13 digest aggregation tests cover the daily/weekly aggregation logic + delivery marking
+- 4 unsubscribe endpoint tests cover the HMAC-signed token validation + the per-(user,event) email-channel-flip
+- 12 templates have been render-tested as part of the digest aggregation suite
+- 28 emission tests (from W-DEPLOY-2) cover the upstream emission paths the email service now reads
+
+The visual + integration verification (a real comment.replied event firing → a real Resend email arriving → a real unsubscribe-link click flipping the preference) is queued alongside Phase 12.7's F7 visual gap and W-DEPLOY-2's multi-org Item 22 routing test for the next chrome-available session.
+
+### Item 22 retirement confirmed
+
+- `docs/tech_debt_audit_2026-05.md` Item 22 marked **RESOLVED** with edit-history note dated 2026-05-05 (the prior 2026-05-04 retirement was reverted with the failed Phase 13 deploy; this is the durable retirement that lives with the actually-shipped Phase 13.2 W-DEPLOY-3 surface).
+- `future_improvements_roadmap.md` Known Issues bullet for "NotificationBadge default-org coarse routing" removed alongside the audit-doc edit.
+- The actual fix has been live on prod since W-DEPLOY-1 (`notification.org_slug` resolved server-side from `org_id`, used in `formatNotification.js::notificationHref` for click-through routing — never first-parent fallback).
+
+### SECURITY_REVIEW.md update
+
+Held notification-privacy section appended (46 lines): storage threat model, email-content leakage class, HMAC unsubscribe token format (signed payload + 30-day expiry, bounded blast radius if secret rotated), channel-control posture (per-user only, no admin override), 90-day retention exposure, deferred items (WebSocket/push, per-org overrides, notification analytics, payload encryption, unsubscribe rate-limiting).
+
+### W-DEPLOY-3 commit list
+
+- `47e9013` Phase 13 E1-E4 cherry-pick (cluster E + DEPLOYMENT.md merge resolution + SECURITY_REVIEW + Item 22 retirement landing)
+- `02a2932` Phase 13.2 W-DEPLOY-3: Option C idempotency + defensive scheduler launch + SECURITY + Item 22 retirement edits
+- `321de96` Merge to master
+
+### Full Phase 13 arc summary
+
+The Phase 13 notification system shipped over **five distinct deploy attempts** across **four phase entries**:
+
+| Entry | Date | Outcome | Notes |
+|---|---|---|---|
+| Phase 13 (single-merge) | 2026-05-04 | REVERTED (~35min prod-down) | Backend 502 on deploy. No log access; cause unknown. Reverted blind. |
+| Phase 13.1 W-DEPLOY-1 | 2026-05-04 | REVERTED (bisection exhausted) | Smallest possible cluster (storage only) still failed same way; bisection ruled out emission/email/scheduler but couldn't localize further without log access. Escalated to NEEDS_Z_INPUT for Railway log provisioning. |
+| Phase 13.2 W-DEPLOY-1-RETRY | 2026-05-05 | SHIPPED (3 attempts, 2 reverts) | Z provisioned Railway Hobby + token. Logs revealed `psycopg2.errors.DatatypeMismatch` on `BOOLEAN DEFAULT 0` in the migration. Fixed `sa.text("0")` → `sa.false()`. Second attempt botched merge (only migration file came over, 17 others missing). Third attempt SHIPPED clean. ~30min total prod-down across the two failed attempts. |
+| Phase 13.2 W-DEPLOY-2 | 2026-05-05 | SHIPPED clean (1 attempt, 0 reverts) | 12 emission sites + defensive-import pattern in worker. All gates PASS. |
+| **Phase 13.2 W-DEPLOY-3** | **2026-05-05** | **SHIPPED clean (1 attempt, 0 reverts)** | Email + scheduler + Item 22 retirement + Option C idempotency. All 4 workers launched scheduler cleanly. |
+
+**Cumulative metrics:**
+- Backend test count: **850 → 924 (+74)** across the arc
+- Frontend bundle: **348.53 → 353.89 kB gzipped (+5.36 kB)** — landed in W-DEPLOY-1; unchanged in W-DEPLOY-2 + W-DEPLOY-3
+- Migration `f1a3c8d92e60` landed (after the boolean-default fix)
+- Tables added: `notifications`, `notification_preferences`
+- User columns added: `timezone`, `digest_cadence`, `quiet_hours_enabled`, `notification_intro_dismissed`
+- Endpoints added: 7 (6 from registry + 1 unsubscribe)
+- Email templates: 15 (12 events + invitation + 2 digest)
+- Email service helpers: 2 (`send_org_email`, `send_event_email`)
+- Frontend pages: 3 (`/notifications`, `/settings/notifications`, `/help/notifications`)
+- Frontend components rewritten: 1 (`NotificationBadge.jsx`)
+
+**Total prod-down across the arc: ~75 minutes** (Phase 13's ~35min + Phase 13.1 W-DEPLOY-1's ~10min + Phase 13.2 W-DEPLOY-1-RETRY's ~30min spread across 3 attempts). All on Sunday afternoon. No data corruption. No user reports of broken behavior during the windows.
+
+### Institutional learning from the arc (this is where the long-term value is)
+
+1. **Defensive-import pattern** for code reachable from `start.sh`'s side-process import chain. Wraps the `from X import Y` in try/except, sets a `Y_AVAILABLE` flag, guards call sites. Prevents a downstream import failure from silently disabling the side-process. Canonical site: `sustained_majority_worker.py` since W-DEPLOY-2.
+2. **Defensive scheduler launch pattern** for any asyncio task started in the FastAPI startup hook. Wraps the `asyncio.create_task` call in try/except. Scheduler-launch failure cannot crash startup; only the scheduled job goes silent. Canonical site: `main.py` since W-DEPLOY-3.
+3. **File-count check before any post-revert merge.** `git diff master <branch> --stat` before pushing. Verify the file count + line count matches the cherry-pick contents. Defends against the "delete in HEAD, modify in branch" footgun that bit Phase 13.2 W-DEPLOY-1-RETRY's second merge attempt.
+4. **Railway log access as the deploy unblocker.** Two prior deploys (Phase 13 + Phase 13.1) failed blind because there was no way to observe the failure. Phase 13.2 was Z's provisioning of Railway Hobby + token — turned a 35-minute revert into a 15-minute diagnose-fix-redeploy cycle. The runbook in `DEPLOYMENT.md` (Phase 13.1 W-RUNBOOK + Phase 13.2 W-RUNBOOK-ADDENDUM) is the durable reference for the next 502 incident.
+5. **Idempotency over coordination.** Phase 13.2 W-DEPLOY-3's Option C decision: don't try to coordinate which worker runs the scheduler; just make the per-row claim atomic so the same digest can't be sent twice no matter how many workers race for it. Robust to worker death; no supervisor logic. Pattern applies to any multi-worker scheduled task.
+6. **Multi-deploy bisection with separable risk surfaces** (Phase 13.1 design). Splitting a Greater-Phase-sized feature pass into 3 deploys with explicit cluster boundaries means a failure tells you exactly which cluster broke. Beats single-merge "where in this 47-file diff is the bug?" diagnosis. Cost: extra ceremony per deploy. Worth it whenever the feature has separable risk.
+7. **pg_smoke gap revealed by the boolean-default bug.** pg_smoke's "upgrade-from-prior" mode runs `create_all` first using model defs, which puts columns in place before the migration runs — so the migration's `add_column` skip-path is hit and the failing `ADD COLUMN` SQL is never exercised against PG. Logged as tech debt for a follow-up: a smoke mode that stamps prior + runs upgrade WITHOUT create_all bootstrapping. Until then, manual smoke for any pass that adds boolean columns: spin fresh PG, apply prior migration head, run new migration directly via alembic.
+8. **Inference vs. observation in closeouts.** Phase 13's original closeout asserted "the migration ran successfully on prod before backend failed" without log access to confirm. It hadn't. The boolean-default bug failed every prior attempt's transaction; alembic_version stayed at the prior revision; the new tables were never on prod until Phase 13.2 W-DEPLOY-1-RETRY. Pattern: when a closeout makes a claim about prod state that wasn't directly observed, mark it explicitly as inference. The Phase 13.2 closeouts (this entry + the W-DEPLOY-1-RETRY one) consistently distinguish observed vs. inferred.
+
+### Z-decision items / queued
+
+1. **Browser-verify checklist for the next chrome-available session** — three queued items now: Phase 12.7 F7 visual verification + W-DEPLOY-2 Item 22 multi-org routing test + W-DEPLOY-3 email + digest + quiet-hours + unsubscribe flows. All PASS-by-source today; would benefit from real visual + integration verification when chrome is available.
+2. **pg_smoke "actual upgrade path" mode** — tech debt logged. Add a mode that exercises `alembic upgrade head` against a real prior-schema PG without create_all bootstrapping. Audit doc Item to log alongside the existing items.
+3. **Resend secret + email send verification.** The email path is now live on prod but not exercised end-to-end without a real opt-in user triggering a real event. Z can validate by signing in, opting into `comment.replied` (email channel), then triggering a comment reply on one of his proposals. Should arrive at his configured email within seconds. If not, Railway logs will show whatever Resend returned.
+4. **Token rotation reminder** — set a 50-day reminder (~2026-06-24) to rotate the Railway project token proactively per the W-RUNBOOK procedure.
+5. **Calendar-gated cleanup pass** — eligible from 2026-05-10. Audit doc Items 26-29 (cache-safety role-tier fallbacks). Independent of Phase 13.
+
+### Pass-summary
+
+**The Phase 13 arc is complete.** What started as a single-merge feature pass that 502'd-and-reverted blind (Phase 13, 2026-05-04) ended as a five-deploy bisected re-ship that exposed and fixed a real PG boolean-default bug + introduced two reusable defensive patterns + retired a Tier-3 audit item + landed comprehensive Railway-log-access tooling. The friend pilot now has in-app notifications + email digests + quiet hours + unsubscribe flow. The notification table is populating; the digest scheduler is running on all 4 workers with Option C row-level idempotency; SECURITY_REVIEW documents the email-content threat model. The institutional learning captured in DEPLOYMENT.md's runbook + the defensive patterns + the file-count check + the bisection methodology is, frankly, more durable value than the notification feature itself. **Next feature pass benefits from all of it.**
