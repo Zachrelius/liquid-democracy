@@ -59,6 +59,7 @@ import VotingMethodsHelp from './pages/VotingMethodsHelp';
 import SustainedMajorityHelp from './pages/SustainedMajorityHelp';
 import PolisHelp from './pages/PolisHelp';
 import RolePermissionsHelp from './pages/RolePermissionsHelp';
+import NotificationsHelp from './pages/NotificationsHelp';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Landing from './pages/Landing';
@@ -231,6 +232,7 @@ export default function App() {
         <Route path="/help/sustained-majority" element={<SustainedMajorityHelp />} />
         <Route path="/help/polis" element={<PolisHelp />} />
         <Route path="/help/role-permissions" element={<RolePermissionsHelp />} />
+        <Route path="/help/notifications" element={<NotificationsHelp />} />
 
         {/* ------------------------------------------------------------- */}
         {/* Auth flows — no auth required, no org context                 */}
