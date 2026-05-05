@@ -224,11 +224,12 @@ def test_stage2_upgrade_downgrade_upgrade_cycle():
                 f"role_permissions.edit=False; got {by_role.get('member')!r}"
             )
 
-        # 2. Downgrade to Stage 1 (c8f4a9d712e6): undoes every revision
-        # built on top of Stage 1 (Stage 2, Phase 12.5, Phase 13, ...).
-        # Targeting an explicit revision rather than a relative offset so
-        # this test stays correct as new migrations are appended.
-        _run_alembic(db_url, "downgrade", "c8f4a9d712e6")
+        # 2. Downgrade -2: reverse Phase 12.5 + Stage 2 (i.e., back to
+        # Stage 1's head). Phase 12.5 added a third migration on top of
+        # Stage 1+2; this test asserts Stage 2's effect specifically, so
+        # we need to step back two revisions to undo both Phase 12.5 and
+        # Stage 2 row inserts.
+        _run_alembic(db_url, "downgrade", "-2")
         engine = sa.create_engine(db_url)
         with engine.connect() as conn:
             tables = set(sa.inspect(conn).get_table_names())
@@ -311,9 +312,7 @@ def test_stage2_idempotent_when_re_applied_with_existing_rows():
         # head, but let's also explicitly call the migration's upgrade()
         # function via stamp+upgrade dance to prove the WHERE NOT EXISTS
         # guard works even if the migration is somehow re-invoked.
-        # Targeting Stage 1 explicitly (rather than -1) so this test stays
-        # correct as new migrations are appended.
-        _run_alembic(db_url, "downgrade", "c8f4a9d712e6")
+        _run_alembic(db_url, "downgrade", "-1")
         _run_alembic(db_url, "upgrade", "head")
         # Now run upgrade head again — already at head, true no-op.
         _run_alembic(db_url, "upgrade", "head")
