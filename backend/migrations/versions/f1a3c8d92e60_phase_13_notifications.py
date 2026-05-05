@@ -62,10 +62,16 @@ depends_on: Union[str, Sequence[str], None] = None
 
 _NEW_USER_COLUMNS: tuple[tuple[str, sa.types.TypeEngine, bool, object], ...] = (
     # (name, type, nullable, server_default)
+    # Phase 13.2 fix: PostgreSQL strict-types BOOLEAN columns and rejects
+    # `0` as a default (DatatypeMismatch). Use sa.false() so the dialect
+    # emits FALSE on PG and 0 on SQLite. The original sa.text("0") passed
+    # SQLite tests + create_all-based pg_smoke but failed prod's actual
+    # alembic upgrade path with column "..." is of type boolean but
+    # default expression is of type integer.
     ("timezone", sa.String(), True, None),
     ("digest_cadence", sa.String(), False, "real_time"),
-    ("quiet_hours_enabled", sa.Boolean(), False, sa.text("0")),
-    ("notification_intro_dismissed", sa.Boolean(), False, sa.text("0")),
+    ("quiet_hours_enabled", sa.Boolean(), False, sa.false()),
+    ("notification_intro_dismissed", sa.Boolean(), False, sa.false()),
 )
 
 
@@ -172,14 +178,14 @@ def upgrade() -> None:
                 batch_op.add_column(
                     sa.Column(
                         "quiet_hours_enabled", sa.Boolean(),
-                        nullable=False, server_default=sa.text("0"),
+                        nullable=False, server_default=sa.false(),
                     ),
                 )
             if "notification_intro_dismissed" not in existing_user_cols:
                 batch_op.add_column(
                     sa.Column(
                         "notification_intro_dismissed", sa.Boolean(),
-                        nullable=False, server_default=sa.text("0"),
+                        nullable=False, server_default=sa.false(),
                     ),
                 )
 
