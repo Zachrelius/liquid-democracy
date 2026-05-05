@@ -261,9 +261,13 @@ def render_and_send_digest(
 ) -> bool:
     """Render the digest HTML + dispatch via send_email.
 
-    Returns True iff the email was sent. On send-success, also marks the
-    included notification rows with ``payload["delivered_in_digest"] =
-    True`` so the next tick doesn't re-include them.
+    Returns True iff the email was sent. Atomically claims the included
+    rows BEFORE sending (Phase 13.2 W-DEPLOY-3 Option C), so multi-worker
+    scheduler launches can't double-send the same digest. On send failure
+    after a successful claim, the rows stay marked-delivered and the
+    email is silently lost — the user retains the in-app notifications
+    and the next tick won't retry the digest. This is the accepted
+    tradeoff (per spec): one lost email is better than 4 duplicate ones.
     """
     if aggregate.is_empty:
         return False
@@ -274,6 +278,18 @@ def render_and_send_digest(
             user.id,
         )
         return False
+
+    # Atomic claim: mark all rows as delivered_in_digest=True, but only
+    # for rows that aren't already marked. If another worker beat us to
+    # it, we get back zero claimed IDs and abort the send.
+    claimed_ids = _atomic_claim_digest_rows(db, aggregate.notification_ids)
+    if not claimed_ids:
+        log.debug(
+            "render_and_send_digest: another worker already claimed user %s's digest; skipping",
+            user.id,
+        )
+        return False
+    db.commit()  # release the row lock before the slow email send
 
     template_key = "digest_daily" if aggregate.cadence == "daily" else "digest_weekly"
     try:
@@ -308,10 +324,54 @@ def render_and_send_digest(
     )
 
     sent = _run_async(send_email(user.email, subject, html_body))
-    if sent:
-        _mark_delivered_in_digest(db, aggregate.notification_ids)
-        db.commit()
+    if not sent:
+        log.warning(
+            "render_and_send_digest: send_email failed for user %s after atomic claim; "
+            "%d rows marked delivered but email not sent (accepted tradeoff)",
+            user.id, len(claimed_ids),
+        )
     return bool(sent)
+
+
+def _atomic_claim_digest_rows(db: Session, notification_ids: list[str]) -> list[str]:
+    """Phase 13.2 W-DEPLOY-3 Option C — atomic per-row claim for digest delivery.
+
+    Locks the candidate rows with FOR UPDATE SKIP LOCKED on PostgreSQL so
+    two workers running the digest tick at the same hour can't both
+    process the same notification. Filters out any row already marked
+    delivered_in_digest, marks the remainder, flushes the changes (the
+    caller commits to release the lock).
+
+    SQLite (test-only) doesn't honor SKIP LOCKED but doesn't run a
+    multi-worker scheduler either — its degraded behavior is benign for
+    the test suite.
+
+    Returns the list of IDs actually claimed by this call. An empty list
+    means another worker beat us; the caller should skip sending.
+    """
+    if not notification_ids:
+        return []
+    q = db.query(models.Notification).filter(
+        models.Notification.id.in_(notification_ids),
+    )
+    # PostgreSQL: FOR UPDATE SKIP LOCKED — other workers' SELECTs skip
+    # rows we're holding. SQLite: option ignored, falls back to SELECT.
+    try:
+        q = q.with_for_update(skip_locked=True)
+    except Exception:  # noqa: BLE001 — older SQLAlchemy versions / SQLite
+        pass
+
+    rows = q.all()
+    claimed: list[str] = []
+    for r in rows:
+        payload = dict(r.payload or {})
+        if payload.get("delivered_in_digest"):
+            continue  # already claimed by another worker's earlier tick
+        payload["delivered_in_digest"] = True
+        r.payload = payload
+        claimed.append(r.id)
+    db.flush()  # holds the lock until commit; caller commits
+    return claimed
 
 
 def _render_digest_body(aggregate: DigestAggregate) -> str:
