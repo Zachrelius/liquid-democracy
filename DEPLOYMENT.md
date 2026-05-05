@@ -908,3 +908,137 @@ A failing smoke check after a successful deploy returns the pytest exit code, so
 ### Adding a new smoke check
 
 Add a new test function to either `test_proxy.py` (nginx / proxy layer) or `test_sw.py` (service worker / PWA), or create a new `test_<boundary>.py` file. Each test takes the `target_url` fixture, hits the URL with `httpx`, and asserts on the response. Keep them independent — no shared state, no fixtures beyond `target_url`.
+
+---
+
+## Reading Railway logs during a 502 incident (Phase 13.1 W-RUNBOOK + Phase 13.2 W-RUNBOOK-ADDENDUM)
+
+When a deploy lands but `/api/*` starts returning 502 "Application failed to respond" while static `/` still serves 200, the backend container failed to reach the listening state. Railway's load balancer keeps trying the failed container, which keeps restarting, which keeps failing — visible end-to-end as a sustained 502 wall.
+
+The Phase 13 incident (2026-05-04) is the canonical example: backend went 502 immediately after a deploy and stayed down for ~35 minutes before the team reverted **without log access**. Phase 13.2 (2026-05-05) is the resolution case study: with log streaming in place, the team caught the exact failure (a Postgres `BOOLEAN DEFAULT 0` DatatypeMismatch in the migration), fixed it, and re-shipped within the same session.
+
+### Where the logs are
+
+Set the project token in your shell:
+
+```bash
+export RAILWAY_TOKEN=<token>      # bash
+$env:RAILWAY_TOKEN = "<token>"    # PowerShell
+```
+
+The token lives in `.env` (gitignored). **Never commit, paste, or log the token.** If it leaks into tool output, redact it before sharing.
+
+**Railway dashboard:** project → service (the backend service) → "Deployments" tab → click the failing deployment → "Logs" sub-tab.
+
+**Railway CLI** (faster, scriptable):
+
+```bash
+railway logs                      # live tail of current deployment
+railway logs --build              # build-step logs (Docker layers, image push)
+railway logs --deployment         # runtime logs (start.sh + uvicorn)
+railway logs --deployment -n 200  # last 200 lines, no streaming
+railway logs --service backend    # explicit service (default is the linked service)
+```
+
+`railway logs` without flags streams the current deployment until that deployment ends. When a new deploy starts, the streaming command exits and you re-invoke it to follow the new deployment.
+
+### What healthy startup looks like (baseline)
+
+A healthy backend startup on Railway with `--workers 4` produces this log shape (captured from Phase 13.2 post-fix deploy, container started 2026-05-05T22:55:20Z):
+
+```
+Starting Container
+Alembic-stamped DB detected — applying pending migrations…
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+[INFO  [alembic.runtime.migration] Running upgrade <prior> -> <new>, ...   ← only when there are pending migrations]
+Public demo mode — ensuring demo seed data…
+Starting sustained-majority worker…
+Sustained-majority worker PID: <N>
+Starting application…
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started parent process [1]
+2026-05-05 22:55:20,770 INFO     [sustained_majority_worker] Worker starting; check_interval=300s, once=False
+INFO:     Started server process [8]   ← one per worker (--workers 4 → 4 lines)
+INFO:     Started server process [9]
+INFO:     Started server process [10]
+INFO:     Started server process [11]
+[INFO] Creating database tables…       ← one per worker (4×)
+[INFO] Rebuilding delegation graphs from DB…   ← one per worker
+[INFO] Startup complete.                ← one per worker
+INFO:     Application startup complete.   ← one per worker
+[INFO] {"...request...","path": "/api/health","status_code": 200, ...}   ← Railway healthcheck
+```
+
+Critical observations:
+
+- Each `--workers 4` worker independently runs the FastAPI startup hook. This means every startup-side-effect (`create_tables()`, `graph_store.rebuild_from_db()`, Phase 13's digest scheduler launch when shipped) executes **4 times** at boot. Memory footprint compounds; CPU spike on cold start is visible. This was unfamiliar variance during the Phase 13 diagnosis.
+- The `INFO: Application startup complete.` line per worker is the load-bearing signal that uvicorn is serving. Absent for any worker = traffic distribution skews to whichever workers DID come up; sustained absence = 502.
+- The first `/api/health 200` log line typically appears within ~30s of "Starting Container" on a warm Railway image cache; cold builds are slower because Docker pulls the base image first.
+
+### What to look for during a 502 incident
+
+Top-to-bottom on the failing container's logs:
+
+1. **Did `start.sh` start at all?** Look for "Alembic-stamped DB detected…" or "Fresh database detected…". Absent → image build / Dockerfile issue.
+
+2. **Did alembic upgrade succeed?** Look for `Running upgrade <a> -> <b>` followed by completion. A migration error here ends start.sh with non-zero exit due to `set -e`, container restarts in a loop. **Phase 13/13.1's failure mode lived here**: `psycopg2.errors.DatatypeMismatch: column "..." is of type boolean but default expression is of type integer` from a `BOOLEAN DEFAULT 0` ADD COLUMN. The transaction rolled back, alembic_version stayed at the prior revision, container looped. Fix: use `sa.false()` for boolean server_defaults, never `sa.text("0")`.
+
+3. **Did the seed step run cleanly?** Only relevant if `IS_PUBLIC_DEMO=true`. Look for "Public demo mode — ensuring demo seed data…" + a clean exit.
+
+4. **Did the worker side-process start?** Look for `Starting sustained-majority worker…` followed by `Sustained-majority worker PID: <N>`. The PID line prints even if the worker dies milliseconds later (because `&` backgrounds the process). Worker death does NOT take down uvicorn.
+
+5. **Did uvicorn reach the listening state?** Look for `INFO: Started server process` (one per worker) followed by `INFO: Application startup complete.` and `INFO: Uvicorn running on http://0.0.0.0:8000`. Without those lines per worker, the app never bound to the port.
+
+6. **Are health checks reaching workers?** Look for repeated `GET /api/health HTTP/1.1 200 OK`. Distributed across `100.64.0.X` source IPs (Railway's internal probe addresses).
+
+### Failure-mode → diagnosis cheatsheet
+
+| Symptom in logs | Likely cause | Fix |
+|---|---|---|
+| `psycopg2.errors.DatatypeMismatch: column "..." is of type boolean but default expression is of type integer` | Migration `ADD COLUMN ... BOOLEAN DEFAULT 0`. PG rejects integer for boolean. | Use `sa.false()` (or dialect-aware) for boolean server_defaults; never `sa.text("0")`. |
+| `relation "<table>" already exists` mid-migration | Migration not idempotent against post-revert state. | Add `if "<table>" not in existing_tables` guards. |
+| `ImportError` or stack trace before any `Started server process` line | Module-level code raises at import. | Find the module, lazy-import the failing import. |
+| `Killed` / no exit log + container restart loop | OOM. With `--workers 4` startup compounds memory. | Reduce workers, lazy-import heavy modules, or upgrade tier. |
+| `Application startup complete.` but `502` from healthchecks | Railway probe hitting wrong port or container shutdown signal handling. | Check `--port` in start.sh, check WORKERS env var. |
+| `alembic upgrade head` no-op when migration file is in the codebase | alembic_version already at head (prior deploy advanced it). | Confirm via direct DB query; usually fine (idempotent path). |
+
+### The start.sh ordering invariant
+
+The container's bring-up sequence is fixed:
+
+```
+alembic upgrade (or create_all + stamp head if fresh DB)
+  → optional seed_if_empty.py
+    → python -m sustained_majority_worker &  (background, fire-and-forget per `&`)
+      → exec uvicorn main:app --workers ${WORKERS:-4}
+```
+
+A 502 with no `/api/health` response means the container did not reach the `exec uvicorn` line, OR uvicorn started but never reached `Application startup complete.`. The first three steps run in foreground with `set -e`; any failure exits the script and Railway loops the container. The `&` on the worker line decouples its lifecycle from start.sh.
+
+### When to revert vs. hot-fix-forward
+
+If the cause is obvious from the logs and the fix is one or two lines, hot-fix-forward (push, redeploy, observe). Phase 13.2's experience: revert immediately to restore service (~2 minutes), apply the small fix on the deploy branch, push the corrected merge. Total cycle: ~15 minutes from the failing deploy to the recovered + fixed redeploy.
+
+If the cause requires more than ~10 minutes of investigation OR if the diagnosis isn't certain, **revert immediately** with `git revert -m 1 <merge-sha>` and push, then diagnose offline.
+
+### pg_smoke gap revealed by Phase 13.2
+
+Phase 13.1 and Phase 13.2's first attempt both passed `pg_smoke --mode both` against the migration that was about to fail in production. Why pg_smoke missed it:
+
+- The smoke's "upgrade-from-prior" mode runs `create_all` first (using model definitions) BEFORE running `alembic upgrade head`. The model definitions contain `server_default="0"` (a string literal, which SQLAlchemy somehow accepts on PG when emitted via metadata). By the time alembic upgrade runs, the columns already exist, and the migration's idempotent skip-path is hit — the failing `add_column(..., server_default=sa.text("0"))` is never exercised against a fresh PG.
+- The smoke's "fresh-DB" mode also uses `create_all + stamp head`; the migration body is never run.
+
+A better pg_smoke pattern (logged as tech debt) would: stamp at the prior revision with the prior schema (no Phase-13 columns), then run `alembic upgrade head`. That would actually exercise the add_column path. Until that lands, **add a manual smoke step** for any pass that adds boolean columns to existing tables: spin a fresh PG, apply the prior migration head, then run the new migration directly via `alembic upgrade head`.
+
+### Token rotation
+
+The Railway project token has a 60-day lifetime. Rotation procedure:
+
+1. Railway dashboard → Project Settings → Tokens → Create new token (scope: project).
+2. Update `.env` locally with the new token.
+3. Verify with `railway logs -n 5` (should print 5 recent lines).
+4. Revoke the old token in the dashboard.
+5. **Don't** commit the new token. Don't paste it into spec files, closeouts, or commit messages.
+
+Set a reminder ~50 days out to rotate proactively rather than waiting for the token to expire mid-incident.
