@@ -1,11 +1,10 @@
-import { useEffect } from 'react';
 import { Routes, Route, Navigate, Link } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { OrgProvider, useOrg } from './OrgContext';
 import { PublicConfigProvider } from './PublicConfigContext';
 import { ToastProvider } from './components/Toast';
 import { ConfirmProvider } from './components/ConfirmDialog';
-import { deriveDarker } from './utils/color_derive';
+import BrandingThemeApplier from './components/BrandingThemeApplier';
 import ProtectedRoute from './ProtectedRoute';
 import AdminRoute from './AdminRoute';
 import AdminOnlyRoute from './AdminOnlyRoute';
@@ -67,6 +66,9 @@ import About from './pages/About';
 import Why from './pages/Why';
 import Security from './pages/Security';
 import Demo from './pages/Demo';
+// Phase 14 F2 — public org landing page; lives at the bare /{slug} URL and
+// renders the splash for non-members and members alike (no auto-redirect).
+import OrgPublicLanding from './pages/OrgPublicLanding';
 
 function Layout({ children }) {
   return (
@@ -79,57 +81,18 @@ function Layout({ children }) {
 }
 
 /**
- * Phase 12.7 F2 — apply org branding to the document root via CSS variables.
+ * Phase 12.7 F2 — apply the active org's branding to document.documentElement.
  *
- * Runs whenever the active org's branding object changes (org switch, save
- * in the Branding settings section, etc.). When `currentOrg.branding` has
- * non-null primary / accent values, sets the corresponding CSS custom
- * properties on document.documentElement so the styles defined in
- * index.css's :root block are overridden globally. Cleanup on unmount
- * (org switch to a different OrgScopedLayout instance, or navigation away
- * from any org-scoped route) removes the overrides — platform defaults
- * reapply automatically because the :root rule remains in place.
- *
- * The -primary-dark variant is auto-derived from primary via deriveDarker
- * (HSL darken by ~10) so stewards configure only primary + accent.
- *
- * Renders no DOM. Mounted inside OrgScopedLayout so it's only active on
- * org-scoped routes; non-org-scoped pages (login, marketing, OrgSelector,
- * /settings, /orgs/create) inherit platform defaults from index.css.
+ * Phase 14 F2 — the underlying CSS-var application logic was extracted to
+ * `components/BrandingThemeApplier.jsx` so the public org landing page
+ * (which doesn't go through OrgScopedLayout's auth gate) can reuse it.
+ * This thin wrapper bridges OrgContext into the prop-shaped component so
+ * org-scoped routes keep their existing "active org's branding" behavior
+ * with no call-site changes downstream.
  */
-function BrandingThemeApplier() {
+function OrgScopedBrandingTheme() {
   const { currentOrg } = useOrg();
-  const branding = currentOrg?.branding;
-  const primary = branding?.primary_color || null;
-  const accent = branding?.accent_color || null;
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (primary) {
-      root.style.setProperty('--brand-primary', primary);
-      root.style.setProperty('--brand-primary-dark', deriveDarker(primary, 10));
-    } else {
-      root.style.removeProperty('--brand-primary');
-      root.style.removeProperty('--brand-primary-dark');
-    }
-    if (accent) {
-      root.style.setProperty('--brand-accent', accent);
-    } else {
-      root.style.removeProperty('--brand-accent');
-    }
-    // Cleanup: when the user navigates to a non-org-scoped route,
-    // OrgScopedLayout unmounts and this effect's cleanup runs, restoring
-    // platform defaults. The same cleanup also fires on org-switch within
-    // OrgScopedLayout (via the deps re-run before applying new values),
-    // but that's fine — the next effect run sets them right back.
-    return () => {
-      root.style.removeProperty('--brand-primary');
-      root.style.removeProperty('--brand-primary-dark');
-      root.style.removeProperty('--brand-accent');
-    };
-  }, [primary, accent]);
-
-  return null;
+  return <BrandingThemeApplier branding={currentOrg?.branding} />;
 }
 
 /**
@@ -152,7 +115,7 @@ function OrgScopedLayout({ children }) {
   if (loading) {
     return (
       <Layout>
-        <BrandingThemeApplier />
+        <OrgScopedBrandingTheme />
         <div className="flex items-center justify-center py-20">
           <div className="text-gray-500 text-sm">Loading…</div>
         </div>
@@ -162,7 +125,7 @@ function OrgScopedLayout({ children }) {
   if (accessDenied) {
     return (
       <Layout>
-        <BrandingThemeApplier />
+        <OrgScopedBrandingTheme />
         <div className="max-w-xl mx-auto px-4 py-20 text-center space-y-3">
           <h1 className="text-xl font-semibold text-[var(--brand-primary)]">
             You don&apos;t have access to this organization
@@ -183,7 +146,7 @@ function OrgScopedLayout({ children }) {
   }
   return (
     <Layout>
-      <BrandingThemeApplier />
+      <OrgScopedBrandingTheme />
       {children}
     </Layout>
   );
@@ -587,6 +550,35 @@ export default function App() {
                 <OrgScopedLayout><PolisDetail /></OrgScopedLayout>
               </OrgProvider>
             </ProtectedRoute>
+          }
+        />
+
+        {/* ------------------------------------------------------------- */}
+        {/* Phase 14 F1 — public org landing page at bare /{slug}.        */}
+        {/*                                                               */}
+        {/* This route is intentionally NOT wrapped in ProtectedRoute or  */}
+        {/* OrgScopedLayout: the public splash must render for logged-out */}
+        {/* visitors, logged-in non-members, AND members (no auto-redirect*/}
+        {/* to /{slug}/proposals — Z's Q1 ruling). The page reads auth    */}
+        {/* state via useAuth and membership via OrgProvider's userOrgs   */}
+        {/* (empty for logged-out users); branding is applied via the    */}
+        {/* lifted BrandingThemeApplier hook against the public-endpoint  */}
+        {/* response shape rather than via OrgScopedLayout.               */}
+        {/*                                                               */}
+        {/* The route must sit AFTER all the specific top-level routes    */}
+        {/* (/login, /register, /orgs, /help/*, /invite/:token, etc.) so  */}
+        {/* react-router's "more specific wins" still applies, and BEFORE */}
+        {/* the catch-all so unknown slugs reach the splash (which itself */}
+        {/* renders the "organization not found" UI on the endpoint's    */}
+        {/* 404). Sub-paths like /{slug}/proposals stay member-gated via  */}
+        {/* the existing /:org_slug/* routes above; this single-segment   */}
+        {/* /:org_slug pattern only matches the bare slug case.           */}
+        <Route
+          path="/:org_slug"
+          element={
+            <OrgProvider>
+              <OrgPublicLanding />
+            </OrgProvider>
           }
         />
 

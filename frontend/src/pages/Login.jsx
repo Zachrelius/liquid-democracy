@@ -18,12 +18,40 @@ function landingForOrgs(orgs) {
   return hinted ? urlFor(hinted, 'proposals') : '/orgs';
 }
 
+// Phase 14 F2 — `?next=` query-param honoring for post-auth redirect.
+//
+// The public org landing page CTAs link to /login?next=/{slug} and
+// /register?next=/{slug} so visitors who sign in or register from a
+// splash return to that splash to complete their join action. We accept
+// only same-origin relative paths — any value not starting with a single
+// "/" is rejected (and we explicitly reject protocol-relative "//foo"
+// values, which would otherwise navigate off-site). On rejection we fall
+// back to the default landingForOrgs path so the auth flow still
+// completes; we just don't honor the unsafe redirect.
+function resolveNext(rawNext) {
+  if (typeof rawNext !== 'string') return null;
+  if (!rawNext.startsWith('/')) return null;
+  if (rawNext.startsWith('//')) return null;
+  return rawNext;
+}
+
 export default function Login() {
   const { login, register } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   // If the visitor lands on /register, start on the register tab
   const [tab, setTab] = useState(location.pathname === '/register' ? 'register' : 'login');
+  // Phase 14 F2 — pull the `next` query-param so post-auth we can return
+  // the user to the splash they came from. Validated via resolveNext;
+  // null when absent or unsafe.
+  const nextParam = (() => {
+    try {
+      const params = new URLSearchParams(location.search);
+      return resolveNext(params.get('next'));
+    } catch {
+      return null;
+    }
+  })();
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -64,6 +92,13 @@ export default function Login() {
     setSubmitting(true);
     try {
       await login(loginUsername, loginPassword);
+      // Phase 14 F2 — honor `?next=` first if present and safe (set by
+      // public landing page CTAs so the visitor returns to the splash).
+      // Falls through to the default org-derived landing if absent.
+      if (nextParam) {
+        navigate(nextParam);
+        return;
+      }
       // Check if user has orgs, redirect accordingly
       try {
         const orgs = await api.get('/api/orgs');
@@ -98,6 +133,11 @@ export default function Login() {
       const result = await register(regUsername, regDisplayName, regEmail, regPassword);
       if (result.is_first_user) {
         navigate('/setup');
+      } else if (nextParam) {
+        // Phase 14 F2 — honor `?next=` after registration too. New users
+        // arriving via a public org splash should return to that splash
+        // (where they can request to join / join open orgs).
+        navigate(nextParam);
       } else {
         // Phase 11 — fetch orgs and pick a slug-prefixed landing path. New
         // users typically have either zero orgs (→ /orgs empty-state) or

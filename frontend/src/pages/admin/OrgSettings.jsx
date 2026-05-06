@@ -8,6 +8,16 @@ import { useConfirm } from '../../components/ConfirmDialog';
 import { useHasPermission } from '../../hooks/useHasPermission';
 // Phase 12.7 F4 — auto-derived accent + dark variant share the F3 utility.
 import { getDerivedAccent } from '../../utils/color_derive';
+// Phase 14 F3 — intro_text editor renders a live markdown preview using the
+// same renderer as proposal bodies, so what stewards see here matches what
+// renders on the public landing page.
+import renderMarkdown from '../../utils/renderMarkdown';
+
+// Phase 14 F3 — public landing page intro text length cap. Matches the
+// backend B4 cap (5000 chars; a longer payload returns 400). Enforcing it
+// client-side keeps the textarea + counter honest without round-tripping
+// every keystroke.
+const INTRO_TEXT_MAX = 5000;
 
 // Phase 9.6 — sustained-majority demotion. Defaults that mirror what the
 // backend uses when keys are absent. Used both for the "expand from
@@ -113,11 +123,40 @@ export default function OrgSettings() {
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const logoFileInputRef = useRef(null);
 
+  // Phase 14 F3 — public landing page intro text.
+  //
+  // Persisted at Organization.settings.intro_text (string, capped at
+  // INTRO_TEXT_MAX). The B4 PATCH /api/orgs/{slug}/branding endpoint
+  // accepts intro_text alongside the existing color/logo fields, so we
+  // reuse that endpoint for save (consistent with treating intro_text as
+  // org self-presentation alongside branding, per spec).
+  //
+  // Empty string is treated as "no intro" — the public landing page hides
+  // the section entirely when intro_text is empty/absent. We keep the
+  // textarea editable regardless of policy so stewards can prepare
+  // content before flipping their join_policy to a public variant.
+  const [introText, setIntroText] = useState('');
+  const [savingIntro, setSavingIntro] = useState(false);
+
   useEffect(() => {
     if (currentOrg) {
       setName(currentOrg.name);
       setDescription(currentOrg.description || '');
-      setJoinPolicy(currentOrg.join_policy);
+      // Phase 14 F3 — the join_policy enum expanded from {invite_only,
+      // approval_required, open} to {invite_only_secret, invite_only_public,
+      // approval_required, open}. The backend B1 migration renames legacy
+      // 'invite_only' rows to 'invite_only_secret', and B5 rejects the old
+      // value going forward. During the deploy cutover a stale /api/orgs
+      // response could still report 'invite_only' to a freshly-loaded
+      // bundle, so we coerce it to 'invite_only_secret' here so the radio
+      // selection matches the intent ("don't expose me publicly"). After
+      // a single save the value persists in the new form and this branch
+      // is unreached.
+      setJoinPolicy(
+        currentOrg.join_policy === 'invite_only'
+          ? 'invite_only_secret'
+          : currentOrg.join_policy
+      );
       const s = currentOrg.settings || {};
       setSettings(s);
       // Expand the SM section if the org currently has it on, or if any
@@ -146,6 +185,11 @@ export default function OrgSettings() {
       } else {
         setAccentColor(b.accent_color || PLATFORM_ACCENT_DEFAULT);
       }
+      // Phase 14 F3 — intro_text lives in settings JSON (B1 doesn't add a
+      // schema column, just a documented key). Backend's get_intro_text
+      // helper treats empty string as null, so we hydrate empty when the
+      // field is missing/null.
+      setIntroText(typeof s.intro_text === 'string' ? s.intro_text : '');
     }
   }, [currentOrg]);
 
@@ -263,6 +307,31 @@ export default function OrgSettings() {
     }
   }
 
+  async function handleSaveIntroText() {
+    // Phase 14 F3 — save intro_text via the same B4 branding PATCH endpoint
+    // (per spec: bundling with branding since intro_text is conceptually
+    // org self-presentation). The backend persists to
+    // Organization.settings.intro_text and validates length server-side;
+    // we enforce client-side too via the textarea maxLength + a defensive
+    // length check here so we don't even send a payload we know will 400.
+    if (introText.length > INTRO_TEXT_MAX) {
+      toast.error(`Intro text is over the ${INTRO_TEXT_MAX}-character limit.`);
+      return;
+    }
+    setSavingIntro(true);
+    try {
+      await api.patch(`/api/orgs/${currentOrg.slug}/branding`, {
+        intro_text: introText,
+      });
+      await refreshOrgs();
+      toast.success('Intro text saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save intro text');
+    } finally {
+      setSavingIntro(false);
+    }
+  }
+
   async function handleResetBranding() {
     const ok = await confirm({
       title: 'Reset to platform defaults?',
@@ -313,11 +382,33 @@ export default function OrgSettings() {
           </div>
           <div>
             <label className="block text-xs text-gray-500 mb-2">Join Policy</label>
+            {/* Phase 14 F3 — four-policy selector. The split of the legacy
+                "Invite only" into _secret and _public is the visible
+                surface of the new public-landing-pages feature: stewards
+                choose whether the org has a public splash at all. The
+                copy below is verbatim from spec §F3 line 304-307. */}
             <div className="space-y-2">
               {[
-                { value: 'invite_only', label: 'Invite Only', desc: 'Only people with an invitation can join' },
-                { value: 'approval_required', label: 'Approval Required', desc: 'Anyone can request to join, admins approve' },
-                { value: 'open', label: 'Open', desc: 'Anyone can join immediately' },
+                {
+                  value: 'invite_only_secret',
+                  label: 'Invite only (private)',
+                  desc: 'Members must be invited. The organization has no public landing page.',
+                },
+                {
+                  value: 'invite_only_public',
+                  label: 'Invite only (public)',
+                  desc: 'Members must be invited. The organization has a public landing page that explains who you are; visitors cannot join without an invitation.',
+                },
+                {
+                  value: 'approval_required',
+                  label: 'Approval required',
+                  desc: 'Anyone can request to join. Your admins approve each request. The organization has a public landing page.',
+                },
+                {
+                  value: 'open',
+                  label: 'Open',
+                  desc: 'Anyone with the link can join immediately. The organization has a public landing page.',
+                },
               ].map(opt => (
                 <label key={opt.value} className="flex items-start gap-3 cursor-pointer">
                   <input
@@ -496,6 +587,77 @@ export default function OrgSettings() {
                 className="px-5 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
               >
                 Reset to platform defaults
+              </button>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Phase 14 F3 — Public landing page intro text editor.
+          Same permission gate as branding (`org.edit_branding`) since
+          intro_text is conceptually org self-presentation. Live markdown
+          preview reuses the proposal-body renderer so what stewards see
+          here matches what visitors see on /{slug}. The textarea stays
+          editable for invite_only_secret orgs (so stewards can stage
+          intro content before flipping their policy) but a small
+          read-only indicator clarifies that nothing renders publicly
+          while the org has no landing page. */}
+      {canEditBranding && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Public landing page intro
+          </h2>
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+            {joinPolicy === 'invite_only_secret' && (
+              <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                Your organization has no public landing page; this intro
+                text isn&apos;t shown anywhere. Switch the join policy
+                to a public variant (Invite only public, Approval required,
+                or Open) to make the intro visible.
+              </div>
+            )}
+            <p className="text-xs text-gray-500">
+              A longer introduction shown on your organization&apos;s public
+              landing page at <code>/{currentOrg.slug}</code>. Visible only
+              when policy is &quot;Invite only (public)&quot;,
+              &quot;Approval required&quot;, or &quot;Open&quot;. Markdown
+              supported (same syntax as proposal bodies).
+            </p>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Intro text</label>
+              <textarea
+                value={introText}
+                onChange={e => setIntroText(e.target.value)}
+                maxLength={INTRO_TEXT_MAX}
+                rows={8}
+                placeholder="# Welcome&#10;&#10;A short paragraph about who you are, why you exist, and what new members can expect."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-y"
+              />
+              <p className="mt-1 text-xs text-gray-400">
+                {introText.length} / {INTRO_TEXT_MAX} characters
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-500 mb-1">Preview</p>
+              {introText.trim() ? (
+                <div
+                  className="prose text-[#2C3E50] text-sm leading-relaxed bg-gray-50 border border-gray-200 rounded-lg p-4"
+                  dangerouslySetInnerHTML={{ __html: `<p>${renderMarkdown(introText)}</p>` }}
+                />
+              ) : (
+                <div className="text-xs text-gray-400 italic bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  Empty — the intro section is hidden on the public landing page.
+                </div>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleSaveIntroText}
+                disabled={savingIntro}
+                className="px-5 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+              >
+                {savingIntro ? 'Saving…' : 'Save intro text'}
               </button>
             </div>
           </div>
