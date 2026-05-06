@@ -73,7 +73,8 @@ def test_backfill_creates_missing_membership(db, capsys):
         user_id=alice.id, sub_org_id=sub.id,
     ).first()
     assert sm is not None
-    assert sm.role == "admin"
+    # Phase 15 Cluster S: role is an FK relationship; check system_key.
+    assert sm.role is not None and sm.role.system_key == "admin"
     assert sm.status == "active"
 
     out = capsys.readouterr().out
@@ -107,9 +108,12 @@ def test_backfill_skips_existing_active_membership(db, capsys):
         actor_id=alice.id,
     )
     # Pre-existing active membership — backfill should skip silently.
-    db.add(models.SubOrgMembership(
-        user_id=alice.id, sub_org_id=sub.id, role="admin", status="active",
-    ))
+    # Phase 15 Cluster S: SubOrgMembership.role is now an FK.
+    from tests.conftest import make_sub_org_membership
+    make_sub_org_membership(
+        db, sub_org_id=sub.id, user_id=alice.id,
+        role="admin", status="active",
+    )
     db.commit()
 
     rows = backfill(db)

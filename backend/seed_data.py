@@ -433,10 +433,33 @@ def _add_sub_org_membership(
     ).first()
     if existing:
         return existing
+    # Phase 15 Cluster S: SubOrgMembership.role is now an FK to the
+    # parent's Role row. Seed translates legacy ``"owner"`` to
+    # ``"steward"`` (Phase 12.5 rename).
+    rename = {"owner": "steward"}
+    target_sk = rename.get(role, role)
+    if sub_org.parent_org_id is None:
+        raise ValueError(
+            f"_get_or_create_sub_org_membership: sub_org.id={sub_org.id} "
+            "has no parent_org_id; sub-org membership requires a real sub-org."
+        )
+    parent_role = (
+        db.query(models.Role)
+        .filter(
+            models.Role.org_id == sub_org.parent_org_id,
+            models.Role.system_key == target_sk,
+        )
+        .first()
+    )
+    if parent_role is None:
+        raise ValueError(
+            f"Parent org {sub_org.parent_org_id} missing the {target_sk!r} "
+            "preset role; ensure role_seed.seed_default_roles_for_org has run."
+        )
     m = models.SubOrgMembership(
         user_id=user.id,
         sub_org_id=sub_org.id,
-        role=role,
+        role_id=parent_role.id,
         status="active",
     )
     db.add(m)

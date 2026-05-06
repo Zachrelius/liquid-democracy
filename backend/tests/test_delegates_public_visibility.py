@@ -81,11 +81,14 @@ def test_public_delegates_filtered_by_sub_org_scope_for_authenticated_viewer(
         name="Parent", slug="parent-pd", description="",
         join_policy="approval_required",
     )
+    test_db.add(parent_org)
+    test_db.flush()
     sub_org = models.Organization(
         name="Sub Engineering", slug="sub-engineering-pd", description="",
         join_policy="approval_required",
+        parent_org_id=parent_org.id,
     )
-    test_db.add_all([parent_org, sub_org])
+    test_db.add(sub_org)
     test_db.flush()
 
     viewer = _make_user(test_db, "pd_viewer")
@@ -134,13 +137,13 @@ def test_public_delegates_filtered_by_sub_org_scope_for_authenticated_viewer(
     assert sub_only_delegate.id not in visible_ids
 
     # Now make viewer an active sub-org member → sub_only_delegate becomes
-    # visible.
-    test_db.add(models.SubOrgMembership(
-        user_id=viewer.id,
-        sub_org_id=sub_org.id,
-        role="member",
-        status="active",
-    ))
+    # visible. Phase 15 Cluster S — use the conftest helper to populate
+    # the role_id FK correctly.
+    from tests.conftest import make_sub_org_membership
+    make_sub_org_membership(
+        test_db, sub_org_id=sub_org.id, user_id=viewer.id,
+        role="member", status="active",
+    )
     test_db.commit()
 
     resp_member = client.get(

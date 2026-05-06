@@ -131,10 +131,34 @@ def backfill(db: Session) -> int:
             )
             continue
 
+        # Phase 15 Cluster S: SubOrgMembership.role is now an FK to
+        # the parent's Role row. Look up Admin on the parent org. If
+        # the preset roles haven't been seeded for some reason, seed
+        # them now (idempotent — Phase 12 Stage 1's seed helper handles
+        # this safely).
+        admin_role = (
+            db.query(models.Role)
+            .filter(
+                models.Role.org_id == sub_org.parent_org_id,
+                models.Role.system_key == "admin",
+            )
+            .first()
+        )
+        if admin_role is None:
+            from role_seed import seed_default_roles_for_org
+            roles = seed_default_roles_for_org(db, sub_org.parent_org_id)
+            admin_role = roles.get("admin")
+            if admin_role is None:
+                print(
+                    f"WARNING: Skipping {sub_org.slug}: parent org "
+                    f"{sub_org.parent_org_id} missing 'admin' preset role "
+                    "even after attempted seed"
+                )
+                continue
         sm = models.SubOrgMembership(
             user_id=creator_id,
             sub_org_id=sub_org.id,
-            role="admin",
+            role_id=admin_role.id,
             status="active",
         )
         db.add(sm)

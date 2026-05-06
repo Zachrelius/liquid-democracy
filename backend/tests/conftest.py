@@ -151,6 +151,47 @@ def make_org_membership(
     return m
 
 
+def make_sub_org_membership(
+    db: Session,
+    *,
+    sub_org_id: str,
+    user_id: str,
+    role: str = "member",
+    status: str = "active",
+) -> models.SubOrgMembership:
+    """Phase 15 Cluster S — test-only constructor for ``SubOrgMembership``
+    post-migration.
+
+    Like ``make_org_membership``, replaces ``models.SubOrgMembership(
+    role="admin", ...)`` patterns. Sub-orgs inherit the parent's matrix
+    wholesale, so this helper looks up the role row on the PARENT org,
+    not on the sub-org itself. Auto-seeds the parent's preset Role rows
+    on first use (idempotent).
+
+    The ``role`` arg accepts both the new system_keys ('steward', 'admin',
+    'moderator', 'member') and the legacy 'owner' (silently mapped to
+    'steward' to match Phase 12 helpers).
+    """
+    sub_org = db.get(models.Organization, sub_org_id)
+    if sub_org is None:
+        raise ValueError(f"sub_org_id={sub_org_id!r} not found")
+    if sub_org.parent_org_id is None:
+        raise ValueError(
+            f"sub_org_id={sub_org_id!r} has no parent_org_id; "
+            "make_sub_org_membership is only valid for actual sub-orgs."
+        )
+    role_id = resolve_role_id(db, sub_org.parent_org_id, role)
+    sm = models.SubOrgMembership(
+        user_id=user_id,
+        sub_org_id=sub_org_id,
+        role_id=role_id,
+        status=status,
+    )
+    db.add(sm)
+    db.flush()
+    return sm
+
+
 def make_proposal(
     db: Session, author: models.User, topic_ids: list[str] | None = None
 ) -> models.Proposal:

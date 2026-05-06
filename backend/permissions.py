@@ -122,39 +122,57 @@ def public_delegate_topic_ids(db: Session, user_id: str) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
-# Phase 8.5 — Sub-org permission helper
+# Phase 8.5 — Sub-org permission helper (Phase 15 — role_id FK now)
 # ---------------------------------------------------------------------------
 
-# Phase 12 — SubOrgMembership.role is STILL a string column per D2; the
-# direct sub-org-admin check below compares against this tuple unchanged.
-# OrgMembership.role is now an FK to Role; the parent-org-admin branch
-# uses ``role.system_key`` via a Role lookup instead.
-_SUB_ORG_ADMIN_STRING_ROLES = ("admin", "owner")
-_SUB_ORG_PROPOSAL_CREATOR_ROLES = ("moderator", "admin", "owner")
+# Phase 15 Cluster S — SubOrgMembership.role is now an FK to Role
+# (parent's matrix wholesale); compare via role.system_key. The
+# admin-tier set is the same {admin, steward} as for parent
+# OrgMembership; "owner" was retired by the Phase 12 rename.
+_SUB_ORG_ADMIN_TIER_SYSTEM_KEYS = ("admin", "steward")
+_SUB_ORG_PROPOSAL_CREATOR_TIERS = ("moderator", "admin", "steward")
 _PARENT_ADMIN_TIER_SYSTEM_KEYS = ("admin", "steward")
+
+
+def _sub_membership_role_system_key(
+    sub_membership: models.SubOrgMembership | None,
+) -> str | None:
+    """Resolve a SubOrgMembership row to its role.system_key, or None.
+
+    Phase 15 Cluster S: SubOrgMembership.role is now an FK relationship
+    to Role (parent-org's matrix). The string column is gone; callers
+    that previously compared ``sub_membership.role == 'admin'`` should
+    use this helper or the explicit ``role.system_key`` chain.
+    """
+    if sub_membership is None or sub_membership.role is None:
+        return None
+    return sub_membership.role.system_key
 
 
 def is_sub_org_admin(
     db: Session, user_id: str, sub_org: models.Organization
 ) -> bool:
-    """Decision 6: True iff ``user_id`` can act as admin of ``sub_org``.
+    """Decision 6 + Phase 15 Cluster S: True iff ``user_id`` can act as
+    admin of ``sub_org``.
 
-    A user qualifies if EITHER:
-      (a) They have an active SubOrgMembership in ``sub_org`` with role
-          'admin' or 'owner', OR
-      (b) They have an active OrgMembership in the parent org
-          (``sub_org.parent_org_id``) with role 'admin' or 'owner' — the
-          implicit-admin pattern (parent-org admins govern all sub-orgs).
+    A user qualifies if any of:
+      (a) They have an active SubOrgMembership in ``sub_org`` with the
+          role.system_key in {'admin', 'steward'}, OR
+      (b) They have an active OrgMembership in the parent org whose
+          role.system_key is in {'admin', 'steward'} AND that role
+          transfers to sub-orgs (Phase 15 transferability config — see
+          ``role_permissions.role_transfers_to_sub_orgs``). The
+          configurability is new in Phase 15: previously parent admins
+          ALWAYS got implicit sub-org admin power; now parent-Steward
+          always transfers (locked on) and parent-Admin defaults ON but
+          is configurable via ``Organization.settings``.
 
-    Sub-org admins do NOT have powers outside their sub-org. This helper
-    only answers "can this user admin THIS specific sub-org?". The implicit-
-    admin pattern is read-time, not stored — no row says "alice is admin of
-    every sub-org"; we just check her parent-org role at each call site.
+    Note: this helper retains its narrow contract ("admin tier on this
+    sub-org"); callers checking a specific permission should use
+    ``role_permissions.has_permission_on_sub_org`` instead, which
+    consults the parent's matrix at the resolved role.
 
-    Raises ValueError if ``sub_org`` is not actually a sub-org
-    (parent_org_id IS NULL). The helper is for sub-orgs only; callers
-    asking about parent-org admin powers should use the existing
-    OrgMembership-based checks in routes/organizations.py.
+    Raises ValueError if ``sub_org`` is not actually a sub-org.
     """
     if sub_org.parent_org_id is None:
         raise ValueError(
@@ -163,18 +181,24 @@ def is_sub_org_admin(
             "This helper is only valid for sub-orgs."
         )
 
-    # (a) Direct sub-org admin/owner — SubOrgMembership.role is STILL a
-    # string column per Phase 12 D2.
+    # (a) Direct sub-org admin tier — SubOrgMembership.role is now an
+    # FK to Role; check via the related row's system_key.
     sub_membership = db.query(models.SubOrgMembership).filter(
         models.SubOrgMembership.user_id == user_id,
         models.SubOrgMembership.sub_org_id == sub_org.id,
         models.SubOrgMembership.status == "active",
     ).first()
-    if sub_membership is not None and sub_membership.role in _SUB_ORG_ADMIN_STRING_ROLES:
+    sub_sk = _sub_membership_role_system_key(sub_membership)
+    if sub_sk in _SUB_ORG_ADMIN_TIER_SYSTEM_KEYS:
         return True
 
-    # (b) Parent-org admin/Steward (implicit power) — OrgMembership.role is
-    # an FK to Role; check via the related Role row's ``system_key``.
+    # (b) Parent-org admin/Steward (implicit power), gated by Phase 15
+    # transferability config. Steward always transfers; Admin
+    # configurable via Organization.settings.sub_org_role_transferability.
+    # Imported lazily to avoid a circular import (role_permissions
+    # imports models which is also where SubOrgMembership lives).
+    from role_permissions import role_transfers_to_sub_orgs
+    parent_org = db.get(models.Organization, sub_org.parent_org_id)
     parent_membership = db.query(models.OrgMembership).filter(
         models.OrgMembership.user_id == user_id,
         models.OrgMembership.org_id == sub_org.parent_org_id,
@@ -184,6 +208,10 @@ def is_sub_org_admin(
         parent_membership is not None
         and parent_membership.role is not None
         and parent_membership.role.system_key in _PARENT_ADMIN_TIER_SYSTEM_KEYS
+        and parent_org is not None
+        and role_transfers_to_sub_orgs(
+            parent_org, parent_membership.role.system_key,
+        )
     ):
         return True
 
@@ -193,21 +221,18 @@ def is_sub_org_admin(
 def can_create_proposal_in_sub_org(
     db: Session, user_id: str, sub_org: models.Organization,
 ) -> bool:
-    """Decision 6 + Session 3 clarification.
+    """Decision 6 + Session 3 clarification + Phase 15 transferability.
 
     A user can create proposals scoped to a sub-org if EITHER:
-      - they have an active SubOrgMembership in the sub-org with role
-        IN ('moderator', 'admin', 'owner'); OR
-      - they are a parent-org admin/owner (implicit sub-org admin via
-        is_sub_org_admin already covers this — we just call through).
+      - they have an active SubOrgMembership with role.system_key in
+        {'moderator', 'admin', 'steward'}; OR
+      - they have an inherited governance role that grants them admin
+        power on the sub-org (via ``is_sub_org_admin``).
 
-    A sub-org `member` (no elevated role) cannot create proposals;
-    they can vote on existing ones. This matches how parent-org
-    proposal creation already works (parent-org moderator+ required).
+    A sub-org `member` (no elevated role) cannot create proposals.
 
     Raises ValueError if ``sub_org.parent_org_id IS NULL`` — programmer
-    error; use the existing org-moderator gate for parent-org-scoped
-    proposals.
+    error.
     """
     if sub_org.parent_org_id is None:
         raise ValueError(
@@ -217,20 +242,18 @@ def can_create_proposal_in_sub_org(
             "org-moderator gate for parent-org-scoped proposals."
         )
 
-    # (a) Active sub-org membership with moderator+ role
+    # (a) Active sub-org membership with moderator+ role.system_key.
     sub_membership = db.query(models.SubOrgMembership).filter(
         models.SubOrgMembership.user_id == user_id,
         models.SubOrgMembership.sub_org_id == sub_org.id,
         models.SubOrgMembership.status == "active",
     ).first()
-    if (
-        sub_membership is not None
-        and sub_membership.role in _SUB_ORG_PROPOSAL_CREATOR_ROLES
-    ):
+    sub_sk = _sub_membership_role_system_key(sub_membership)
+    if sub_sk in _SUB_ORG_PROPOSAL_CREATOR_TIERS:
         return True
 
-    # (b) Implicit parent-org-admin path. Decision 6: parent-org admin/owner
-    # has implicit sub-org admin power, which includes proposal creation.
+    # (b) Inherited admin tier via is_sub_org_admin (parent admin/Steward
+    # path, gated by transferability per Phase 15).
     return is_sub_org_admin(db, user_id, sub_org)
 
 

@@ -37,15 +37,13 @@ def _make_org(db, name: str, slug: str, parent_org_id: str | None = None) -> mod
 
 
 def _add_sub_org_membership(db, user, sub_org, role="member") -> models.SubOrgMembership:
-    m = models.SubOrgMembership(
-        user_id=user.id,
-        sub_org_id=sub_org.id,
-        role=role,
-        status="active",
+    # Phase 15 Cluster S: SubOrgMembership.role is now an FK to the
+    # parent's Role row. Use the conftest helper.
+    from tests.conftest import make_sub_org_membership
+    return make_sub_org_membership(
+        db, sub_org_id=sub_org.id, user_id=user.id,
+        role=role, status="active",
     )
-    db.add(m)
-    db.flush()
-    return m
 
 
 # ---------------------------------------------------------------------------
@@ -138,16 +136,20 @@ def test_delete_sub_org_cascades_to_its_memberships(db):
     assert membership_count_after == 0
 
 
-def test_sub_org_membership_default_role_member(db):
+def test_sub_org_membership_role_is_fk_to_parent_role(db):
+    """Phase 15 Cluster S: SubOrgMembership.role is an FK relationship
+    to the PARENT org's Role row (sub-orgs inherit the matrix wholesale,
+    no per-sub-org roles). This test pins the FK shape and the
+    parent-org lookup convention.
+    """
     parent = _make_org(db, "Parent", "parent")
     sub = _make_org(db, "Sub", "sub", parent_org_id=parent.id)
     user = make_user(db, "alice")
-    m = models.SubOrgMembership(
-        user_id=user.id, sub_org_id=sub.id, status="active",
-    )
-    db.add(m)
-    db.flush()
-    assert m.role == "member"
+    m = _add_sub_org_membership(db, user, sub, role="member")
+    assert m.role is not None
+    assert m.role.system_key == "member"
+    # The Role row lives on the PARENT, not the sub.
+    assert m.role.org_id == parent.id
 
 
 # ---------------------------------------------------------------------------

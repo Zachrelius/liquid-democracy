@@ -44,12 +44,11 @@ def _add_membership(db, user, org, role: str = "member", status: str = "active")
 
 
 def _add_sub_membership(db, user, sub_org, role: str = "member", status: str = "active"):
-    m = models.SubOrgMembership(
-        user_id=user.id, sub_org_id=sub_org.id, role=role, status=status,
+    from tests.conftest import make_sub_org_membership
+    return make_sub_org_membership(
+        db, sub_org_id=sub_org.id, user_id=user.id,
+        role=role, status=status,
     )
-    db.add(m)
-    db.flush()
-    return m
 
 
 # ---------------------------------------------------------------------------

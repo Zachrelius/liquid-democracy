@@ -119,14 +119,20 @@ def eligible_polis_admin_ids(
     admins: set[str] = {polis.created_by}
 
     if polis.sub_org_id is not None:
-        # Sub-org admins/owners — SubOrgMembership.role is STILL a string
-        # column per Phase 12 D2 (sub-org-direct memberships keep the
-        # legacy shape until Stage 2+).
-        sub_admins = db.query(models.SubOrgMembership.user_id).filter(
-            models.SubOrgMembership.sub_org_id == polis.sub_org_id,
-            models.SubOrgMembership.status == "active",
-            models.SubOrgMembership.role.in_(("admin", "owner")),
-        ).all()
+        # Sub-org admins/Stewards — Phase 15 Cluster S replaced the
+        # legacy string column with a role_id FK to Role; join through
+        # Role so we can filter on system_key. The "owner" → "steward"
+        # rename applies here too.
+        sub_admins = (
+            db.query(models.SubOrgMembership.user_id)
+            .join(models.Role, models.Role.id == models.SubOrgMembership.role_id)
+            .filter(
+                models.SubOrgMembership.sub_org_id == polis.sub_org_id,
+                models.SubOrgMembership.status == "active",
+                models.Role.system_key.in_(_ADMIN_TIER_SYSTEM_KEYS),
+            )
+            .all()
+        )
         admins.update(r.user_id for r in sub_admins)
         # Parent-org admins/Stewards — OrgMembership join through Role.
         parent_admins = (

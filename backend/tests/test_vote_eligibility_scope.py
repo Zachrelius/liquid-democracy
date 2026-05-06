@@ -123,12 +123,11 @@ def _join_org(db, user, org, role: str = "member"):
 
 
 def _join_sub_org(db, user, sub_org, role: str = "member"):
-    m = models.SubOrgMembership(
-        user_id=user.id, sub_org_id=sub_org.id, role=role, status="active",
+    from tests.conftest import make_sub_org_membership
+    return make_sub_org_membership(
+        db, sub_org_id=sub_org.id, user_id=user.id,
+        role=role, status="active",
     )
-    db.add(m)
-    db.flush()
-    return m
 
 
 def _make_proposal(

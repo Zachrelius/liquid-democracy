@@ -112,12 +112,11 @@ def _membership(db: Session, org, user, role="member", status="active"):
 
 
 def _sub_membership(db: Session, sub_org, user, role="member", status="active"):
-    m = models.SubOrgMembership(
-        user_id=user.id, sub_org_id=sub_org.id, role=role, status=status,
+    from tests.conftest import make_sub_org_membership
+    return make_sub_org_membership(
+        db, sub_org_id=sub_org.id, user_id=user.id,
+        role=role, status=status,
     )
-    db.add(m)
-    db.flush()
-    return m
 
 
 def _auth(user: models.User) -> dict:
@@ -939,7 +938,9 @@ class TestPhase96SubOrgMembership:
             models.SubOrgMembership.sub_org_id == sub_id,
         ).first()
         assert sm is not None, "Creator should be auto-added as sub-org member"
-        assert sm.role == "admin"
+        # Phase 15 Cluster S: role is now an FK relationship; check the
+        # system_key on the related Role row.
+        assert sm.role is not None and sm.role.system_key == "admin"
         assert sm.status == "active"
 
     def test_direct_add_by_parent_org_admin(self, db, client):

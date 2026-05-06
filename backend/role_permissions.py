@@ -1,58 +1,52 @@
-"""Phase 12 Stage 1 — has_permission helper + per-request cache (Cluster H, H1+H2).
+"""Phase 12 Stage 1 + Phase 15 Cluster S — has_permission helper +
+per-request cache + sub-org effective-role resolution.
 
-Single entry point for "can user X do action Y in org Z?" checks across the
-backend. Replaces the scattered ``role in ('admin', 'owner')`` patterns
-(refactored away by Cluster R).
+Single entry point for "can user X do action Y in org Z?" checks across
+the backend.
 
-Resolution order (per spec H1, lines 263-300):
+Resolution order for parent-org checks (Phase 12 Stage 1):
 
-  1. Decision-6 implicit power. If ``org_id`` refers to a sub-org
-     (``Organization.parent_org_id IS NOT NULL``), check whether the user
-     has an active OrgMembership on the PARENT org with role.system_key in
-     {'admin', 'steward'}. If yes, return True for ANY permission_key.
-     Hardcoded — not user-configurable in Stage 1.
+  1. ``has_permission`` first checks the Decision-6 implicit-power
+     shortcut: if ``org_id`` refers to a sub-org and the user is parent
+     admin/steward AND that role transfers (Phase 15 transferability
+     config), return True. **Phase 15 Cluster S note:** this shortcut is
+     now transferability-aware; parent Admin no longer ALWAYS transfers
+     (defaults ON but configurable). Sub-org checks should now go
+     through ``has_permission_on_sub_org`` which uses
+     ``effective_role_on_sub_org`` for the full resolution model.
 
-  2. Owner-only D4 hardcoded gates. The keys ``org.delete`` and
-     ``org.transfer_stewardship`` cannot be re-granted via the permission
-     system. They require the user's role.system_key on this org to be
-     'steward'. The role_permissions table is NOT consulted for these
-     keys — even an explicit row would be ignored.
+  2. Owner-only D4 hardcoded gates. ``org.delete`` and
+     ``org.transfer_stewardship`` require role.system_key == 'steward'.
 
-  3. Standard path. Look up the user's active OrgMembership for this org;
-     follow membership.role_id → Role → role_permissions for
-     ``(role_id, permission_key)``; return ``enabled``.
+  3. Standard path. Look up the user's active OrgMembership; follow
+     ``membership.role_id → Role → role_permissions`` for the
+     ``(role_id, permission_key)`` pair; return ``enabled``.
 
-Returns False if the user is not a member, the membership is not active,
-the role row is missing, or no matching role_permission row exists.
+Phase 15 Cluster S — sub-org permission resolution:
 
-Per-request cache (Decision 6, spec H2):
+  ``effective_role_on_sub_org(db, user_id, sub_org)`` returns the
+  highest-tier applicable Role for a user on a sub-org, or None. The
+  candidates are:
+    1. Sub-org-specific role (from active SubOrgMembership.role_id).
+    2. Parent role IF transferability is set (per
+       ``role_transfers_to_sub_orgs``).
+    3. Platform-admin Admin-level grant if ``user.is_admin``.
 
-  Stored on ``Session.info['_permission_cache']`` keyed by
-  ``(user_id, org_id)`` → ``dict[permission_key, bool]`` (the user's full
-  permission set for that org). On a first miss for a given (user, org)
-  pair, ONE query joins OrgMembership → Role → RolePermission and loads
-  every grant; subsequent calls in the same request are dict lookups.
+  ``has_permission_on_sub_org(db, user_id, sub_org, permission_key)``
+  resolves the effective role then checks the parent org's matrix. The
+  return value is ``(allowed, via_platform_admin)`` so callers can
+  emit ``platform_admin_override`` audit-log enrichment when relevant.
 
-  The Decision-6 path also fills the ``(user, parent_org)`` cache as a
-  side effect because it loads the parent's permission set during the
-  implicit-power check.
+Out of scope here:
 
-  ``Session.info`` is request-scoped (FastAPI's ``get_db`` dependency
-  yields a fresh session per request), so no manual eviction is needed.
-
-Out of scope here (separate concerns):
-
-  * Platform admin (``User.is_admin``) — completely separate gate;
-    governed by ``auth.get_current_admin``. Not consulted here.
-  * Sub-org direct membership roles (``SubOrgMembership.role``) — Stage 1
-    keeps these as string columns; helpers in ``permissions.py`` continue
-    to use them for the direct-sub-org-admin path. ``has_permission`` only
-    handles the parent-org-implicit branch of the sub-org story.
+  * Platform admin (``User.is_admin``) is consulted ONLY in
+    ``effective_role_on_sub_org`` as the final fallback; parent-org
+    permissions still ignore it (governed by ``auth.get_current_admin``).
 """
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -221,29 +215,30 @@ def has_permission(
     """
     cache = get_or_init_permission_cache(db)
 
-    # --- Resolution step 1: Decision-6 implicit power ---
-    # If org_id is a sub-org, check whether the user is admin/steward on
-    # the parent. If so, they get every permission on the sub-org.
+    # --- Resolution step 1: sub-org effective-role resolution ---
+    # If org_id is a sub-org, defer to the Phase 15 Cluster S
+    # ``has_permission_on_sub_org`` path which resolves the user's
+    # effective role (sub-org-specific assignment, transferable parent
+    # role, or platform-admin Admin grant) and consults the parent's
+    # matrix at the resolved role.
+    #
+    # This replaces the Phase 12 Stage 1 "implicit power" shortcut where
+    # parent admin/steward got EVERY permission on the sub-org
+    # unconditionally — that path didn't honor transferability config
+    # and didn't model platform admin grants. The new path covers both:
+    #   - parent Steward / Admin (when transferability enabled) still
+    #     get the matrix's grants, identical to the old behavior for
+    #     all-permissions-true Admin/Steward roles.
+    #   - parent Member with default-off transferability now correctly
+    #     resolves to "no permission".
     org = db.get(models.Organization, org_id)
     if org is None:
         return False
     if org.parent_org_id is not None:
-        parent_id = org.parent_org_id
-        # Load (and cache) the parent's permission set for this user — but
-        # the implicit-power test is on the parent role's system_key, not on
-        # a permission key. We need the role.system_key for that check,
-        # which the cached permission set doesn't carry. Load it directly.
-        parent_system_key = _user_role_system_key(db, user_id, parent_id)
-        if parent_system_key in _PARENT_IMPLICIT_ADMIN_KEYS:
-            # Side-effect: also cache the parent's permission set so any
-            # subsequent has_permission(user, parent_id, ...) call in the
-            # same request hits the cache.
-            parent_cache_key = (user_id, parent_id)
-            if parent_cache_key not in cache:
-                cache[parent_cache_key] = _load_permission_set_for_user_org(
-                    db, user_id, parent_id
-                )
-            return True
+        allowed, _via_pa = has_permission_on_sub_org(
+            db, user_id, org, permission_key,
+        )
+        return allowed
 
     # --- Resolution step 2: D4 owner-only hardcoded gates ---
     if permission_key in OWNER_ONLY_KEYS:
@@ -273,10 +268,242 @@ def has_permission(
     return cache[cache_key].get(permission_key, False)
 
 
+# ---------------------------------------------------------------------------
+# Phase 15 Cluster S — sub-org permission inheritance + transferability
+# ---------------------------------------------------------------------------
+
+# Tier ordering for "highest role wins" resolution. Steward is the
+# strongest; Member the weakest. A user with no candidates (no sub-org
+# membership, no transferable parent role, not platform admin) gets
+# None — no permissions on the sub-org.
+ROLE_TIER: dict[str, int] = {
+    "member": 0,
+    "moderator": 1,
+    "admin": 2,
+    "steward": 3,
+}
+
+
+def role_transfers_to_sub_orgs(
+    org: "models.Organization", role_system_key: str,
+) -> bool:
+    """Return True if a user holding ``role_system_key`` on the parent
+    org should inherit that role's permissions on every sub-org of
+    this parent.
+
+    Phase 15 Cluster S §S1/S3 (locked with Z):
+      - Steward: ALWAYS transfers. The toggle exists in the settings
+        JSON for symmetry but is locked at the helper level — even a
+        stored ``False`` is overridden here. Setting it to False through
+        the settings API is rejected upstream with 400.
+      - Admin: defaults ON; configurable via
+        ``Organization.settings.sub_org_role_transferability.admin``.
+      - Moderator: defaults ON; configurable.
+      - Member: defaults OFF; configurable.
+
+    The settings JSON shape::
+
+        Organization.settings = {
+          "sub_org_role_transferability": {
+            "steward": true,   # ignored, locked on
+            "admin": true,
+            "moderator": true,
+            "member": false,
+          },
+          ...
+        }
+
+    Per spec, the JSON key is sibling to other Organization.settings
+    entries (branding, intro_text, default thresholds, etc.); this
+    helper does not touch any of them.
+    """
+    if role_system_key == "steward":
+        return True  # Locked on; not configurable.
+
+    settings = (org.settings or {}).get("sub_org_role_transferability", {})
+    defaults = {"admin": True, "moderator": True, "member": False}
+    # Use ``in`` rather than ``.get`` with a default so a missing key
+    # falls back to the spec's default; an explicit False overrides.
+    if role_system_key in settings:
+        return bool(settings[role_system_key])
+    return defaults.get(role_system_key, False)
+
+
+def _platform_admin_role(
+    db: Session, parent_org_id: str,
+) -> Optional["models.Role"]:
+    """Return the parent org's Admin Role (the role granted to platform
+    admins under the spec §S1 case 3)."""
+    return (
+        db.query(models.Role)
+        .filter(
+            models.Role.org_id == parent_org_id,
+            models.Role.system_key == "admin",
+        )
+        .first()
+    )
+
+
+def effective_role_on_sub_org(
+    db: Session, user_id: str, sub_org: "models.Organization",
+) -> Tuple[Optional["models.Role"], bool]:
+    """Phase 15 Cluster S §S1 — resolve the highest-tier applicable Role
+    for ``user_id`` on ``sub_org``.
+
+    Returns a tuple ``(role, via_platform_admin)``:
+      - ``role``: the resolved Role row, or None if no candidates apply.
+      - ``via_platform_admin``: True iff the resolved role came ONLY from
+        the platform-admin fallback (case 3) — i.e., the user has no
+        sub-org membership and no transferable parent role. Callers
+        should emit ``platform_admin_override: true`` on audit events
+        when this flag is set.
+
+    Resolution candidates (highest-tier wins):
+
+      1. Sub-org-specific assignment from an active SubOrgMembership.
+      2. Parent role with ``role_transfers_to_sub_orgs`` set.
+      3. Platform admin Admin-level grant (if ``user.is_admin``).
+
+    The matrix permission lookup against the resolved role is the
+    caller's job (see ``has_permission_on_sub_org``); this function
+    only does the resolution.
+    """
+    if sub_org.parent_org_id is None:
+        raise ValueError(
+            "effective_role_on_sub_org called on a non-sub-org "
+            f"(organization id={sub_org.id} has parent_org_id=NULL)."
+        )
+    parent_org = db.get(models.Organization, sub_org.parent_org_id)
+    if parent_org is None:
+        return None, False
+
+    candidates: list[tuple[models.Role, bool]] = []
+    # ``via_platform_admin`` is True only if THIS candidate came from
+    # the platform-admin fallback. The final tuple's flag is True iff
+    # the WINNER's flag is True — i.e., only when no stronger candidate
+    # outranks the platform-admin grant.
+
+    # 1. Sub-org-specific role assignment.
+    sub_membership = (
+        db.query(models.SubOrgMembership)
+        .filter(
+            models.SubOrgMembership.user_id == user_id,
+            models.SubOrgMembership.sub_org_id == sub_org.id,
+            models.SubOrgMembership.status == "active",
+        )
+        .first()
+    )
+    if sub_membership is not None and sub_membership.role is not None:
+        candidates.append((sub_membership.role, False))
+
+    # 2. Parent role with transferability flag set.
+    parent_membership = (
+        db.query(models.OrgMembership)
+        .filter(
+            models.OrgMembership.user_id == user_id,
+            models.OrgMembership.org_id == parent_org.id,
+            models.OrgMembership.status == "active",
+        )
+        .first()
+    )
+    if parent_membership is not None and parent_membership.role is not None:
+        parent_role = parent_membership.role
+        if role_transfers_to_sub_orgs(parent_org, parent_role.system_key):
+            candidates.append((parent_role, False))
+
+    # 3. Platform admin Admin-level grant.
+    user = db.get(models.User, user_id)
+    if user is not None and user.is_admin:
+        admin_role = _platform_admin_role(db, parent_org.id)
+        if admin_role is not None:
+            candidates.append((admin_role, True))
+
+    if not candidates:
+        return None, False
+
+    # Highest-tier wins. Among ties (shouldn't happen in normal data
+    # because a user can't have two distinct roles on the same scope),
+    # prefer the non-platform-admin candidate so the override flag is
+    # only set when the platform-admin path is actually load-bearing.
+    candidates.sort(
+        key=lambda rb: (
+            ROLE_TIER.get(rb[0].system_key, -1),
+            # Tie-break: non-override (False) sorts after True, so
+            # use the negation to prefer False (real grants) over True.
+            not rb[1],
+        ),
+        reverse=True,
+    )
+    winner_role, winner_via_pa = candidates[0]
+    return winner_role, winner_via_pa
+
+
+def has_permission_on_sub_org(
+    db: Session,
+    user_id: str,
+    sub_org: "models.Organization",
+    permission_key: str,
+) -> Tuple[bool, bool]:
+    """Phase 15 Cluster S §S4 — sub-org permission gate using the
+    effective-role resolution model + the parent's matrix.
+
+    Returns ``(allowed, via_platform_admin)``. Callers that emit audit
+    events should pass the second element through to
+    ``log_audit_event``'s ``details`` payload as
+    ``platform_admin_override`` when True.
+
+    The owner-only D4 keys (``org.delete``, ``org.transfer_stewardship``)
+    are gated on the resolved system_key being ``'steward'``. Platform
+    admins do NOT get these via the override path because the resolved
+    role for a platform-admin-only path is ``admin``, not ``steward``.
+    This is the explicit S6 test case ("Platform admin attempts
+    org.delete on a sub-org: fails").
+
+    The Steward-locked permissions (member.change_role,
+    org.edit_settings, role_permissions.edit) are hardcoded TRUE for
+    Stewards regardless of any matrix row state, paralleling
+    ``has_permission`` for parent orgs.
+    """
+    role, via_pa = effective_role_on_sub_org(db, user_id, sub_org)
+    if role is None:
+        return False, False
+
+    # D4 owner-only gates.
+    if permission_key in OWNER_ONLY_KEYS:
+        return (role.system_key == "steward", via_pa)
+
+    # Steward-locked permissions.
+    if permission_key in STEWARD_LOCKED_PERMISSIONS:
+        if role.system_key == "steward":
+            return True, via_pa
+        # Non-Steward callers fall through to the matrix.
+
+    # Standard path: matrix lookup against the parent's role_permissions
+    # rows for this resolved role.
+    cache = get_or_init_permission_cache(db)
+    parent_org_id = sub_org.parent_org_id
+    cache_key = (user_id, f"sub:{sub_org.id}:role:{role.id}")
+    if cache_key not in cache:
+        rows = (
+            db.query(
+                models.RolePermission.permission_key,
+                models.RolePermission.enabled,
+            )
+            .filter(models.RolePermission.role_id == role.id)
+            .all()
+        )
+        cache[cache_key] = {key: enabled for key, enabled in rows}
+    return cache[cache_key].get(permission_key, False), via_pa
+
+
 __all__ = [
     "OWNER_ONLY_KEYS",
     "STEWARD_LOCKED_PERMISSIONS",
+    "ROLE_TIER",
     "get_or_init_permission_cache",
     "has_permission",
     "is_locked",
+    "role_transfers_to_sub_orgs",
+    "effective_role_on_sub_org",
+    "has_permission_on_sub_org",
 ]

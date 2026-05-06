@@ -29,12 +29,11 @@ def _membership(db, user, org, *, role="member", status="active"):
 
 
 def _sub_membership(db, user, sub_org, *, role="member", status="active"):
-    m = models.SubOrgMembership(
-        user_id=user.id, sub_org_id=sub_org.id, role=role, status=status,
+    from tests.conftest import make_sub_org_membership
+    return make_sub_org_membership(
+        db, sub_org_id=sub_org.id, user_id=user.id,
+        role=role, status=status,
     )
-    db.add(m)
-    db.flush()
-    return m
 
 
 def _polis(db, org_id, sub_org_id, creator):

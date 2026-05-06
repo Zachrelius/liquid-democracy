@@ -22,9 +22,10 @@ def _membership(db, user, org, *, role="member"):
 
 
 def _sub_membership(db, user, sub, *, role="member"):
-    m = models.SubOrgMembership(user_id=user.id, sub_org_id=sub.id, role=role, status="active")
-    db.add(m); db.flush()
-    return m
+    from tests.conftest import make_sub_org_membership
+    return make_sub_org_membership(
+        db, sub_org_id=sub.id, user_id=user.id, role=role, status="active",
+    )
 
 
 def _polis(db, org, sub, creator):

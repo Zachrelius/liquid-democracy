@@ -1422,13 +1422,29 @@ class SubOrgOut(BaseModel):
     parent_org_id: str
     settings: dict = {}
     member_count: Optional[int] = None
+    # Phase 15 Cluster S — sub-org effective role's system_key (the
+    # highest-tier role applicable to the user via direct sub-org
+    # membership, transferable parent role, or platform-admin grant).
+    # None for users with no applicable role on this sub-org.
     user_role: Optional[str] = None
+    # Phase 15 Cluster S §S5 — resolved permission keys the current user
+    # holds on this sub-org. Computed via has_permission_on_sub_org
+    # against the parent's matrix at the resolved role. Empty list when
+    # user has no applicable role. Frontend uses this to drive the
+    # sub-org admin nav and in-page control gating, parallel to Phase
+    # 12.5 B4's addition to OrgOut.
+    user_permissions: list[str] = []
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
 
 class SubOrgMemberInvite(BaseModel):
-    """Body for `POST /api/orgs/{slug}/sub-orgs/{sub_slug}/members/invite`."""
+    """Body for `POST /api/orgs/{slug}/sub-orgs/{sub_slug}/members/invite`.
+
+    Phase 15 Cluster S — accepts the new ``steward`` role; ``owner`` is
+    accepted for one cycle of backwards compatibility and silently
+    translated to ``steward`` server-side (per the role-rename policy).
+    """
     user_id: str
     role: str = "member"
 
@@ -1440,8 +1456,10 @@ class SubOrgMemberInvite(BaseModel):
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: str) -> str:
-        if v not in ("member", "moderator", "admin", "owner"):
-            raise ValueError("role must be member, moderator, admin, or owner")
+        if v not in ("member", "moderator", "admin", "owner", "steward"):
+            raise ValueError(
+                "role must be member, moderator, admin, or steward"
+            )
         return v
 
 
@@ -1451,8 +1469,10 @@ class SubOrgMemberRoleUpdate(BaseModel):
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: str) -> str:
-        if v not in ("member", "moderator", "admin", "owner"):
-            raise ValueError("role must be member, moderator, admin, or owner")
+        if v not in ("member", "moderator", "admin", "owner", "steward"):
+            raise ValueError(
+                "role must be member, moderator, admin, or steward"
+            )
         return v
 
 
