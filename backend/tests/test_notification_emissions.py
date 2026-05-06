@@ -110,6 +110,8 @@ def _auth(user: models.User) -> dict:
 
 
 def _opt_in(db: Session, user: models.User, event_type: str, *, in_app: bool = True, email: bool = False) -> None:
+    """Phase 13.3: ``email=True`` maps to the new email_immediate channel
+    (closest analog of the legacy 'email' channel)."""
     if in_app:
         db.add(models.NotificationPreference(
             user_id=user.id, event_type=event_type,
@@ -118,7 +120,7 @@ def _opt_in(db: Session, user: models.User, event_type: str, *, in_app: bool = T
     if email:
         db.add(models.NotificationPreference(
             user_id=user.id, event_type=event_type,
-            channel="email", enabled=True,
+            channel="email_immediate", enabled=True,
         ))
     db.flush()
 
@@ -507,63 +509,28 @@ def test_proposal_closed_negative(client, test_db):
 
 # ---------------------------------------------------------------------------
 # Site 7 — sustained_majority.floor_approached (worker)
+#
+# Phase 13.3: this event was deleted from the registry. The worker's
+# _maybe_emit_floor_approached helper short-circuits at the top to avoid
+# raising ValueError when emit_notification rejects the unknown event
+# type. The previous positive/negative emit tests are intentionally
+# removed; the short-circuit is verified below.
 # ---------------------------------------------------------------------------
 
-def test_sustained_majority_floor_approached_emits_idempotently(test_db):
-    """Direct unit test of the worker's floor_approached path."""
+def test_floor_approached_short_circuited_post_phase_13_3(test_db):
+    """Phase 13.3: _maybe_emit_floor_approached is a no-op now that the
+    event was removed from the registry. Verify it doesn't raise and
+    creates no notification rows."""
     from sustained_majority_worker import _maybe_emit_floor_approached
     from sustained_majority import (
         BinarySnapshotPoint,
         SustainedMajorityConfig,
     )
 
-    org = _make_org(test_db, "smorg")
-    author = _make_user(test_db, "sm_author")
-    voter = _make_user(test_db, "sm_voter")
-    make_org_membership(test_db, org_id=org.id, user_id=author.id, role="admin")
-    make_org_membership(test_db, org_id=org.id, user_id=voter.id, role="member")
-    proposal = _make_proposal(test_db, author, org, status="voting")
-    test_db.add(models.Vote(
-        proposal_id=proposal.id, user_id=voter.id, vote_value="no",
-        is_direct=True, cast_by_id=voter.id,
-    ))
-    _opt_in(test_db, author, "sustained_majority.floor_approached")
-    _opt_in(test_db, voter, "sustained_majority.floor_approached")
-    test_db.commit()
-
-    # Snapshot showing support = 0.46 (just above floor 0.45 + 5% delta).
-    snap = BinarySnapshotPoint(
-        simulated_time=datetime.now(timezone.utc).replace(tzinfo=None),
-        yes=46, no=54, abstain=0, total_eligible=100,
-    )
-    config = SustainedMajorityConfig(
-        enabled_default=True, per_proposal_override=True,
-        threshold=0.50, floor=0.45, failure_mode="fail",
-    )
-    _maybe_emit_floor_approached(test_db, proposal, [snap], config)
-    test_db.flush()
-
-    assert len(_notifications_for(test_db, author, "sustained_majority.floor_approached")) == 1
-    assert len(_notifications_for(test_db, voter, "sustained_majority.floor_approached")) == 1
-
-    # Second call within the dedup window should NOT emit again.
-    _maybe_emit_floor_approached(test_db, proposal, [snap], config)
-    test_db.flush()
-    assert len(_notifications_for(test_db, author, "sustained_majority.floor_approached")) == 1
-
-
-def test_sustained_majority_floor_approached_negative(test_db):
-    from sustained_majority_worker import _maybe_emit_floor_approached
-    from sustained_majority import (
-        BinarySnapshotPoint,
-        SustainedMajorityConfig,
-    )
-
-    org = _make_org(test_db, "smneg")
-    author = _make_user(test_db, "smn_author")
+    org = _make_org(test_db, "smshort")
+    author = _make_user(test_db, "smsh_author")
     make_org_membership(test_db, org_id=org.id, user_id=author.id, role="admin")
     proposal = _make_proposal(test_db, author, org, status="voting")
-    # No opt-in -> no row.
     test_db.commit()
 
     snap = BinarySnapshotPoint(
@@ -574,10 +541,11 @@ def test_sustained_majority_floor_approached_negative(test_db):
         enabled_default=True, per_proposal_override=True,
         threshold=0.50, floor=0.45, failure_mode="fail",
     )
-    _maybe_emit_floor_approached(test_db, proposal, [snap], config)
-    test_db.flush()
+    _maybe_emit_floor_approached(test_db, proposal, [snap], config)  # no-op
 
-    rows = _notifications_for(test_db, author, "sustained_majority.floor_approached")
+    rows = test_db.query(models.Notification).filter(
+        models.Notification.user_id == author.id,
+    ).all()
     assert rows == []
 
 

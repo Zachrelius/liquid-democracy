@@ -1,31 +1,30 @@
-"""Phase 13 — notification emission helper + 90-day cleanup.
+"""Phase 13 / 13.3 — notification emission helper + 90-day cleanup.
 
-The single entry point ``emit_notification`` is invoked from the 12 event
-sites listed in §B3 of the Phase 13 spec. It consults the recipient's
-opt-in preferences and:
+The single entry point ``emit_notification`` is invoked from each event
+site. It consults the recipient's opt-in preferences and:
 
   1. Inserts an in-app ``Notification`` row when the
      ``(event_type, "in_app")`` preference is enabled.
   2. Queues a real-time email send via ``BackgroundTasks`` when the
-     ``(event_type, "email")`` preference is enabled AND the user's
-     ``digest_cadence == "real_time"`` AND we're not currently inside the
-     user's quiet-hours window.
-  3. For digest cadences (``"daily"`` / ``"weekly"``) the in-app row is
-     still inserted; the digest job (Cluster E) picks it up later.
+     ``(event_type, "email_immediate")`` preference is enabled AND we're
+     not currently inside the user's quiet-hours window.
+  3. For digest channels (``email_daily`` / ``email_weekly``) the in-app
+     row is still inserted; the digest job picks it up later.
+
+Phase 13.3 retired the global ``digest_cadence`` column on User in favor
+of per-event channel rows; see ``backend/notification_events.py`` and
+the migration ``b9e2f4a17c83_phase_13_3_preferences_refinements.py``.
 
 Critically, this helper is wrapped at every call site by ``try/except`` so
 a notification failure never sinks the originating request — the user's
-primary action (commenting, voting, etc.) takes priority. See spec §B3
-"Critical try/except".
+primary action (commenting, voting, etc.) takes priority.
 
 Cluster E coupling
 ------------------
 
 The real-time email path goes through ``_queue_email_for_event``, a thin
-shim that lazily imports ``email_service.send_event_email``. Cluster E
-will implement that function; until then the shim is a logged no-op. The
-in-app path (the load-bearing piece for the F1 notification center)
-works regardless of Cluster E's status.
+shim that lazily imports ``email_service.send_event_email``. The in-app
+path is the load-bearing piece for the F1 notification center.
 """
 from __future__ import annotations
 
@@ -47,12 +46,22 @@ log = logging.getLogger(__name__)
 # 90 days per spec Q6.
 NOTIFICATION_RETENTION_DAYS: int = 90
 
-# Quiet-hours window (in the user's local timezone). Real-time emails
-# during this window are suppressed and re-queued for the next 9am by
-# Cluster E's digest/queue logic; the in-app row still goes through
-# regardless.
+# Default quiet-hours window (in the user's local timezone). Phase 13.3
+# made this per-user adjustable via ``User.quiet_hours_start`` /
+# ``User.quiet_hours_end`` (HH:MM strings). These constants remain for
+# backwards-compatible imports (digest_scheduler uses QUIET_HOURS_END as
+# the daily digest hour default) and as fallbacks if the per-user fields
+# are unset.
 QUIET_HOURS_START: int = 21  # 9pm
 QUIET_HOURS_END: int = 9     # 9am
+
+# Channels that represent email delivery (any one of these enabled means
+# the user accepts email for the given event_type). Phase 13.3 split the
+# legacy "email" channel into three.
+_EMAIL_CHANNELS: tuple[str, ...] = (
+    "email_immediate", "email_daily", "email_weekly",
+)
+_ALL_CHANNELS: tuple[str, ...] = ("in_app",) + _EMAIL_CHANNELS
 
 
 def _now_naive() -> datetime:
@@ -81,6 +90,30 @@ def _is_channel_enabled(
         .first()
     )
     return bool(pref and pref.enabled)
+
+
+def user_has_any_channel_enabled(
+    db: Session, user_id: str, event_type: str,
+) -> bool:
+    """Phase 13.3 helper: True iff the user has at least one of the four
+    channels (in_app / email_immediate / email_daily / email_weekly)
+    enabled for this event_type.
+
+    Used by the proposal-entered-voting priority resolution in
+    ``routes/proposals.py::_emit_proposal_status_notifications`` to pick
+    the highest-priority candidate event the recipient is opted into.
+    """
+    pref = (
+        db.query(models.NotificationPreference)
+        .filter(
+            models.NotificationPreference.user_id == user_id,
+            models.NotificationPreference.event_type == event_type,
+            models.NotificationPreference.channel.in_(_ALL_CHANNELS),
+            models.NotificationPreference.enabled == True,  # noqa: E712
+        )
+        .first()
+    )
+    return pref is not None
 
 
 # ---------------------------------------------------------------------------
@@ -112,9 +145,45 @@ def _user_local_hour(user: models.User, now_utc: Optional[datetime] = None) -> i
 
 
 def _in_quiet_hours(local_hour: int) -> bool:
-    """Return True iff ``local_hour`` falls in the 9pm-9am suppression
-    window. The window wraps midnight: hours >= 21 OR hours < 9."""
+    """Return True iff ``local_hour`` falls in the default 9pm-9am
+    suppression window. The window wraps midnight: hours >= 21 OR hours
+    < 9. Kept as a back-compat shim used by tests; the live emission
+    path now goes through ``_in_user_quiet_hours`` for per-user windows.
+    """
     return local_hour >= QUIET_HOURS_START or local_hour < QUIET_HOURS_END
+
+
+def _parse_hhmm_hour(value: str | None, fallback: int) -> int:
+    """Extract the hour-of-day from a HH:MM string. Falls back on parse
+    errors so a bad value never breaks the emission path.
+    """
+    if not value:
+        return fallback
+    try:
+        h, _ = value.split(":", 1)
+        return int(h)
+    except Exception:  # noqa: BLE001
+        return fallback
+
+
+def _in_user_quiet_hours(user: models.User, local_hour: int) -> bool:
+    """Phase 13.3: per-user quiet-hours window with HH:MM start/end.
+
+    The ``User.quiet_hours_start`` / ``quiet_hours_end`` columns hold
+    HH:MM strings (e.g. "21:00", "09:00"). We compare on the hour of day
+    only — minute-grained windows are out of scope for v1.
+
+    The window is closed-open ``[start_hour, end_hour)`` and wraps
+    midnight when ``start_hour >= end_hour``.
+    """
+    start_h = _parse_hhmm_hour(getattr(user, "quiet_hours_start", None), QUIET_HOURS_START)
+    end_h = _parse_hhmm_hour(getattr(user, "quiet_hours_end", None), QUIET_HOURS_END)
+    if start_h == end_h:
+        return False  # zero-length window = always off
+    if start_h < end_h:
+        return start_h <= local_hour < end_h
+    # Wraparound: e.g. 21:00..09:00.
+    return local_hour >= start_h or local_hour < end_h
 
 
 # ---------------------------------------------------------------------------
@@ -170,26 +239,24 @@ def emit_notification(
 ) -> Optional[models.Notification]:
     """Emit a single notification to ``user_id`` for ``event_type``.
 
-    Behavior summary:
+    Behavior summary (Phase 13.3 per-event channel model):
 
       * If the user has the ``(event_type, "in_app")`` preference enabled
         an in-app ``Notification`` row is inserted (and returned). Absent
         row = disabled (opt-in default).
-      * If the user has the ``(event_type, "email")`` preference enabled
-        AND ``digest_cadence == "real_time"`` AND we're not in the user's
-        quiet-hours window, a real-time email send is queued via
-        ``background_tasks``.
-      * For ``digest_cadence in ("daily", "weekly")`` the in-app row is
-        still inserted; the digest job (Cluster E) picks it up later.
-      * For ``digest_cadence == "off"`` no real-time email is queued.
-      * Quiet hours suppress only the real-time email — the in-app row
-        always goes through. Cluster E's digest/queue logic delivers the
-        email later (typically at 9am local).
+      * If the user has ``(event_type, "email_immediate")`` enabled AND
+        we're not in the user's quiet-hours window, a real-time email
+        send is queued via ``background_tasks``.
+      * For ``email_daily`` / ``email_weekly`` the in-app row is still
+        inserted; the digest job picks it up later via
+        ``digest_scheduler.aggregate_for_user``.
+      * Quiet hours suppress only the immediate email — the in-app row
+        always goes through. The digest/quiet-hours flush logic delivers
+        the suppressed email at end-of-quiet-hours.
 
     Returns the inserted ``Notification`` row if one was created, else
-    ``None``. Either way the caller MUST wrap this in ``try/except`` per
-    spec §B3 — a DB error in this path must not sink the originating
-    request.
+    ``None``. Either way the caller MUST wrap this in ``try/except`` —
+    a DB error in this path must not sink the originating request.
 
     Unknown ``event_type`` strings raise ``ValueError`` so a typo at a
     call site fails loudly in tests; production call sites pass keys from
@@ -210,7 +277,7 @@ def emit_notification(
         return None
 
     in_app_enabled = _is_channel_enabled(db, user_id, event_type, "in_app")
-    email_enabled = _is_channel_enabled(db, user_id, event_type, "email")
+    email_immediate = _is_channel_enabled(db, user_id, event_type, "email_immediate")
 
     notification: Optional[models.Notification] = None
     if in_app_enabled:
@@ -226,23 +293,22 @@ def emit_notification(
         db.add(notification)
         db.flush()
 
-    # Real-time email path. Digest cadences ("daily"/"weekly") rely on
-    # the in-app row being present; the digest job aggregates them at
-    # the cadence boundary. "off" suppresses email entirely.
-    if email_enabled and user.digest_cadence == "real_time":
-        if user.quiet_hours_enabled and _in_quiet_hours(_user_local_hour(user)):
+    # Real-time email path. Phase 13.3: gated only on the per-event
+    # email_immediate channel. ``email_daily`` / ``email_weekly`` rows
+    # rely on the in-app row being present; the digest job aggregates
+    # them at the cadence boundary.
+    if email_immediate:
+        if user.quiet_hours_enabled and _in_user_quiet_hours(user, _user_local_hour(user)):
             log.debug(
                 "emit_notification: suppressing real-time email for user=%s "
                 "event=%s — inside quiet hours; flagging payload so the "
-                "9am-local digest tick flushes the queued email",
+                "end-of-window digest tick flushes the queued email",
                 user_id, event_type,
             )
             # Tag the in-app row so digest_scheduler.flush_quiet_hours_queue
-            # can pick it up at 9am local. If in_app was disabled (no row
-            # was inserted) we skip — the user opted out of in-app, so
-            # there's nothing to attach the flag to and the email is
-            # forfeited; this matches spec §E4 (quiet hours is an email-
-            # channel feature; in-app is the SoT feed).
+            # can pick it up. If in_app was disabled (no row was
+            # inserted) the email is forfeited — quiet hours is an
+            # email-channel feature; in-app is the SoT feed.
             if notification is not None:
                 merged = dict(payload or {})
                 merged["queued_for_quiet_hours_end"] = True
