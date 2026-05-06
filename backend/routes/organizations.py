@@ -478,6 +478,49 @@ def update_organization(
                     detail=f"{tkey} must be between 0.0 and 1.0 inclusive",
                 )
 
+        # Phase 15 Cluster S §S3 — sub_org_role_transferability validation.
+        # Steward toggle is locked ON: rejecting an explicit False keeps
+        # the resolution helper's invariant (Steward always transfers)
+        # readable. Other keys validated as bools.
+        if "sub_org_role_transferability" in body.settings:
+            transferability = body.settings["sub_org_role_transferability"]
+            if not isinstance(transferability, dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "sub_org_role_transferability must be an object "
+                        "with role-key booleans (steward, admin, moderator, "
+                        "member)."
+                    ),
+                )
+            allowed_keys = {"steward", "admin", "moderator", "member"}
+            unknown = set(transferability.keys()) - allowed_keys
+            if unknown:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Unknown role keys in sub_org_role_transferability: "
+                        f"{sorted(unknown)}. Allowed: "
+                        f"{sorted(allowed_keys)}."
+                    ),
+                )
+            for k, v in transferability.items():
+                if not isinstance(v, bool):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"sub_org_role_transferability.{k} must be a "
+                            f"boolean, got {type(v).__name__}."
+                        ),
+                    )
+            if transferability.get("steward") is False:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Steward role transferability cannot be disabled."
+                    ),
+                )
+
         # Diff BEFORE merging so we capture the actual transition.
         sm_diff = diff_sustained_majority_settings(org.settings, body.settings)
         # Phase 12.5 — capture default-threshold transitions for the audit

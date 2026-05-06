@@ -4,6 +4,14 @@ Audit log utility.
 Call log_audit_event() inside the same database transaction as the action it
 records — the write is committed atomically with the action or rolled back
 together if anything fails.
+
+Phase 15 Cluster S §S5 — when the action was authorized via the
+platform-admin override path on a sub-org (i.e., the actor has no direct
+or transferable membership-based permission on the sub-org and the
+effective role came from User.is_admin), pass
+``platform_admin_override=True`` and the flag will be merged into the
+details payload as ``"platform_admin_override": true``. This makes
+"platform admin operating on behalf" explicit in the audit trail.
 """
 
 from __future__ import annotations
@@ -24,6 +32,7 @@ def log_audit_event(
     actor_id: Optional[str] = None,
     details: Optional[dict[str, Any]] = None,
     ip_address: Optional[str] = None,
+    platform_admin_override: bool = False,
 ) -> models.AuditLog:
     """
     Append one entry to the audit log within the caller's transaction.
@@ -37,13 +46,23 @@ def log_audit_event(
     actor_id    : ID of the user performing the action (None for system events)
     details     : action-specific JSON payload
     ip_address  : client IP (optional, for future abuse detection)
+    platform_admin_override : Phase 15 Cluster S — when True, merge
+        ``"platform_admin_override": true`` into the details payload so
+        downstream audit consumers can distinguish actions taken via
+        the platform-admin sub-org override from regular membership-
+        based actions. Callers obtain the flag from
+        ``role_permissions.effective_role_on_sub_org`` or
+        ``has_permission_on_sub_org``.
     """
+    payload: dict[str, Any] = dict(details or {})
+    if platform_admin_override:
+        payload["platform_admin_override"] = True
     entry = models.AuditLog(
         actor_id=actor_id,
         action=action,
         target_type=target_type,
         target_id=target_id,
-        details=details or {},
+        details=payload,
         ip_address=ip_address,
     )
     db.add(entry)
