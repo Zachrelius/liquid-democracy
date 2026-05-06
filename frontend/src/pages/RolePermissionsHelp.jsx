@@ -52,6 +52,18 @@ export default function RolePermissionsHelp() {
           <li><strong>Want only the Steward to remove members?</strong> Revoke <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">member.remove</code> from Admin.</li>
           <li><strong>Running a high-trust org where members can create their own topics?</strong> Grant <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">topic.create</code> to Member.</li>
           <li><strong>Letting an admin manage permissions but not the org's core settings?</strong> Grant <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">role_permissions.edit</code> but revoke <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">org.edit_settings</code> from a custom-fit Admin (in Stage 2 you have to use one of the four preset roles; future passes may add custom roles).</li>
+          <li><strong>Letting moderators schedule live polls or time-pressure decisions?</strong> Grant <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">proposal.set_durations</code> to Moderator (it's a default grant — the matrix ships with this enabled). Without it, proposals always use the org's default deliberation and voting durations.</li>
+        </ul>
+      </section>
+
+      <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Per-proposal duration overrides</h2>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          Org settings configure default deliberation and voting durations for new proposals. Members granted the <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">proposal.set_durations</code> permission (Steward, Admin, and Moderator by default) can override those defaults on a per-proposal basis when creating or editing a proposal — useful for live polls or time-pressure decisions. Members without the permission see a read-only display of the org's defaults on the proposal-creation form, and the proposal uses those values automatically.
+        </p>
+        <ul className="text-sm text-gray-700 leading-relaxed list-disc pl-6 space-y-1">
+          <li><strong>Minimum voting duration:</strong> 0.05 days (72 minutes) — sub-day windows enable live-poll use cases.</li>
+          <li><strong>Minimum deliberation duration:</strong> 0 days — proposals can skip deliberation entirely for time-pressure decisions.</li>
         </ul>
       </section>
 

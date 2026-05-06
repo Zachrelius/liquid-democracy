@@ -69,27 +69,10 @@ export default function OrgSettings() {
   // Steward + Admin). This is the UI that finally consumes it.
   const canEditBranding = useHasPermission('org.edit_branding');
   // Phase 12 Stage 2 F7 — D4 hardcoded-gate UI hiding.
-  //
-  // The org-delete endpoint (DELETE /api/orgs/{slug}) is one of two D4
-  // hardcoded gates: its permission cannot be reassigned through the
-  // role-permissions matrix. Anyone short of Steward who clicks "Delete
-  // organization" hits the role-agnostic 403 with no path to fix it
-  // through the matrix UI, which is a confusing UX path. So we hide the
-  // entire Danger Zone section from non-Stewards. The backend 403 stays
-  // as defense in depth for direct API callers (curl, etc.).
-  //
-  // The legacy 'owner' system_key is also accepted: pre-Stage-1 cached
-  // /api/orgs responses may still report 'owner' for the same human user
-  // briefly during deploy cutover, and we don't want to lock the actual
-  // org owner out of the delete control they've always had.
-  //
-  // (Sub-org delete in SubOrgSettings is matrix-routed via sub_org.delete
-  // and is correctly governed by has_permission server-side; that surface
-  // is intentionally not gated this way.)
-  const isSteward = !!(
-    currentOrg &&
-    (currentOrg.user_role === 'steward' || currentOrg.user_role === 'owner')
-  );
+  // org.delete is hardcoded Steward-only (not matrix-routed), so this gate
+  // mirrors the backend's role check. Sub-org delete in SubOrgSettings is
+  // matrix-routed via sub_org.delete and uses useHasPermission instead.
+  const isSteward = currentOrg?.user_role === 'steward';
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [joinPolicy, setJoinPolicy] = useState('approval_required');

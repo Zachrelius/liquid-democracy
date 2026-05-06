@@ -28,6 +28,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useOrg } from '../../OrgContext';
+import { useHasPermission } from '../../hooks/useHasPermission';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
@@ -47,16 +48,10 @@ export default function RolePermissionsPage() {
   const toast = useToast();
   const confirm = useConfirm();
 
-  // Whether the current user can edit the matrix. Tier shortcut per spec
-  // (F6): admin or steward (matches DEFAULT_GRANTS for role_permissions.edit).
-  // The legacy 'owner' system_key is also accepted for safety during deploy
-  // cutover, mirroring OrgContext's isAdmin/isOwner derivation.
-  const canEdit = !!(
-    currentOrg &&
-    (currentOrg.user_role === 'steward' ||
-      currentOrg.user_role === 'admin' ||
-      currentOrg.user_role === 'owner')
-  );
+  // Whether the current user can edit the matrix. Driven by the
+  // role_permissions.edit permission so the matrix self-administers:
+  // anyone granted that permission via the matrix UI can edit it.
+  const canEdit = useHasPermission('role_permissions.edit');
 
   const [registry, setRegistry] = useState(null);    // {permissions:[], categories:[]}
   const [serverMatrix, setServerMatrix] = useState(null); // full B1 payload
