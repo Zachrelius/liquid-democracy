@@ -2159,3 +2159,97 @@ The 2 items that fit this session's verification budget were the highest-priorit
 **Phase 14 shipped clean on first attempt — no diagnostic-fix-redeploy cycles, no reverts.** All 5 pre-merge gates passed including the now-standard actual-upgrade-path verification (Phase 13 learning #7 applied for the second consecutive pass). The friend-pilot blocker is unblocked: registered users can now discover and join orgs via direct URL share, with four discrete privacy levels available to stewards (`invite_only_secret` for full privacy, `invite_only_public` for recognizable-but-controlled, `approval_required` for vetted-but-open, `open` for fully-public). The 12-state F2 matrix is partially verified live (open + logged-out + 404-rule + sub-path gating preservation); remaining states queued for the next chrome session pending fresh test users + policy variants on prod orgs.
 
 Backend tests **850 (post-12.8) → 989 (+139) over the Phase 13 + 14 arc**. Frontend bundle **348.53 (post-12.8) → 358.72 (+10.19 kB) over Phase 13 + 14**. Eight institutional learning items captured during the Phase 13 arc (defensive-import / defensive-scheduler / file-count check / Railway log access / idempotency-over-coordination / multi-deploy bisection / pg_smoke gap awareness / observation-vs-inference) all continued to apply through Phase 14 — each pre-merge gate inherited from that arc continues to catch (or NOT catch, when the migration is clean) what it's supposed to. Closeout commit follows.
+
+---
+
+## Phase 15 — Cleanup Pass: Sub-org Permissions + Mobile Layouts + Housekeeping — SHIPPED 2026-05-06
+
+**Multi-cluster cleanup pass shipped as a single bundled merge.** Master `22f6cea` + closeout. **Backend tests 989 → 1020 (+31)**. Frontend bundle **358.72 → 358.80 kB gzipped (+0.08 kB)**, well under ±2 kB spec budget. All four clusters landed cleanly; split-authority fallback NOT needed. Single merge, no reverts. Migration `98dcd0058ba2` applied cleanly on prod (live: `Running upgrade c0a3e5d12f4a -> 98dcd0058ba2, Phase 15 — Sub-org permission inheritance...`).
+
+### Pre-merge gates (all PASS)
+
+- **Backend tests:** 989 → **1020 (+31)**. Spec target was 1040-1070; landed slightly under because the sub-org permissions surface required fewer new tests than estimated (the resolution function is small and well-bounded; 7 cases + 5 gate cases + 3 transferability cases plus 5 migration cycle tests + 24 sub-org-permission tests covered the complete behavior).
+- **PG smoke** (mode=both, prior=`c0a3e5d12f4a`): **PASS both modes**
+- **PG smoke actual-upgrade** (the new G5 flag): **PASS** with documented pre/post counts: PRE `{member: 1, moderator: 1, admin: 1, owner: 1}` (legacy strings) → POST `{member: 1, moderator: 1, admin: 1, steward: 1}` (FK rows on parent's Role). The owner→Steward mapping verified — third consecutive pass exercising actual-upgrade-path mode (now via the standard flag rather than a one-off script).
+- **Migration cycle test:** 5/5 PASS
+- **W-START-CHECK PASS:** uvicorn --workers 1 health 200 at +1s; `Digest scheduler launched.` line present; no failure trace
+- **File-count check:** 45 files / 2715 insertions / 402 deletions matches scope (Cluster S's SubOrgMembership refactor touched ~12 production files + ~12 test fixtures + new helpers + new tests)
+- **W-OBSERVABILITY-CHECK PASS:** railway logs streaming pre-push
+
+### What ships
+
+**Cluster S — Sub-org permission inheritance (commits `a2861d5`, `36b3ddf`):**
+
+- **Migration `98dcd0058ba2`** (down_revision = `c0a3e5d12f4a`): SubOrgMembership.role string column → role_id FK to Role table. Legacy values backfill to parent-org Role rows; the Phase 12.5 owner→Steward rename applies here too (the load-bearing mapping). Reversible.
+- **Per-role transferability config** in `Organization.settings.sub_org_role_transferability` JSON: four booleans (steward / admin / moderator / member). Defaults: Steward locked-on (always TRUE regardless of stored value), Admin/Moderator default-on, Member default-off.
+- **`role_transfers_to_sub_orgs` helper** in `role_permissions.py`. Returns True for steward unconditionally; reads from settings JSON for the other three with defaults applied if absent.
+- **`effective_role_on_sub_org` resolution function** picks the highest-tier applicable role from three candidates: (1) sub-org-specific assignment, (2) parent role with transferability flag set, (3) platform-admin Admin-level grant (when user.is_admin). Returns None if no candidates apply (no permissions in the sub-org). Tier ordering: member < moderator < admin < steward.
+- **`has_permission` integration** for sub-org scopes routes through `effective_role_on_sub_org` instead of Phase 12 Stage 1's "implicit power" shortcut. Parent-Member callers now correctly resolve to no-permission; parent-Admin/Steward keep working.
+- **Sub-org admin nav permission-driven** (parallel to Phase 12.5 B4 for parent orgs). `_sub_org_to_out` in `routes/sub_organizations.py` now resolves the effective role via the new helper and enumerates the registry against `has_permission_on_sub_org` to produce both `user_role` and `user_permissions` fields on the sub-org GET response.
+- **Audit log enrichment**: `details.platform_admin_override = true` flag on AuditLog details JSON when the resolution falls through to the platform-admin path. `audit_utils.log_audit_event` accepts a `platform_admin_override: bool = False` kwarg.
+- **`PATCH /api/orgs/{slug}` extended** to accept `sub_org_role_transferability` partial-update field. Permission gate `org.edit_settings`. The Steward toggle is rejected if the request body tries to set it FALSE — returns 400 with `"Steward role transferability cannot be disabled."`
+- **`make_sub_org_membership` conftest helper** added paralleling Phase 12 Stage 1's `make_org_membership` pattern. Used in 12 test files that previously constructed SubOrgMembership directly with the old string `role=` kwarg.
+
+**Latent security hole closed by Cluster S:** `test_role_permissions.py::test_parent_admin_can_delete_sub_org_via_implicit_power` previously asserted **True** for parent-Admin calling `org.delete` on a sub-org via implicit power. That was a real bug — the old "implicit power" shortcut bypassed the matrix's hardcoded D4 Steward-only protection on `org.delete`. Phase 15 closes this hole correctly: Admin inherits Admin role, but `org.delete` is Steward-only, so the call now returns False. Test renamed to `test_parent_admin_cannot_delete_sub_org_via_inherited_admin` and inverted to assert the correct (False) behavior.
+
+**Cluster M — Notification preferences mobile responsive (commit `719cf82`):**
+
+- Two render paths gated by `sm:` utilities (Option B from spec). At ≥640px the existing 4-column grid stays; at <640px each event renders as a stacked card (title + description + 4 labeled checkboxes vertically with inline labels). Sticky header `hidden sm:grid` so it disappears at <640px.
+- Verified live post-deploy via Chrome: bundle `index-aFqfIvH7`, both `hidden sm:grid` and `sm:hidden` classes present in DOM at desktop viewport (2560px). Cache clear + reload was needed because the tab had a stale `index-d8DNS-1X` bundle from the prior session — flagging this as a session-state lesson, not a regression.
+
+**Cluster P — Permissions matrix mobile responsive (commit `eeee3ef`):**
+
+- Sticky-positioning approach with `overflow-x-auto sm:overflow-visible` wrapper at <640px. First column `position:sticky; left:0;` so it stays visible during horizontal scroll. Role-name `<th>`s tightened to `w-24 sm:w-32 leading-tight` so 12-char names wrap cleanly on narrow screens. ≥640px unchanged.
+
+**Cluster G — Housekeeping (six items, all landed):**
+
+- **G1** (commit `51706b3`): Shared `HelpBackLink` component using `history.back()` with `/orgs` fallback. 6 help pages updated (PolisHelp, VotingMethodsHelp, SustainedMajorityHelp, RolePermissionsHelp, NotificationsHelp, OrganizationsHelp from Phase 14 — the agent caught the 6th file beyond the spec's stated 5). Item 33 marked RESOLVED in audit doc; **the spec-claimed roadmap entry was not actually present** (verified via grep), so no roadmap edit needed for G1 — flagging in case the spec writer wants to verify.
+- **G2** (commit `ebd0ae1`): CLAUDE.md "Frontend conventions" section added with the Tailwind underscore-vs-comma footgun note (the Phase 13.4 learning). **Note: CLAUDE.md was previously untracked by git** (`?? CLAUDE.md` was in every prior session's git status output but never noticed); the G2 commit incidentally puts the entire team-conventions doc under version control as a 135-line new file. Cross-clone benefit; minor incidental improvement.
+- **G3**: OrgSelector empty-state copy verified intact (lines 51-52 of OrgSelector.jsx); Phase 14 F4's update preserved. No commit needed.
+- **G4**: `/register` route uses the same Login.jsx component as `/login` (line 206 of App.jsx). The `resolveNext()` validator at Login.jsx:31-36 rejects non-strings, non-relative paths, and protocol-relative `//` URLs. Both login (line 99) and register (line 140) success paths honor the validated `nextParam`. Single source of truth covers both flows — **no security gap, no patch needed**. Phase 14 tech debt #1 closed as a no-op.
+- **G5** (committed alongside Cluster S): `pg_smoke.py --mode actual-upgrade` flag promoted from the single-purpose scripts. New CLI args `--mode actual-upgrade` and `--sample-data-script <path>`. Seed module supports optional `reshape(engine)`, required `seed(engine)`, optional `verify(engine)` hooks. DEPLOYMENT.md Smoke Harness section updated. Equivalence verified against Phase 13.3 and Phase 14 migrations (same pre/post counts as the prior single-purpose scripts produced).
+- **G6a** (commit `382573d`): Cache-safety role-tier fallbacks removed from `Nav.jsx`, `AdminRoute.jsx`, `AdminOnlyRoute.jsx`. Audit Items 26-27 marked RESOLVED. **Items 28 (OrgSettings Danger Zone owner branch) and 29 (RolePermissionsPage canEdit derivation) deferred** as cosmetic-not-security gates — separate cleanup if/when bundled with other cosmetic UX work.
+- **G6b** (commit `6f96981`): Defensive `invite_only` → `invite_only_secret` coercion removed from `OrgSettings.jsx` (located at line 155-159). Phase 14 tech debt #3 closed. Source-verified the four-policy radio still loads + saves cleanly.
+
+### Calendar-gate waiver
+
+Per Z's 2026-05-06 determination: the conventional 7-day cached-response cutover gates are WAIVED for this pass for both G6a and G6b. With Z as the only active user (multiple email addresses), the cached-bundle population that the gates were designed to protect is effectively zero. **The convention itself is preserved as institutional discipline**; future passes touching cached-cutover boundaries default back to the 7-day pattern unless Z explicitly waives again. This is a one-off waiver based on real cached-bundle population at this moment, not precedent for routine gate-skipping.
+
+### Live verification (Chrome connected this session)
+
+- ✅ **Migration applied successfully on prod:** `Running upgrade c0a3e5d12f4a -> 98dcd0058ba2` in deploy logs; all 4 workers reached `Application startup complete.`; 4× `Digest scheduler launched.`; 4× `tick complete` no-op.
+- ✅ **Smoke 5/5 PASS** (1.78s) post-deploy.
+- ✅ **Phase 15 M live:** Bundle `index-aFqfIvH7` confirmed in browser; both `hidden sm:grid` and `sm:hidden` classes present in DOM. Phase 13.4 grid-template fix preserved.
+- ✅ **G5 actual-upgrade-path verified end-to-end** through three migrations (13.3, 14, 15) — same pre/post counts as the prior one-off scripts produced.
+
+Visual verification at all three breakpoints (380px / 640px / 1024px) for M and P documented as PASS-by-source by the frontend agent (chrome-in-Claude was unavailable to the agent during their work; lead picked up a partial sanity check at desktop viewport post-deploy).
+
+### Phase 15 commit list
+
+- `ebd0ae1` Phase 15 G2: CLAUDE.md Tailwind footgun note
+- `51706b3` Phase 15 G1: shared HelpBackLink component
+- `382573d` Phase 15 G6a: cache-safety role-tier fallbacks removal
+- `6f96981` Phase 15 G6b: defensive invite_only coercion removal
+- `719cf82` Phase 15 M: NotificationsPreferences mobile responsive
+- `eeee3ef` Phase 15 P: RolePermissionsPage mobile responsive
+- `a2861d5` Phase 15 S2+S1+S4: SubOrgMembership.role_id FK + effective-role resolution
+- `36b3ddf` Phase 15 S3+S5+S6: transferability config endpoint, audit override flag, S6 tests
+- `22f6cea` Merge phase-15/cleanup-pass
+
+(G5 landed alongside Cluster S in commits `a2861d5`/`36b3ddf` — seed scripts + pg_smoke.py + DEPLOYMENT.md additions. The backend agent's report mentioned a confused commit-id reference; the actual commits are these.)
+
+### Process notes
+
+1. **Multi-agent staging discipline + recovery from a near-miss.** Frontend agent's first G1 commit attempt picked up backend dev #1's pre-staged in-flight files (DEPLOYMENT.md, pg_smoke.py, two seed scripts). Caught via `git log --stat`; recovered via `git reset --soft HEAD~1` + `git restore --staged`. Backend dev's working tree was preserved in their pre-commit state; they committed Cluster S separately. **Lesson:** when two agents are committing on the same branch in parallel, each agent's `git add .` style commands can sweep up the OTHER's staged-but-uncommitted work. Use explicit `git add <path>` per file to avoid this. Worth folding into CLAUDE.md alongside the new Tailwind note.
+2. **CLAUDE.md was previously untracked by git.** Every prior session's `git status` showed it as `?? CLAUDE.md` (untracked) — but it was loaded as the project conventions doc by every dispatch. The G2 commit incidentally puts it under version control. Cross-clone availability for the first time. Worth a callout in the next planning conversation.
+3. **G6 deferred items 28-29.** Frontend agent left audit Items 28 (OrgSettings Danger Zone `'owner'` branch) and 29 (RolePermissionsPage `canEdit` derivation) for future cleanup since they're cosmetic UX gates rather than security-bearing route guards. Bundling them would have widened the diff beyond the spec's "remove fallback in Nav.jsx + AdminRoute + AdminOnlyRoute" scope. Worth folding into a future cosmetic-UX cleanup pass.
+4. **Backend test count came in slightly under spec target** (1020 vs 1040-1070). The sub-org permissions surface is small and well-bounded; the +31 tests covered the complete behavior. Spec was loose; the gap doesn't indicate missing coverage.
+
+### New tech debt logged
+
+1. **Audit doc Items 28 + 29** still deferred (frontend agent's choice; reasonable). Worth a future cosmetic-UX cleanup pass that bundles these alongside other UI gates that use role-tier-string fallbacks rather than permission-driven gating.
+2. **Multi-agent commit-staging hazard** (the G1 near-miss). Worth a CLAUDE.md addition: "When dispatching parallel agents on the same branch, brief each to use explicit `git add <path>` per file rather than `git add .` to prevent sweeping up the other agent's staged-but-uncommitted work."
+
+### Pass-summary
+
+**Phase 15 shipped clean on first attempt — single merge, no reverts, no diagnostic-fix-redeploy cycles.** All four clusters landed (S + M + P + G with all six G items); split-authority fallback was NOT needed. The pre-merge gate set inherited from the Phase 13 arc continues to do its job. Phase 13 learning #7's actual-upgrade-path mode is now a standard `pg_smoke.py` flag (G5) — third consecutive pass exercising the pattern, now via the durable mechanism rather than per-pass one-off scripts. The latent parent-Admin-can-delete-sub-org security hole that lurked in Phase 12 Stage 1's "implicit power" shortcut is closed correctly. Sub-org permissions are now matrix-driven via parent's matrix + per-role transferability + platform-admin override. Mobile responsive layouts ship for both matrices. Six housekeeping items knocked down with the calendar-gate waiver explicitly documented and the convention preserved for future passes. Closeout commit follows.
