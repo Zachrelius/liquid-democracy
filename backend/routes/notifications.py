@@ -59,11 +59,34 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
 
-# Allowed values mirrored from User.digest_cadence semantics.
-_VALID_DIGEST_CADENCES: frozenset[str] = frozenset(
-    {"real_time", "daily", "weekly", "off"}
+# Phase 13.3: per-event channel set replaces the legacy
+# (in_app, email) + global digest_cadence model.
+_VALID_CHANNELS: frozenset[str] = frozenset({
+    "in_app", "email_immediate", "email_daily", "email_weekly",
+})
+
+# Channels that get rendered in PreferencesOut sub-dicts. Order doesn't
+# affect the JSON response; the frontend keys by channel name.
+_CHANNEL_FIELDS: tuple[str, ...] = (
+    "in_app", "email_immediate", "email_daily", "email_weekly",
 )
-_VALID_CHANNELS: frozenset[str] = frozenset({"in_app", "email"})
+
+
+_HHMM_RE = __import__("re").compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def _validate_hhmm(value: str, field: str) -> str:
+    """Validate that ``value`` is an HH:MM 24-hour string. Raises
+    HTTPException(400) on failure."""
+    if not isinstance(value, str) or not _HHMM_RE.match(value):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"{field} must be a 24-hour HH:MM string "
+                f"(e.g. '21:00'); got {value!r}"
+            ),
+        )
+    return value
 
 
 def _now_naive() -> datetime:
@@ -107,41 +130,66 @@ class NotificationListOut(BaseModel):
 
 
 class ChannelPrefsOut(BaseModel):
-    """Per-event preference flags."""
+    """Phase 13.3 per-event preference flags. Four discrete channels:
+    in-app + three email cadences. Email channels are independent
+    booleans (NOT mutually exclusive — a user can opt into immediate
+    email AND daily digest for belt-and-suspenders coverage).
+    """
     in_app: bool = False
-    email: bool = False
+    email_immediate: bool = False
+    email_daily: bool = False
+    email_weekly: bool = False
 
 
 class PreferencesOut(BaseModel):
     """Top-level preferences shape returned by GET /preferences.
 
-    ``preferences`` is a dict keyed by event_type with a
-    ``{in_app, email}`` sub-dict. All 12 event keys are always present
-    (absent rows = default-False, surfaced explicitly so the frontend
-    doesn't have to merge defaults itself).
+    ``preferences`` is a dict keyed by event_type with a 4-channel
+    sub-dict. All registry events are always present (absent rows =
+    default-False, surfaced explicitly so the frontend doesn't have to
+    merge defaults itself).
+
+    Phase 13.3 retired the global ``digest_cadence`` field in favor of
+    per-event email cadence channels; ``quiet_hours_start`` and
+    ``quiet_hours_end`` (HH:MM strings) replaced the hardcoded 21:00-09:00
+    window.
     """
     preferences: dict[str, ChannelPrefsOut]
-    digest_cadence: str
     quiet_hours_enabled: bool
+    quiet_hours_start: str
+    quiet_hours_end: str
     timezone: Optional[str]
     notification_intro_dismissed: bool
 
 
 class ChannelPrefsPatch(BaseModel):
-    """Per-event partial update. Either field may be omitted."""
+    """Per-event partial update. Any field may be omitted (unchanged)."""
     in_app: Optional[bool] = None
-    email: Optional[bool] = None
+    email_immediate: Optional[bool] = None
+    email_daily: Optional[bool] = None
+    email_weekly: Optional[bool] = None
 
 
 class PreferencesPatch(BaseModel):
     """Body shape for PATCH /preferences. All fields optional; unspecified
     fields are unchanged. ``preferences`` is a partial dict — only the
-    listed event types are updated."""
+    listed event types are updated.
+
+    Phase 13.3: ``digest_cadence`` is REJECTED with 400 (legacy field
+    removed). ``quiet_hours_start`` / ``quiet_hours_end`` are HH:MM
+    24-hour strings.
+    """
     preferences: Optional[dict[str, ChannelPrefsPatch]] = None
-    digest_cadence: Optional[str] = None
     quiet_hours_enabled: Optional[bool] = None
+    quiet_hours_start: Optional[str] = None
+    quiet_hours_end: Optional[str] = None
     timezone: Optional[str] = Field(default=None)
     notification_intro_dismissed: Optional[bool] = None
+    # Accept-and-reject so legacy clients see a clear 400 rather than the
+    # field being silently ignored. Pydantic v2 by default IGNORES unknown
+    # fields, but we need to surface a hard error — so we accept it
+    # explicitly here and validate in the handler.
+    digest_cadence: Optional[str] = None
 
 
 class EventDefinitionOut(BaseModel):
@@ -320,9 +368,10 @@ def get_preferences(
 ):
     """Return the caller's full preferences shape.
 
-    Every event_type from EVENT_REGISTRY is included (all 12). Absent
-    rows surface as ``{in_app: False, email: False}`` so the frontend
-    doesn't have to merge defaults itself.
+    Every event_type from EVENT_REGISTRY is included. Absent rows
+    surface as ``{in_app: False, email_immediate: False, email_daily:
+    False, email_weekly: False}`` so the frontend doesn't have to merge
+    defaults itself.
     """
     rows = (
         db.query(models.NotificationPreference)
@@ -337,15 +386,14 @@ def get_preferences(
             # Stale row (event removed from registry); skip rather than
             # surface a key the frontend can't render.
             continue
-        if r.channel == "in_app":
-            by_event[r.event_type].in_app = bool(r.enabled)
-        elif r.channel == "email":
-            by_event[r.event_type].email = bool(r.enabled)
+        if r.channel in _CHANNEL_FIELDS:
+            setattr(by_event[r.event_type], r.channel, bool(r.enabled))
 
     return PreferencesOut(
         preferences=by_event,
-        digest_cadence=current_user.digest_cadence,
         quiet_hours_enabled=bool(current_user.quiet_hours_enabled),
+        quiet_hours_start=current_user.quiet_hours_start or "21:00",
+        quiet_hours_end=current_user.quiet_hours_end or "09:00",
         timezone=current_user.timezone,
         notification_intro_dismissed=bool(current_user.notification_intro_dismissed),
     )
@@ -364,40 +412,53 @@ def update_preferences(
 ):
     """Partial update of the caller's notification preferences.
 
-    Body shape::
+    Body shape (Phase 13.3)::
 
         {
           "preferences": {
-              "comment.replied": {"in_app": true, "email": false},
+              "comment.replied": {
+                  "in_app": true, "email_immediate": false,
+                  "email_daily": true, "email_weekly": false
+              },
               "follow.requested": {"in_app": true}
           },
-          "digest_cadence": "daily",
           "quiet_hours_enabled": true,
+          "quiet_hours_start": "22:00",
+          "quiet_hours_end": "08:00",
           "timezone": "America/Los_Angeles",
           "notification_intro_dismissed": true
         }
 
     All top-level fields are optional. Inside ``preferences`` only listed
     event types are touched; unspecified events are unchanged. Inside each
-    per-event sub-dict, omitting ``in_app`` or ``email`` leaves that
-    channel unchanged.
+    per-event sub-dict, omitting any channel leaves that channel
+    unchanged.
+
+    The legacy ``digest_cadence`` field is REJECTED with 400 — Phase 13.3
+    moved cadence per-event onto the channel rows.
 
     Audited as ``notifications.preferences_updated`` with the change-set.
     """
     diff: dict[str, Any] = {}
 
-    # Validate top-level enum-like fields up front so we 400 cleanly
-    # before mutating anything.
+    # Phase 13.3: reject the retired digest_cadence field with 400 +
+    # clear error so old client code surfaces the issue immediately.
     if body.digest_cadence is not None:
-        if body.digest_cadence not in _VALID_DIGEST_CADENCES:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"digest_cadence must be one of "
-                    f"{sorted(_VALID_DIGEST_CADENCES)}; got "
-                    f"{body.digest_cadence!r}"
-                ),
-            )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "digest_cadence was retired in Phase 13.3. Cadence is "
+                "now per-event: set 'email_immediate', 'email_daily', "
+                "and/or 'email_weekly' on each event in the "
+                "'preferences' dict."
+            ),
+        )
+
+    # Validate HH:MM time fields up front.
+    if body.quiet_hours_start is not None:
+        _validate_hhmm(body.quiet_hours_start, "quiet_hours_start")
+    if body.quiet_hours_end is not None:
+        _validate_hhmm(body.quiet_hours_end, "quiet_hours_end")
 
     if body.preferences:
         for ev_key in body.preferences.keys():
@@ -411,19 +472,26 @@ def update_preferences(
                 )
 
     # Top-level user columns.
-    if body.digest_cadence is not None and body.digest_cadence != current_user.digest_cadence:
-        diff["digest_cadence"] = {
-            "old": current_user.digest_cadence,
-            "new": body.digest_cadence,
-        }
-        current_user.digest_cadence = body.digest_cadence
-
     if body.quiet_hours_enabled is not None and bool(body.quiet_hours_enabled) != bool(current_user.quiet_hours_enabled):
         diff["quiet_hours_enabled"] = {
             "old": bool(current_user.quiet_hours_enabled),
             "new": bool(body.quiet_hours_enabled),
         }
         current_user.quiet_hours_enabled = bool(body.quiet_hours_enabled)
+
+    if body.quiet_hours_start is not None and body.quiet_hours_start != current_user.quiet_hours_start:
+        diff["quiet_hours_start"] = {
+            "old": current_user.quiet_hours_start,
+            "new": body.quiet_hours_start,
+        }
+        current_user.quiet_hours_start = body.quiet_hours_start
+
+    if body.quiet_hours_end is not None and body.quiet_hours_end != current_user.quiet_hours_end:
+        diff["quiet_hours_end"] = {
+            "old": current_user.quiet_hours_end,
+            "new": body.quiet_hours_end,
+        }
+        current_user.quiet_hours_end = body.quiet_hours_end
 
     if body.timezone is not None and body.timezone != current_user.timezone:
         diff["timezone"] = {
@@ -447,7 +515,13 @@ def update_preferences(
     pref_changes: dict[str, dict[str, dict[str, bool]]] = {}
     if body.preferences:
         for ev_key, sub in body.preferences.items():
-            for channel, new_val in (("in_app", sub.in_app), ("email", sub.email)):
+            channels = (
+                ("in_app", sub.in_app),
+                ("email_immediate", sub.email_immediate),
+                ("email_daily", sub.email_daily),
+                ("email_weekly", sub.email_weekly),
+            )
+            for channel, new_val in channels:
                 if new_val is None:
                     continue
                 row = (
@@ -576,24 +650,27 @@ def unsubscribe_via_token(
             ),
         )
 
-    # Upsert the (user, event_type, email) preference to enabled=False.
-    pref = (
-        db.query(models.NotificationPreference)
-        .filter(
-            models.NotificationPreference.user_id == user_id,
-            models.NotificationPreference.event_type == event_type,
-            models.NotificationPreference.channel == "email",
+    # Phase 13.3: unsubscribe links arrive from immediate emails — flip
+    # all three email channels off so the user definitively stops getting
+    # email for this event_type. Idempotent.
+    for channel in ("email_immediate", "email_daily", "email_weekly"):
+        pref = (
+            db.query(models.NotificationPreference)
+            .filter(
+                models.NotificationPreference.user_id == user_id,
+                models.NotificationPreference.event_type == event_type,
+                models.NotificationPreference.channel == channel,
+            )
+            .first()
         )
-        .first()
-    )
-    if pref is None:
-        pref = models.NotificationPreference(
-            user_id=user_id, event_type=event_type, channel="email",
-            enabled=False,
-        )
-        db.add(pref)
-    else:
-        pref.enabled = False
+        if pref is None:
+            pref = models.NotificationPreference(
+                user_id=user_id, event_type=event_type, channel=channel,
+                enabled=False,
+            )
+            db.add(pref)
+        else:
+            pref.enabled = False
     db.commit()
     return UnsubscribeOut(
         success=True,

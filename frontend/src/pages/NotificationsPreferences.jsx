@@ -4,27 +4,47 @@ import api from '../api';
 import { useToast } from '../components/Toast';
 
 /**
- * Phase 13 F3 — notification preferences page at /settings/notifications.
+ * Phase 13.3 F1-F5 — notification preferences page at /settings/notifications.
  *
  * Account-scoped (top-level route in App.jsx, NOT wrapped in
- * OrgScopedLayout). Renders the 12-event matrix from the backend
- * registry, plus account-level controls (digest cadence, quiet hours,
- * timezone).
+ * OrgScopedLayout). Renders the registry-driven event matrix with a
+ * 4-column labeled layout (In-App | Weekly Digest | Daily Digest |
+ * Immediate Email — ascending intrusiveness). Email options are NOT
+ * mutually exclusive — a user can opt into multiple email channels per
+ * event for belt-and-suspenders coverage.
+ *
+ * Phase 13.3 changes vs Phase 13:
+ * - F1: 4-column matrix (was 2-column: in_app, email + global cadence).
+ * - F2: global Email Cadence radio buttons section REMOVED. Per-event
+ *       cadence in the matrix replaces it. `digest_cadence` is gone from
+ *       both state and the PATCH payload.
+ * - F3: quiet hours adjustable time pickers (HTML <input type="time">),
+ *       defaults 21:00 / 09:00, hidden when toggle is off.
+ * - F4: registry-driven matrix automatically renders the two new
+ *       voting-opened events; floor_approached is gone from registry.
+ * - F5: PATCH payload uses {in_app, email_immediate, email_daily,
+ *       email_weekly} per event + {quiet_hours_start, quiet_hours_end}
+ *       as HH:MM strings.
  *
  * F5 — first-time banner. When the user has not yet dismissed the intro,
- * a banner sits at the top with a Dismiss button. Dismiss flips
- * `notification_intro_dismissed` to true via PATCH.
+ * a banner sits at the top with a Dismiss button.
  *
  * Item 30 audit: NO role-tier gating. Every authenticated user can manage
  * their own preferences regardless of org role.
  */
 
-const DIGEST_CADENCES = [
-  { value: 'real_time', label: 'Real-time', desc: 'Send each email immediately when the event happens.' },
-  { value: 'daily', label: 'Daily (9am local)', desc: 'One digest per day grouping the events from the previous 24 hours.' },
-  { value: 'weekly', label: 'Weekly (Monday 9am local)', desc: 'One digest per week grouping the events from the previous 7 days.' },
-  { value: 'off', label: 'Off', desc: "Don't send me any emails about notifications." },
+// 4 channel columns in ascending-intrusiveness order. The order is the
+// visual left-to-right order in the matrix and is intentional (gentle →
+// loud, so users opt in from the gentle end first).
+const CHANNELS = [
+  { key: 'in_app', label: 'In-App' },
+  { key: 'email_weekly', label: 'Weekly Digest' },
+  { key: 'email_daily', label: 'Daily Digest' },
+  { key: 'email_immediate', label: 'Immediate Email' },
 ];
+
+const DEFAULT_QUIET_START = '21:00';
+const DEFAULT_QUIET_END = '09:00';
 
 // Common IANA timezones, used as a fallback when
 // Intl.supportedValuesOf isn't available (older browsers). Order: continents
@@ -79,12 +99,24 @@ function detectBrowserTimezone() {
   }
 }
 
+// Normalize a HH:MM string from the server. Backend may send "21:00",
+// "21:00:00", or null. We always render an HH:MM string in state (that's
+// what <input type="time"> wants and what we PATCH back).
+function normalizeTime(value, fallback) {
+  if (typeof value !== 'string' || value.length < 4) return fallback;
+  // Accept "HH:MM" or "HH:MM:SS" — slice to HH:MM.
+  const match = value.match(/^(\d{2}):(\d{2})/);
+  return match ? `${match[1]}:${match[2]}` : fallback;
+}
+
 export default function NotificationsPreferences() {
   const toast = useToast();
   const [registry, setRegistry] = useState({ events: [], categories: [] });
-  const [prefs, setPrefs] = useState({});           // event_type -> {in_app, email}
-  const [digestCadence, setDigestCadence] = useState('real_time');
+  // event_type -> {in_app, email_immediate, email_daily, email_weekly}
+  const [prefs, setPrefs] = useState({});
   const [quietHours, setQuietHours] = useState(false);
+  const [quietStart, setQuietStart] = useState(DEFAULT_QUIET_START);
+  const [quietEnd, setQuietEnd] = useState(DEFAULT_QUIET_END);
   const [timezone, setTimezone] = useState('');
   const [introDismissed, setIntroDismissed] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -104,8 +136,9 @@ export default function NotificationsPreferences() {
         categories: Array.isArray(reg?.categories) ? reg.categories : [],
       });
       setPrefs(p?.preferences || {});
-      setDigestCadence(p?.digest_cadence || 'real_time');
       setQuietHours(!!p?.quiet_hours_enabled);
+      setQuietStart(normalizeTime(p?.quiet_hours_start, DEFAULT_QUIET_START));
+      setQuietEnd(normalizeTime(p?.quiet_hours_end, DEFAULT_QUIET_END));
       setIntroDismissed(!!p?.notification_intro_dismissed);
       // Pre-populate timezone from server, falling back to browser detection
       // ONLY if the user hasn't set one yet. We don't quietly overwrite the
@@ -128,8 +161,28 @@ export default function NotificationsPreferences() {
 
   function toggleChannel(eventKey, channel) {
     setPrefs(prev => {
-      const cur = prev[eventKey] || { in_app: false, email: false };
+      const cur = prev[eventKey] || {
+        in_app: false,
+        email_immediate: false,
+        email_daily: false,
+        email_weekly: false,
+      };
+      // No XOR enforcement — email channels are independent booleans.
       return { ...prev, [eventKey]: { ...cur, [channel]: !cur[channel] } };
+    });
+  }
+
+  function toggleQuietHours() {
+    setQuietHours(v => {
+      const next = !v;
+      // When flipping ON without prior values, ensure defaults are visible
+      // immediately. (load() already pre-populates, but if the user has
+      // never enabled quiet hours, the times may match the defaults.)
+      if (next) {
+        if (!quietStart) setQuietStart(DEFAULT_QUIET_START);
+        if (!quietEnd) setQuietEnd(DEFAULT_QUIET_END);
+      }
+      return next;
     });
   }
 
@@ -138,8 +191,9 @@ export default function NotificationsPreferences() {
     try {
       const body = {
         preferences: prefs,
-        digest_cadence: digestCadence,
         quiet_hours_enabled: quietHours,
+        quiet_hours_start: quietStart || DEFAULT_QUIET_START,
+        quiet_hours_end: quietEnd || DEFAULT_QUIET_END,
         timezone: timezone || null,
       };
       await api.patch('/api/notifications/preferences', body);
@@ -183,6 +237,12 @@ export default function NotificationsPreferences() {
     );
   }
 
+  // Grid template: event-description column flexes; 4 fixed-width channel
+  // columns. Each channel column is 88px wide — narrow enough that all 4
+  // fit on most viewports, wide enough that the labels (Weekly Digest /
+  // Immediate Email) wrap predictably to two lines on narrow screens.
+  const gridCols = 'grid-cols-[1fr,88px,88px,88px,88px]';
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -224,12 +284,21 @@ export default function NotificationsPreferences() {
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
           What to notify me about
         </h2>
+        <p className="text-xs text-gray-500">
+          Pick any combination of channels per event. Email channels can be combined —
+          for example, an immediate email AND inclusion in the weekly digest.
+        </p>
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          {/* Header row */}
-          <div className="grid grid-cols-[1fr,auto,auto] gap-4 px-4 py-2 border-b border-gray-200 bg-gray-50 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+          {/* Sticky header row — stays visible while scrolling the matrix. */}
+          <div
+            className={`grid ${gridCols} gap-2 px-4 py-2 border-b border-gray-200 bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase tracking-wide sticky top-0 z-10`}
+          >
             <span>Event</span>
-            <span className="text-center w-16">In-App</span>
-            <span className="text-center w-16">Email</span>
+            {CHANNELS.map(ch => (
+              <span key={ch.key} className="text-center leading-tight">
+                {ch.label}
+              </span>
+            ))}
           </div>
 
           {registry.categories.map(cat => {
@@ -237,69 +306,46 @@ export default function NotificationsPreferences() {
             if (events.length === 0) return null;
             return (
               <div key={cat} className="border-b border-gray-100 last:border-0">
-                <div className="px-4 pt-3 pb-1 text-xs font-semibold text-[var(--brand-primary)] uppercase tracking-wide">
+                {/* Category header spans full width above its event group. */}
+                <div className="px-4 pt-3 pb-1 text-xs font-semibold text-[var(--brand-primary)] uppercase tracking-wide bg-white">
                   {cat}
                 </div>
                 {events.map(ev => {
-                  const cur = prefs[ev.key] || { in_app: false, email: false };
+                  const cur = prefs[ev.key] || {
+                    in_app: false,
+                    email_immediate: false,
+                    email_daily: false,
+                    email_weekly: false,
+                  };
                   return (
                     <div
                       key={ev.key}
-                      className="grid grid-cols-[1fr,auto,auto] gap-4 items-center px-4 py-3"
+                      className={`grid ${gridCols} gap-2 items-center px-4 py-3`}
                     >
-                      <div className="min-w-0">
+                      <div className="min-w-0 pr-2">
                         <p className="text-sm text-gray-800">{ev.label}</p>
                         <p className="text-xs text-gray-500 mt-0.5">{ev.description}</p>
                       </div>
-                      <label className="flex items-center justify-center w-16 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={!!cur.in_app}
-                          onChange={() => toggleChannel(ev.key, 'in_app')}
-                          className="w-4 h-4 accent-[var(--brand-accent)]"
-                          aria-label={`${ev.label} — in-app`}
-                        />
-                      </label>
-                      <label className="flex items-center justify-center w-16 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={!!cur.email}
-                          onChange={() => toggleChannel(ev.key, 'email')}
-                          className="w-4 h-4 accent-[var(--brand-accent)]"
-                          aria-label={`${ev.label} — email`}
-                        />
-                      </label>
+                      {CHANNELS.map(ch => (
+                        <label
+                          key={ch.key}
+                          className="flex items-center justify-center cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!!cur[ch.key]}
+                            onChange={() => toggleChannel(ev.key, ch.key)}
+                            className="w-4 h-4 accent-[var(--brand-accent)]"
+                            aria-label={`${ev.label} — ${ch.label}`}
+                          />
+                        </label>
+                      ))}
                     </div>
                   );
                 })}
               </div>
             );
           })}
-        </div>
-      </section>
-
-      {/* Email digest cadence */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-          Email Digest
-        </h2>
-        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
-          {DIGEST_CADENCES.map(opt => (
-            <label key={opt.value} className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="radio"
-                name="digest_cadence"
-                value={opt.value}
-                checked={digestCadence === opt.value}
-                onChange={() => setDigestCadence(opt.value)}
-                className="mt-0.5 accent-[var(--brand-accent)]"
-              />
-              <div>
-                <p className="text-sm text-gray-800">{opt.label}</p>
-                <p className="text-xs text-gray-500">{opt.desc}</p>
-              </div>
-            </label>
-          ))}
         </div>
       </section>
 
@@ -313,18 +359,45 @@ export default function NotificationsPreferences() {
             <input
               type="checkbox"
               checked={quietHours}
-              onChange={() => setQuietHours(v => !v)}
+              onChange={toggleQuietHours}
               className="mt-0.5 w-4 h-4 accent-[var(--brand-accent)]"
             />
             <div>
               <p className="text-sm text-gray-800">
-                Don't email me between 9pm and 9am in my timezone.
+                Don't email me during quiet hours.
               </p>
               <p className="text-xs text-gray-500">
-                In-app notifications are unaffected — only email delivery is delayed.
+                In-app notifications are unaffected — only email delivery is delayed
+                until quiet hours end.
               </p>
             </div>
           </label>
+
+          {quietHours && (
+            <div className="pl-7 flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <span>Start</span>
+                <input
+                  type="time"
+                  value={quietStart}
+                  onChange={e => setQuietStart(e.target.value)}
+                  className="px-2 py-1 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                  aria-label="Quiet hours start"
+                />
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <span>End</span>
+                <input
+                  type="time"
+                  value={quietEnd}
+                  onChange={e => setQuietEnd(e.target.value)}
+                  className="px-2 py-1 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                  aria-label="Quiet hours end"
+                />
+              </label>
+              <span className="text-xs text-gray-500">(in your timezone)</span>
+            </div>
+          )}
         </div>
       </section>
 

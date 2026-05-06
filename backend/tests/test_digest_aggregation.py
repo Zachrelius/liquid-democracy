@@ -68,17 +68,36 @@ def _make_user(
     timezone_name: str | None = None, quiet_hours_enabled: bool = False,
     email_verified: bool = True,
 ) -> models.User:
+    """Phase 13.3: ``digest_cadence`` argument retained for back-compat
+    of existing test bodies but the User column is gone. The argument
+    is still useful for routing — for ``aggregate_for_user`` tests, the
+    digest_cadence value is interpreted as "opt this user into
+    email_daily / email_weekly for every registry event type so the
+    aggregator picks up everything they receive". Tests that need
+    finer-grained channel opt-in should pass ``digest_cadence='off'``
+    and add specific NotificationPreference rows.
+    """
     u = models.User(
         username=username, display_name=username,
         password_hash=_DUMMY_HASH,
         email=f"{username}@test.example",
         email_verified=email_verified,
-        digest_cadence=digest_cadence,
         timezone=timezone_name,
         quiet_hours_enabled=quiet_hours_enabled,
     )
     db.add(u)
     db.flush()
+    # Map legacy digest_cadence into per-event channel opt-ins so
+    # aggregate_for_user includes notifications for this user.
+    from notification_events import EVENT_REGISTRY
+    if digest_cadence in ("daily", "weekly"):
+        ch = "email_daily" if digest_cadence == "daily" else "email_weekly"
+        for ev in EVENT_REGISTRY:
+            db.add(models.NotificationPreference(
+                user_id=u.id, event_type=ev.key,
+                channel=ch, enabled=True,
+            ))
+        db.flush()
     return u
 
 
@@ -217,7 +236,15 @@ def test_aggregate_excludes_read_rows(test_db):
 
 
 def test_aggregate_only_includes_events_in_window(test_db):
-    user = _make_user(test_db, "win_user")
+    # Phase 13.3: this user must opt into BOTH email_daily and
+    # email_weekly to satisfy the per-event cadence filter for both
+    # cadence aggregations below.
+    user = _make_user(test_db, "win_user", digest_cadence="daily")
+    test_db.add(models.NotificationPreference(
+        user_id=user.id, event_type="comment.replied",
+        channel="email_weekly", enabled=True,
+    ))
+    test_db.flush()
     org = _make_org(test_db, "win_org")
     old = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=2)
     new = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -282,7 +309,7 @@ def test_quiet_hours_flag_set_at_emit_time_when_in_window(test_db, monkeypatch):
         enabled=True,
     ))
     test_db.add(models.NotificationPreference(
-        user_id=user.id, event_type="comment.replied", channel="email",
+        user_id=user.id, event_type="comment.replied", channel="email_immediate",
         enabled=True,
     ))
     test_db.commit()
@@ -313,7 +340,7 @@ def test_quiet_hours_normal_send_outside_window(test_db, monkeypatch):
         enabled=True,
     ))
     test_db.add(models.NotificationPreference(
-        user_id=user.id, event_type="comment.replied", channel="email",
+        user_id=user.id, event_type="comment.replied", channel="email_immediate",
         enabled=True,
     ))
     test_db.commit()

@@ -17,7 +17,7 @@ from delegation_engine import (
     RCVTally,
     eligible_voter_ids_for_proposal,
 )
-from notification_emit import emit_notification
+from notification_emit import emit_notification, user_has_any_channel_enabled
 from org_config import get_default_proposal_thresholds, get_org_config
 from permissions import can_see_votes
 from polis_engine import eligible_viewers_for_polis
@@ -642,6 +642,79 @@ def update_proposal(
     return _build_proposal_out(proposal, db)
 
 
+def _is_delegate_target_for_proposal(
+    db: Session, user_id: str, proposal: models.Proposal,
+) -> bool:
+    """Phase 13.3 — is anyone delegating to ``user_id`` on ANY of this
+    proposal's topics?
+
+    Counts a row in ``delegations`` where ``delegate_id == user_id`` and
+    ``topic_id`` is one of the proposal's topics (or ``topic_id IS NULL``
+    for global delegations). Returns False for topicless proposals
+    (delegated_to_you doesn't fire when there's no topic to scope on).
+    """
+    topic_ids = [pt.topic_id for pt in proposal.proposal_topics]
+    if not topic_ids:
+        return False
+    q = db.query(models.Delegation.id).filter(
+        models.Delegation.delegate_id == user_id,
+        models.Delegation.topic_id.in_(topic_ids),
+    )
+    return db.query(q.exists()).scalar() or False
+
+
+def _has_delegated_away_for_proposal(
+    db: Session, user_id: str, proposal: models.Proposal,
+) -> bool:
+    """Phase 13.3 — has ``user_id`` delegated their vote on ANY of this
+    proposal's topics?
+
+    Counts a row in ``delegations`` where ``delegator_id == user_id`` and
+    ``topic_id`` is one of the proposal's topics. Topicless proposals
+    treat all recipients as not-delegated (you_vote candidates).
+    """
+    topic_ids = [pt.topic_id for pt in proposal.proposal_topics]
+    if not topic_ids:
+        return False
+    q = db.query(models.Delegation.id).filter(
+        models.Delegation.delegator_id == user_id,
+        models.Delegation.topic_id.in_(topic_ids),
+    )
+    return db.query(q.exists()).scalar() or False
+
+
+def _resolve_voting_event_for_recipient(
+    db: Session, user_id: str, proposal: models.Proposal,
+) -> Optional[str]:
+    """Phase 13.3 §B3 — pick the highest-priority voting-opened event
+    the recipient has at least one channel enabled for.
+
+    Priority order (highest first):
+      1. ``proposal.entered_voting.delegated_to_you`` (if recipient is a
+         delegate-target on one of the proposal's topics)
+      2. ``proposal.entered_voting.you_vote`` (if recipient has not
+         delegated their vote on any of the proposal's topics)
+      3. ``proposal.entered_voting`` (generic fallback)
+
+    Returns the chosen event_type or ``None`` if the recipient is opted
+    into none of the candidates.
+    """
+    is_target = _is_delegate_target_for_proposal(db, user_id, proposal)
+    has_delegated = _has_delegated_away_for_proposal(db, user_id, proposal)
+
+    candidates: list[str] = []
+    if is_target:
+        candidates.append("proposal.entered_voting.delegated_to_you")
+    if not has_delegated:
+        candidates.append("proposal.entered_voting.you_vote")
+    candidates.append("proposal.entered_voting")  # generic fallback last
+
+    for candidate in candidates:
+        if user_has_any_channel_enabled(db, user_id, candidate):
+            return candidate
+    return None
+
+
 def _emit_proposal_status_notifications(
     db,
     background_tasks: BackgroundTasks,
@@ -650,14 +723,17 @@ def _emit_proposal_status_notifications(
     new_status: str,
     actor_id: Optional[str],
 ) -> None:
-    """Phase 13 B-emit — fire proposal.entered_voting and proposal.closed.
+    """Phase 13 B-emit / 13.3 §B3 — fire proposal.entered_voting (with
+    priority-resolved variants) and proposal.closed.
 
     Always wrapped by the caller in try/except so a notification failure
-    never sinks the originating advance/close request (spec §B3).
+    never sinks the originating advance/close request.
 
     Routing:
-      - old != "voting" -> "voting": proposal.entered_voting -> all
-        eligible voters (org-scope-aware).
+      - old != "voting" -> "voting": for each eligible voter, resolve to
+        the highest-priority voting-opened event they're opted into and
+        emit ONE notification (single-notification-per-recipient
+        invariant, spec §B3).
       - "voting" -> "passed"/"failed": proposal.closed -> author + every
         user who voted (deduplicated).
 
@@ -682,10 +758,16 @@ def _emit_proposal_status_notifications(
             )
             return
         for uid in voter_ids:
+            chosen = _resolve_voting_event_for_recipient(db, uid, proposal)
+            if chosen is None:
+                # Recipient is opted into none of the three voting-opened
+                # events — emit nothing for them. Single-notification-per-
+                # recipient invariant: this is the "zero" case.
+                continue
             emit_notification(
                 db,
                 background_tasks,
-                event_type="proposal.entered_voting",
+                event_type=chosen,
                 user_id=uid,
                 org_id=proposal.org_id,
                 actor_id=actor_id,

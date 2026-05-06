@@ -183,8 +183,10 @@ def test_phase13_upgrade_downgrade_upgrade_cycle():
                 f"Pre-state should not have users.{col}"
             )
 
-        # 1. Upgrade head — applies Phase 13.
-        _run_alembic(db_url, "upgrade", "head")
+        # 1. Upgrade to Phase 13's revision (not head; Phase 13.3 added a
+        #    follow-on migration that drops digest_cadence — but THIS
+        #    test exercises Phase 13's upgrade only).
+        _run_alembic(db_url, "upgrade", _PHASE_13_REVISION)
         assert _has_table(db_url, "notifications")
         assert _has_table(db_url, "notification_preferences")
         for col in (
@@ -221,8 +223,8 @@ def test_phase13_upgrade_downgrade_upgrade_cycle():
                 f"Post-downgrade users.{col} should be gone"
             )
 
-        # 3. Re-upgrade head — idempotent re-application.
-        _run_alembic(db_url, "upgrade", "head")
+        # 3. Re-upgrade to Phase 13's revision — idempotent re-application.
+        _run_alembic(db_url, "upgrade", _PHASE_13_REVISION)
         assert _has_table(db_url, "notifications")
         assert _has_table(db_url, "notification_preferences")
         for col in (
@@ -254,13 +256,12 @@ def test_phase13_upgrade_idempotent_when_re_applied():
         _build_pre_phase13_schema(db_url)
         _seed_one_user(db_url)
 
-        _run_alembic(db_url, "upgrade", "head")
-        # No-op second invocation. alembic upgrade head when at head is
-        # a no-op anyway, but we exercise the path explicitly via
-        # downgrade+re-upgrade to prove the migration's own guards work.
-        _run_alembic(db_url, "downgrade", "-1")
-        _run_alembic(db_url, "upgrade", "head")
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_13_REVISION)
+        # No-op second invocation. We re-run the Phase 13 upgrade after
+        # a downgrade to prove the migration's own guards work.
+        _run_alembic(db_url, "downgrade", _PRIOR_REVISION)
+        _run_alembic(db_url, "upgrade", _PHASE_13_REVISION)
+        _run_alembic(db_url, "upgrade", _PHASE_13_REVISION)
 
         assert _has_table(db_url, "notifications")
         assert _has_table(db_url, "notification_preferences")

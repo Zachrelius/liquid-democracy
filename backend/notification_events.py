@@ -76,15 +76,28 @@ EVENT_REGISTRY: list[EventDefinition] = [
         category="Proposals",
     ),
     EventDefinition(
-        key="proposal.closed",
-        label="Proposal closed",
-        description="A proposal you voted on or authored has reached its outcome.",
+        key="proposal.entered_voting.you_vote",
+        label="Voting opened (you vote)",
+        description=(
+            "A proposal in your organization moved into voting and you "
+            "haven't delegated your vote on its topic. You need to vote "
+            "yourself."
+        ),
         category="Proposals",
     ),
     EventDefinition(
-        key="sustained_majority.floor_approached",
-        label="Vote support nearing floor",
-        description="A proposal's support is approaching the sustained-majority floor.",
+        key="proposal.entered_voting.delegated_to_you",
+        label="Voting opened (you vote on others' behalf)",
+        description=(
+            "A proposal moved into voting and someone has delegated their "
+            "vote to you on its topic. You're voting on their behalf."
+        ),
+        category="Proposals",
+    ),
+    EventDefinition(
+        key="proposal.closed",
+        label="Proposal closed",
+        description="A proposal you voted on or authored has reached its outcome.",
         category="Proposals",
     ),
     # ---- Membership -----------------------------------------------------

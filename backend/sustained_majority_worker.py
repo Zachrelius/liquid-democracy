@@ -184,6 +184,14 @@ def _maybe_emit_floor_approached(
 ) -> None:
     """Phase 13 B-emit (#7) — emit sustained_majority.floor_approached.
 
+    Phase 13.3: this event was removed from the EVENT_REGISTRY; the
+    underlying detection logic isn't fully wired and the event was
+    surfacing as a dead checkbox in the preferences UI. The worker
+    helper short-circuits here so attempting to emit doesn't raise
+    (emit_notification rejects unknown event_types). If/when floor-
+    approach detection is re-enabled, re-add the event to the registry
+    and lift this guard.
+
     Idempotency: suppress further notifications for this proposal if any
     floor_approached notification fired within the past
     ``FLOOR_APPROACHED_DEDUP_HOURS``. Audience: the proposal author + all
@@ -193,6 +201,11 @@ def _maybe_emit_floor_approached(
     Always wrapped in try/except — a notification failure must not break
     the worker tick (the failure-mode application is the load-bearing piece).
     """
+    # Phase 13.3 short-circuit: event removed from registry.
+    return
+    # The original implementation is preserved below (unreachable) so
+    # re-enabling the event is a one-line edit (delete the return above)
+    # plus re-adding the EventDefinition entry in notification_events.py.
     try:
         if proposal.voting_method != "binary" or not snapshots:
             return

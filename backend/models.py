@@ -260,13 +260,19 @@ class User(Base):
     # (frontend renders the initials-on-colored-background fallback). Set by
     # POST /api/users/me/avatar; cleared by DELETE.
     avatar_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    # Phase 13 — notification-related per-user preferences. ``timezone`` is
-    # an IANA name (e.g. "America/Los_Angeles"); NULL = unknown, treated as
-    # UTC by the digest job. ``digest_cadence`` controls when email-channel
-    # notifications are delivered ("real_time" | "daily" | "weekly" |
-    # "off"). ``quiet_hours_enabled`` toggles the 9pm-9am local-time email
-    # suppression. ``notification_intro_dismissed`` records whether the
-    # F5 first-time banner has been dismissed.
+    # Phase 13 / 13.3 — notification-related per-user preferences.
+    # ``timezone`` is an IANA name (e.g. "America/Los_Angeles"); NULL =
+    # unknown, treated as UTC by the digest job.
+    # ``quiet_hours_enabled`` toggles the local-time email suppression
+    # window. ``quiet_hours_start`` / ``quiet_hours_end`` (HH:MM 24-hour
+    # strings, Phase 13.3) define the user's adjustable window; defaults
+    # 21:00-09:00 match Phase 13's hardcoded behavior.
+    # ``notification_intro_dismissed`` records whether the F5 first-time
+    # banner has been dismissed.
+    #
+    # Phase 13.3 retired ``digest_cadence``: per-event cadence is now
+    # stored as ``email_immediate`` / ``email_daily`` / ``email_weekly``
+    # rows in ``notification_preferences``.
     #
     # The server_default values mirror the migration's column-add defaults
     # so raw-SQL INSERTs that omit these columns (test fixtures, the
@@ -274,13 +280,17 @@ class User(Base):
     # constraint. SQLAlchemy default= covers ORM inserts; server_default=
     # covers the rest.
     timezone: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    digest_cadence: Mapped[str] = mapped_column(
-        String, nullable=False, default="real_time",
-        server_default="real_time",
-    )
     quiet_hours_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False,
         server_default="0",
+    )
+    quiet_hours_start: Mapped[str] = mapped_column(
+        String(length=5), nullable=False, default="21:00",
+        server_default="21:00",
+    )
+    quiet_hours_end: Mapped[str] = mapped_column(
+        String(length=5), nullable=False, default="09:00",
+        server_default="09:00",
     )
     notification_intro_dismissed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False,
