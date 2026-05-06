@@ -314,6 +314,17 @@ class ProposalCreate(BaseModel):
     # eligible_viewers_for_polis, status must be active). Required when
     # the org's `require_polis_for_new_proposals` config is True.
     linked_polis_ids: Optional[list[str]] = None
+    # Phase 16 — per-proposal duration overrides. Setting either to a
+    # value differing from the org's default requires the
+    # `proposal.set_durations` permission; values matching the default
+    # are accepted from any caller. Both default to None so the route
+    # can distinguish "omitted" from "explicitly equal to default".
+    # Floor validation is enforced in the route handler (NOT via Pydantic
+    # ge=) so a below-floor value returns HTTP 400 with a friendly message,
+    # not a 422 schema-validation error: voting_days >= 0.05 (72 minutes),
+    # deliberation_days >= 0 (zero is valid; negative is rejected).
+    deliberation_days: Optional[float] = Field(default=None)
+    voting_days: Optional[float] = Field(default=None)
 
     @field_validator("voting_method")
     @classmethod
@@ -352,6 +363,13 @@ class ProposalUpdate(BaseModel):
     # "patching to a value matching the default."
     pass_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     quorum_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    # Phase 16 — per-proposal duration overrides. Same shape as
+    # pass_threshold/quorum_threshold: setting to a value differing from
+    # the org's default requires `proposal.set_durations`. Floor checks
+    # (voting >= 0.05, deliberation >= 0) are enforced in the route so
+    # below-floor values return 400 (not 422). Both default to None.
+    deliberation_days: Optional[float] = Field(default=None)
+    voting_days: Optional[float] = Field(default=None)
 
     @field_validator("topics", mode="before")
     @classmethod
@@ -383,6 +401,9 @@ class ProposalOut(BaseModel):
     voting_end: Optional[datetime]
     pass_threshold: float
     quorum_threshold: float
+    # Phase 16 — per-proposal duration overrides; null = inherit org default.
+    deliberation_days: Optional[float] = None
+    voting_days: Optional[float] = None
     created_at: datetime
     updated_at: datetime
     topics: list[ProposalTopicOut] = []

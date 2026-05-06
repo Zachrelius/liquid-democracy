@@ -114,11 +114,13 @@ def test_default_grants_counts_match_spec():
 
     Stage 1 shipped at 23/23/8/0. Phase 12 Stage 2 added the
     `role_permissions.edit` meta-permission (steward/admin both go to 24).
-    Phase 12.5 adds `proposal.set_thresholds` (steward/admin both go to
+    Phase 12.5 added `proposal.set_thresholds` (steward/admin both go to
     25; moderator/member get it absent per Q2: reserved for Steward and
-    maybe Admin). New totals: 25/25/8/0.
+    maybe Admin). Phase 16 adds `proposal.set_durations` (steward/admin
+    both go to 26; moderator gets it TRUE since durations are logistics
+    not governance — Q1; member still absent). New totals: 26/26/9/0.
     """
-    assert len(DEFAULT_GRANTS["steward"]) == 25
-    assert len(DEFAULT_GRANTS["admin"]) == 25
-    assert len(DEFAULT_GRANTS["moderator"]) == 8
+    assert len(DEFAULT_GRANTS["steward"]) == 26
+    assert len(DEFAULT_GRANTS["admin"]) == 26
+    assert len(DEFAULT_GRANTS["moderator"]) == 9
     assert len(DEFAULT_GRANTS["member"]) == 0

@@ -40,12 +40,12 @@ _DUMMY_HASH = auth_utils.hash_password("demo1234")
 # Module-level data tests (no DB required)
 # ---------------------------------------------------------------------------
 
-def test_registry_has_25_entries():
-    """Per Phase 12.5 spec — Stage 1 shipped 23 keys; Stage 2 added
-    `role_permissions.edit` (24); Phase 12.5 adds `proposal.set_thresholds`
-    in the Proposals category (25). Per-category breakdown:
-    5+3+5+3+1+2+1+3+2 = 25."""
-    assert len(PERMISSION_REGISTRY) == 25
+def test_registry_has_26_entries():
+    """Per Phase 16 spec — Stage 1 shipped 23 keys; Stage 2 added
+    `role_permissions.edit` (24); Phase 12.5 added `proposal.set_thresholds`
+    (25); Phase 16 adds `proposal.set_durations` (26). Per-category
+    breakdown: 6+3+5+3+1+2+1+3+2 = 26."""
+    assert len(PERMISSION_REGISTRY) == 26
 
 
 def test_registry_keys_are_unique():
@@ -66,11 +66,11 @@ def test_registry_uses_nine_canonical_categories():
 
 
 def test_registry_per_category_counts_match_spec():
-    """Per spec table totals + Stage 2 + Phase 12.5 additions:
-    5+3+5+3+1+2+1+3+2 = 25. Phase 12.5 adds `proposal.set_thresholds` to
-    the Proposals category, bumping that category from 4 to 5."""
+    """Per spec table totals + Stage 2 + Phase 12.5 + Phase 16 additions:
+    6+3+5+3+1+2+1+3+2 = 26. Phase 16 adds `proposal.set_durations` to
+    the Proposals category, bumping that category from 5 to 6."""
     expected = {
-        "Proposals": 5,
+        "Proposals": 6,
         "Topics": 3,
         "Members": 5,
         "Sub-organizations": 3,
@@ -90,32 +90,33 @@ def test_registry_per_category_counts_match_spec():
 # DEFAULT_GRANTS counts
 # ---------------------------------------------------------------------------
 
-def test_default_grants_steward_gets_all_25():
-    """Phase 12.5 — steward holds every permission by default, including
-    `role_permissions.edit` (Stage 2 meta) and `proposal.set_thresholds`
-    (Phase 12.5). The Steward column also has three lockout-protected
-    cells per Stage 2 spec Q1, but those still appear in DEFAULT_GRANTS
-    as TRUE — they're enforced as-locked at the PATCH endpoint, not via
-    DEFAULT_GRANTS."""
-    assert len(DEFAULT_GRANTS["steward"]) == 25
+def test_default_grants_steward_gets_all_26():
+    """Phase 16 — steward holds every permission by default, including
+    `role_permissions.edit` (Stage 2 meta), `proposal.set_thresholds`
+    (Phase 12.5), and `proposal.set_durations` (Phase 16). The Steward
+    column also has three lockout-protected cells per Stage 2 spec Q1,
+    but those still appear in DEFAULT_GRANTS as TRUE — they're enforced
+    as-locked at the PATCH endpoint, not via DEFAULT_GRANTS."""
+    assert len(DEFAULT_GRANTS["steward"]) == 26
     assert DEFAULT_GRANTS["steward"] == ALL_PERMISSION_KEYS
 
 
-def test_default_grants_admin_gets_all_25():
-    """Phase 12.5 — admins also default to the full 25-key set, including
-    both `role_permissions.edit` and `proposal.set_thresholds`. The matrix
-    UI is what permits orgs to scope these back if they want stricter
-    Admin scopes."""
-    assert len(DEFAULT_GRANTS["admin"]) == 25
+def test_default_grants_admin_gets_all_26():
+    """Phase 16 — admins also default to the full 26-key set, including
+    `role_permissions.edit`, `proposal.set_thresholds`, and
+    `proposal.set_durations`. The matrix UI is what permits orgs to scope
+    these back if they want stricter Admin scopes."""
+    assert len(DEFAULT_GRANTS["admin"]) == 26
     assert DEFAULT_GRANTS["admin"] == ALL_PERMISSION_KEYS
 
 
-def test_default_grants_moderator_gets_8():
-    """Per spec — moderators get the eight 'moderator, admin, steward'
-    rows. Counted by hand from spec lines 105-144. Stage 2 does NOT add
-    any new keys to moderator (moderators don't get `role_permissions.edit`
-    by default)."""
-    assert len(DEFAULT_GRANTS["moderator"]) == 8
+def test_default_grants_moderator_gets_9():
+    """Per Phase 16 spec — moderators get the eight original 'moderator,
+    admin, steward' rows PLUS `proposal.set_durations` (Phase 16 Q1:
+    durations are logistics, not governance, so moderators get them by
+    default — different from `proposal.set_thresholds` which 12.5 reserves
+    for Steward/Admin)."""
+    assert len(DEFAULT_GRANTS["moderator"]) == 9
     expected = {
         "proposal.create",
         "proposal.advance_phase",
@@ -125,6 +126,7 @@ def test_default_grants_moderator_gets_8():
         "member.invite",
         "polis.create",
         "comment.moderate",
+        "proposal.set_durations",
     }
     assert DEFAULT_GRANTS["moderator"] == expected
 
@@ -213,9 +215,9 @@ def test_get_registry_returns_200_for_authenticated_user(client, test_db):
     assert resp.status_code == 200, resp.text
 
 
-def test_get_registry_returns_25_entries_with_correct_shape(client, test_db):
-    """Phase 12.5 — endpoint returns the full 25-entry list (Stage 2's 24
-    plus `proposal.set_thresholds`) with key/label/description/category on
+def test_get_registry_returns_26_entries_with_correct_shape(client, test_db):
+    """Phase 16 — endpoint returns the full 26-entry list (12.5's 25
+    plus `proposal.set_durations`) with key/label/description/category on
     every row."""
     user = _make_user(test_db, "bob")
     test_db.commit()
@@ -225,7 +227,7 @@ def test_get_registry_returns_25_entries_with_correct_shape(client, test_db):
 
     assert "permissions" in body
     assert "categories" in body
-    assert len(body["permissions"]) == 25
+    assert len(body["permissions"]) == 26
     for entry in body["permissions"]:
         assert set(entry.keys()) == {"key", "label", "description", "category"}
         assert isinstance(entry["key"], str) and entry["key"]

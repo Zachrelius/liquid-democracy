@@ -346,28 +346,30 @@ def test_role_permissions_seeded_per_preset_role():
                     {"org_id": org_id},
                 ).fetchall()
                 counts = {sk: cnt for sk, cnt in rows}
-                assert counts.get("steward") == 25, (
-                    f"org {org_id}: steward should have 25 permissions "
+                assert counts.get("steward") == 26, (
+                    f"org {org_id}: steward should have 26 permissions "
                     f"(Stage 1's 23 + Stage 2's role_permissions.edit + "
-                    f"Phase 12.5's proposal.set_thresholds), "
-                    f"got {counts.get('steward')}"
+                    f"Phase 12.5's proposal.set_thresholds + Phase 16's "
+                    f"proposal.set_durations), got {counts.get('steward')}"
                 )
-                assert counts.get("admin") == 25, (
-                    f"org {org_id}: admin should have 25 permissions "
+                assert counts.get("admin") == 26, (
+                    f"org {org_id}: admin should have 26 permissions "
                     f"(Stage 1's 23 + Stage 2's role_permissions.edit + "
-                    f"Phase 12.5's proposal.set_thresholds), "
-                    f"got {counts.get('admin')}"
+                    f"Phase 12.5's proposal.set_thresholds + Phase 16's "
+                    f"proposal.set_durations), got {counts.get('admin')}"
                 )
-                assert counts.get("moderator") == 10, (
-                    f"org {org_id}: moderator should have 10 permissions "
+                assert counts.get("moderator") == 11, (
+                    f"org {org_id}: moderator should have 11 permissions "
                     f"(Stage 1's 8 trues + Stage 2's role_permissions.edit "
                     f"row [enabled=False] + Phase 12.5's proposal.set_thresholds "
-                    f"row [enabled=False]), got {counts.get('moderator')}"
+                    f"row [enabled=False] + Phase 16's proposal.set_durations "
+                    f"row [enabled=True]), got {counts.get('moderator')}"
                 )
-                assert counts.get("member") == 2, (
-                    f"org {org_id}: member should have 2 permission rows "
+                assert counts.get("member") == 3, (
+                    f"org {org_id}: member should have 3 permission rows "
                     f"(Stage 2's role_permissions.edit [enabled=False] + "
-                    f"Phase 12.5's proposal.set_thresholds [enabled=False] — "
+                    f"Phase 12.5's proposal.set_thresholds [enabled=False] + "
+                    f"Phase 16's proposal.set_durations [enabled=False] — "
                     f"Stage 1 inserted no rows for member), "
                     f"got {counts.get('member')}"
                 )

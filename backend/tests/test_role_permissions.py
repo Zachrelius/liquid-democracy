@@ -143,9 +143,10 @@ def test_member_does_not_have_proposal_create(db):
     assert has_permission(db, user.id, org.id, "proposal.create") is False
 
 
-def test_moderator_has_eight_default_grants(db):
-    """Spot-check moderator's 8-key default set: gets proposal.create but
-    NOT proposal.delete; gets topic.edit but NOT topic.delete."""
+def test_moderator_has_nine_default_grants(db):
+    """Spot-check moderator's 9-key default set: gets proposal.create but
+    NOT proposal.delete; gets topic.edit but NOT topic.delete; Phase 16
+    adds proposal.set_durations to the moderator default set."""
     user = _make_user(db, "carol")
     org = _make_org(db, "Org", "org")
     _add_membership(db, user, org, "moderator")
@@ -160,6 +161,8 @@ def test_moderator_has_eight_default_grants(db):
     assert has_permission(db, user.id, org.id, "member.invite") is True
     assert has_permission(db, user.id, org.id, "polis.create") is True
     assert has_permission(db, user.id, org.id, "comment.moderate") is True
+    # Phase 16 — moderators get this by default (durations are logistics).
+    assert has_permission(db, user.id, org.id, "proposal.set_durations") is True
 
     # NOT granted to moderator by default (admin+).
     assert has_permission(db, user.id, org.id, "proposal.delete") is False
@@ -168,6 +171,8 @@ def test_moderator_has_eight_default_grants(db):
     assert has_permission(db, user.id, org.id, "member.suspend") is False
     assert has_permission(db, user.id, org.id, "polis.manage") is False
     assert has_permission(db, user.id, org.id, "audit.view_org") is False
+    # Phase 12.5 — moderators do NOT get proposal.set_thresholds by default.
+    assert has_permission(db, user.id, org.id, "proposal.set_thresholds") is False
 
 
 def test_non_member_returns_false(db):

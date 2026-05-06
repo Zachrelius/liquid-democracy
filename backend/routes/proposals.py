@@ -18,7 +18,11 @@ from delegation_engine import (
     eligible_voter_ids_for_proposal,
 )
 from notification_emit import emit_notification, user_has_any_channel_enabled
-from org_config import get_default_proposal_thresholds, get_org_config
+from org_config import (
+    get_default_proposal_durations,
+    get_default_proposal_thresholds,
+    get_org_config,
+)
 from permissions import can_see_votes
 from polis_engine import eligible_viewers_for_polis
 from role_permissions import has_permission as _has_permission
@@ -176,6 +180,8 @@ def _build_proposal_out(
         voting_end=proposal.voting_end,
         pass_threshold=proposal.pass_threshold,
         quorum_threshold=proposal.quorum_threshold,
+        deliberation_days=getattr(proposal, "deliberation_days", None),
+        voting_days=getattr(proposal, "voting_days", None),
         created_at=proposal.created_at,
         updated_at=proposal.updated_at,
         topics=proposal.proposal_topics,
@@ -283,6 +289,89 @@ def _enforce_threshold_permission(
                 "You do not have permission to override the organization's "
                 "default thresholds. Submit the proposal with default values "
                 "or ask an Admin or Steward to set custom thresholds."
+            ),
+        )
+
+
+# Phase 16 — floors for per-proposal duration overrides.
+# Voting must be >= 0.05 days (72 minutes) — prevents pathological
+# 1-second windows while still permitting live-poll use cases.
+# Deliberation must be >= 0 days (zero is a valid choice for time-pressure
+# decisions: proposal created -> straight to voting).
+_VOTING_DAYS_FLOOR: float = 0.05
+_DELIBERATION_DAYS_FLOOR: float = 0.0
+
+
+def _validate_duration_floors(
+    requested_delib: Optional[float], requested_vote: Optional[float],
+) -> None:
+    """Phase 16 — floor checks independent of the permission gate.
+
+    Raises HTTPException(400) with the spec's exact error messages when
+    a below-floor value is requested. Skips when the field is omitted.
+    """
+    if requested_vote is not None and requested_vote < _VOTING_DAYS_FLOOR:
+        raise HTTPException(
+            status_code=400,
+            detail="Voting duration must be at least 0.05 days (72 minutes).",
+        )
+    if requested_delib is not None and requested_delib < _DELIBERATION_DAYS_FLOOR:
+        raise HTTPException(
+            status_code=400,
+            detail="Deliberation duration cannot be negative.",
+        )
+
+
+def _enforce_duration_permission(
+    db: Session,
+    user_id: str,
+    org: Optional[models.Organization],
+    requested_delib: Optional[float],
+    requested_vote: Optional[float],
+) -> None:
+    """Phase 16 — gate duration overrides on `proposal.set_durations`.
+
+    Same shape as ``_enforce_threshold_permission``: the check is
+    "differs from defaults," NOT "is present" (spec line 169). A user
+    without the permission who explicitly passes values matching the
+    org's defaults succeeds; only differing values trigger the gate.
+
+    Args:
+      requested_delib: deliberation_days from the request body, or None
+        when the field was omitted (caller intends to use the org default).
+      requested_vote: voting_days, same convention.
+
+    For global (non-org) proposals — org is None — falls through to the
+    platform-wide defaults via the helper. There is no permission check
+    possible without an org context, so global proposals use the
+    existing free-form behavior. Org-scoped routes always pass org.
+
+    Raises HTTPException(400) on permission denial with the spec's exact
+    error message (line 162).
+    """
+    default_delib, default_vote = get_default_proposal_durations(org)
+
+    delib_diverges = (
+        requested_delib is not None and float(requested_delib) != default_delib
+    )
+    vote_diverges = (
+        requested_vote is not None and float(requested_vote) != default_vote
+    )
+    if not (delib_diverges or vote_diverges):
+        return
+
+    # Only enforce the permission gate when there's an org context. Global
+    # proposals (no org_id) keep their pre-Phase-16 behavior.
+    if org is None:
+        return
+
+    if not _has_permission(db, user_id, org.id, "proposal.set_durations"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "You do not have permission to override the organization's "
+                "default durations. Submit the proposal with default values "
+                "or ask a Moderator/Admin/Steward to set custom durations."
             ),
         )
 
@@ -456,6 +545,34 @@ def create_proposal(
         body.quorum_threshold if "quorum_threshold" in body.model_fields_set else None,
     )
 
+    # Phase 16 — duration floors + permission gate. Floors are enforced
+    # regardless of org context (global proposals also can't have
+    # below-floor values); the permission gate short-circuits for the
+    # global path (no org context).
+    requested_delib = (
+        body.deliberation_days
+        if "deliberation_days" in body.model_fields_set else None
+    )
+    requested_vote = (
+        body.voting_days
+        if "voting_days" in body.model_fields_set else None
+    )
+    _validate_duration_floors(requested_delib, requested_vote)
+    _enforce_duration_permission(
+        db, current_user.id, None, requested_delib, requested_vote,
+    )
+    # Phase 16 — record effective duration values on the proposal so the
+    # row reflects what was decided at create time (spec line 109: existing
+    # proposals keep whatever durations they were created with). Global
+    # proposals fall back to platform defaults (org=None branch of helper).
+    default_delib_days, default_vote_days = get_default_proposal_durations(None)
+    effective_delib_days = (
+        requested_delib if requested_delib is not None else default_delib_days
+    )
+    effective_vote_days = (
+        requested_vote if requested_vote is not None else default_vote_days
+    )
+
     # Phase 8 — global (non-org) proposals: per-proposal override is always
     # ignored at create time because there is no org config to honor it
     # against. Store as null.
@@ -487,6 +604,8 @@ def create_proposal(
         num_winners=body.num_winners,
         pass_threshold=body.pass_threshold,
         quorum_threshold=body.quorum_threshold,
+        deliberation_days=effective_delib_days,
+        voting_days=effective_vote_days,
         sustained_majority_enabled=sustained_majority_enabled,
     )
     db.add(proposal)
@@ -553,6 +672,40 @@ def update_proposal(
             proposal.pass_threshold = body.pass_threshold
         if "quorum_threshold" in body.model_fields_set and body.quorum_threshold is not None:
             proposal.quorum_threshold = body.quorum_threshold
+
+    # Phase 16 — duration-override gate (mirrors the threshold block
+    # immediately above). Same atomicity property: floor + permission
+    # checks fire BEFORE field writes so a 400 leaves the row untouched.
+    if (
+        "deliberation_days" in body.model_fields_set
+        or "voting_days" in body.model_fields_set
+    ):
+        org_for_dur = (
+            db.get(models.Organization, proposal.org_id)
+            if proposal.org_id else None
+        )
+        requested_delib = (
+            body.deliberation_days
+            if "deliberation_days" in body.model_fields_set else None
+        )
+        requested_vote = (
+            body.voting_days
+            if "voting_days" in body.model_fields_set else None
+        )
+        _validate_duration_floors(requested_delib, requested_vote)
+        _enforce_duration_permission(
+            db, current_user.id, org_for_dur, requested_delib, requested_vote,
+        )
+        if (
+            "deliberation_days" in body.model_fields_set
+            and body.deliberation_days is not None
+        ):
+            proposal.deliberation_days = body.deliberation_days
+        if (
+            "voting_days" in body.model_fields_set
+            and body.voting_days is not None
+        ):
+            proposal.voting_days = body.voting_days
 
     if body.title is not None:
         proposal.title = body.title
