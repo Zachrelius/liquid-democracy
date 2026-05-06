@@ -18,7 +18,11 @@ from audit_utils import log_audit_event
 from database import get_db
 from email_service import send_invitation_email
 from notification_emit import emit_notification
-from org_config import get_default_proposal_thresholds, get_org_config
+from org_config import (
+    get_default_proposal_durations,
+    get_default_proposal_thresholds,
+    get_org_config,
+)
 from permission_registry import PERMISSION_REGISTRY
 from reserved_slugs import RESERVED_SLUGS
 from role_permissions import has_permission
@@ -2114,6 +2118,38 @@ def create_org_proposal(
     effective_pass = requested_pass if requested_pass is not None else default_pass
     effective_quorum = requested_quorum if requested_quorum is not None else default_quorum
 
+    # Phase 16 — per-proposal duration override gate. Mirrors the
+    # threshold block above: same model_fields_set pattern; the helper
+    # short-circuits when both fields are omitted or match the org
+    # defaults. Floor checks are independent of the permission gate.
+    # Sub-org-scoped proposals reuse the parent org's defaults today
+    # (per-sub-org defaults out of scope per spec line 411).
+    from routes.proposals import (
+        _enforce_duration_permission,
+        _validate_duration_floors,
+    )
+    requested_delib_days = (
+        body.deliberation_days
+        if "deliberation_days" in body.model_fields_set else None
+    )
+    requested_vote_days = (
+        body.voting_days
+        if "voting_days" in body.model_fields_set else None
+    )
+    _validate_duration_floors(requested_delib_days, requested_vote_days)
+    _enforce_duration_permission(
+        db, current_user.id, org, requested_delib_days, requested_vote_days,
+    )
+    default_delib_days, default_vote_days = get_default_proposal_durations(org)
+    effective_delib_days = (
+        requested_delib_days
+        if requested_delib_days is not None else default_delib_days
+    )
+    effective_vote_days = (
+        requested_vote_days
+        if requested_vote_days is not None else default_vote_days
+    )
+
     proposal = models.Proposal(
         title=body.title,
         body=body.body,
@@ -2124,6 +2160,8 @@ def create_org_proposal(
         num_winners=body.num_winners,
         pass_threshold=effective_pass,
         quorum_threshold=effective_quorum,
+        deliberation_days=effective_delib_days,
+        voting_days=effective_vote_days,
         sustained_majority_enabled=body.sustained_majority_enabled,
         linked_polis_ids=linked_ids if linked_ids else None,
     )

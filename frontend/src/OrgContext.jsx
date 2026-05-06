@@ -125,25 +125,41 @@ export function OrgProvider({ children }) {
   }, [urlOrgSlug, urlSubSlug, userOrgs, subOrgsByParent, loading]);
 
   // Persist last-used org slug whenever URL-derived currentOrg changes —
-  // only used by OrgSelector to decide whether to auto-redirect a single-
-  // org user on next sign-in.
+  // used by OrgSelector to decide whether to auto-redirect a single-org
+  // user on next sign-in, AND (Phase 16 F5) by Nav.jsx to resolve org-
+  // context-dependent links on non-org-scoped routes like /settings.
+  // Both keys carry the same value:
+  //   - `currentOrgSlug` is the legacy name (Phase 11) read by OrgSelector.
+  //   - `lastOrgSlug` is the Phase 16 F5 contract; Nav.jsx reads this to
+  //     synthesize a stand-in currentOrg for nav rendering when the URL
+  //     is non-org-scoped. Single key would have worked too; dual-write
+  //     keeps the older read path stable and honors the spec naming.
   useEffect(() => {
     if (currentOrg?.slug && !currentOrg.parent_org_id) {
       // Track the parent slug as "last used" — sub-org slugs aren't useful
       // as a sign-in-resume hint because they require parent context.
       try {
         localStorage.setItem('currentOrgSlug', currentOrg.slug);
+        localStorage.setItem('lastOrgSlug', currentOrg.slug);
       } catch { /* best-effort */ }
     }
   }, [currentOrg]);
 
   // setCurrentOrg — kept for OrgSelector / CreateOrg's "pick" surfaces.
   // Writes localStorage as a sign-in hint; does NOT navigate (callers do).
+  // Phase 16 F5 — also writes `lastOrgSlug` so Nav.jsx can resolve org-
+  // context-dependent links on non-org-scoped routes.
   const setCurrentOrg = useCallback((org) => {
     if (org?.slug && !org.parent_org_id) {
-      try { localStorage.setItem('currentOrgSlug', org.slug); } catch { /* ignore */ }
+      try {
+        localStorage.setItem('currentOrgSlug', org.slug);
+        localStorage.setItem('lastOrgSlug', org.slug);
+      } catch { /* ignore */ }
     } else if (!org) {
-      try { localStorage.removeItem('currentOrgSlug'); } catch { /* ignore */ }
+      try {
+        localStorage.removeItem('currentOrgSlug');
+        localStorage.removeItem('lastOrgSlug');
+      } catch { /* ignore */ }
     }
   }, []);
 

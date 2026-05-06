@@ -2,7 +2,7 @@
 
 Coverage:
 
-  - Steward sees all 25 keys.
+  - Steward sees all 26 keys (Phase 16 added proposal.set_durations).
   - Member with default grants sees [] (members have zero default
     permissions).
   - Member with one matrix-grant (e.g. proposal.create) sees exactly that key.
@@ -12,7 +12,7 @@ Coverage:
     (or a direct unit test on the helper).
   - Cache verification (the spec calls this out explicitly, line 163):
     one /api/orgs/{slug} call should issue exactly ONE SELECT against
-    role_permissions for the 25 has_permission calls — proving Stage 1's
+    role_permissions for the 26 has_permission calls — proving Stage 1's
     per-request cache works as advertised.
 """
 from __future__ import annotations
@@ -93,7 +93,7 @@ def _auth(user: models.User) -> dict:
 
 
 def test_steward_sees_all_25_permission_keys(client, test_db):
-    """Steward holds every default-grant key (25 total per Phase 12.5),
+    """Steward holds every default-grant key (26 total per Phase 16),
     so user_permissions in the response equals the full registry set."""
     user = _make_user(test_db, "steward_perms")
     org = _make_org(test_db, "steward-perms")
@@ -104,7 +104,7 @@ def test_steward_sees_all_25_permission_keys(client, test_db):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert "user_permissions" in body
-    assert len(body["user_permissions"]) == 25
+    assert len(body["user_permissions"]) == 26
     # Spot-check one key from each category.
     expected_subset = {
         "proposal.create",
@@ -133,14 +133,14 @@ def test_admin_sees_all_25_permission_keys(client, test_db):
 
     resp = client.get(f"/api/orgs/{org.slug}", headers=_auth(user))
     assert resp.status_code == 200, resp.text
-    assert len(resp.json()["user_permissions"]) == 25
+    assert len(resp.json()["user_permissions"]) == 26
 
 
-def test_moderator_sees_exactly_eight_default_grants(client, test_db):
-    """Moderator's default grant set is the 8-key subset (proposal.create
+def test_moderator_sees_exactly_nine_default_grants(client, test_db):
+    """Moderator's default grant set is the 9-key subset (proposal.create
     + advance_phase, topic.create + edit, member.approve_join + invite,
-    polis.create, comment.moderate). proposal.set_thresholds is NOT in
-    this set per Phase 12.5 Q2 decision."""
+    polis.create, comment.moderate, plus Phase 16's proposal.set_durations).
+    proposal.set_thresholds is NOT in this set per Phase 12.5 Q2 decision."""
     user = _make_user(test_db, "mod_perms")
     org = _make_org(test_db, "mod-perms")
     make_org_membership(test_db, org_id=org.id, user_id=user.id, role="moderator")
@@ -154,6 +154,7 @@ def test_moderator_sees_exactly_eight_default_grants(client, test_db):
         "topic.create", "topic.edit",
         "member.approve_join", "member.invite",
         "polis.create", "comment.moderate",
+        "proposal.set_durations",
     }
     assert keys == expected
     assert "proposal.set_thresholds" not in keys
@@ -225,7 +226,7 @@ def test_parent_org_admin_sees_full_25_on_sub_org_via_implicit_power(client, tes
     if resp.status_code == 200:
         keys = set(resp.json()["user_permissions"])
         assert len(keys) == 25, (
-            f"parent-org admin should see all 25 keys on sub-org via "
+            f"parent-org admin should see all 26 keys on sub-org via "
             f"implicit power; got {len(keys)}"
         )
 
@@ -259,7 +260,7 @@ def test_repeated_has_permission_calls_via_endpoint_use_cache(client, test_db):
     assert resp.status_code == 200, resp.text
     # Steward returns 25 keys; cache should have absorbed all 25
     # has_permission calls into ONE SELECT (the first call's load).
-    assert len(resp.json()["user_permissions"]) == 25
+    assert len(resp.json()["user_permissions"]) == 26
     assert role_permission_query_count["n"] == 1, (
         f"expected exactly 1 SELECT FROM role_permissions across the 25 "
         f"has_permission calls inside _org_to_out (Stage 1's per-request "

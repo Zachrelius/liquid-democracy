@@ -55,11 +55,12 @@ CATEGORIES: list[str] = [
 ]
 
 
-# Full registry — 25 entries. Stage 1 shipped 23; Stage 2 added
-# `role_permissions.edit`; Phase 12.5 adds `proposal.set_thresholds`.
+# Full registry — 26 entries. Stage 1 shipped 23; Stage 2 added
+# `role_permissions.edit`; Phase 12.5 adds `proposal.set_thresholds`;
+# Phase 16 adds `proposal.set_durations`.
 # See spec §"Permission registry" lines 105-144 for Stage 1's 23-key table.
 PERMISSION_REGISTRY: list[PermissionDefinition] = [
-    # --- Proposals (5) ---
+    # --- Proposals (6) ---
     PermissionDefinition(
         "proposal.create",
         "Create proposals",
@@ -89,6 +90,13 @@ PERMISSION_REGISTRY: list[PermissionDefinition] = [
         "proposal.set_thresholds",
         "Set proposal thresholds",
         "Allow overriding the organization's default pass and quorum thresholds when creating or editing a proposal. Without this permission, proposals use the organization defaults.",
+        "Proposals",
+    ),
+    # Phase 16 — gate on overriding org-default deliberation/voting durations.
+    PermissionDefinition(
+        "proposal.set_durations",
+        "Set proposal durations",
+        "Allow overriding the organization's default deliberation and voting durations when creating or editing a proposal. Without this permission, proposals use the organization defaults.",
         "Proposals",
     ),
     # --- Topics (3) ---
@@ -232,16 +240,18 @@ ALL_PERMISSION_KEYS: set[str] = {p.key for p in PERMISSION_REGISTRY}
 # backend/role_seed.py (Cluster D) imports DEFAULT_GRANTS to populate
 # role_permissions rows when an org is created.
 #
-# Counts (verified by test_permission_registry.py) — Phase 12.5 totals:
-#   steward   = 25  (every key, including `role_permissions.edit` and
-#                    `proposal.set_thresholds`)
-#   admin     = 25  (every key — admin appears in every Default: line, plus
-#                    `role_permissions.edit` from Stage 2 and
-#                    `proposal.set_thresholds` from 12.5)
-#   moderator =  8  (the moderator-defaults from the spec table — Stage 2
-#                    does NOT grant `role_permissions.edit` to moderator;
-#                    12.5 does NOT grant `proposal.set_thresholds` either,
-#                    per Q2: reserved for Steward / maybe Admin)
+# Counts (verified by test_permission_registry.py) — Phase 16 totals:
+#   steward   = 26  (every key, including `role_permissions.edit`,
+#                    `proposal.set_thresholds`, and `proposal.set_durations`)
+#   admin     = 26  (every key — admin appears in every Default: line, plus
+#                    `role_permissions.edit` from Stage 2,
+#                    `proposal.set_thresholds` from 12.5, and
+#                    `proposal.set_durations` from Phase 16)
+#   moderator =  9  (the moderator-defaults from the spec table — Stage 2
+#                    does NOT grant `role_permissions.edit`; 12.5 does NOT
+#                    grant `proposal.set_thresholds`; Phase 16 DOES grant
+#                    `proposal.set_durations` per Q1 — durations are
+#                    logistics, not governance)
 #   member    =  0  (members are gated by membership status, not by these
 #                    administrative-action permissions)
 DEFAULT_GRANTS: dict[str, set[str]] = {
@@ -256,6 +266,8 @@ DEFAULT_GRANTS: dict[str, set[str]] = {
         "member.invite",
         "polis.create",
         "comment.moderate",
+        # Phase 16 — moderators can override per-proposal durations.
+        "proposal.set_durations",
     },
     "member": set(),
 }

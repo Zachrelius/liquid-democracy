@@ -9,6 +9,7 @@ Audit date: 2026-05-04 (Phase 12.8). Scope: PROGRESS.md from Phase 9 forward, co
 - 2026-05-06 (Phase 15 Cluster G1): Item 33 (help page back-link destination) RESOLVED — a shared `frontend/src/components/HelpBackLink.jsx` component now uses `window.history.back()` with `/orgs` fallback (when `window.history.length <= 1`) across PolisHelp, VotingMethodsHelp, SustainedMajorityHelp, RolePermissionsHelp, NotificationsHelp, and OrganizationsHelp. The static `<Link to="/orgs">← Back</Link>` pattern is gone from all six pages.
 - 2026-05-06 (Phase 15 Cluster G6b): Phase 14 tech debt #3 (defensive client-side `invite_only` → `invite_only_secret` coercion in OrgSettings.jsx hydration) RESOLVED — same Z gate waiver as G6a applies; single-save behavior already persists the value in the new four-policy form, and the backend B1 migration renamed all legacy rows. The four-policy radio group still loads + saves all four values cleanly without the coercion (browser-verified in closeout).
 - 2026-05-06 (Phase 15 Cluster G6a): Items 26-27 (cache-safety role-tier fallbacks in Nav.jsx + AdminRoute.jsx + AdminOnlyRoute.jsx) RESOLVED. Z waived the 7-day cached-cutover gate for this pass based on single-user reality (the cached-bundle population the gate was designed to protect is effectively zero); the convention itself is preserved as institutional discipline for future passes. Cache-safety fallback branches removed from all three files (`legacyIsAdmin` derivation + `userPerms === null` branches gone); strict permission-driven gating throughout. Items 28-29 are scoped to OrgSettings.jsx (`'owner'` Danger Zone visibility) and the RolePermissionsPage `canEdit` derivation; both are cosmetic UX gates rather than security-bearing route guards, so they were left for a future cleanup pass to keep the diff focused on the load-bearing surfaces.
+- 2026-05-04 (Phase 16 Clusters G1 + G2): Items 28-29 RESOLVED — finishing the cleanup arc started in Phase 15 G6a. Item 28: `OrgSettings.jsx` Danger Zone gate tightened from `(user_role === 'steward' \|\| user_role === 'owner')` to `currentOrg?.user_role === 'steward'`; the rationale comment for the legacy `'owner'` branch was trimmed since the cached-cutover protection is no longer load-bearing. Item 29: `RolePermissionsPage.jsx` `canEdit` now derives from `useHasPermission('role_permissions.edit')` instead of a hardcoded `(steward \|\| admin \|\| owner)` tier shortcut — the matrix self-administers (anyone granted `role_permissions.edit` via the matrix UI can edit the matrix). Both changes are UX gates, not security-bearing route guards (backend `org.delete` 403 remains as defense in depth; backend B2 still enforces `role_permissions.edit` on PATCH).
 
 ## Summary
 
@@ -220,19 +221,15 @@ These items are correct fixes but blocked on cached responses ageing out. **Toda
 - Description: ~25 grep hits across OrgContext / Members / Nav / PolisDetail / OrgSelector / Demo.jsx accepted both `'steward'` (canonical) and `'owner'` (defensive cached-response handling).
 - Status: Phase 15 Cluster G6a removed the `'owner'` legacy-string branches from the cache-safety fallback paths of Nav.jsx / AdminRoute.jsx / AdminOnlyRoute.jsx (those fallbacks are gone entirely). Other call sites that defensively accept `'owner'` for cosmetic role-display purposes (OrgSelector cards, profile-page role display, the OrgSwitcher tree's parent/sub admin checks) remain — they're cosmetic, not gating, and can be tidied in a future cleanup pass without security implications.
 
-### Item 28: F7 legacy `'owner'` acceptance in OrgSettings.jsx
+### Item 28: F7 legacy `'owner'` acceptance in OrgSettings.jsx — RESOLVED (Phase 16 Cluster G1)
 - Source: PROGRESS.md Phase 12 Stage 2 tech debt #3
 - Description: Defensive 'owner' branch in OrgSettings.jsx D4 hardcoded gate (Danger Zone visibility). Tighten to strict `'steward'` after age-out.
-- Recommendation: DEFER_WITH_ESTIMATE
-- Effort: ~5 minutes (one-line tighten)
-- Rationale: Phase 15 G6a's gate-waiver applied to the security-bearing fallbacks in Nav.jsx / AdminRoute / AdminOnlyRoute. Item 28's `'owner'` branch in OrgSettings.jsx is technically eligible for the same tightening but was scoped out of Cluster G6a to keep the diff focused on the route-guard / nav-visibility surfaces; left for future cleanup.
+- Status: RESOLVED in Phase 16 Cluster G1 — `isSteward` derivation in `OrgSettings.jsx` reduced to `currentOrg?.user_role === 'steward'` (legacy `'owner'` branch removed; rationale comment trimmed since the cached-cutover protection is no longer load-bearing).
 
-### Item 29: Tier-shortcuts on Permissions nav link visibility + F6 read-only detection
+### Item 29: Tier-shortcuts on Permissions nav link visibility + F6 read-only detection — RESOLVED (Phase 16 Cluster G2)
 - Source: PROGRESS.md Phase 12 Stage 2 tech debt #1, #2
 - Description: Two places where the nav-link / read-only detection uses tier shortcut even though Phase 12.5 B4 already exposes `user_permissions` in `currentOrg`.
-- Recommendation: DEFER_WITH_ESTIMATE
-- Effort: ~30 minutes (replace tier shortcuts with `useHasPermission('role_permissions.edit')` reads)
-- Rationale: Phase 15 G6a kept its scope tight to the security-bearing nav/route-guard fallbacks. Item 29's tier shortcuts on the RolePermissionsPage `canEdit` derivation are cosmetic UX gates (read-only mode is the fallback when `canEdit` is false, not a 403; backend B2 still enforces `role_permissions.edit`), so the cutover here is style-only and was left for a future cleanup pass.
+- Status: RESOLVED in Phase 16 Cluster G2 — `RolePermissionsPage.jsx` `canEdit` now uses `useHasPermission('role_permissions.edit')`, so the matrix self-administers (anyone granted that permission via the matrix UI can edit it).
 
 ## Extends 10.2 audit (test-depth gaps that fit Phase 10.2's framework)
 

@@ -69,27 +69,10 @@ export default function OrgSettings() {
   // Steward + Admin). This is the UI that finally consumes it.
   const canEditBranding = useHasPermission('org.edit_branding');
   // Phase 12 Stage 2 F7 — D4 hardcoded-gate UI hiding.
-  //
-  // The org-delete endpoint (DELETE /api/orgs/{slug}) is one of two D4
-  // hardcoded gates: its permission cannot be reassigned through the
-  // role-permissions matrix. Anyone short of Steward who clicks "Delete
-  // organization" hits the role-agnostic 403 with no path to fix it
-  // through the matrix UI, which is a confusing UX path. So we hide the
-  // entire Danger Zone section from non-Stewards. The backend 403 stays
-  // as defense in depth for direct API callers (curl, etc.).
-  //
-  // The legacy 'owner' system_key is also accepted: pre-Stage-1 cached
-  // /api/orgs responses may still report 'owner' for the same human user
-  // briefly during deploy cutover, and we don't want to lock the actual
-  // org owner out of the delete control they've always had.
-  //
-  // (Sub-org delete in SubOrgSettings is matrix-routed via sub_org.delete
-  // and is correctly governed by has_permission server-side; that surface
-  // is intentionally not gated this way.)
-  const isSteward = !!(
-    currentOrg &&
-    (currentOrg.user_role === 'steward' || currentOrg.user_role === 'owner')
-  );
+  // org.delete is hardcoded Steward-only (not matrix-routed), so this gate
+  // mirrors the backend's role check. Sub-org delete in SubOrgSettings is
+  // matrix-routed via sub_org.delete and uses useHasPermission instead.
+  const isSteward = currentOrg?.user_role === 'steward';
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [joinPolicy, setJoinPolicy] = useState('approval_required');
@@ -229,6 +212,10 @@ export default function OrgSettings() {
     try {
       await api.delete(`/api/orgs/${currentOrg.slug}`);
       localStorage.removeItem('currentOrgSlug');
+      // Phase 16 F5 — also clear the lastOrgSlug used by Nav.jsx so the
+      // user's next visit to /settings doesn't try to resolve nav links
+      // for an org that no longer exists.
+      localStorage.removeItem('lastOrgSlug');
       window.location.href = '/orgs';
     } catch (e) {
       toast.error(e.message || 'Failed to delete');
@@ -356,7 +343,18 @@ export default function OrgSettings() {
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-10">
       <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Organization Settings</h1>
 
-      {/* General */}
+      {/* General — Phase 16 F4 moves the Save button from the page bottom
+          to immediately below this section so per-section save UX is
+          consistent across the page (every section now has its Save
+          button adjacent rather than the user having to scroll to a
+          page-bottom button after editing top-of-page fields). The
+          handleSave call still PATCHes the same payload through the
+          existing endpoint — only the JSX position of the button
+          changed; the lower sections that have no per-section button
+          (Voting Defaults / Threshold Defaults / Voting Methods /
+          Sustained-Majority / Deliberation / Public Delegates) are
+          still saved through this same button, since handleSave sends
+          the whole settings object. */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">General</h2>
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
@@ -425,6 +423,20 @@ export default function OrgSettings() {
               ))}
             </div>
           </div>
+        </div>
+        {/* Phase 16 F4 — Save button repositioned from page bottom to here
+            so the general-settings save action is adjacent to its fields. */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-6 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+          >
+            {saving ? 'Saving...' : 'Save Settings'}
+          </button>
+          {msg && (
+            <span className={`text-sm ${msg === 'Settings saved' ? 'text-green-600' : 'text-red-600'}`}>{msg}</span>
+          )}
         </div>
       </section>
 
@@ -1019,19 +1031,13 @@ export default function OrgSettings() {
         </div>
       </section>
 
-      {/* Save Button */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="px-6 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
-        >
-          {saving ? 'Saving...' : 'Save Settings'}
-        </button>
-        {msg && (
-          <span className={`text-sm ${msg === 'Settings saved' ? 'text-green-600' : 'text-red-600'}`}>{msg}</span>
-        )}
-      </div>
+      {/* Phase 16 F4 — the Save Settings button previously lived here at
+          the bottom of the page; it has been moved up to the General
+          section so users editing org name/description/join-policy see
+          a section-adjacent save action. The same button still PATCHes
+          the entire settings payload (general + voting defaults + voting
+          methods + sustained-majority + deliberation + public delegates),
+          so this position change is JSX-only. */}
 
       {/* Danger Zone — Phase 12 Stage 2 F7 D4 UI hiding (see isSteward
           derivation comment at the top of this file). */}

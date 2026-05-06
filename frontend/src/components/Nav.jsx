@@ -201,6 +201,37 @@ export default function Nav() {
   const menuRef = useRef(null);
   const adminRef = useRef(null);
 
+  // Phase 16 F5 — preserve the org-aware top nav on non-org-scoped routes
+  // like /settings and /orgs. When `currentOrg` is null (URL has no org
+  // slug), fall back to a "navOrg" derived from `localStorage.lastOrgSlug`
+  // (written by OrgContext on every org-scoped page mount). The nav then
+  // resolves Proposals / Delegations / Admin links against navOrg's slug
+  // so the user has working navigation back to their last-visited org.
+  // When neither currentOrg nor a valid lastOrgSlug exists (brand-new
+  // user, never visited an org, or org membership lost), navOrg falls
+  // back to null and the org-context section of the nav is hidden — the
+  // brand link still routes to /orgs (the OrgSelector picker).
+  //
+  // Permissions are read from currentOrg only. The fallback path renders
+  // generic nav links (Proposals / Delegations) but does NOT speculate
+  // about the user's permissions on the fallback org, so admin-tab
+  // visibility on /settings stays correct (hidden, since we don't know).
+  // Permissioned subsections only appear when currentOrg is concrete.
+  const fallbackOrg = (() => {
+    if (currentOrg) return null;
+    let lastSlug = null;
+    try {
+      lastSlug = localStorage.getItem('lastOrgSlug');
+    } catch { /* SSR / private mode — no fallback */ }
+    if (!lastSlug) return null;
+    // Only return a real userOrgs entry — if the user has lost access
+    // to that org, we don't want to render broken links. userOrgs only
+    // contains parent orgs, which is correct: lastOrgSlug is always
+    // a parent slug per the OrgContext write effect.
+    return userOrgs.find(o => o.slug === lastSlug && !o.parent_org_id) || null;
+  })();
+  const navOrg = currentOrg || fallbackOrg;
+
   // currentOrg is a sub-org when it has a parent_org_id; the legacy admin
   // dropdown (parent-org admin pages) is hidden in that mode because those
   // pages target the parent org's slug. Sub-org admin pages have their own
@@ -283,7 +314,7 @@ export default function Nav() {
       <div className="max-w-6xl mx-auto px-4 flex items-center justify-between h-14">
         <div className="flex items-center gap-6">
           <Link
-            to={currentOrg ? urlFor(currentOrg, 'proposals') : '/orgs'}
+            to={navOrg ? urlFor(navOrg, 'proposals') : '/orgs'}
             className="font-semibold text-sm tracking-wide hover:text-blue-100 transition-colors"
           >
             Liquid Democracy
@@ -292,11 +323,17 @@ export default function Nav() {
           {/* Org switcher tree (Phase 8.5) */}
           <OrgSwitcher />
 
-          {/* Desktop nav links */}
-          {currentOrg && (
+          {/* Desktop nav links — Phase 16 F5: render the org-context links
+              when navOrg is resolvable (either currentOrg or the fallback
+              from localStorage.lastOrgSlug). On /settings and /orgs the
+              fallback path keeps Proposals / Delegations links visible
+              and pointing at the user's last-visited org so they aren't
+              stranded. Notifications is account-scoped and renders below
+              regardless. */}
+          {navOrg && (
             <div className="hidden md:flex items-center gap-6">
               <NavLink
-                to={urlFor(currentOrg, 'proposals')}
+                to={urlFor(navOrg, 'proposals')}
                 end
                 className={({ isActive }) =>
                   `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
@@ -305,7 +342,7 @@ export default function Nav() {
                 Proposals
               </NavLink>
               <NavLink
-                to={urlFor(currentOrg, 'delegations')}
+                to={urlFor(navOrg, 'delegations')}
                 className={({ isActive }) =>
                   `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
                 }
@@ -376,6 +413,23 @@ export default function Nav() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Phase 16 F3 — top-level Notifications link. Account-scoped
+              (no permission gate; notifications are per-user) and visible
+              to any authenticated user, including on non-org-scoped pages
+              like /settings and /orgs. Sits between the org primary
+              content and the bell so the relationship between "feed"
+              and "bell quick-glance" reads visually. The bell
+              (NotificationBadge below) stays unchanged. */}
+          {user && (
+            <NavLink
+              to="/notifications"
+              className={({ isActive }) =>
+                `hidden md:inline text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+              }
+            >
+              Notifications
+            </NavLink>
+          )}
           <NotificationBadge />
 
           {user && (
@@ -469,23 +523,36 @@ export default function Nav() {
                 : currentOrg.name}
             </p>
           )}
-          {currentOrg && (
+          {/* Phase 16 F5 — mobile mirror uses navOrg (currentOrg or
+              localStorage.lastOrgSlug fallback) so /settings preserves
+              navigation back to the last-visited org. */}
+          {navOrg && (
             <>
               <Link
-                to={urlFor(currentOrg, 'proposals')}
+                to={urlFor(navOrg, 'proposals')}
                 onClick={() => setMobileOpen(false)}
                 className="block py-2 text-sm text-blue-200 hover:text-white"
               >
                 Proposals
               </Link>
               <Link
-                to={urlFor(currentOrg, 'delegations')}
+                to={urlFor(navOrg, 'delegations')}
                 onClick={() => setMobileOpen(false)}
                 className="block py-2 text-sm text-blue-200 hover:text-white"
               >
                 My Delegations
               </Link>
             </>
+          )}
+          {/* Phase 16 F3 — mobile mirror of the desktop Notifications link. */}
+          {user && (
+            <Link
+              to="/notifications"
+              onClick={() => setMobileOpen(false)}
+              className="block py-2 text-sm text-blue-200 hover:text-white"
+            >
+              Notifications
+            </Link>
           )}
           {showLegacyAdminDropdown && parentSlugForLinks && (
             <>

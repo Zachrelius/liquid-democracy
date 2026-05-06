@@ -27,6 +27,51 @@ import models
 _MAX_PARENT_WALK_DEPTH = 5
 
 
+# Phase 16 — platform-default durations. Mirror the values in
+# `routes/organizations.py::DEFAULT_ORG_SETTINGS` (default_deliberation_days=14,
+# default_voting_days=7). Floats so callers can compare fractional values
+# from POST/PATCH bodies without int-vs-float type confusion.
+PLATFORM_DEFAULT_DELIBERATION_DAYS: float = 14.0
+PLATFORM_DEFAULT_VOTING_DAYS: float = 7.0
+
+
+def get_default_proposal_durations(
+    org: Optional[models.Organization],
+) -> tuple[float, float]:
+    """Return ``(deliberation_days, voting_days)`` defaults for new
+    proposals in this org.
+
+    Phase 16 — central helper for org-level duration defaults. Reads
+    ``Organization.settings['default_deliberation_days']`` and
+    ``Organization.settings['default_voting_days']`` if present; falls
+    back to the platform-wide defaults (14.0 / 7.0, matching
+    ``routes/organizations.py::DEFAULT_ORG_SETTINGS``).
+
+    Mirror of ``get_default_proposal_thresholds``: same Optional[org] +
+    settings.get + cast-to-float pattern. NO migration backfill of these
+    keys into existing org settings JSON — defaults-if-absent here covers
+    every existing org transparently.
+
+    Like the threshold helper, this does NOT walk the parent chain via
+    ``get_org_config``: per-sub-org override is deferred (Phase 16
+    "What this pass is NOT" §"Per-sub-org default durations"). Sub-orgs
+    inherit parent defaults today.
+
+    Returns floats unconditionally so callers can compare against
+    request-body floats safely (a stored int 7 still resolves to 7.0).
+    """
+    if org is None:
+        return (PLATFORM_DEFAULT_DELIBERATION_DAYS, PLATFORM_DEFAULT_VOTING_DAYS)
+    settings = org.settings or {}
+    delib = settings.get(
+        "default_deliberation_days", PLATFORM_DEFAULT_DELIBERATION_DAYS,
+    )
+    vote = settings.get(
+        "default_voting_days", PLATFORM_DEFAULT_VOTING_DAYS,
+    )
+    return (float(delib), float(vote))
+
+
 def get_default_proposal_thresholds(
     org: Optional[models.Organization],
 ) -> tuple[float, float]:

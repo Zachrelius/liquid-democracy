@@ -304,6 +304,8 @@ enforced in code.
 >
 > Defense-in-depth posture unchanged: backend permission checks (`has_permission(user, org, key)`) remain the source of truth. UI gating just prevents the confusing-error UX path; a direct API caller (curl, custom client) still gets 403 / 400 on operations they lack permission for.
 
+> **Phase 16 update (2026-05-04):** new 26th permission key `proposal.set_durations` (default Steward + Admin + Moderator TRUE; Member FALSE). Same exposure shape as `proposal.set_thresholds` — gates per-proposal override of org-default deliberation/voting durations on `POST /api/proposals` and `PATCH /api/proposals/{id}` via the "differs from defaults" check; callers without the permission either omit the fields or pass values matching org defaults. No new data-exposure surface. Validation floors (`voting_days >= 0.05`, `deliberation_days >= 0`) are independent of the permission gate — they reject 400 regardless of caller permissions to prevent pathological zero-second voting windows. Defense-in-depth posture unchanged: backend `has_permission` enforcement is the source of truth; UI hides the editable inputs (replaced with read-only display of the org's defaults) for callers without the permission, matching the Phase 12.6 threshold-form-copy pattern.
+
 ### Tier 1 — Authenticated user
 
 Standard `Depends(get_current_user)`. A logged-in user may:

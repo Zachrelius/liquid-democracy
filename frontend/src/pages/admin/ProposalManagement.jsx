@@ -9,6 +9,24 @@ import LinkedPolisesPicker from '../../components/LinkedPolisesPicker';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
 
+// Phase 16 F1 — format a day-count for display. Whole numbers render as
+// integers ("3 days"); fractional values keep up to two decimal places so
+// 0.05 renders as "0.05" rather than "0.0500" or "5e-2". Trailing zeros
+// stripped so 0.50 → "0.5".
+function formatDays(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return '?';
+  const n = Number(value);
+  if (Number.isInteger(n)) return String(n);
+  // Two decimal places is enough for the 0.05 floor; trim trailing zeros.
+  return n.toFixed(2).replace(/\.?0+$/, '');
+}
+
+function pluralizeDays(value) {
+  // Spec line 224 example uses "day(s)"; we render "day"/"days" based on
+  // the numeric value (1 day, 2 days, 0.5 days, 0 days).
+  return Number(value) === 1 ? 'day' : 'days';
+}
+
 function OptionsEditor({ options, onChange }) {
   function updateOption(idx, field, value) {
     const updated = options.map((o, i) => i === idx ? { ...o, [field]: value } : o);
@@ -109,6 +127,12 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
   // org defaults. The form simply omits pass_threshold/quorum_threshold
   // from the POST payload in that case.
   const canSetThresholds = useHasPermission('proposal.set_thresholds');
+  // Phase 16 F1 — duration inputs are gated on `proposal.set_durations`.
+  // Same shape as Phase 12.5 thresholds: members without the permission see
+  // a read-only display of the org defaults; members with it see editable
+  // number inputs (deliberation integer days, voting fractional days with
+  // a 0.05 floor / 0.05 step for live-poll use cases).
+  const canSetDurations = useHasPermission('proposal.set_durations');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [votingMethod, setVotingMethod] = useState('binary');
@@ -119,6 +143,16 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
   const [scope, setScope] = useState('');
   const [passThreshold, setPassThreshold] = useState(orgSettings?.default_pass_threshold ?? 0.5);
   const [quorumThreshold, setQuorumThreshold] = useState(orgSettings?.default_quorum_threshold ?? 0.4);
+  // Phase 16 F1 — duration state. Pre-populated from org defaults so the
+  // visible numbers match what the backend would default to. When the user
+  // lacks `proposal.set_durations` we still hold these values but only
+  // include them in the payload when the editor is shown.
+  const [deliberationDays, setDeliberationDays] = useState(
+    orgSettings?.default_deliberation_days ?? 7,
+  );
+  const [votingDays, setVotingDays] = useState(
+    orgSettings?.default_voting_days ?? 3,
+  );
 
   // Decision 3: sub-org proposals can use parent-org-wide topics + that sub-
   // org's own topics. Parent-org-wide proposals can use ONLY parent-org-wide
@@ -202,6 +236,14 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
       if (canSetThresholds) {
         payload.pass_threshold = passThreshold;
         payload.quorum_threshold = quorumThreshold;
+      }
+      // Phase 16 F1/B3 — same pattern for durations. Only include when the
+      // user has `proposal.set_durations`; otherwise the backend uses the
+      // org defaults. Sending values that differ from defaults without the
+      // permission would 400.
+      if (canSetDurations) {
+        payload.deliberation_days = deliberationDays;
+        payload.voting_days = votingDays;
       }
       if (scope) payload.sub_org_id = scope;
       if (isMultiOption) {
@@ -441,6 +483,74 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
             <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>
             {' / '}
             <strong>{Math.round((orgSettings?.default_quorum_threshold ?? 0.40) * 100)}% quorum</strong>.
+          </p>
+        </div>
+      )}
+
+      {/* Phase 16 F1 — duration inputs gated on `proposal.set_durations`.
+          Same shape as the Phase 12.5 thresholds gate above. Authors with
+          the permission can override per-proposal (Q2: 0.05-day voting
+          floor enables sub-day live polls; 0-day deliberation valid for
+          time-pressure decisions). Authors without it see the org defaults
+          read-only — same UX as the Phase 12.6 threshold-form-copy fix:
+          actual numbers, NOT "ask an admin" copy. */}
+      {canSetDurations ? (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Deliberation duration (days)
+            </label>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={deliberationDays}
+              onChange={e => {
+                const v = parseFloat(e.target.value);
+                if (Number.isNaN(v)) return;
+                setDeliberationDays(Math.max(0, v));
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              0 days skips deliberation (straight to voting).
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Voting duration (days)
+            </label>
+            <input
+              type="number"
+              min={0.05}
+              step={0.05}
+              value={votingDays}
+              onChange={e => {
+                const v = parseFloat(e.target.value);
+                if (Number.isNaN(v)) return;
+                setVotingDays(Math.max(0.05, v));
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              Minimum 0.05 days (72 minutes) for live polls.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">Durations</p>
+          <p className="text-sm text-[#2C3E50]">
+            This proposal will use the organization's defaults:{' '}
+            <strong>
+              Deliberation: {formatDays(orgSettings?.default_deliberation_days ?? 7)}{' '}
+              {pluralizeDays(orgSettings?.default_deliberation_days ?? 7)}
+            </strong>
+            {' / '}
+            <strong>
+              Voting: {formatDays(orgSettings?.default_voting_days ?? 3)}{' '}
+              {pluralizeDays(orgSettings?.default_voting_days ?? 3)}
+            </strong>.
           </p>
         </div>
       )}

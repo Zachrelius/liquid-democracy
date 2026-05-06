@@ -407,6 +407,14 @@ class Proposal(Base):
     tie_resolution: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     pass_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.50)
     quorum_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.40)
+    # Phase 16 — per-proposal duration overrides.
+    # null = inherit org default at advance-to-voting time; non-null = the
+    # author/editor (with `proposal.set_durations`) explicitly set a custom
+    # window. Floats so live-poll sub-day voting windows (>= 0.05 days =
+    # 72 minutes) are representable. The actual voting_end DateTime is
+    # still computed at advance-time from voting_start + voting_days.
+    deliberation_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    voting_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # Phase 8: per-proposal sustained-majority override.
     # null = inherit org default; True/False = explicit per-proposal opt-in/out.
     # Authors can only set non-null when org has
