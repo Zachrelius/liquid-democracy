@@ -2,15 +2,20 @@ import { Link } from 'react-router-dom';
 
 /**
  * Phase 13 D1 — public help page for the notification system.
+ * Phase 13.3 D1 — updated for per-event cadence + 4-column matrix +
+ * three voting-opened event types + adjustable quiet hours + retired
+ * sustained_majority.floor_approached.
  *
  * Route: /help/notifications (public — no `ProtectedRoute` wrapping;
  * mirrors the other /help/* pages).
  *
  * Content covers:
  *   1. Opt-in by default — explicit statement of philosophy.
- *   2. The 12 event types with one-line descriptions.
- *   3. The four digest cadence options (real-time / daily / weekly / off).
- *   4. How quiet hours work.
+ *   2. The 13 event types with one-line descriptions, including the
+ *      three voting-opened events with priority-resolution semantics.
+ *   3. The four channels (in-app, weekly digest, daily digest, immediate
+ *      email) — per-event, NOT mutually exclusive.
+ *   4. How adjustable quiet hours work.
  *   5. That transactional emails (verification, password reset) are NOT
  *      affected by these preferences.
  */
@@ -23,7 +28,7 @@ export default function NotificationsHelp() {
         </Link>
         <h1 className="text-2xl font-bold text-[var(--brand-primary)]">About Notifications</h1>
         <p className="text-sm text-gray-500 mt-1">
-          What events fire, how to opt in, and how digests + quiet hours work.
+          What events fire, how to opt in per-channel-per-event, and how quiet hours work.
         </p>
       </div>
 
@@ -33,12 +38,31 @@ export default function NotificationsHelp() {
           Liquid Democracy is built around the idea that you can delegate to people you trust and get on with your life. That means we do not ship a notification system that pings you about everything. Every event-channel pair starts disabled; you choose what you want to be notified about.
         </p>
         <p className="text-sm text-gray-700 leading-relaxed">
-          Open the notification center (the bell icon) and visit Notification preferences in your account settings to enable any of the 12 event types in either the in-app feed or via email.
+          Open the notification center (the bell icon) and visit Notification preferences in your account settings to enable any of the 13 event types in any of the four channels.
         </p>
       </section>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">The 12 event types</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">The four channels (per-event)</h2>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          For each event type, you choose any combination of these channels — they're independent toggles, not mutually exclusive:
+        </p>
+        <ul className="text-sm text-gray-700 leading-relaxed list-disc pl-6 space-y-1">
+          <li><strong>In-App</strong> — a row appears in your notification dropdown + on <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">/notifications</code>. Silent until you check the badge.</li>
+          <li><strong>Weekly Digest</strong> — included in a single email at 9am Monday in your timezone, grouped by org and event type.</li>
+          <li><strong>Daily Digest</strong> — included in a single email at 9am every day in your timezone.</li>
+          <li><strong>Immediate Email</strong> — fires as soon as the event happens (subject to quiet hours, see below).</li>
+        </ul>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          The columns on the preferences page are ordered left-to-right by ascending intrusiveness so you can pick the gentlest channel that gives you the signal you want. You can pick more than one — for example, "Daily Digest + Immediate Email" on a high-importance event for belt-and-suspenders coverage.
+        </p>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          Empty digests don't send. If you opt into Daily Digest for an event but no events fire on a given day, no email goes out.
+        </p>
+      </section>
+
+      <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">The 13 event types</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Events are grouped into 5 categories on the preferences page:
         </p>
@@ -53,10 +77,16 @@ export default function NotificationsHelp() {
           <div>
             <p className="font-semibold">Proposals</p>
             <ul className="list-disc pl-6 space-y-1">
-              <li><strong>Proposal entered voting</strong> — voting opened on a proposal in an org you belong to (and you are eligible to vote).</li>
+              <li><strong>Voting opened (generic)</strong> — voting opened on a proposal in an org you belong to. The legacy "everyone gets the same notification" event; useful if you don't want to think about delegation state.</li>
+              <li><strong>Voting opened (you vote)</strong> — voting opened on a proposal whose topic you have NOT delegated. You need to vote yourself.</li>
+              <li><strong>Voting opened (you vote on others' behalf)</strong> — voting opened on a proposal whose topic someone has delegated to you. You're voting on their behalf.</li>
               <li><strong>Proposal closed</strong> — a proposal you voted on or authored has reached its final state (passed / failed).</li>
-              <li><strong>Vote support nearing floor</strong> — for proposals using sustained-majority voting, a heads-up that support has dropped near the configured floor.</li>
             </ul>
+            <div className="mt-2 p-3 bg-amber-50/50 border border-amber-200 rounded-lg">
+              <p className="text-xs text-gray-700 leading-relaxed">
+                <strong>One notification per voting-opened trigger.</strong> If you opt into multiple voting-opened events, you'll receive the most relevant one for each proposal — never multiple notifications for the same proposal entering voting. Priority order: "delegated to you" beats "you vote" beats generic.
+              </p>
+            </div>
           </div>
           <div>
             <p className="font-semibold">Membership</p>
@@ -84,34 +114,24 @@ export default function NotificationsHelp() {
       </section>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Email digest cadence</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Quiet hours (adjustable)</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
-          For events you have enabled the email channel on, you choose how often the emails arrive:
+          Below the matrix, a single checkbox: "Don't email me during quiet hours." When enabled, two time pickers appear — Start and End — letting you set the window in your timezone. Defaults are 21:00 (9pm) start and 09:00 (9am) end, but you can pick any window.
         </p>
-        <ul className="text-sm text-gray-700 leading-relaxed list-disc pl-6 space-y-1">
-          <li><strong>Real-time</strong> — every event sends its own email when it happens.</li>
-          <li><strong>Daily (9am local)</strong> — one digest email per day at 9am in your timezone, grouping all events from the prior 24 hours by org and event type. Empty digests are not sent.</li>
-          <li><strong>Weekly (Monday 9am local)</strong> — one digest per week, same shape as daily but covering the prior 7 days.</li>
-          <li><strong>Off</strong> — no email is sent for any event, regardless of per-event email toggles. The in-app feed still works normally.</li>
-        </ul>
-      </section>
-
-      <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Quiet hours</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
-          A single checkbox on the preferences page: "Don't email me between 9pm and 9am in my timezone." When enabled, real-time emails that would arrive in the quiet window are queued and delivered at 9am instead. Quiet hours only affects the email channel — in-app notifications appear in the feed regardless of the time of day (the in-app feed is silent by design, so quiet hours doesn't apply to it).
+          During the quiet window, immediate emails that would have arrived are queued and delivered when the window ends. Daily and Weekly digests are unaffected (they already run on a schedule). In-App notifications also unaffected — the in-app feed is silent by design, so quiet hours doesn't apply to it.
         </p>
       </section>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
         <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Opting out</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
-          You can change any preference at any time. Three options:
+          You can change any preference at any time. Three paths:
         </p>
         <ul className="text-sm text-gray-700 leading-relaxed list-disc pl-6 space-y-1">
-          <li>Visit Notification preferences in your account settings and uncheck the events you no longer want.</li>
-          <li>Click the "Unsubscribe from these" link in the footer of any notification email — that flips just that event-type's email channel to off.</li>
-          <li>Set the digest cadence to "Off" to silence all email notifications without changing per-event toggles.</li>
+          <li>Visit Notification preferences in your account settings and uncheck the channels you no longer want, per event.</li>
+          <li>Click the "Unsubscribe from these" link in the footer of any notification email — that flips ALL email channels (immediate / daily / weekly) for that event type to off in one click. The In-App channel stays on if you had it on.</li>
+          <li>Uncheck every email channel for an event to stop email entirely while keeping the in-app feed.</li>
         </ul>
       </section>
 
