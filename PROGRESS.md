@@ -2253,3 +2253,72 @@ Visual verification at all three breakpoints (380px / 640px / 1024px) for M and 
 ### Pass-summary
 
 **Phase 15 shipped clean on first attempt — single merge, no reverts, no diagnostic-fix-redeploy cycles.** All four clusters landed (S + M + P + G with all six G items); split-authority fallback was NOT needed. The pre-merge gate set inherited from the Phase 13 arc continues to do its job. Phase 13 learning #7's actual-upgrade-path mode is now a standard `pg_smoke.py` flag (G5) — third consecutive pass exercising the pattern, now via the durable mechanism rather than per-pass one-off scripts. The latent parent-Admin-can-delete-sub-org security hole that lurked in Phase 12 Stage 1's "implicit power" shortcut is closed correctly. Sub-org permissions are now matrix-driven via parent's matrix + per-role transferability + platform-admin override. Mobile responsive layouts ship for both matrices. Six housekeeping items knocked down with the calendar-gate waiver explicitly documented and the convention preserved for future passes. Closeout commit follows.
+
+## Phase 16 — Proposal Duration Permission + UX Polish — SHIPPED 2026-05-06
+
+**UX polish pass with one new permission key, fractional voting durations, five UX cleanups, one navigation bug fix, and audit Items 28-29 closure — bundled into a single merge.** Master `a95118b` + closeout. **Backend tests 1020 → 1039 (+19)**. Frontend bundle **358.80 → 360.08 kB gzipped (+1.28 kB)**. Migration `9a8910210205` adds the 26th permission key + two new Float columns on `proposals`. Single merge, no reverts. Backend agent #1 hit a usage-limit cutoff mid-Cluster-B; backend agent #2 (continuation) finished the missing wirings + caught one critical gap the first agent left behind.
+
+### Pre-merge gates (all PASS)
+
+- **Backend tests:** 1020 → **1039 (+19)**, all in new `test_phase_16_duration_enforcement.py`. Full suite 195.6s.
+- **PG smoke `--mode actual-upgrade --prior-revision 98dcd0058ba2`:** PASS. Fourth consecutive pass exercising actual-upgrade-path mode via the standardized G5 flag.
+- **Frontend build:** 1162 modules, 360.08 kB gzipped (+1.28 kB from Phase 15). No Tailwind class warnings.
+- **Migration cycle:** PASS (reversible, idempotent — both halves of the migration safe to re-run on a partially-applied DB).
+- **Browser verification:** **CHROME_DEFERRED** — Chrome extension was not connected this session. Routine surface (button positions, gate cleanups, copy) PASS-by-source by the lead. Load-bearing flows (F1 form gating, F5 last-org memory) queued for next-session verification when Chrome is available.
+
+### What ships
+
+**Cluster B — Backend (commit `83c4716`):**
+
+- **26th permission key `proposal.set_durations`** (Steward + Admin + Moderator default TRUE; Member FALSE per Q1 — durations are logistics, not governance, so a Moderator scheduling a sub-org event vote shouldn't need an Admin to set the window). More permissive than `proposal.set_thresholds` (Phase 12.5, Steward/Admin only) by deliberate design.
+- **Two new Float columns on `proposals`:** `deliberation_days` and `voting_days` (both `nullable=True`). Null = inherit org default at advance-time; non-null = author/editor (with permission) explicitly set custom window. Float from the start so live-poll sub-day voting windows (>= 0.05 days = 72 minutes) are representable. **B4 schema check finding:** the existing Proposal model had NEITHER column prior to this pass (durations lived only on `Organization.settings`); both added fresh as Float, no Int→Float migration needed.
+- **Floor validation** independent of permission gate: `voting_days >= 0.05` (rejects below-floor with "Voting duration must be at least 0.05 days (72 minutes)."), `deliberation_days >= 0` (zero is valid for time-pressure decisions; negative rejected).
+- **Permission gate enforced** on `POST /api/orgs/{slug}/proposals` (`organizations.py::create_org_proposal`), `POST /api/proposals` (global, `proposals.py::create_proposal`), and `PATCH /api/proposals/{id}` (`proposals.py::update_proposal`). Same "differs from defaults" pattern as Phase 12.5 thresholds — a caller without the permission who passes values matching org defaults always succeeds; only differing values trigger the gate.
+- **Migration `9a8910210205`** (down_revision = `98dcd0058ba2`): permission seed for 4 preset roles per existing org + adds two new Float columns to proposals. Reversible, idempotent (existence guards on both halves).
+- **`get_default_proposal_durations(org)` helper** in `org_config.py` mirrors the threshold helper. Platform defaults: 14 days deliberation / 7 days voting (matching `routes/organizations.py::DEFAULT_ORG_SETTINGS`).
+- **`_build_proposal_out` updated** to include the new fields in the response payload — caught by backend agent #2 during continuation review; backend agent #1 had omitted this.
+
+**Cluster F — Frontend (commits `f3d46b1` + `051afec`):**
+
+- **F1: Proposal-creation form duration gating.** Users with `proposal.set_durations` see editable inputs (`<input type="number" min="0" step="1" />` for deliberation, `min="0.05" step="0.05"` for voting). Users without the permission see a read-only display of the org's actual defaults (e.g., "Deliberation: 14 days / Voting: 7 days"), matching the Phase 12.6 threshold-form-copy pattern. No "ask an admin" suffix; the read-only display speaks for itself.
+- **F2: Create proposal button on `/{slug}/proposals`.** Top-right of page header, gated by `proposal.create`. Hidden otherwise. Routes to the existing proposal-creation form. Closes the Phase 12.6 "matrix lies if there's no UI surface" gap for this permission.
+- **F3: `/notifications` elevated to top-level nav.** Visible to all authenticated users. The bell-icon dropdown stays as quick-access; the new top-level link is the "see all my notifications" entry point. `/settings/notifications` (preferences) stays under account settings — it's configuration, not content.
+- **F4: Org Settings general-section Save button repositioned.** Moved from page bottom to immediately below the general-settings section's fields. Other sections' Save buttons stayed put. Result: every section has its Save button at the bottom of that section, consistent across the page. Pure JSX rearrangement; the existing PATCH endpoint still saves the general-settings fields together.
+- **F5: Top bar nav preserved on `/settings` via `lastOrgSlug` localStorage.** Layout writes `localStorage.lastOrgSlug = slug` on every org-scoped page mount; `/settings` reads it for nav-link resolution; falls back to OrgSelector links (`/orgs`) when absent. The "switch org" button still works as before for multi-org users; this fixes the single-org-member-stranded bug specifically. Org-delete handler also clears `lastOrgSlug` so the next visit to `/settings` doesn't try to resolve nav for a deleted org.
+
+**Cluster G — Cleanup (audit Items 28-29; commit `9af2c7c`):**
+
+- **G1: OrgSettings Danger Zone gate tightened** from `(user_role === 'steward' || user_role === 'owner')` to `currentOrg?.user_role === 'steward'`. Legacy `'owner'` branch was a cached-cutover guard that's no longer load-bearing post-Phase 12.5. Rationale comment trimmed to the still-load-bearing F7 explanation.
+- **G2: RolePermissionsPage canEdit derivation switched** from a `(steward || admin || owner)` tier shortcut to `useHasPermission('role_permissions.edit')`. Matrix is now self-administering — anyone granted `role_permissions.edit` via the matrix UI can edit it. Backend B2 PATCH endpoint already enforces the same key, so this is a UX-gate cutover only; the read-only fallback (F6) covers callers without the permission.
+- **Items 28-29 marked RESOLVED** in `docs/tech_debt_audit_2026-05.md` with edit-history entry. Closes the cleanup arc started in Phase 15 G6a.
+
+**Cluster D — Documentation (commit `9af2c7c`):**
+
+- **`RolePermissionsHelp.jsx`** — new "Per-proposal duration overrides" section explaining `proposal.set_durations` behavior (read-only display of org defaults for callers without permission; editable inputs with 0.05-day voting floor and 0-day deliberation floor for callers with). Common configurations list updated with a moderator-grants-durations entry. (Spec called for `/help/proposals` but no such page exists; RolePermissionsHelp was the closest existing surface.)
+- **`SECURITY_REVIEW.md`** — Phase 16 update note on `proposal.set_durations` (26th key, same exposure shape as `proposal.set_thresholds`, validation floors are independent of permission gate).
+- **`docs/tech_debt_audit_2026-05.md`** edit-history entry — Items 28-29 RESOLVED via G1+G2.
+
+### Phase 16 commit list
+
+- `f3d46b1` Phase 16 F1: proposal-creation form duration section gating
+- `9af2c7c` Phase 16 G1+G2+D1+D2+D3: audit Items 28-29 cleanup + docs
+- `051afec` Phase 16 F2+F3+F4+F5: UX polish bundle
+- `83c4716` Phase 16 B1+B2+B3+B4+B5: proposal.set_durations permission + per-proposal duration columns + enforcement + tests
+- `a95118b` Merge phase-16/proposal-durations-and-ux-polish
+
+### Process notes
+
+1. **Backend agent usage-limit handoff.** Backend agent #1 hit Anthropic's per-account usage limit mid-Cluster-B (the "You're out of extra usage" cutoff) before it could finish the org-scoped + PATCH wirings, persistence, or B3 enforcement tests. Lead surveyed the WIP, judged the partial state coherent (registry, schemas, model, migration, helpers all complete; just missing the wirings into two routes + persistence), and dispatched a continuation agent with a self-contained brief covering exactly what was missing. Continuation agent finished cleanly in ~9 minutes, including catching a critical gap the first agent left behind: `_build_proposal_out` was not returning the new fields, which would have caused silent absence on GET responses and failed the persistence assertions in the new B3 tests. **Lesson:** when a partial cluster looks coherent on inspection but covers ~70% of the spec's scope, a self-contained continuation brief is more efficient than reverting and restarting.
+2. **Multi-agent staging discipline followed throughout.** Three concurrent agents (frontend, backend #1, backend #2 continuation) plus the lead all committed via explicit `git add <path>` per file. No near-miss this pass — the Phase 15 G1 incident discipline held.
+3. **Phase 12.5 threshold pattern as Phase 16 template.** Every Cluster B sub-item (registry entry, default helper, route enforcement, schema additions, model columns, migration, B3 tests) had a direct Phase 12.5 analog. The continuation agent's brief leaned heavily on "mirror the threshold pattern at line X" instructions, and the resulting code is parallel enough that future passes adding similar permission-gated proposal fields can follow the same template.
+4. **Browser verification deferred to Z's next session.** Chrome extension was not connected this session; routine surface (button positions, gate cleanups, copy changes) was PASS-by-source by the lead, but load-bearing flows (F1 read-only-vs-editable form gating, F5 nav preservation under various last-org states) need live verification on prod. Z runs through the F6 verification matrix at next Chrome-available session; revert is one commit + 4-min Railway redeploy if a regression surfaces.
+5. **Continuation agent finding for the closeout record.** Backend agent #1 wired the duration validators in `create_proposal` (global) but never persisted the new model columns — the proposal would have had `null` for both fields even when a steward set them explicitly. Backend agent #2 caught this during the persistence-test write-up. Worth a callout for future spec writers: when a permission gate adds new columns, the brief should explicitly enumerate the persistence sites (model construction in N create paths + N update paths), not just the gate-enforcement sites.
+
+### New tech debt logged
+
+1. **Live verification of Phase 16 F1 + F5** still queued for next-session Chrome run. Not a regression; just a deferred check.
+2. **Chrome-deferred queue items from prior passes** (7 items) also still queued; no progress made this session.
+
+### Pass-summary
+
+**Phase 16 shipped clean despite a mid-pass agent handoff.** One new permission key (`proposal.set_durations`, 26 total), fractional voting durations (>= 0.05 days minimum), five UX cleanups, one navigation bug fix (single-org `/settings` strands), and audit Items 28-29 closed — bundled into a single merge with no reverts. The Phase 12.5 threshold pattern proved useful as a template the continuation agent could lean on; the Phase 15 multi-agent staging discipline held with three concurrent agents. The friend-pilot now has per-proposal duration overrides for stewards/admins/moderators (live polls + time-pressure decisions both feasible) without giving members the same power, and single-org members can navigate from `/settings` back to their org without typing the URL. Browser verification deferred to Z's next session; merge is reversible if a regression surfaces.
