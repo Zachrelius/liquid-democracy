@@ -424,6 +424,19 @@ def update_org_branding(
     current_settings = dict(org.settings or {})
     branding = dict(current_settings.get("branding") or {})
 
+    # Phase 14 B4 — intro_text lives at the top level of settings (not
+    # nested under settings.branding) since it's conceptually independent
+    # of color/logo branding even though it ships through the same PATCH
+    # endpoint. Pop it out of the branding-key loop so it doesn't get
+    # written into settings.branding.intro_text by mistake.
+    intro_text_change: Optional[dict] = None
+    if "intro_text" in requested:
+        new_intro = requested.pop("intro_text")
+        old_intro = current_settings.get("intro_text")
+        if old_intro != new_intro:
+            intro_text_change = {"old": old_intro, "new": new_intro}
+        current_settings["intro_text"] = new_intro
+
     # Diff against current state to build the audit event payload. Only
     # actually-changed fields end up in the diff so the audit log isn't
     # littered with no-op rows.
@@ -433,6 +446,9 @@ def update_org_branding(
         if old_val != new_val:
             diff[key] = {"old": old_val, "new": new_val}
         branding[key] = new_val
+
+    if intro_text_change is not None:
+        diff["intro_text"] = intro_text_change
 
     current_settings["branding"] = branding
     org.settings = current_settings
