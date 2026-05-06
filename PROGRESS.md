@@ -1944,3 +1944,123 @@ The Phase 13 notification system shipped over **five distinct deploy attempts** 
 ### Pass-summary
 
 **The Phase 13 arc is complete.** What started as a single-merge feature pass that 502'd-and-reverted blind (Phase 13, 2026-05-04) ended as a five-deploy bisected re-ship that exposed and fixed a real PG boolean-default bug + introduced two reusable defensive patterns + retired a Tier-3 audit item + landed comprehensive Railway-log-access tooling. The friend pilot now has in-app notifications + email digests + quiet hours + unsubscribe flow. The notification table is populating; the digest scheduler is running on all 4 workers with Option C row-level idempotency; SECURITY_REVIEW documents the email-content threat model. The institutional learning captured in DEPLOYMENT.md's runbook + the defensive patterns + the file-count check + the bisection methodology is, frankly, more durable value than the notification feature itself. **Next feature pass benefits from all of it.**
+
+---
+
+## Phase 13.3 — Notifications Preferences UX + Event Refinements — SHIPPED 2026-05-06
+
+**Refinement pass on Phase 13's preferences UX based on Z's first-real-use signal.** Single merge, three workstream clusters, no reverts. Master `de4f0c5`. Backend tests **924 → 947 (+23)**. Frontend bundle **353.89 → 354.57 kB gzipped (+0.68 kB)**, well within the spec's ±2 kB budget. Migration `b9e2f4a17c83` applied cleanly on prod (live log line: `Running upgrade f1a3c8d92e60 -> b9e2f4a17c83, Phase 13.3 — Preferences refinements: split email channel into 3`). All 4 workers reached `Application startup complete.` with `Digest scheduler launched.` × 4 — no failures, no fallback warnings.
+
+**Numbering note:** the spec called itself 13.2 because the planning agent's draft numbered it sequentially after 13.1. Lead chose 13.3 instead because 13.2 was already taken by the deploy-with-logs arc (W-DEPLOY-1 / W-DEPLOY-2 / W-DEPLOY-3). Substance unchanged; clearer history.
+
+### What shipped
+
+**Cluster B — Backend (commits `1faef71`, `49636e3`, `3582da0`):**
+
+- **Migration `b9e2f4a17c83`** (down_revision = `f1a3c8d92e60`):
+  - `NotificationPreference.channel` value-set: `{in_app, email}` → `{in_app, email_immediate, email_daily, email_weekly}`. Per-event cadence replaces the global one.
+  - **Data migration** (load-bearing): for each `(user_id, event_type)` row with `channel='email' AND enabled=true`, look up the user's `digest_cadence` and insert the matching new-channel row (`real_time`→`email_immediate`, `daily`→`email_daily`, `weekly`→`email_weekly`, `off`→no insert preserving the explicit "off" choice). Then delete all legacy `channel='email'` rows.
+  - `users.digest_cadence` column dropped (after data migration extracts the signal).
+  - `users.quiet_hours_start` + `quiet_hours_end` String(5) HH:MM columns added with defaults `'21:00'` / `'09:00'`.
+  - Inline cleanup: `DELETE notification_preferences WHERE event_type='sustained_majority.floor_approached'`. Idempotent.
+  - Reversible downgrade with best-effort cadence reconstruction.
+- **EVENT_REGISTRY**: `sustained_majority.floor_approached` removed (underlying detection logic was never wired in `sustained_majority_service.py`); two new entries added (`proposal.entered_voting.you_vote` + `proposal.entered_voting.delegated_to_you`). 12 → 13 events.
+- **Emission priority logic** for the proposal-entered-voting family (in `routes/proposals.py`):
+  - Priority order per recipient: `delegated_to_you` (most specific) > `you_vote` (recipient hasn't delegated on the topic) > `proposal.entered_voting` (generic fallback).
+  - For each recipient, build candidate list, resolve to highest-priority candidate the recipient has at least one channel enabled for via `user_has_any_channel_enabled`. Emit ONLY that one event.
+  - **Single-notification-per-recipient invariant** is the load-bearing correctness property; tested across 6 scenarios (delegate-target / has-delegated-away / opted-only-into-legacy / opted-into-nothing / topicless / multi-recipient priority).
+  - Helpers added: `_is_delegate_target_for_proposal`, `_has_delegated_away_for_proposal`, `_resolve_voting_event_for_recipient`.
+- **Endpoints** (`routes/notifications.py`): PATCH accepts the new 4-channel payload shape + `quiet_hours_start` / `quiet_hours_end` HH:MM strings. `digest_cadence` field is REJECTED with 400 + clear error message. `unsubscribe` endpoint flips ALL THREE email channels (immediate / daily / weekly) for the event in one click.
+- **Digest scheduler** (`digest_scheduler.py`): per-event channel filter replaces global `digest_cadence` slicing. New helper `_user_cadence_event_types(db, user_id, cadence_channel)`. Per-user `quiet_hours_end` drives the queue-flush window (was hardcoded 9am). Phase 13.2 W-DEPLOY-3 Option C atomic-claim pattern preserved.
+- **Quiet hours**: `notification_emit._in_user_quiet_hours(user, local_hour)` reads from the user's now-configurable HH:MM window. Defaults match prior 21:00-09:00 behavior so existing users see no change.
+- `sustained_majority_worker._maybe_emit_floor_approached`: short-circuits via early `return` (the registry no longer has the event); body kept for trivial re-enable when/if the underlying detection ships.
+- **Cleanup script** `backend/scripts/phase13_3_cleanup_floor_approached_prefs.py` — Z-runnable backup; the migration's inline DELETE handles it normally.
+- **Phase 13 learning #7 closer**: new `backend/scripts/phase13_3_actual_upgrade_path_check.py` stamps a fresh PG container at `f1a3c8d92e60` with sample data, runs `alembic upgrade head` directly **without `create_all` bootstrapping**, then verifies pre/post counts. This is the actual-upgrade-path test that would have caught Phase 13's boolean-default datatype mismatch had it existed earlier.
+- **Tests**: 924 → **947 (+23)**.
+  - `test_phase13_3_migration_cycle.py` (8): cycle + reversibility + data-mapping per cadence value
+  - `test_phase13_3_emission_priority.py` (7): 4 priority cases + single-notification-per-recipient invariant + topicless edge + opt-into-nothing edge
+  - `test_phase13_3_digest_routing.py` (7): daily-only / weekly-only / both-immediate-and-digest / immediate-only / quiet-hours flush
+
+**Cluster F — Frontend (commit `358120f`):**
+
+- `NotificationsPreferences.jsx` full rewrite:
+  - **4-column CSS grid matrix** `In-App | Weekly Digest | Daily Digest | Immediate Email`, ascending intrusiveness left-to-right. Identical `grid-cols-[1fr,88px,88px,88px,88px]` template across header + per-event rows so columns stay aligned.
+  - **Sticky header** (`sticky top-0 z-10`) inside the matrix card so labels stay visible while scrolling past long event lists.
+  - `CHANNELS` array as single source of truth for column order + labels; adding a 5th channel later is a one-line change.
+  - **No XOR enforcement** on email columns — each toggles independently via `toggleChannel(eventKey, channel)`. A user can check Daily AND Immediate AND Weekly on the same event for belt-and-suspenders coverage.
+  - Global Email Cadence radio button section + `digestCadence` state REMOVED entirely. New payload omits the field; backend rejects it with 400 if a stale client sends it.
+  - **Quiet hours**: when toggle ON, two `<input type="time">` pickers labeled Start / End with defaults `21:00` / `09:00`. Toggle OFF hides them. `normalizeTime()` helper handles backend `HH:MM:SS` / `HH:MM` / `null` variability.
+  - Small explanatory line above the matrix ("Pick any combination of channels per event. Email channels can be combined…") makes the no-XOR semantics legible without forcing discovery by experimentation.
+  - PATCH payload uses new shape; GET response prepopulates state.
+- Bundle: 353.89 → **354.57 kB gzipped (+0.68 kB)**. Spec budget ±2 kB.
+
+**Cluster D — Help docs + audit doc note (commit `19eb55c`):**
+
+- `NotificationsHelp.jsx` rewrite:
+  - "Email digest cadence" section replaced with "The four channels (per-event)" section (In-App / Weekly Digest / Daily Digest / Immediate Email + the no-XOR combinability + "empty digests don't send")
+  - Event-type list updated 12 → 13: removed "Vote support nearing floor"; added the three voting-opened events with an inline callout box explaining the priority-resolution invariant ("one notification per voting-opened trigger; priority order delegated_to_you > you_vote > generic")
+  - Quiet hours section: adjustable Start / End time pickers, default 21:00-09:00 in user's timezone
+  - Opting-out section: unsubscribe-link click flips all three email channels for the event in one click; "uncheck every email channel" is the per-event email-only-stop path
+- `docs/tech_debt_audit_2026-05.md` edit-history entry dated 2026-05-06 noting both retirements (`digest_cadence` column, `floor_approached` event) + flagging the new actual-upgrade-path-check pattern as worth promoting to a standard pg_smoke mode in a future cleanup pass.
+
+### Pre-merge gates (all PASS)
+
+| Gate | Result |
+|---|---|
+| Backend tests | 924 → **947 (+23)**, all passing |
+| PG smoke (mode=both, prior=f1a3c8d92e60) | **PASS both modes** |
+| **Phase 13 learning #7 actual-upgrade-path check** | **PASS** with documented pre/post counts (9 prefs → 7, 4 email→0, 1 floor_approached→0, 1 each of email_immediate/daily/weekly inserted; digest_cadence dropped; quiet_hours_start/end present with defaults) |
+| Migration cycle test (upgrade→downgrade→upgrade on SQLite) | 8/8 PASS |
+| Emission priority test | 6/6 cases + invariant test PASS |
+| W-START-CHECK (uvicorn --workers 1) | **PASS** — health 200 at +1s; `Digest scheduler launched.` log line present; no failure trace |
+| File-count check | **PASS** — 20 files / 2601 insertions / 369 deletions matches scope |
+| W-OBSERVABILITY-CHECK (railway logs streaming pre-push) | **PASS** |
+
+### Deploy result
+
+- Push at master `de4f0c5` triggered Railway redeploy.
+- Build proceeded normally.
+- New container started 12:16:34. Logs (filtered):
+  ```
+  INFO  [alembic.runtime.migration] Will assume transactional DDL.
+  INFO  [alembic.runtime.migration] Running upgrade f1a3c8d92e60 -> b9e2f4a17c83, Phase 13.3 — Preferences refinements: split email channel into 3
+  Worker starting; check_interval=300s, once=False
+  Started server process [8/9/10/11]                  ← --workers 4 confirmed
+  Digest scheduler launched. (×4)                     ← all 4 workers' defensive launch hit success path
+  digest_loop: tick complete {'daily': 0, 'weekly': 0, 'quiet': 0, 'cleaned': 0} (×4)
+  Application startup complete. (×4)
+  ```
+- **Zero `error` / `exception` / `traceback` / `Failed to start digest scheduler` lines** in deploy log scan.
+- Migration applied cleanly on prod (the live `Running upgrade` log line is the durable proof — Phase 13's pg_smoke gap that masked the boolean-default bug doesn't repeat here).
+- Bundle flipped to `index-BKrcP9Cs.js`.
+- Backend stability: **5/5 200**, response times <0.22s.
+- `/api/notifications/registry`: 401 (auth gate working — endpoint reachable).
+- Smoke suite: **5/5 PASS** (1.35s).
+
+### Browser verification (PASS-by-source)
+
+Chrome-in-Claude unavailable this session (carrying forward from Phase 13.2 sessions). The 7 emission priority tests + 7 digest routing tests + 8 migration cycle tests cover the critical paths. The **load-bearing multi-recipient priority browser test** (spec §F6) is queued alongside the existing chrome-deferred items:
+- Phase 12.7 F7 visual verification (logo upload + theming)
+- Phase 13.2 W-DEPLOY-2 Item 22 multi-org routing test
+- Phase 13.2 W-DEPLOY-3 email/digest/quiet-hours/unsubscribe end-to-end
+- **Phase 13.3 multi-recipient priority test** (alice + voter01 + voter02 opt into all three voting-opened events; trigger advance; verify each gets ONE notification at the right priority — alice gets generic, voter01 gets delegated_to_you, voter02 gets you_vote)
+- **Phase 13.3 4-column UI render** — verify the matrix renders correctly + the time pickers show/hide on the quiet-hours toggle
+
+### Phase 13.3 commit list
+
+- `358120f` Phase 13.3 F1-F5: rewrite preferences matrix with 4-column per-event channels
+- `1faef71` Phase 13.3 B1: schema migration + model + cycle tests
+- `49636e3` Phase 13.3 B2+B3: registry edits + voting-opened emission priority
+- `3582da0` Phase 13.3 B4+B5+B6: cleanup script, endpoints, digest channel routing
+- `19eb55c` Phase 13.3 D1+D2: help article rewrite + audit doc edit-history note
+- `de4f0c5` Merge phase-13-3/preferences-refinements
+
+### New tech debt logged
+
+1. **Promote actual-upgrade-path mode to standard pg_smoke.** Phase 13.3's new `phase13_3_actual_upgrade_path_check.py` is a single-purpose script. The pattern (stamp prior + sample data + alembic upgrade head WITHOUT create_all bootstrapping) is the gap Phase 13 learning #7 identified. Worth promoting to a `pg_smoke.py --mode actual-upgrade` flag so every future migration pass exercises it by default.
+2. **`sustained_majority_worker._maybe_emit_floor_approached` short-circuit** is dead code path (the function always early-returns now). Either delete the body fully when confidence is high that the event won't be re-added, or leave for trivial re-enable. Logged for future audit.
+3. **`_make_user(... digest_cadence=...)` test helper kwarg compat shim** kept the kwarg signature even though the column is gone. Helper translates to per-event channel opt-ins (daily → email_daily for every registry event). Cleaner shape would be to update the call sites to pass per-event-channel maps directly. Not blocking; can clean up in a future hygiene pass.
+
+### Pass-summary
+
+**Phase 13.3 shipped clean on first attempt** — single merge, no reverts, no diagnostic-fix-redeploy cycles. The pre-merge gate set inherited from the Phase 13 arc (backend tests + PG smoke + W-START-CHECK + file-count check + W-OBSERVABILITY-CHECK) plus the new actual-upgrade-path check (Phase 13 learning #7 closer) caught nothing this pass — the migration is clean — but exercised the path that masked the Phase 13 boolean-default bug. The notifications preferences UX is now per-event-cadence + 4-column-labeled-grid + adjustable-quiet-hours + three-voting-opened-events-with-priority-resolution. Friend-pilot first-use signal addressed; preferences page reads cleanly; one-notification-per-voting-opened-trigger invariant is the load-bearing UX correctness property and is exhaustively tested. Next chrome-available session has 5 queued visual checks (Phase 12.7 + 13.2's three deploys + 13.3 multi-recipient + 13.3 matrix render).
