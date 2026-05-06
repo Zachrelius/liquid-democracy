@@ -168,6 +168,14 @@ class SubOrgMembership(Base):
     Parallel to OrgMembership for the parent-org membership. A user can belong
     to multiple sub-orgs of the same parent (Decision 2). Sub-org membership is
     OPT-IN — being a parent-org member does not auto-create rows here.
+
+    Phase 15 Cluster S — replaced the string ``role`` column with an FK to
+    ``roles.id`` (the parent org's Role rows; sub-orgs inherit the
+    parent's matrix wholesale, no per-sub-org roles table). The legacy
+    string column is dropped by the
+    ``98dcd0058ba2_phase_15_sub_org_role_permissions`` migration.
+    Code must reference the role's ``system_key`` (via the ``role``
+    relationship) rather than the FK directly.
     """
     __tablename__ = "sub_org_memberships"
     __table_args__ = (UniqueConstraint("user_id", "sub_org_id", name="uq_sub_org_membership_user_sub_org"),)
@@ -175,7 +183,11 @@ class SubOrgMembership(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     sub_org_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id"), nullable=False, index=True)
-    role: Mapped[str] = mapped_column(String, default="member")  # member, moderator, admin, owner
+    # Phase 15 Cluster S — FK to the PARENT org's Role row (sub-orgs
+    # inherit the parent's matrix wholesale; no per-sub-org roles table).
+    role_id: Mapped[str] = mapped_column(
+        String, ForeignKey("roles.id"), nullable=False, index=True,
+    )
     status: Mapped[str] = mapped_column(String, default="active")  # active, suspended, pending_approval
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
@@ -184,6 +196,7 @@ class SubOrgMembership(Base):
         "Organization", back_populates="sub_org_memberships",
         foreign_keys=[sub_org_id],
     )
+    role: Mapped["Role"] = relationship("Role", foreign_keys=[role_id])
 
 
 class Invitation(Base):

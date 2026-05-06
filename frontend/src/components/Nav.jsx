@@ -217,35 +217,24 @@ export default function Nav() {
   // no Admin tab, same as before.
   //
   // Per-subsection visibility uses ADMIN_NAV_SUBSECTION_PERMISSIONS — each
-  // subsection appears iff the user has at least one of its mapped keys. The
-  // legacy isAdmin role-tier shortcut is preserved only as a defensive
-  // membership-fallback check inside the permission lookup (cached pre-12.5
-  // responses without `user_permissions` get a one-time grace render via
-  // role-tier).
+  // subsection appears iff the user has at least one of its mapped keys.
+  //
+  // Phase 15 G6a (2026-05-06) — the cache-safety role-tier fallback that
+  // covered cached pre-12.5 responses without `user_permissions` has been
+  // removed. The 7-day age-out window from Phase 12.5 ship (2026-05-03)
+  // would normally close 2026-05-10; Z waived it for this pass based on
+  // single-user reality (cached-bundle population the gate was protecting
+  // is effectively zero). Audit Items 26-29.
   const userPerms = Array.isArray(currentOrg?.user_permissions)
     ? currentOrg.user_permissions
-    : null;
-
-  // Cache-safety fallback: if the response predates Phase 12.5 and lacks
-  // user_permissions, fall back to the legacy isAdmin role check so the
-  // admin tab doesn't disappear during the deploy cutover. Once the bundle
-  // and backend both ship, every response carries user_permissions and this
-  // fallback is unused.
-  const legacyIsAdmin = !!(
-    currentOrg &&
-    (currentOrg.user_role === 'admin' ||
-      currentOrg.user_role === 'steward' ||
-      currentOrg.user_role === 'owner' ||
-      currentOrg.user_role === 'moderator')
-  );
+    : [];
 
   function hasAny(keys) {
-    if (userPerms) return keys.some((k) => userPerms.includes(k));
-    return legacyIsAdmin;
+    return keys.some((k) => userPerms.includes(k));
   }
 
   // Top-level admin tab: any permission at all.
-  const hasAnyAdminPerm = userPerms ? userPerms.length > 0 : legacyIsAdmin;
+  const hasAnyAdminPerm = userPerms.length > 0;
   const showLegacyAdminDropdown = hasAnyAdminPerm && !isSubOrgScope;
 
   // Per-subsection visibility flags.

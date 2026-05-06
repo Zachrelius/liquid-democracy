@@ -130,12 +130,13 @@ def _add_sub_org_membership(
     db: Session, user: models.User, sub_org: models.Organization,
     *, role: str = "member", status: str = "active",
 ) -> models.SubOrgMembership:
-    m = models.SubOrgMembership(
-        user_id=user.id, sub_org_id=sub_org.id, role=role, status=status,
+    # Phase 15 Cluster S — SubOrgMembership.role is now an FK to the
+    # parent's Role row. Use the conftest helper.
+    from tests.conftest import make_sub_org_membership
+    return make_sub_org_membership(
+        db, sub_org_id=sub_org.id, user_id=user.id,
+        role=role, status=status,
     )
-    db.add(m)
-    db.flush()
-    return m
 
 
 def _make_proposal(

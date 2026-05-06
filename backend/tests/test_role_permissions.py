@@ -244,9 +244,19 @@ def test_parent_steward_has_all_permissions_on_sub_org(db):
     assert has_permission(db, user.id, sub.id, "polis.manage") is True
 
 
-def test_parent_moderator_does_not_inherit_sub_org_permissions(db):
-    """D3 boundary: only admin/steward on the parent inherit. A parent
-    moderator gets NO implicit power on sub-orgs."""
+def test_parent_moderator_inherits_sub_org_permissions_by_default(db):
+    """Phase 15 Cluster S — parent Moderator transferability defaults ON
+    (per spec table). A parent Moderator with no sub-org membership now
+    inherits the Moderator permission set on the sub-org via the
+    parent's matrix at the resolved (Moderator) role.
+
+    This REPLACES Phase 12 Stage 1's behavior where only admin/steward
+    on the parent transferred. The Phase 12 Stage 1 "implicit power"
+    path was reframed in Phase 15 as "transferability + matrix lookup":
+    parent Moderator now resolves to the parent's Moderator role on
+    the sub-org, which has proposal.create granted by default but does
+    not have org.edit_settings.
+    """
     parent = _make_org(db, "Parent Co", "parent")
     sub = _make_org(db, "Sub Team", "sub", parent_org_id=parent.id)
 
@@ -254,7 +264,31 @@ def test_parent_moderator_does_not_inherit_sub_org_permissions(db):
     _add_membership(db, user, parent, "moderator")
     db.flush()
 
-    # Moderator on parent ≠ implicit admin on sub-org.
+    # Moderator transferability defaults ON; the parent's Moderator
+    # matrix grants proposal.create (in DEFAULT_GRANTS).
+    assert has_permission(db, user.id, sub.id, "proposal.create") is True
+    # Moderator does NOT have polis.manage (admin-tier only by default).
+    assert has_permission(db, user.id, sub.id, "polis.manage") is False
+
+
+def test_parent_member_does_not_inherit_sub_org_permissions_by_default(db):
+    """Phase 15 Cluster S — parent Member transferability defaults OFF
+    (per spec table). A parent Member with no sub-org membership has
+    no permissions on the sub-org by default.
+
+    This is the load-bearing privacy property: a parent Member cannot
+    discover what's happening in a sub-org they don't belong to via
+    permission-based features unless the org has explicitly enabled
+    Member transferability.
+    """
+    parent = _make_org(db, "Parent Co", "parent")
+    sub = _make_org(db, "Sub Team", "sub", parent_org_id=parent.id)
+
+    user = _make_user(db, "parent_member")
+    _add_membership(db, user, parent, "member")
+    db.flush()
+
+    # Member transferability defaults OFF.
     assert has_permission(db, user.id, sub.id, "proposal.create") is False
     assert has_permission(db, user.id, sub.id, "polis.manage") is False
 
@@ -276,10 +310,15 @@ def test_parent_admin_cross_parent_isolation(db):
     assert has_permission(db, user.id, sub_of_b.id, "audit.view_org") is False
 
 
-def test_implicit_power_caches_parent_permission_set(db):
-    """The implicit-power path also caches the parent's permission set as
-    a side effect, so a follow-up has_permission(user, parent, key) call
-    in the same request is a dict lookup."""
+def test_sub_org_permission_lookup_caches_resolved_role_set(db):
+    """Phase 15 Cluster S — the sub-org permission path caches the
+    resolved-role permission set under a sub-org-specific cache key
+    (``(user, "sub:<sub_id>:role:<role_id>")``) so subsequent calls for
+    other permission keys in the same request hit the cache. Replaces
+    the Phase 12 Stage 1 implicit-power side-effect cache, which keyed
+    on the parent ``(user, parent_id)`` because the old shortcut always
+    returned True regardless of permission_key.
+    """
     parent = _make_org(db, "Parent", "parent")
     sub = _make_org(db, "Sub", "sub", parent_org_id=parent.id)
 
@@ -288,13 +327,26 @@ def test_implicit_power_caches_parent_permission_set(db):
     db.flush()
 
     cache = get_or_init_permission_cache(db)
-    assert (user.id, parent.id) not in cache
+    # No sub-org cache entries at start.
+    assert not any(
+        isinstance(k, tuple) and len(k) == 2
+        and isinstance(k[1], str) and k[1].startswith("sub:")
+        for k in cache.keys()
+    )
 
-    # Implicit-power call on sub-org should fill the parent cache slot.
+    # Sub-org permission call should fill a sub-org-specific cache slot.
     has_permission(db, user.id, sub.id, "proposal.create")
 
-    assert (user.id, parent.id) in cache
-    assert cache[(user.id, parent.id)]["proposal.create"] is True
+    sub_keys = [
+        k for k in cache.keys()
+        if isinstance(k, tuple) and len(k) == 2
+        and isinstance(k[1], str) and k[1].startswith(f"sub:{sub.id}:")
+    ]
+    assert len(sub_keys) == 1, (
+        f"expected exactly one sub-org cache entry, got {sub_keys}"
+    )
+    cached_set = cache[sub_keys[0]]
+    assert cached_set.get("proposal.create") is True
 
 
 # ---------------------------------------------------------------------------
@@ -357,26 +409,48 @@ def test_owner_only_explicit_grant_is_ignored(db):
     assert has_permission(db, user.id, org.id, "org.delete") is False
 
 
-def test_parent_admin_can_delete_sub_org_via_implicit_power(db):
-    """Subtle D3 + D4 interaction: org.delete on a sub-org is gated by
-    Decision-6 implicit power BEFORE the D4 check fires (because step 1
-    runs before step 2). A parent-org admin can delete a sub-org because
-    they get every permission on it via implicit power.
+def test_parent_admin_cannot_delete_sub_org_via_inherited_admin(db):
+    """Phase 15 Cluster S — the Phase 12 Stage 1 "implicit power"
+    shortcut is replaced by transferability-aware effective-role
+    resolution. A parent Admin (default-on transferability) resolves
+    to the sub-org's Admin role; ``org.delete`` is hardcoded
+    Steward-only, so Admin still cannot delete via inheritance.
 
-    This matches the spec intent: D4 is about preventing a NON-Steward
-    from deleting the ORG THEY'RE ON. Sub-org deletion already has its
-    own permission key (sub_org.delete), and the implicit-power path is
-    how parent admins manage their sub-orgs."""
+    This MATCHES the explicit spec §S6 test case: "Platform admin
+    attempts org.delete on a sub-org: fails (Admin doesn't have
+    org.delete; that's hardcoded Steward-only)." The same logic
+    applies to a parent Admin who inherits the Admin role on the
+    sub-org via transferability.
+
+    The CHANGE from Phase 12 Stage 1: the old shortcut returned True
+    for any permission_key (including org.delete) when parent admin
+    inherited; that was actually a latent bug — the matrix's
+    Steward-only protection was being bypassed via inheritance. Phase
+    15 closes that hole.
+    """
     parent = _make_org(db, "Parent", "parent")
     sub = _make_org(db, "Sub", "sub", parent_org_id=parent.id)
     user = _make_user(db, "alice")
     _add_membership(db, user, parent, "admin")
     db.flush()
 
-    # Parent admin gets implicit power on the sub-org → org.delete True.
-    # (In practice, deleting a sub-org goes through sub_org.delete; the
-    # owner-only org.delete key is for top-level org self-delete. But the
-    # helper's resolution order makes this combination work cleanly.)
+    # Parent Admin inherits Admin on sub-org but org.delete is locked
+    # Steward-only.
+    assert has_permission(db, user.id, sub.id, "org.delete") is False
+    # Sanity: they DO have other Admin-tier permissions.
+    assert has_permission(db, user.id, sub.id, "proposal.create") is True
+
+
+def test_parent_steward_can_delete_sub_org_via_inheritance(db):
+    """Phase 15 Cluster S — parent Steward has Steward transferability
+    locked ON; resolved role on sub-org is Steward; org.delete is
+    granted (Steward-only key matches the resolved role)."""
+    parent = _make_org(db, "Parent", "parent")
+    sub = _make_org(db, "Sub", "sub", parent_org_id=parent.id)
+    user = _make_user(db, "alice")
+    _add_membership(db, user, parent, "steward")
+    db.flush()
+
     assert has_permission(db, user.id, sub.id, "org.delete") is True
 
 

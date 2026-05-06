@@ -1,5 +1,11 @@
 """
 Phase 8.5 Session 2 — Sub-organization endpoints.
+Phase 15 Cluster S — sub-org membership now uses role_id FK to Role
+(parent's matrix wholesale); the legacy string ``role`` column is gone.
+This module's helpers and routes were updated in Cluster S to operate
+through ``role.system_key``; the legacy ``"owner"`` string was renamed
+to ``"steward"`` (Phase 12.5) and the migration backfilled all existing
+rows accordingly.
 
 Mounted under `/api/orgs/{slug}/sub-orgs` (and topics `promote-to-orgwide`).
 
@@ -24,8 +30,79 @@ from org_middleware import (
     require_org_admin,
     require_org_membership,
 )
+from permission_registry import PERMISSION_REGISTRY
 from permissions import is_sub_org_admin
 from reserved_slugs import RESERVED_SLUGS
+from role_permissions import (
+    effective_role_on_sub_org,
+    has_permission_on_sub_org,
+)
+
+
+# Phase 15 Cluster S — accept the legacy "owner" string in API payloads
+# for one cycle of backwards compatibility (callers who haven't updated
+# yet); silently translate to "steward". Map keys are the four legal
+# values in request bodies; the value is the role.system_key on the
+# parent's Role row.
+_REQUEST_ROLE_TO_SYSTEM_KEY: dict[str, str] = {
+    "member": "member",
+    "moderator": "moderator",
+    "admin": "admin",
+    "owner": "steward",
+    "steward": "steward",
+}
+
+
+def _resolve_parent_role_id(
+    db: Session, parent_org_id: str, role_str: str,
+) -> str:
+    """Resolve a request-payload role string to the parent's Role.id.
+
+    Used by all the sub-org membership creators / role-changers. Raises
+    HTTPException(400) if the string is unknown.
+    """
+    target_sk = _REQUEST_ROLE_TO_SYSTEM_KEY.get(role_str)
+    if target_sk is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid role {role_str!r}. Must be one of "
+                "member, moderator, admin, steward."
+            ),
+        )
+    role = (
+        db.query(models.Role)
+        .filter(
+            models.Role.org_id == parent_org_id,
+            models.Role.system_key == target_sk,
+        )
+        .first()
+    )
+    if role is None:
+        # Defensive: every org should have all four preset roles seeded
+        # by Phase 12 Stage 1's migration + role_seed.seed_default_roles_for_org.
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Parent org missing the {target_sk!r} preset role; "
+                "this should not happen on a normally-seeded org."
+            ),
+        )
+    return role.id
+
+
+def _sub_membership_role_system_key(
+    sub_membership: models.SubOrgMembership | None,
+) -> str | None:
+    """Return the SubOrgMembership's role.system_key, or None.
+
+    Phase 15 Cluster S: SubOrgMembership.role is now an FK relationship
+    to Role; this helper centralizes the safe-access pattern (None when
+    the FK row was deleted out from under the membership).
+    """
+    if sub_membership is None or sub_membership.role is None:
+        return None
+    return sub_membership.role.system_key
 
 router = APIRouter(prefix="/api/orgs", tags=["sub-organizations"])
 
@@ -103,20 +180,37 @@ def _sub_org_to_out(
     db: Session,
     user_id: Optional[str] = None,
 ) -> schemas.SubOrgOut:
+    """Phase 15 Cluster S §S5 — also includes ``user_role`` (the
+    resolved sub-org effective role's system_key) and
+    ``user_permissions`` (the matrix permission keys the user holds on
+    this sub-org via the parent's matrix at the resolved role).
+
+    Parallel to ``_org_to_out`` in routes/organizations.py. The
+    resolution uses ``effective_role_on_sub_org`` from role_permissions
+    so a parent admin (with default-on transferability) sees the full
+    permission set on a sub-org they have no direct membership in.
+    """
     member_count = db.query(models.SubOrgMembership).filter(
         models.SubOrgMembership.sub_org_id == sub_org.id,
         models.SubOrgMembership.status == "active",
     ).count()
 
-    user_role = None
+    user_role: Optional[str] = None
+    user_permissions: list[str] = []
     if user_id:
-        sm = db.query(models.SubOrgMembership).filter(
-            models.SubOrgMembership.sub_org_id == sub_org.id,
-            models.SubOrgMembership.user_id == user_id,
-            models.SubOrgMembership.status == "active",
-        ).first()
-        if sm:
-            user_role = sm.role
+        # Phase 15: resolve the EFFECTIVE role (sub-org assignment ->
+        # transferable parent role -> platform admin), not just the
+        # direct sub-org membership. This matches Phase 12.5's
+        # _org_to_out pattern of returning the resolved permission set.
+        role, _via_pa = effective_role_on_sub_org(db, user_id, sub_org)
+        if role is not None:
+            user_role = role.system_key
+            for perm_def in PERMISSION_REGISTRY:
+                allowed, _ = has_permission_on_sub_org(
+                    db, user_id, sub_org, perm_def.key,
+                )
+                if allowed:
+                    user_permissions.append(perm_def.key)
 
     return schemas.SubOrgOut(
         id=sub_org.id,
@@ -127,6 +221,7 @@ def _sub_org_to_out(
         settings=sub_org.settings or {},
         member_count=member_count,
         user_role=user_role,
+        user_permissions=user_permissions,
         created_at=sub_org.created_at,
     )
 
@@ -141,7 +236,9 @@ def _sub_member_to_out(
         display_name=user.display_name if user else "",
         email=user.email if user else None,
         avatar_url=user.avatar_url if user else None,
-        role=sm.role,
+        # Phase 15 Cluster S: emit the role.system_key, not the legacy
+        # string column. Frontend reads this.
+        role=_sub_membership_role_system_key(sm) or "member",
         status=sm.status,
         joined_at=sm.joined_at,
     )
@@ -227,10 +324,13 @@ def create_sub_org(
     # not gated against them. Mirrors the org-creation pattern where the
     # creator is bootstrapped as owner. No separate audit event — the
     # `sub_org.created` event with this actor implies the auto-add.
+    # Phase 15 Cluster S: SubOrgMembership.role is now an FK to the
+    # parent's Role row.
+    creator_role_id = _resolve_parent_role_id(db, parent.id, "admin")
     creator_membership = models.SubOrgMembership(
         user_id=current_user.id,
         sub_org_id=sub_org.id,
-        role="admin",
+        role_id=creator_role_id,
         status="active",
     )
     db.add(creator_membership)
@@ -461,19 +561,20 @@ def delete_sub_org(
     sub_org = _sub_org_or_404(db, parent, sub_slug)
 
     is_parent_admin = _is_parent_org_admin(db, current_user.id, parent)
-    is_sub_owner = False
+    # Phase 15 Cluster S: "owner" → "steward" rename applies here too.
+    is_sub_steward = False
     sm = db.query(models.SubOrgMembership).filter(
         models.SubOrgMembership.user_id == current_user.id,
         models.SubOrgMembership.sub_org_id == sub_org.id,
         models.SubOrgMembership.status == "active",
     ).first()
-    if sm is not None and sm.role == "owner":
-        is_sub_owner = True
+    if _sub_membership_role_system_key(sm) == "steward":
+        is_sub_steward = True
 
-    if not (is_parent_admin or is_sub_owner):
+    if not (is_parent_admin or is_sub_steward):
         raise HTTPException(
             status_code=403,
-            detail="Parent-org admin or sub-org owner access required",
+            detail="Parent-org admin or sub-org Steward access required",
         )
 
     # Block delete if the sub-org has any active topics or proposals.
@@ -591,6 +692,7 @@ def invite_sub_org_member(
             ),
         )
 
+    target_role_id = _resolve_parent_role_id(db, parent.id, body.role)
     existing = db.query(models.SubOrgMembership).filter(
         models.SubOrgMembership.user_id == body.user_id,
         models.SubOrgMembership.sub_org_id == sub_org.id,
@@ -604,12 +706,12 @@ def invite_sub_org_member(
             )
         # suspended -> resurrect as pending
         existing.status = "pending_approval"
-        existing.role = body.role
+        existing.role_id = target_role_id
     else:
         sm = models.SubOrgMembership(
             user_id=body.user_id,
             sub_org_id=sub_org.id,
-            role=body.role,
+            role_id=target_role_id,
             status="pending_approval",
         )
         db.add(sm)
@@ -623,7 +725,9 @@ def invite_sub_org_member(
         details={
             "sub_org_id": sub_org.id,
             "target_user_id": body.user_id,
-            "role": body.role,
+            # Phase 15 Cluster S: emit the canonical system_key (translates
+            # any "owner" backwards-compat input to "steward").
+            "role": _REQUEST_ROLE_TO_SYSTEM_KEY.get(body.role, body.role),
         },
         ip_address=request.client.host if request.client else None,
     )
@@ -691,10 +795,11 @@ def add_sub_org_member_directly(
     if existing is not None:
         raise HTTPException(status_code=400, detail="Already a member")
 
+    target_role_id = _resolve_parent_role_id(db, parent.id, body.role)
     sm = models.SubOrgMembership(
         user_id=body.user_id,
         sub_org_id=sub_org.id,
-        role=body.role,
+        role_id=target_role_id,
         status="active",
     )
     db.add(sm)
@@ -709,7 +814,7 @@ def add_sub_org_member_directly(
         details={
             "sub_org_id": sub_org.id,
             "target_user_id": body.user_id,
-            "role": body.role,
+            "role": _REQUEST_ROLE_TO_SYSTEM_KEY.get(body.role, body.role),
             "by_actor": current_user.id,
         },
         ip_address=request.client.host if request.client else None,
@@ -736,6 +841,7 @@ def request_join_sub_org(
     parent = _parent_or_404(db, org_slug)
     sub_org = _sub_org_or_404(db, parent, sub_slug)
 
+    member_role_id = _resolve_parent_role_id(db, parent.id, "member")
     existing = db.query(models.SubOrgMembership).filter(
         models.SubOrgMembership.user_id == current_user.id,
         models.SubOrgMembership.sub_org_id == sub_org.id,
@@ -746,12 +852,12 @@ def request_join_sub_org(
         if existing.status == "pending_approval":
             raise HTTPException(status_code=409, detail="Join request already pending")
         existing.status = "pending_approval"
-        existing.role = "member"
+        existing.role_id = member_role_id
     else:
         sm = models.SubOrgMembership(
             user_id=current_user.id,
             sub_org_id=sub_org.id,
-            role="member",
+            role_id=member_role_id,
             status="pending_approval",
         )
         db.add(sm)
@@ -819,7 +925,10 @@ def approve_sub_org_member(
         details={
             "sub_org_id": sub_org.id,
             "target_user_id": user_id,
-            "role": sm.role,
+            # Phase 15 Cluster S: emit role.system_key, not the legacy
+            # string; the FK relationship's system_key is the canonical
+            # form.
+            "role": _sub_membership_role_system_key(sm) or "member",
         },
         ip_address=request.client.host if request.client else None,
     )
@@ -906,9 +1015,11 @@ def remove_sub_org_member(
     ).first()
     if sm is None:
         raise HTTPException(status_code=404, detail="Sub-org member not found")
-    if sm.role == "owner":
+    # Phase 15 Cluster S — "owner" → "steward" rename applies to the
+    # protect-from-removal gate too.
+    if _sub_membership_role_system_key(sm) == "steward":
         raise HTTPException(
-            status_code=400, detail="Cannot remove the sub-org owner",
+            status_code=400, detail="Cannot remove the sub-org Steward",
         )
 
     log_audit_event(
@@ -958,14 +1069,18 @@ def change_sub_org_member_role(
     ).first()
     if sm is None:
         raise HTTPException(status_code=404, detail="Sub-org member not found")
-    if sm.role == "owner" and body.role != "owner":
+    old_role_sk = _sub_membership_role_system_key(sm)
+    new_role_sk = _REQUEST_ROLE_TO_SYSTEM_KEY.get(body.role, body.role)
+    # Phase 15 Cluster S — "owner" → "steward" rename: the demote-from-
+    # Steward gate parallels the parent-org Steward protection.
+    if old_role_sk == "steward" and new_role_sk != "steward":
         raise HTTPException(
             status_code=400,
-            detail="Cannot demote the sub-org owner",
+            detail="Cannot demote the sub-org Steward",
         )
 
-    old_role = sm.role
-    sm.role = body.role
+    new_role_id = _resolve_parent_role_id(db, parent.id, body.role)
+    sm.role_id = new_role_id
 
     log_audit_event(
         db,
@@ -976,8 +1091,8 @@ def change_sub_org_member_role(
         details={
             "sub_org_id": sub_org.id,
             "target_user_id": user_id,
-            "old_role": old_role,
-            "new_role": body.role,
+            "old_role": old_role_sk,
+            "new_role": new_role_sk,
         },
         ip_address=request.client.host if request.client else None,
     )

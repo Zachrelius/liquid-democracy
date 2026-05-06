@@ -146,17 +146,15 @@ export default function OrgSettings() {
       // approval_required, open} to {invite_only_secret, invite_only_public,
       // approval_required, open}. The backend B1 migration renames legacy
       // 'invite_only' rows to 'invite_only_secret', and B5 rejects the old
-      // value going forward. During the deploy cutover a stale /api/orgs
-      // response could still report 'invite_only' to a freshly-loaded
-      // bundle, so we coerce it to 'invite_only_secret' here so the radio
-      // selection matches the intent ("don't expose me publicly"). After
-      // a single save the value persists in the new form and this branch
-      // is unreached.
-      setJoinPolicy(
-        currentOrg.join_policy === 'invite_only'
-          ? 'invite_only_secret'
-          : currentOrg.join_policy
-      );
+      // value going forward.
+      //
+      // Phase 15 G6b (2026-05-06) — the defensive client-side coercion
+      // 'invite_only' → 'invite_only_secret' was removed under Z's
+      // calendar-gate waiver for this pass. Single-user reality means the
+      // cached-bundle population the coercion was protecting is zero, and
+      // the migration has long since renamed legacy rows. Phase 14 tech
+      // debt #3 closed.
+      setJoinPolicy(currentOrg.join_policy);
       const s = currentOrg.settings || {};
       setSettings(s);
       // Expand the SM section if the org currently has it on, or if any

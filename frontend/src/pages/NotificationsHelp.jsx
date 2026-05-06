@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import HelpBackLink from '../components/HelpBackLink';
 
 /**
  * Phase 13 D1 — public help page for the notification system.
@@ -23,9 +23,8 @@ export default function NotificationsHelp() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
       <div>
-        <Link to="/orgs" className="text-sm text-[var(--brand-accent)] hover:underline mb-4 inline-block">
-          ← Back
-        </Link>
+        {/* Phase 15 G1 — back-link uses history.back() with /orgs fallback. */}
+        <HelpBackLink />
         <h1 className="text-2xl font-bold text-[var(--brand-primary)]">About Notifications</h1>
         <p className="text-sm text-gray-500 mt-1">
           What events fire, how to opt in per-channel-per-event, and how quiet hours work.

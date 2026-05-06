@@ -562,9 +562,6 @@ Add Polis's Docker components to the platform's docker-compose configuration for
 
 For the comprehensive working list (resolved + deferred + Z-action items + manual-verification gaps), see `docs/tech_debt_audit_2026-05.md` (Phase 12.8 audit). The list below is the curated long-term planning view; items are added when they're meaningful enough to plan a future pass around and removed when they ship.
 
-**Calendar-gated cleanup (single ~30-minute pass; eligible no earlier than 2026-05-10)**
-- **Cache-safety role-tier fallbacks across Nav.jsx + AdminRoute + AdminOnlyRoute + OrgSettings.jsx + Permissions tier-shortcuts** — Phase 12.5 / 12.6 / Stage 1 / Stage 2 left defensive fallback branches that preserve nav visibility when cached `/api/orgs` responses report stale shapes (`user_permissions` absent, `'owner'` instead of `'steward'`). Once cached responses age out (~7 days from Phase 12.5 ship 2026-05-03), the bundle of items 26-29 in the audit doc can be removed in a single small pass for strict permission-driven gating.
-
 **Tier 2 deferred (small, future cleanup pass candidates)**
 - **`is_polis_admin` not exposed on PolisOut schema** (Phase 9 Session 3 #1, audit Item 6) — frontend uses heuristic (creator OR moderator/admin OR sub-org admin) to gate Polis admin controls. Backend remains source of truth via 403, but the heuristic re-implements per-route auth logic. Estimated ~1.5 hours.
 - **PolisDetail linked-from indicator is N+1** (Phase 9 Session 3 #2, audit Item 7) — fetches full proposal list per detail render. Needs new backend endpoint querying proposals by linked_polis_id. Estimated ~2 hours.

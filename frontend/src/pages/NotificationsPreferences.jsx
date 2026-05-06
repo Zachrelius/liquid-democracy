@@ -295,9 +295,19 @@ export default function NotificationsPreferences() {
           for example, an immediate email AND inclusion in the weekly digest.
         </p>
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          {/* Sticky header row — stays visible while scrolling the matrix. */}
+          {/* Phase 15 M — at ≥640px (sm:) the existing sticky-header
+              4-column grid renders unchanged. Below 640px the header row
+              hides (column labels move inline with each checkbox) and
+              event rows render as a stacked layout per event with inline
+              labels. Two render paths gated by hidden/visible utilities;
+              the sm:hidden / hidden sm:grid pair toggles cleanly at the
+              breakpoint. */}
+
+          {/* Sticky header row — desktop only. Stays visible while
+              scrolling the matrix. Hidden at <640px since labels move
+              inline with each checkbox. */}
           <div
-            className={`grid ${gridCols} gap-2 px-4 py-2 border-b border-gray-200 bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase tracking-wide sticky top-0 z-10`}
+            className={`hidden sm:grid ${gridCols} gap-2 px-4 py-2 border-b border-gray-200 bg-gray-50 text-[11px] font-semibold text-gray-500 uppercase tracking-wide sticky top-0 z-10`}
           >
             <span>Event</span>
             {CHANNELS.map(ch => (
@@ -326,26 +336,59 @@ export default function NotificationsPreferences() {
                   return (
                     <div
                       key={ev.key}
-                      className={`grid ${gridCols} gap-2 items-center px-4 py-3`}
+                      className="border-b border-gray-50 last:border-0"
                     >
-                      <div className="min-w-0 pr-2">
-                        <p className="text-sm text-gray-800">{ev.label}</p>
-                        <p className="text-xs text-gray-500 mt-0.5">{ev.description}</p>
+                      {/* Desktop layout (≥640px): 4-column grid, no labels per checkbox. */}
+                      <div
+                        className={`hidden sm:grid ${gridCols} gap-2 items-center px-4 py-3`}
+                      >
+                        <div className="min-w-0 pr-2">
+                          <p className="text-sm text-gray-800">{ev.label}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">{ev.description}</p>
+                        </div>
+                        {CHANNELS.map(ch => (
+                          <label
+                            key={ch.key}
+                            className="flex items-center justify-center cursor-pointer"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={!!cur[ch.key]}
+                              onChange={() => toggleChannel(ev.key, ch.key)}
+                              className="w-4 h-4 accent-[var(--brand-accent)]"
+                              aria-label={`${ev.label} — ${ch.label}`}
+                            />
+                          </label>
+                        ))}
                       </div>
-                      {CHANNELS.map(ch => (
-                        <label
-                          key={ch.key}
-                          className="flex items-center justify-center cursor-pointer"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={!!cur[ch.key]}
-                            onChange={() => toggleChannel(ev.key, ch.key)}
-                            className="w-4 h-4 accent-[var(--brand-accent)]"
-                            aria-label={`${ev.label} — ${ch.label}`}
-                          />
-                        </label>
-                      ))}
+
+                      {/* Mobile layout (<640px): title + description, then
+                          four labeled checkboxes stacked below. Labels move
+                          inline with each checkbox since the column-header
+                          pattern doesn't apply at this width. */}
+                      <div className="sm:hidden flex flex-col gap-2 px-4 py-3">
+                        <div>
+                          <p className="text-sm text-gray-800">{ev.label}</p>
+                          <p className="text-xs text-gray-500 mt-0.5">{ev.description}</p>
+                        </div>
+                        <div className="flex flex-col gap-2 pl-1">
+                          {CHANNELS.map(ch => (
+                            <label
+                              key={ch.key}
+                              className="flex items-center gap-3 cursor-pointer text-sm text-gray-700"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={!!cur[ch.key]}
+                                onChange={() => toggleChannel(ev.key, ch.key)}
+                                className="w-4 h-4 accent-[var(--brand-accent)]"
+                                aria-label={`${ev.label} — ${ch.label}`}
+                              />
+                              <span>{ch.label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   );
                 })}

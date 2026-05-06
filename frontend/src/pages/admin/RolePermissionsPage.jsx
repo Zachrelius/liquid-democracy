@@ -290,19 +290,29 @@ export default function RolePermissionsPage() {
         </div>
       </div>
 
-      {/* Matrix table */}
+      {/* Matrix table.
+          Phase 15 P — at <640px (below sm:) the table wraps in a
+          horizontally-scrollable container with the first column
+          (Permission name) sticky-left so it stays visible during
+          horizontal scroll. Background colors are explicit on every cell
+          in the first column so the sticky overlay doesn't show
+          scrolling content through it.
+          At ≥640px (sm:) the existing flush-edge layout is preserved
+          unchanged. */}
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto sm:overflow-visible">
+          <table className="w-full text-sm min-w-[560px] sm:min-w-0">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                <th
+                  className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide sticky left-0 z-10 bg-gray-50 sm:static"
+                >
                   Permission
                 </th>
                 {roles.map(r => (
                   <th
                     key={r.system_key}
-                    className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-32"
+                    className="text-center px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide w-24 sm:w-32 leading-tight"
                   >
                     {r.name || r.system_key}
                   </th>
@@ -382,8 +392,17 @@ function CategorySection({
         </td>
       </tr>
       {permissions.map(perm => (
-        <tr key={perm.key} className="border-t border-gray-100 hover:bg-gray-50/40">
-          <td className="px-4 py-3 align-top">
+        <tr
+          key={perm.key}
+          className="border-t border-gray-100 group hover:bg-gray-50/40"
+        >
+          {/* Phase 15 P — first cell is sticky-left at <640px so it stays
+              visible during horizontal scroll. Background is explicit
+              (white, with a hover variant) to prevent show-through of
+              scrolling content; we mirror the row's hover state via the
+              parent's `group` class so the sticky cell tracks the row's
+              hover background. */}
+          <td className="px-4 py-3 align-top sticky left-0 z-[5] bg-white group-hover:bg-gray-50 sm:static sm:bg-transparent sm:group-hover:bg-transparent">
             <div className="text-sm text-gray-800 font-medium">{perm.label}</div>
             <div className="text-xs text-gray-500 mt-0.5">{perm.description}</div>
             <div className="text-[10px] text-gray-400 mt-0.5 font-mono">{perm.key}</div>

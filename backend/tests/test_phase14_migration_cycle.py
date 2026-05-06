@@ -234,8 +234,12 @@ def test_phase14_upgrade_downgrade_upgrade_cycle():
             engine.dispose()
         assert _join_policy(db_url, ar) == "invite_only_public"
 
-        # 2. Downgrade -1: secret -> invite_only AND public -> invite_only.
-        _run_alembic(db_url, "downgrade", "-1")
+        # 2. Downgrade to the prior revision: secret -> invite_only AND
+        # public -> invite_only. Targeting an explicit revision rather
+        # than ``-1`` so this test stays correct as new migrations are
+        # appended on top of Phase 14 (e.g., Phase 15 added 98dcd0058ba2
+        # which would shift -1 by one slot).
+        _run_alembic(db_url, "downgrade", _PRIOR_REVISION)
         assert _join_policy(db_url, legacy) == "invite_only"
         assert _join_policy(db_url, ar) == "invite_only"  # lossy collapse
         assert _join_policy(db_url, op_org) == "open"

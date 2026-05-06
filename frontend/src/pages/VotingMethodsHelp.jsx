@@ -1,15 +1,12 @@
-import { Link } from 'react-router-dom';
+import HelpBackLink from '../components/HelpBackLink';
 
 export default function VotingMethodsHelp() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
       <div>
-        {/* Phase 11 — help pages are public/non-org-scoped; back-link
-            routes to /orgs (the picker) since we don't know which org the
-            visitor came from. */}
-        <Link to="/orgs" className="text-sm text-[var(--brand-accent)] hover:underline mb-4 inline-block">
-          ← Back
-        </Link>
+        {/* Phase 11 — help pages are public/non-org-scoped.
+            Phase 15 G1 — back-link uses history.back() with /orgs fallback. */}
+        <HelpBackLink />
         <h1 className="text-2xl font-bold text-[var(--brand-primary)]">Voting Methods</h1>
         <p className="text-sm text-gray-500 mt-1">
           Understanding the different ways your organization can make decisions.

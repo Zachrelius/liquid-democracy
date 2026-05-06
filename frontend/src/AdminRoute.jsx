@@ -42,25 +42,14 @@ export default function AdminRoute({ children, permissions = [] }) {
     return <Navigate to="/orgs" replace />;
   }
 
+  // Phase 15 G6a (2026-05-06) — the cache-safety role-tier fallback that
+  // covered cached pre-12.5 responses without `user_permissions` has been
+  // removed. The 7-day age-out window from Phase 12.5 ship (2026-05-03)
+  // was waived by Z for this pass based on single-user reality. Audit
+  // Items 26-29.
   const userPerms = Array.isArray(currentOrg.user_permissions)
     ? currentOrg.user_permissions
-    : null;
-
-  // Cache-safety fallback (mirrors 12.5 F1 Nav.jsx pattern): if the API
-  // response predates 12.5 B4 and lacks `user_permissions` entirely, fall
-  // back to the legacy role-tier check so admins/moderators don't get
-  // locked out during deploy cutover. Once cached responses age out
-  // (~1 week post-deploy), this branch becomes dead code and can be
-  // removed.
-  if (userPerms === null) {
-    const role = currentOrg.user_role;
-    const isAdminOrSteward = role === 'admin' || role === 'steward' || role === 'owner';
-    const isModerator = role === 'moderator';
-    if (!(isAdminOrSteward || isModerator)) {
-      return <Navigate to={urlFor(currentOrg, 'proposals')} replace />;
-    }
-    return children;
-  }
+    : [];
 
   const hasAny = permissions.some((p) => userPerms.includes(p));
   if (!hasAny) {
