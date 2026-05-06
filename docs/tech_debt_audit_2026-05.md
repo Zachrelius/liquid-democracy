@@ -7,6 +7,7 @@ Audit date: 2026-05-04 (Phase 12.8). Scope: PROGRESS.md from Phase 9 forward, co
 - 2026-05-06 (Phase 13.3 closeout): Phase 13's global `User.digest_cadence` column retired in favor of per-event cadence (the `email` channel split into `email_immediate` / `email_daily` / `email_weekly`, each independently togglable per event). `sustained_majority.floor_approached` event type deleted from registry — the underlying detection logic was never wired in `sustained_majority_service.py` and the dead checkbox confused the friend-pilot dogfooder; orphaned `notification_preferences` rows cleaned up inline in migration `b9e2f4a17c83`. Phase 13 learning #7 (pg_smoke gap) was exercised for the first time on this pass: a new `backend/scripts/phase13_3_actual_upgrade_path_check.py` stamps a fresh PG at the prior revision with sample data, then runs `alembic upgrade head` directly without `create_all` bootstrapping — the actual upgrade path that would have caught Phase 13's boolean-default datatype mismatch. Worth promoting to a standard pg_smoke mode in a future cleanup pass.
 - 2026-05-06 (Phase 14 closeout): Phase 14 introduced public org landing pages and the four-value `Organization.join_policy` enum (`invite_only_secret` / `invite_only_public` / `approval_required` / `open`). Migration `c0a3e5d12f4a` renames legacy `invite_only` → `invite_only_secret` to preserve current behavior on existing orgs. Phase 13 learning #7's actual-upgrade-path mode applied again via `backend/scripts/phase14_actual_upgrade_path_check.py` — strengthens the case for promoting it to a standard pg_smoke mode (now exercised on two consecutive passes). One small spec inaccuracy surfaced and was patched in the same pass: the dispatch claimed `?next=` Login redirect support was "Phase 9-era functionality" — it wasn't; frontend dev added minimal same-origin-relative-path-only support as part of Cluster F. OrgSelector empty-state copy updated to mention "joinable public organizations" alongside the existing "create an org / wait for invitation" guidance.
 - 2026-05-06 (Phase 15 Cluster G1): Item 33 (help page back-link destination) RESOLVED — a shared `frontend/src/components/HelpBackLink.jsx` component now uses `window.history.back()` with `/orgs` fallback (when `window.history.length <= 1`) across PolisHelp, VotingMethodsHelp, SustainedMajorityHelp, RolePermissionsHelp, NotificationsHelp, and OrganizationsHelp. The static `<Link to="/orgs">← Back</Link>` pattern is gone from all six pages.
+- 2026-05-06 (Phase 15 Cluster G6a): Items 26-27 (cache-safety role-tier fallbacks in Nav.jsx + AdminRoute.jsx + AdminOnlyRoute.jsx) RESOLVED. Z waived the 7-day cached-cutover gate for this pass based on single-user reality (the cached-bundle population the gate was designed to protect is effectively zero); the convention itself is preserved as institutional discipline for future passes. Cache-safety fallback branches removed from all three files (`legacyIsAdmin` derivation + `userPerms === null` branches gone); strict permission-driven gating throughout. Items 28-29 are scoped to OrgSettings.jsx (`'owner'` Danger Zone visibility) and the RolePermissionsPage `canEdit` derivation; both are cosmetic UX gates rather than security-bearing route guards, so they were left for a future cleanup pass to keep the diff focused on the load-bearing surfaces.
 
 ## Summary
 
@@ -208,33 +209,29 @@ Audit date: 2026-05-04 (Phase 12.8). Scope: PROGRESS.md from Phase 9 forward, co
 
 These items are correct fixes but blocked on cached responses ageing out. **Today is 2026-05-04. The 7-day window from Phase 12.5 (shipped 2026-05-03) closes 2026-05-10.** All four items below should be picked up no earlier than that date in a single small cleanup pass.
 
-### Item 26: Cache-safety role-tier fallback in Nav.jsx + AdminRoute + AdminOnlyRoute
+### Item 26: Cache-safety role-tier fallback in Nav.jsx + AdminRoute + AdminOnlyRoute — RESOLVED in Phase 15 (2026-05-06)
 - Source: PROGRESS.md Phase 12.5 tech debt #3, Phase 12.6 tech debt #1; spec F.1 item 1
-- Description: Nav.jsx (12.5 F1) and AdminRoute/AdminOnlyRoute (12.6 G2/G4) preserve admin/moderator nav visibility when `user_permissions` is absent (cached stale API responses during cutover). Once cached responses age out, the fallback can be removed for strict permission-driven gating.
-- Recommendation: DEFER_WITH_ESTIMATE (calendar-gated)
-- Effort: ~30 minutes (remove fallback branches in 3 files + add tests verifying strict permission gating + smoke)
-- Rationale: The 7-day age-out window from Phase 12.5 (2026-05-03) hasn't passed; today is 2026-05-04. Reclassified per spec F.1 item 1.
+- Description: Nav.jsx (12.5 F1) and AdminRoute/AdminOnlyRoute (12.6 G2/G4) preserved admin/moderator nav visibility when `user_permissions` was absent (cached stale API responses during cutover).
+- Status: **RESOLVED.** Phase 15 Cluster G6a removed the fallback branches in all three files. Z waived the 7-day calendar gate for this pass based on single-user reality (cached-bundle population the gate was protecting is effectively zero); the convention itself is preserved as institutional discipline for future passes.
 
-### Item 27: Frontend rename defensive backward-compat (`'steward'` and `'owner'`)
+### Item 27: Frontend rename defensive backward-compat (`'steward'` and `'owner'`) — partially RESOLVED in Phase 15 (2026-05-06)
 - Source: PROGRESS.md Phase 12 Stage 1 tech debt #6
-- Description: ~25 grep hits across OrgContext / Members / Nav / PolisDetail / OrgSelector / Demo.jsx accept both `'steward'` (canonical) and `'owner'` (defensive cached-response handling).
-- Recommendation: DEFER_WITH_ESTIMATE (calendar-gated, same window as Item 26)
-- Effort: ~30 minutes (drop `'owner'` branches across the ~6 files, manual smoke, tests)
-- Rationale: Same age-out window as Item 26.
+- Description: ~25 grep hits across OrgContext / Members / Nav / PolisDetail / OrgSelector / Demo.jsx accepted both `'steward'` (canonical) and `'owner'` (defensive cached-response handling).
+- Status: Phase 15 Cluster G6a removed the `'owner'` legacy-string branches from the cache-safety fallback paths of Nav.jsx / AdminRoute.jsx / AdminOnlyRoute.jsx (those fallbacks are gone entirely). Other call sites that defensively accept `'owner'` for cosmetic role-display purposes (OrgSelector cards, profile-page role display, the OrgSwitcher tree's parent/sub admin checks) remain — they're cosmetic, not gating, and can be tidied in a future cleanup pass without security implications.
 
 ### Item 28: F7 legacy `'owner'` acceptance in OrgSettings.jsx
 - Source: PROGRESS.md Phase 12 Stage 2 tech debt #3
-- Description: Defensive 'owner' branch in OrgSettings.jsx D4 hardcoded gate. Tighten to strict `'steward'` after age-out.
-- Recommendation: DEFER_WITH_ESTIMATE (calendar-gated, same window as Item 26)
+- Description: Defensive 'owner' branch in OrgSettings.jsx D4 hardcoded gate (Danger Zone visibility). Tighten to strict `'steward'` after age-out.
+- Recommendation: DEFER_WITH_ESTIMATE
 - Effort: ~5 minutes (one-line tighten)
-- Rationale: Same age-out window. Bundle with Items 26+27 in the calendar-gated cleanup pass.
+- Rationale: Phase 15 G6a's gate-waiver applied to the security-bearing fallbacks in Nav.jsx / AdminRoute / AdminOnlyRoute. Item 28's `'owner'` branch in OrgSettings.jsx is technically eligible for the same tightening but was scoped out of Cluster G6a to keep the diff focused on the route-guard / nav-visibility surfaces; left for future cleanup.
 
 ### Item 29: Tier-shortcuts on Permissions nav link visibility + F6 read-only detection
 - Source: PROGRESS.md Phase 12 Stage 2 tech debt #1, #2
-- Description: Two places where the nav-link / read-only detection uses tier shortcut even though Phase 12.5 B4 already exposes `user_permissions` in `currentOrg`. Could migrate to permission-driven gating now, but bundling with Items 26-28 means one cohesive cleanup commit.
-- Recommendation: DEFER_WITH_ESTIMATE (bundle with Items 26-28)
+- Description: Two places where the nav-link / read-only detection uses tier shortcut even though Phase 12.5 B4 already exposes `user_permissions` in `currentOrg`.
+- Recommendation: DEFER_WITH_ESTIMATE
 - Effort: ~30 minutes (replace tier shortcuts with `useHasPermission('role_permissions.edit')` reads)
-- Rationale: Cleaner to bundle with the calendar-gated removal of the role-tier fallback so the entire permission-driven gating story lands in one diff.
+- Rationale: Phase 15 G6a kept its scope tight to the security-bearing nav/route-guard fallbacks. Item 29's tier shortcuts on the RolePermissionsPage `canEdit` derivation are cosmetic UX gates (read-only mode is the fallback when `canEdit` is false, not a 403; backend B2 still enforces `role_permissions.edit`), so the cutover here is style-only and was left for a future cleanup pass.
 
 ## Extends 10.2 audit (test-depth gaps that fit Phase 10.2's framework)
 

@@ -40,19 +40,14 @@ export default function AdminOnlyRoute({ children, permissions = [] }) {
     return <Navigate to="/orgs" replace />;
   }
 
+  // Phase 15 G6a (2026-05-06) — the cache-safety role-tier fallback that
+  // covered cached pre-12.5 responses without `user_permissions` has been
+  // removed. The 7-day age-out window from Phase 12.5 ship (2026-05-03)
+  // was waived by Z for this pass based on single-user reality. Audit
+  // Items 26-29.
   const userPerms = Array.isArray(currentOrg.user_permissions)
     ? currentOrg.user_permissions
-    : null;
-
-  // Cache-safety fallback (mirrors AdminRoute / 12.5 F1 Nav.jsx pattern).
-  if (userPerms === null) {
-    const role = currentOrg.user_role;
-    const isAdminOrSteward = role === 'admin' || role === 'steward' || role === 'owner';
-    if (!isAdminOrSteward) {
-      return <Navigate to={urlFor(currentOrg, 'proposals')} replace />;
-    }
-    return children;
-  }
+    : [];
 
   const hasAny = permissions.some((p) => userPerms.includes(p));
   if (!hasAny) {
