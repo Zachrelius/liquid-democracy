@@ -212,6 +212,10 @@ export default function OrgSettings() {
     try {
       await api.delete(`/api/orgs/${currentOrg.slug}`);
       localStorage.removeItem('currentOrgSlug');
+      // Phase 16 F5 — also clear the lastOrgSlug used by Nav.jsx so the
+      // user's next visit to /settings doesn't try to resolve nav links
+      // for an org that no longer exists.
+      localStorage.removeItem('lastOrgSlug');
       window.location.href = '/orgs';
     } catch (e) {
       toast.error(e.message || 'Failed to delete');
@@ -339,7 +343,18 @@ export default function OrgSettings() {
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-10">
       <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Organization Settings</h1>
 
-      {/* General */}
+      {/* General — Phase 16 F4 moves the Save button from the page bottom
+          to immediately below this section so per-section save UX is
+          consistent across the page (every section now has its Save
+          button adjacent rather than the user having to scroll to a
+          page-bottom button after editing top-of-page fields). The
+          handleSave call still PATCHes the same payload through the
+          existing endpoint — only the JSX position of the button
+          changed; the lower sections that have no per-section button
+          (Voting Defaults / Threshold Defaults / Voting Methods /
+          Sustained-Majority / Deliberation / Public Delegates) are
+          still saved through this same button, since handleSave sends
+          the whole settings object. */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">General</h2>
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
@@ -408,6 +423,20 @@ export default function OrgSettings() {
               ))}
             </div>
           </div>
+        </div>
+        {/* Phase 16 F4 — Save button repositioned from page bottom to here
+            so the general-settings save action is adjacent to its fields. */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-6 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+          >
+            {saving ? 'Saving...' : 'Save Settings'}
+          </button>
+          {msg && (
+            <span className={`text-sm ${msg === 'Settings saved' ? 'text-green-600' : 'text-red-600'}`}>{msg}</span>
+          )}
         </div>
       </section>
 
@@ -1002,19 +1031,13 @@ export default function OrgSettings() {
         </div>
       </section>
 
-      {/* Save Button */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="px-6 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
-        >
-          {saving ? 'Saving...' : 'Save Settings'}
-        </button>
-        {msg && (
-          <span className={`text-sm ${msg === 'Settings saved' ? 'text-green-600' : 'text-red-600'}`}>{msg}</span>
-        )}
-      </div>
+      {/* Phase 16 F4 — the Save Settings button previously lived here at
+          the bottom of the page; it has been moved up to the General
+          section so users editing org name/description/join-policy see
+          a section-adjacent save action. The same button still PATCHes
+          the entire settings payload (general + voting defaults + voting
+          methods + sustained-majority + deliberation + public delegates),
+          so this position change is JSX-only. */}
 
       {/* Danger Zone — Phase 12 Stage 2 F7 D4 UI hiding (see isSteward
           derivation comment at the top of this file). */}

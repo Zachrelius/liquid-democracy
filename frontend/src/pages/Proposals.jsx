@@ -332,11 +332,35 @@ export default function Proposals() {
       .finally(() => setLoading(false));
   }, [statusFilter, topicFilter, currentOrg]);
 
+  // Phase 16 F2 — surface a "Create proposal" button to any user with the
+  // `proposal.create` permission. Routes to the existing creation form on
+  // /{slug}/admin/proposals (Option B in spec §F2): the AdminRoute wrapper
+  // already accepts the `proposals` subsection permission set — which
+  // includes `proposal.create` — so a Member granted just that one key can
+  // reach the form. No new route added; the form is structurally tied to
+  // the management page (proposals table + create button + advance/withdraw
+  // actions live together) so duplicating the route under a non-admin path
+  // would only re-render the same component.
+  const canCreateProposal = Array.isArray(currentOrg?.user_permissions)
+    && currentOrg.user_permissions.includes('proposal.create');
+  // Resolve the parent slug for the admin link the same way as the
+  // proposal-detail link above (sub-org scope walks up to the parent
+  // because the admin/proposals page lives under the parent's slug).
+  const adminProposalsHref = linkOrg ? urlFor(linkOrg, 'admin-proposals') : null;
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Proposals</h1>
+        {canCreateProposal && adminProposalsHref && (
+          <Link
+            to={adminProposalsHref}
+            className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
+          >
+            Create proposal
+          </Link>
+        )}
       </div>
 
       {/* Filters */}
