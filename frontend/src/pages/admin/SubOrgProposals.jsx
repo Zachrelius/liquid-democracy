@@ -137,10 +137,25 @@ export default function SubOrgProposals() {
   );
 }
 
+// Phase 16 F1 — same formatting helpers as ProposalManagement.jsx (kept
+// inline here to avoid plumbing a new util file just for two functions).
+function formatDays(value) {
+  if (value === null || value === undefined || Number.isNaN(value)) return '?';
+  const n = Number(value);
+  if (Number.isInteger(n)) return String(n);
+  return n.toFixed(2).replace(/\.?0+$/, '');
+}
+
+function pluralizeDays(value) {
+  return Number(value) === 1 ? 'day' : 'days';
+}
+
 function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated, onCancel }) {
   const toast = useToast();
   // Phase 12.5 F3 — threshold inputs gated on `proposal.set_thresholds`.
   const canSetThresholds = useHasPermission('proposal.set_thresholds');
+  // Phase 16 F1 — duration inputs gated on `proposal.set_durations`.
+  const canSetDurations = useHasPermission('proposal.set_durations');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [votingMethod, setVotingMethod] = useState('binary');
@@ -149,6 +164,12 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
   const [selectedTopics, setSelectedTopics] = useState([]);
   const [passThreshold, setPassThreshold] = useState(orgSettings?.default_pass_threshold ?? 0.5);
   const [quorumThreshold, setQuorumThreshold] = useState(orgSettings?.default_quorum_threshold ?? 0.4);
+  const [deliberationDays, setDeliberationDays] = useState(
+    orgSettings?.default_deliberation_days ?? 7,
+  );
+  const [votingDays, setVotingDays] = useState(
+    orgSettings?.default_voting_days ?? 3,
+  );
   const [linkedPolisIds, setLinkedPolisIds] = useState([]);
   const requirePolis = orgSettings?.require_polis_for_new_proposals === true;
   const [saving, setSaving] = useState(false);
@@ -187,6 +208,11 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
       if (canSetThresholds) {
         payload.pass_threshold = passThreshold;
         payload.quorum_threshold = quorumThreshold;
+      }
+      // Phase 16 F1/B3 — only include durations when permitted.
+      if (canSetDurations) {
+        payload.deliberation_days = deliberationDays;
+        payload.voting_days = votingDays;
       }
       if (isMultiOption) {
         payload.options = options.map(o => ({ label: o.label.trim(), description: o.description.trim() }));
@@ -326,6 +352,68 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
             <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>
             {' / '}
             <strong>{Math.round((orgSettings?.default_quorum_threshold ?? 0.40) * 100)}% quorum</strong>.
+          </p>
+        </div>
+      )}
+
+      {/* Phase 16 F1 — duration inputs gated on `proposal.set_durations`. */}
+      {canSetDurations ? (
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Deliberation duration (days)
+            </label>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={deliberationDays}
+              onChange={e => {
+                const v = parseFloat(e.target.value);
+                if (Number.isNaN(v)) return;
+                setDeliberationDays(Math.max(0, v));
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              0 days skips deliberation (straight to voting).
+            </p>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Voting duration (days)
+            </label>
+            <input
+              type="number"
+              min={0.05}
+              step={0.05}
+              value={votingDays}
+              onChange={e => {
+                const v = parseFloat(e.target.value);
+                if (Number.isNaN(v)) return;
+                setVotingDays(Math.max(0.05, v));
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              Minimum 0.05 days (72 minutes) for live polls.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">Durations</p>
+          <p className="text-sm text-[#2C3E50]">
+            This proposal will use the organization's defaults:{' '}
+            <strong>
+              Deliberation: {formatDays(orgSettings?.default_deliberation_days ?? 7)}{' '}
+              {pluralizeDays(orgSettings?.default_deliberation_days ?? 7)}
+            </strong>
+            {' / '}
+            <strong>
+              Voting: {formatDays(orgSettings?.default_voting_days ?? 3)}{' '}
+              {pluralizeDays(orgSettings?.default_voting_days ?? 3)}
+            </strong>.
           </p>
         </div>
       )}
