@@ -360,15 +360,18 @@ def test_phase13_3_upgrade_downgrade_upgrade_cycle():
         uid = _seed_user(db_url, username="cyc_user", digest_cadence="daily")
         _seed_legacy_email_pref(db_url, user_id=uid, event_type="comment.replied")
 
-        # 1. Upgrade head.
-        _run_alembic(db_url, "upgrade", "head")
+        # 1. Upgrade to the Phase 13.3 head specifically (so newer
+        # migrations can't make `downgrade -1` cross too many revisions).
+        # Post-Phase-14 the head is c0a3e5d12f4a; we want to test the
+        # 13.3 migration's reversibility in isolation.
+        _run_alembic(db_url, "upgrade", _PHASE_13_3_REVISION)
         assert _has_column(db_url, "users", "quiet_hours_start")
         assert not _has_column(db_url, "users", "digest_cadence")
         prefs = _prefs_for(db_url, uid)
         assert ("comment.replied", "email_daily", 1) in prefs
         assert all(ch != "email" for _, ch, _ in prefs)
 
-        # 2. Downgrade -1.
+        # 2. Downgrade -1 from the 13.3 head -> back to f1a3c8d92e60.
         _run_alembic(db_url, "downgrade", "-1")
         assert not _has_column(db_url, "users", "quiet_hours_start")
         assert not _has_column(db_url, "users", "quiet_hours_end")
@@ -381,8 +384,8 @@ def test_phase13_3_upgrade_downgrade_upgrade_cycle():
         events_with_email = {ev for ev, ch, _ in prefs if ch == "email"}
         assert "comment.replied" in events_with_email
 
-        # 3. Re-upgrade head.
-        _run_alembic(db_url, "upgrade", "head")
+        # 3. Re-upgrade to the 13.3 head.
+        _run_alembic(db_url, "upgrade", _PHASE_13_3_REVISION)
         assert _has_column(db_url, "users", "quiet_hours_start")
         assert not _has_column(db_url, "users", "digest_cadence")
     finally:

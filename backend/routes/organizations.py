@@ -693,6 +693,276 @@ def reactivate_member(
 
 
 # ============================================================================
+# Phase 14 B2 — Public landing page endpoint (NO AUTH)
+# ============================================================================
+
+# The public endpoint is intentionally unauthenticated: anyone with the
+# slug can fetch org name/description/logo/branding/intro for the three
+# public join-policy variants. invite_only_secret orgs are 404'd to be
+# indistinguishable from non-existent ones (a probe for a random slug
+# returns the same status whether the slug is unused or belongs to a
+# secret org). NO server-side caching layer in v1; data changes
+# infrequently so the absence is acceptable, and adding caching now
+# without an invalidation hook on PATCH endpoints would risk staleness.
+
+# Phase 14 — public-org sub-router. Dedicated APIRouter so the no-auth
+# path is visible at the route-table level (no Depends on get_current_user).
+public_org_router = APIRouter(prefix="/api/orgs", tags=["organizations-public"])
+
+
+@public_org_router.get("/{org_slug}/public", response_model=schemas.OrgPublicOut)
+def get_public_org(
+    org_slug: str,
+    db: Session = Depends(get_db),
+):
+    """Return the public-facing data shape for an org's landing page.
+
+    No auth required. Logged-in users get the same response as logged-out
+    callers — auth state does not affect the response.
+
+    404 if the org doesn't exist OR if its join_policy is
+    'invite_only_secret'. The 404 response is identical in both cases by
+    design (security: secret orgs must be indistinguishable from
+    non-existent ones from an unauthenticated probe perspective). No
+    leaking via response timing differences either — the same SQL path
+    is taken for both branches.
+
+    Returns a small subset of org fields: slug, name, description,
+    logo_url, branding (primary_color + accent_color), intro_text,
+    join_policy. No member_count, no created_at, no internal IDs.
+    """
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if org is None or org.join_policy == "invite_only_secret":
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    branding_dict = (org.settings or {}).get("branding") or {}
+    return schemas.OrgPublicOut(
+        slug=org.slug,
+        name=org.name,
+        description=org.description or "",
+        logo_url=branding_dict.get("logo_url"),
+        branding=schemas.OrgPublicBrandingOut(
+            primary_color=branding_dict.get("primary_color"),
+            accent_color=branding_dict.get("accent_color"),
+        ),
+        intro_text=(org.settings or {}).get("intro_text") or None,
+        join_policy=org.join_policy,
+    )
+
+
+# ============================================================================
+# Phase 14 B3 — Public join-request endpoint (consolidates two paths)
+# ============================================================================
+
+@router.post("/{org_slug}/join-request", status_code=200, response_model=schemas.JoinRequestOut)
+def create_join_request(
+    org_slug: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 14 B3 — single entry point for prospective members joining
+    an org from its public landing page.
+
+    Dispatches by ``org.join_policy``:
+
+      * ``invite_only_secret`` -> 404 (matches B2's secret-disambiguation
+        rule; even an authenticated probe gets the same answer).
+      * ``invite_only_public`` -> 403 (org has a public landing page but
+        joining requires an invitation; explicit error message).
+      * ``approval_required`` -> create OrgMembership(status='pending_approval'),
+        fire member.join_request notification to all approvers, audit
+        as ``org.join_requested``, return {status: 'pending', ...}.
+      * ``open`` -> create OrgMembership(status='active'), audit as
+        ``org.joined``, return {status: 'active', ...}.
+
+    Already-active members get 409 ("You are already a member.").
+    Already-pending requesters get 409 ("Your request is already pending.").
+
+    Consolidates what were previously two separate code paths (the
+    POST /join legacy endpoint kept the existing approval_required + open
+    behavior; this new endpoint is the public-landing-page front door
+    and is what the new OrgPublicLanding.jsx page calls).
+    """
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if org is None or org.join_policy == "invite_only_secret":
+        # Same 404 shape for non-existent and secret orgs.
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    if org.join_policy == "invite_only_public":
+        raise HTTPException(
+            status_code=403,
+            detail="This organization requires an invitation.",
+        )
+
+    if org.join_policy not in ("approval_required", "open"):
+        # Defensive: should be unreachable given the value set, but
+        # surfaces a loud error if a future policy variant is added
+        # without updating this dispatch.
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unknown join_policy {org.join_policy!r}",
+        )
+
+    existing = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == org.id,
+        models.OrgMembership.user_id == current_user.id,
+    ).first()
+    if existing is not None:
+        if existing.status == "active":
+            raise HTTPException(status_code=409, detail="You are already a member.")
+        if existing.status == "pending_approval":
+            raise HTTPException(
+                status_code=409, detail="Your request is already pending.",
+            )
+
+    # Resolve the Member role (defensive seed for legacy orgs).
+    member_role_id = _resolve_role_id_by_system_key(db, org.id, "member")
+    if member_role_id is None:
+        seed_default_roles_for_org(db, org.id)
+        member_role_id = _resolve_role_id_by_system_key(db, org.id, "member")
+
+    if org.join_policy == "open":
+        membership = models.OrgMembership(
+            user_id=current_user.id,
+            org_id=org.id,
+            role_id=member_role_id,
+            status="active",
+        )
+        db.add(membership)
+        db.flush()
+        log_audit_event(
+            db,
+            action="org.joined",
+            target_type="organization",
+            target_id=org.id,
+            actor_id=current_user.id,
+            details={"slug": org.slug, "policy": "open"},
+            ip_address=request.client.host if request.client else None,
+        )
+        db.commit()
+        db.refresh(membership)
+        return schemas.JoinRequestOut(status="active", member_id=membership.id)
+
+    # approval_required path.
+    membership = models.OrgMembership(
+        user_id=current_user.id,
+        org_id=org.id,
+        role_id=member_role_id,
+        status="pending_approval",
+    )
+    db.add(membership)
+    db.flush()
+    log_audit_event(
+        db,
+        action="org.join_requested",
+        target_type="organization",
+        target_id=org.id,
+        actor_id=current_user.id,
+        details={"slug": org.slug, "policy": "approval_required"},
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    db.refresh(membership)
+
+    # Notification fan-out — same pattern as the legacy /join handler.
+    # Wrapped in try/except so a notification failure can't sink the
+    # join-request creation (the membership row is already committed).
+    try:
+        actor_display = current_user.display_name or current_user.username
+        approver_ids = _users_with_permission_in_org(
+            db, org.id, "member.approve_join",
+        )
+        for approver_id in approver_ids:
+            emit_notification(
+                db,
+                background_tasks,
+                event_type="member.join_request",
+                user_id=approver_id,
+                org_id=org.id,
+                actor_id=current_user.id,
+                target_type="user",
+                target_id=current_user.id,
+                payload={
+                    "org_id": org.id,
+                    "org_slug": org.slug,
+                    "org_name": org.name,
+                    "requester_id": current_user.id,
+                    "actor_display_name": actor_display,
+                },
+            )
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "member.join_request emit failed (B3 path): %s: %s",
+            type(e).__name__, e,
+        )
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+    return schemas.JoinRequestOut(status="pending", member_id=membership.id)
+
+
+@router.delete("/{org_slug}/join-request", status_code=204)
+def cancel_join_request(
+    org_slug: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 14 B3 — cancel a pending join request.
+
+    Auth required.
+
+    404 if org doesn't exist or is invite_only_secret (same disambiguation
+    rule as B2).
+    404 if no pending request from this user exists (idempotent within
+    the 404-on-no-pending behavior — a second call after deletion gets
+    the same 404, no errors).
+
+    Audit event: ``org.join_request_cancelled``.
+
+    Deletes the OrgMembership row outright (rather than transitioning
+    its status), matching the existing deny-join-request pattern.
+    """
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if org is None or org.join_policy == "invite_only_secret":
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    membership = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == org.id,
+        models.OrgMembership.user_id == current_user.id,
+        models.OrgMembership.status == "pending_approval",
+    ).first()
+    if membership is None:
+        raise HTTPException(status_code=404, detail="No pending join request")
+
+    db.delete(membership)
+    log_audit_event(
+        db,
+        action="org.join_request_cancelled",
+        target_type="organization",
+        target_id=org.id,
+        actor_id=current_user.id,
+        details={"slug": org.slug},
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    # 204 — explicit empty response.
+    from fastapi import Response
+    return Response(status_code=204)
+
+
+# ============================================================================
 # Join Flow
 # ============================================================================
 
@@ -710,7 +980,15 @@ def request_join(
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    if org.join_policy == "invite_only":
+    # Phase 14 B5 — new value set: invite_only is gone; secret/public
+    # are both invite-only variants from this endpoint's perspective.
+    # Treat invite_only_secret as 404 to match B2's secret rule even on
+    # this legacy endpoint (defense-in-depth: the new client uses B3
+    # exclusively, but old clients calling /join shouldn't leak secret
+    # org existence).
+    if org.join_policy == "invite_only_secret":
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if org.join_policy in ("invite_only", "invite_only_public"):
         raise HTTPException(status_code=403, detail="This organization is invite-only")
 
     existing = db.query(models.OrgMembership).filter(

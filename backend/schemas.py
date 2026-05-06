@@ -1096,8 +1096,24 @@ class OrgCreate(BaseModel):
     @field_validator("join_policy")
     @classmethod
     def validate_join_policy(cls, v: str) -> str:
-        if v not in ("invite_only", "approval_required", "open"):
-            raise ValueError("join_policy must be invite_only, approval_required, or open")
+        # Phase 14 B5 — accept the four post-rename values and reject the
+        # legacy 'invite_only' loud rather than silently storing an
+        # unrecognized string. The Phase 14 migration renamed existing
+        # rows to 'invite_only_secret'; clients that still send the old
+        # value need an explicit nudge.
+        if v == "invite_only":
+            raise ValueError(
+                "join_policy 'invite_only' is no longer accepted; "
+                "use 'invite_only_secret' or 'invite_only_public' instead."
+            )
+        if v not in (
+            "invite_only_secret", "invite_only_public",
+            "approval_required", "open",
+        ):
+            raise ValueError(
+                "join_policy must be invite_only_secret, invite_only_public, "
+                "approval_required, or open"
+            )
         return v
 
 
@@ -1110,8 +1126,22 @@ class OrgUpdate(BaseModel):
     @field_validator("join_policy")
     @classmethod
     def validate_join_policy(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and v not in ("invite_only", "approval_required", "open"):
-            raise ValueError("join_policy must be invite_only, approval_required, or open")
+        # Phase 14 B5 — see OrgCreate for the value-set rationale.
+        if v is None:
+            return v
+        if v == "invite_only":
+            raise ValueError(
+                "join_policy 'invite_only' is no longer accepted; "
+                "use 'invite_only_secret' or 'invite_only_public' instead."
+            )
+        if v not in (
+            "invite_only_secret", "invite_only_public",
+            "approval_required", "open",
+        ):
+            raise ValueError(
+                "join_policy must be invite_only_secret, invite_only_public, "
+                "approval_required, or open"
+            )
         return v
 
 
@@ -1170,10 +1200,21 @@ class BrandingUpdate(BaseModel):
     The logo_url is NOT settable here — logos are managed via
     POST/DELETE /api/orgs/{slug}/logo which sets the URL as a side
     effect of file upload.
+
+    Phase 14 B4: ``intro_text`` is a markdown-supported text block shown
+    on the org's public landing page. Stored on
+    ``Organization.settings.intro_text`` (NOT under the ``branding``
+    sub-dict, since intro_text is conceptually independent of color/logo
+    branding even though it ships through the same PATCH endpoint).
+    Up to 5000 chars; longer rejected.
     """
     primary_color: Optional[str] = None
     accent_color: Optional[str] = None
     accent_auto_derived: Optional[bool] = None
+    # Phase 14 B4 — empty string is allowed and treated as "clear" by the
+    # endpoint (settings.intro_text set to "" so get_intro_text returns
+    # None). Frontend can submit None to leave the field unchanged.
+    intro_text: Optional[str] = None
 
     @field_validator("primary_color")
     @classmethod
@@ -1184,6 +1225,58 @@ class BrandingUpdate(BaseModel):
     @classmethod
     def validate_accent(cls, v: Optional[str]) -> Optional[str]:
         return _validate_hex_color(v)
+
+    @field_validator("intro_text")
+    @classmethod
+    def validate_intro_text(cls, v: Optional[str]) -> Optional[str]:
+        # Phase 14 B4 — 5000-char cap. None and empty string are both
+        # valid (frontend uses None to mean "leave unchanged" and ""
+        # to mean "clear the field"; the route handler distinguishes
+        # via exclude_unset=True).
+        if v is None:
+            return v
+        if not isinstance(v, str):
+            raise ValueError("intro_text must be a string")
+        if len(v) > 5000:
+            raise ValueError(
+                "intro_text exceeds 5000-character maximum length"
+            )
+        return v
+
+
+class OrgPublicBrandingOut(BaseModel):
+    """Phase 14 B2 — public-shape branding object on the public landing
+    page endpoint. Exposes ONLY primary_color and accent_color (no
+    accent_auto_derived flag, no logo_url — logo_url is on the parent
+    response). Smaller surface than internal BrandingOut.
+    """
+    primary_color: Optional[str] = None
+    accent_color: Optional[str] = None
+
+
+class OrgPublicOut(BaseModel):
+    """Phase 14 B2 — public-facing org data shape returned by
+    GET /api/orgs/{slug}/public.
+
+    No auth required; the response is identical for logged-in and
+    logged-out callers. Excludes internal fields (id, created_at,
+    member_count, user_role, user_permissions, settings) and only
+    surfaces fields a prospective member needs to decide whether and
+    how to join.
+    """
+    slug: str
+    name: str
+    description: str
+    logo_url: Optional[str] = None
+    branding: OrgPublicBrandingOut = OrgPublicBrandingOut()
+    intro_text: Optional[str] = None
+    join_policy: str
+
+
+class JoinRequestOut(BaseModel):
+    """Phase 14 B3 — POST /api/orgs/{slug}/join-request response."""
+    status: str  # 'pending' or 'active'
+    member_id: str
 
 
 class OrgOut(BaseModel):

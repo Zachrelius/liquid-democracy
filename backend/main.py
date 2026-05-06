@@ -185,6 +185,11 @@ app.include_router(users.router)
 app.include_router(delegates.router)
 app.include_router(follows.router)
 app.include_router(organizations.router)
+# Phase 14 B2 — public org landing page endpoint (no-auth GET /api/orgs/{slug}/public).
+# Separate APIRouter so the unauthenticated path is visible at the route-table
+# level and doesn't accidentally inherit auth-required dependencies if
+# organizations.router grows a router-level auth dependency in the future.
+app.include_router(organizations.public_org_router)
 app.include_router(sub_organizations.router)
 app.include_router(polises.router)
 app.include_router(invitations.router)
