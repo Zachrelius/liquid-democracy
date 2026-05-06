@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import HelpBackLink from '../components/HelpBackLink';
 
 /**
  * Phase 14 D1 — public help page for organizations: public landing
@@ -18,9 +18,8 @@ export default function OrganizationsHelp() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
       <div>
-        <Link to="/orgs" className="text-sm text-[var(--brand-accent)] hover:underline mb-4 inline-block">
-          ← Back
-        </Link>
+        {/* Phase 15 G1 — back-link uses history.back() with /orgs fallback. */}
+        <HelpBackLink />
         <h1 className="text-2xl font-bold text-[var(--brand-primary)]">About Organizations</h1>
         <p className="text-sm text-gray-500 mt-1">
           The four join policies, what each means for visitors, and how to set up a public landing page.
