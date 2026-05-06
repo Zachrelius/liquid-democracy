@@ -241,7 +241,13 @@ export default function NotificationsPreferences() {
   // columns. Each channel column is 88px wide — narrow enough that all 4
   // fit on most viewports, wide enough that the labels (Weekly Digest /
   // Immediate Email) wrap predictably to two lines on narrow screens.
-  const gridCols = 'grid-cols-[1fr,88px,88px,88px,88px]';
+  //
+  // Phase 13.4 fix: Tailwind arbitrary-value syntax uses UNDERSCORES, not
+  // commas, to separate multi-value CSS properties. The 13.3 rewrite
+  // shipped `1fr,88px,...` which is an invalid class → grid falls back
+  // to single-column auto layout → all 4 checkboxes stacked vertically
+  // under each event row instead of laying out in 4 columns.
+  const gridCols = 'grid-cols-[1fr_88px_88px_88px_88px]';
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">
