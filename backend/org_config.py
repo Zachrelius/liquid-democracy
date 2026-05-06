@@ -59,6 +59,30 @@ def get_default_proposal_thresholds(
     return (pass_t, quorum_t)
 
 
+def get_intro_text(org: Optional[models.Organization]) -> Optional[str]:
+    """Return the org's optional intro text for the public landing page.
+
+    Phase 14 — markdown-supported text rendered on the org's public splash
+    page below name + description. Lives on
+    ``Organization.settings.intro_text`` (JSON key in the existing
+    ``settings`` column; no schema column added).
+
+    Empty string is treated as None (no section rendered) — the frontend
+    hides the intro section entirely when the value is null/empty so
+    stewards can clear the field by submitting an empty value.
+
+    Does NOT walk the parent chain (intro is per-org self-presentation,
+    not a config knob with sub-org inheritance semantics).
+    """
+    if org is None:
+        return None
+    settings = org.settings or {}
+    val = settings.get("intro_text")
+    if not val:
+        return None
+    return val
+
+
 def get_org_config(
     org: Optional[models.Organization], key: str, default: Any = None,
 ) -> Any:
