@@ -2064,3 +2064,98 @@ Chrome-in-Claude unavailable this session (carrying forward from Phase 13.2 sess
 ### Pass-summary
 
 **Phase 13.3 shipped clean on first attempt** — single merge, no reverts, no diagnostic-fix-redeploy cycles. The pre-merge gate set inherited from the Phase 13 arc (backend tests + PG smoke + W-START-CHECK + file-count check + W-OBSERVABILITY-CHECK) plus the new actual-upgrade-path check (Phase 13 learning #7 closer) caught nothing this pass — the migration is clean — but exercised the path that masked the Phase 13 boolean-default bug. The notifications preferences UX is now per-event-cadence + 4-column-labeled-grid + adjustable-quiet-hours + three-voting-opened-events-with-priority-resolution. Friend-pilot first-use signal addressed; preferences page reads cleanly; one-notification-per-voting-opened-trigger invariant is the load-bearing UX correctness property and is exhaustively tested. Next chrome-available session has 5 queued visual checks (Phase 12.7 + 13.2's three deploys + 13.3 multi-recipient + 13.3 matrix render).
+
+---
+
+## Phase 14 — Public Org Landing Pages + Join Policy Refinement — SHIPPED 2026-05-06
+
+**First new-feature pass after the Phase 13 notifications arc closed.** Master `a6b6b33`. Backend tests **947 → 989 (+42)**. Frontend bundle **354.57 → 358.72 kB gzipped (+4.15 kB)**, mid-range of spec's 4-8 kB budget. Migration `c0a3e5d12f4a` applied cleanly on prod. Single merge, no reverts. **Chrome connected this session for the first time in many** — substantial F2 verification + 13.3 matrix-render queue item drained.
+
+### Pre-merge gates (all PASS)
+
+- **Backend tests:** 947 → **989 (+42)** = 6 migration cycle + 36 endpoint
+- **PG smoke** (mode=both, prior=`b9e2f4a17c83`): **PASS both modes**
+- **Phase 13 learning #7 actual-upgrade-path check: PASS** with documented pre/post counts: `invite_only=2 → 0`, `invite_only_secret=0 → 2`, `approval_required + open` unchanged at 1 each. Second consecutive pass exercising this pattern (Phase 13.3 was the first); strengthens the case for promoting to a standard pg_smoke mode.
+- **Migration cycle test:** 6/6 PASS
+- **W-START-CHECK PASS:** uvicorn --workers 1 health 200 at +1s; `Digest scheduler launched.` line present (Phase 13's defensive launch pattern still working); no failure trace
+- **File-count check:** 19 files / 2782 insertions / 68 deletions
+- **W-OBSERVABILITY-CHECK PASS:** railway logs streaming pre-push
+
+### What ships
+
+**Cluster B — Backend** (commits `1f530b8`, `6b2ac9a`, `7383a59`, `3c4c86e`):
+
+- **Migration `c0a3e5d12f4a`** (down_revision = `b9e2f4a17c83`):
+  - Data migration: `UPDATE organizations SET join_policy = 'invite_only_secret' WHERE join_policy = 'invite_only'`. Idempotent + reversible (downgrade restores `invite_only` for any `invite_only_secret` rows; documents that `invite_only_public` is best-effort renamed to `invite_only` on downgrade).
+  - `intro_text` lives in the existing `Organization.settings` JSON column (Phase 12.7's branding lives there too); no schema column change.
+  - Helper `get_intro_text(org)` added in `backend/org_config.py`.
+- **`GET /api/orgs/{slug}/public`** — no auth required. Returns `{slug, name, description, logo_url, branding {primary_color, accent_color}, intro_text, join_policy}` for the three public policies. Returns identical 404 body for both `invite_only_secret` orgs AND non-existent slugs (deliberate indistinguishability for unauth-probe security posture).
+- **`POST /api/orgs/{slug}/join-request`** — auth required. Consolidates approval_required + open join paths behind one URL. Dispatches by policy: secret→404, public→403 ("This organization requires an invitation."), approval_required→200 `{status:"pending", member_id}` + `member.join_request` notification fan-out + audit `org.join_requested`, open→200 `{status:"active", member_id}` + audit `org.joined`. 409 for already-active / already-pending. 401 for logged-out.
+- **`DELETE /api/orgs/{slug}/join-request`** — cancel pending request. 204 + audit `org.join_request_cancelled`. Idempotent 404 on repeat.
+- **`PATCH /api/orgs/{slug}/branding`** extended to accept `intro_text` (markdown, 5000-char cap, persisted to `settings.intro_text` at top level — NOT under `settings.branding` since it's conceptually independent of color/logo). Permission gate `org.edit_branding` unchanged.
+- **Validation**: legacy `join_policy='invite_only'` rejected with HTTP 400 + clear error message: `"join_policy 'invite_only' is no longer accepted; use 'invite_only_secret' or 'invite_only_public' instead."`
+- **Defense-in-depth**: legacy `POST /api/orgs/{slug}/join` endpoint hardened to also 404 secret + 403 public, so old clients can't probe via that path either.
+- **Membership status note**: existing codebase uses `pending_approval` for the DB row; backend dev kept that internal value (so existing approve/deny code paths work unchanged) but the API response returns `"status": "pending"` per spec — translates the internal value at the boundary.
+
+**Cluster F — Frontend** (commit `2c6e797`):
+
+- **`OrgPublicLanding.jsx`** (new) — single component with a `JoinCta` sub-component that branches on `(policy × visitor state)`. All 12 spec rows map to explicit branches. Header / description / intro / branding render identically across the 4 public-policy paths; only the CTA cell varies. invite_only_secret never reaches splash UI (404 surfaces as the standard not-found page, indistinguishable from non-existent slugs).
+- **Routing change in `App.jsx`**: bare `/{slug}` is now public (renders `OrgPublicLanding`); `/{slug}/proposals` and other sub-paths stay member-gated via `OrgScopedLayout` (existing behavior unchanged). Members visiting bare `/{slug}` see the splash too — no auto-redirect. Per Z's Q1 nuance.
+- **`BrandingThemeApplier.jsx`** (new) — extracted Phase 12.7's branding-theme effect from `App.jsx` into a standalone prop-shaped component. `OrgScopedLayout` wires it via thin `OrgScopedBrandingTheme` wrapper that bridges `OrgContext` into the prop shape (zero behavior change for org-scoped routes); `OrgPublicLanding` mounts it directly with the public-endpoint's branding payload. So the public splash respects each org's brand colors.
+- **`OrgSettings.jsx`** updates:
+  - 4-radio policy selector with the user-facing descriptions from spec §F3 (Invite only private / Invite only public / Approval required / Open).
+  - Defensive client-side coercion of legacy `invite_only` → `invite_only_secret` on hydration so a stale `/api/orgs` response during deploy cutover doesn't render a radio with no selected option.
+  - Intro text editor: textarea (5-10 rows) bound to local state, live markdown preview pane, "Save" → `PATCH /branding` with `{intro_text: "..."}`, 5000-char counter, read-only indicator when policy=`invite_only_secret`.
+- **`OrgSelector.jsx`** empty-state copy updated: "Create your own organization, follow a public organization's link, or wait for an invitation."
+- **`Login.jsx`** — minimal `?next=` support added (validates same-origin relative paths only; rejects `//host`, `javascript:`, absolute URLs to other hosts). The Phase 14 dispatch incorrectly described this as "Phase 9-era functionality" but grep confirmed it didn't exist. Frontend dev surfaced and patched the gap as part of Cluster F.
+
+**Cluster D — Documentation** (commit `835d0a9`):
+
+- **`OrganizationsHelp.jsx`** (new) at `/help/organizations`. Public help page covering the four join policies with the privacy-vs-discoverability tradeoff for each, public-landing-page setup (logo + name + description + intro), end-to-end approval-required flow, and what's deliberately NOT on the splash (member counts, sub-paths, SEO).
+- **SECURITY_REVIEW.md** "Public Org Landing Pages (Phase 14)" section appended (~56 lines): what's exposed without auth, the 404-indistinguishability rule, migration preservation of current behavior, pending-request visibility scope, markdown XSS inheritance, `?next=` redirect parameter validator, deferred items.
+- **`docs/tech_debt_audit_2026-05.md`** edit-history entry dated 2026-05-06 noting the Phase 14 retirements + Phase 13 learning #7 applied a second time + the spec-claim correction about `?next=`.
+
+**Cluster C — Browser verification (Chrome connected this session):**
+
+Live verification against prod (post-merge bundle `index-d8DNS-1X.js`):
+
+- ✅ **Phase 14 F2: open + logged-out** → `/gamenights` renders splash with "Join" CTA (h1="GameNights", description visible, branding `primary_color=#c45f1c` applied via the extracted BrandingThemeApplier).
+- ✅ **`GET /api/orgs/gamenights/public` 200** with full public payload (slug, name, description, logo_url, branding, intro_text=null, join_policy=open).
+- ✅ **404 indistinguishability rule:** two distinct nonexistent slugs both return identical `{"detail":"Organization not found"}` 404 responses.
+- ✅ **F1 routing change correctly scoped:** bare `/{slug}` is public; `/{slug}/proposals` for non-members still hits the existing OrgScopedLayout "You don't have access" wall (regression check PASS — sub-path gating preserved unchanged).
+- ✅ **Phase 13.3/13.4 4-column matrix render: VERIFIED** on `/settings/notifications` — 14 grid containers all using `1fr 88px 88px 88px 88px` template (header + 13 event rows). 13.4's grid-template fix is live and rendering correctly.
+- ✅ **Phase 13.3 quiet hours time picker show/hide: VERIFIED** — toggle off → 0 time inputs in DOM; toggle on (via React click handler) → 2 `<input type="time">` elements appear with default values.
+
+Verifications that did NOT fit this session (queued for next chrome session, in priority order):
+
+1. **Phase 14 F2 invite_only_public + invite_only_secret states** — no orgs configured with those policies on prod yet. Once a steward (Z?) flips an org to one of these via Org Settings, the splash variants can be visually verified.
+2. **Phase 14 F2 approval_required pending state** — no test setup. Would benefit from creating a fresh user, having them request to join an approval_required org, then capturing the pending-state UI.
+3. **Phase 14 F2 logged-in non-member request flow** — would benefit from a fresh test user.
+4. **Phase 12.7 F7** — logo upload + theming + nav logo + OrgSelector cards + permission gate + clear-on-leave.
+5. **Phase 13.2 W-DEPLOY-2 multi-org Item 22 routing** — multi-org user receives a notification for a comment on a non-default org; click-through goes to correct org.
+6. **Phase 13.2 W-DEPLOY-3 email/digest/quiet-hours/unsubscribe** — full Resend round-trip + scheduled-tick verification.
+7. **Phase 13.3 multi-recipient voting-opened priority** — three users opt into all three voting-opened events; advance proposal; verify each gets one notification at the right priority.
+
+The 2 items that fit this session's verification budget were the highest-priority load-bearing checks: Phase 14's 404-indistinguishability + bare-slug public-render + sub-path gating preservation, plus the 13.4 grid-template fix verification (it had been queued since 13.4 shipped). The remaining 7 items now form the chrome-deferred queue going forward.
+
+### Phase 14 commit list
+
+- `1f530b8` Phase 14 B1: schema migration
+- `6b2ac9a` Phase 14 B2+B3+B4+B5: public endpoint, join-request endpoints, intro_text, validation
+- `7383a59` Phase 14 B6: endpoint tests
+- `3c4c86e` Phase 14: actual-upgrade-path verification script
+- `2c6e797` Phase 14 F1-F4: public org landing pages frontend
+- `835d0a9` Phase 14 D1+D2+D3: help article, SECURITY_REVIEW update, audit doc note
+- `a6b6b33` Merge phase-14/public-org-landing-pages
+
+### New tech debt logged
+
+1. **`?next=` validator parity audit.** Frontend dev added minimal Login support but Register hasn't been audited. Worth a small follow-up to confirm both flows validate consistently and to extend coverage to any other auth-redirect entry points.
+2. **Promote actual-upgrade-path mode to standard `pg_smoke.py --mode actual-upgrade` flag.** Now applied on two consecutive passes (13.3 + 14) via single-purpose scripts. The pattern (stamp prior + sample data + alembic upgrade head WITHOUT create_all bootstrap) is generic enough to live in the standard pg_smoke surface. Promote it before the next migration pass so it's exercised by default rather than via a per-pass copy.
+3. **Defensive `invite_only` → `invite_only_secret` coercion in OrgSettings.jsx** is needed only during the deploy cutover (cached responses with stale value). Eligible for removal ~7 days post-deploy (matching the 12.5/12.6/12.7 calendar-gated cleanup precedent — eligible from 2026-05-13).
+
+### Pass-summary
+
+**Phase 14 shipped clean on first attempt — no diagnostic-fix-redeploy cycles, no reverts.** All 5 pre-merge gates passed including the now-standard actual-upgrade-path verification (Phase 13 learning #7 applied for the second consecutive pass). The friend-pilot blocker is unblocked: registered users can now discover and join orgs via direct URL share, with four discrete privacy levels available to stewards (`invite_only_secret` for full privacy, `invite_only_public` for recognizable-but-controlled, `approval_required` for vetted-but-open, `open` for fully-public). The 12-state F2 matrix is partially verified live (open + logged-out + 404-rule + sub-path gating preservation); remaining states queued for the next chrome session pending fresh test users + policy variants on prod orgs.
+
+Backend tests **850 (post-12.8) → 989 (+139) over the Phase 13 + 14 arc**. Frontend bundle **348.53 (post-12.8) → 358.72 (+10.19 kB) over Phase 13 + 14**. Eight institutional learning items captured during the Phase 13 arc (defensive-import / defensive-scheduler / file-count check / Railway log access / idempotency-over-coordination / multi-deploy bisection / pg_smoke gap awareness / observation-vs-inference) all continued to apply through Phase 14 — each pre-merge gate inherited from that arc continues to catch (or NOT catch, when the migration is clean) what it's supposed to. Closeout commit follows.
