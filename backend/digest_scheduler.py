@@ -1,19 +1,19 @@
-"""Phase 13 E3 — daily/weekly digest scheduler + quiet-hours flush.
+"""Phase 13 / 13.3 — daily/weekly digest scheduler + quiet-hours flush.
 
 Scheduling implementation: an asyncio task started in main.py's startup
 hook that wakes every hour. Each tick:
 
-  1. For all users with ``digest_cadence == "daily"`` whose user-local
-     time has just hit 9am, aggregate the unread, undelivered
-     notifications from the last 24 hours, send a digest email, and mark
-     the included rows as ``payload["delivered_in_digest"] = True``.
+  1. For each user, at their local 9am, aggregate any
+     ``email_daily``-enabled events from the last 24 hours, send a digest
+     email, mark the included rows as ``payload["delivered_in_digest"] =
+     True``.
 
-  2. For all users with ``digest_cadence == "weekly"`` whose user-local
-     time has just hit Monday 9am, do the same over the last 7 days.
+  2. For each user, at their local Monday 9am, do the same over the last
+     7 days for ``email_weekly``-enabled events.
 
   3. For users with quiet hours enabled whose local time has just hit
-     9am, flush any real-time emails that were suppressed during their
-     9pm-9am window (rows tagged ``payload["queued_for_quiet_hours_end"]
+     their ``quiet_hours_end``, flush any immediate emails suppressed
+     during the window (rows tagged ``payload["queued_for_quiet_hours_end"]
      = True`` by the emit-time path).
 
   4. Tail-step: ``cleanup_expired_notifications(db)`` deletes
@@ -21,15 +21,17 @@ hook that wakes every hour. Each tick:
 
 Empty digests (zero qualifying notifications) do not send.
 
+Phase 13.3: the global ``digest_cadence`` column on User was retired.
+Daily / weekly opt-in is now a per-event channel preference
+(``email_daily`` / ``email_weekly``). The aggregator filters
+notifications by joining the user's per-event preference rows; the tick
+driver iterates all users (cheap at v1 scale) instead of slicing by the
+old global column.
+
 The loop is gated on ``DISABLE_DIGEST_SCHEDULER`` env var so the test
 suite doesn't accidentally launch it. Tests exercise
 ``aggregate_for_user`` and ``run_one_tick`` directly without spinning
 the loop.
-
-DEPLOYMENT.md note: this approach is documented there. If the scheduler
-needs to be disabled (e.g. while diagnosing a runaway-email incident),
-set ``DISABLE_DIGEST_SCHEDULER=1`` and redeploy; the FastAPI process
-itself stays up.
 """
 from __future__ import annotations
 
@@ -126,6 +128,24 @@ class DigestAggregate:
         return not self.groups
 
 
+def _user_cadence_event_types(
+    db: Session, user_id: str, cadence_channel: str,
+) -> set[str]:
+    """Return the set of event_types the user has the given digest
+    channel (``email_daily`` or ``email_weekly``) enabled for.
+    """
+    rows = (
+        db.query(models.NotificationPreference.event_type)
+        .filter(
+            models.NotificationPreference.user_id == user_id,
+            models.NotificationPreference.channel == cadence_channel,
+            models.NotificationPreference.enabled == True,  # noqa: E712
+        )
+        .all()
+    )
+    return {r.event_type for r in rows}
+
+
 def aggregate_for_user(
     db: Session,
     user: models.User,
@@ -136,10 +156,14 @@ def aggregate_for_user(
     """Collect digest-eligible notifications for ``user`` over the cadence
     window.
 
-    Eligible = unread, undelivered, and within the cadence window
-    (24h for daily, 7d for weekly). Already-delivered notifications
-    (``payload["delivered_in_digest"] == True``) are excluded so a
-    rolling cron doesn't double-count.
+    Phase 13.3: only notifications whose ``event_type`` matches the
+    user's enabled per-event cadence channel (``email_daily`` for daily,
+    ``email_weekly`` for weekly) are included. Eligible = unread,
+    undelivered, within the cadence window, AND user opted into that
+    cadence channel for that event_type.
+
+    Already-delivered notifications (``payload["delivered_in_digest"] ==
+    True``) are excluded so a rolling cron doesn't double-count.
 
     Quiet-hours queued real-time emails (``payload["queued_for_quiet_
     hours_end"] == True``) are NOT included in digests — they're
@@ -148,10 +172,19 @@ def aggregate_for_user(
     now = (now or datetime.now(timezone.utc)).replace(tzinfo=None) if now else datetime.now(timezone.utc).replace(tzinfo=None)
     if cadence == "daily":
         cutoff = now - timedelta(days=1)
+        cadence_channel = "email_daily"
     elif cadence == "weekly":
         cutoff = now - timedelta(days=7)
+        cadence_channel = "email_weekly"
     else:
         return DigestAggregate(user=user, cadence=cadence, cutoff=now, groups=[], notification_ids=[])
+
+    # Phase 13.3: filter to event_types the user has explicitly opted
+    # into for this cadence channel. Empty set => empty digest (nothing
+    # qualifies).
+    cadence_events = _user_cadence_event_types(db, user.id, cadence_channel)
+    if not cadence_events:
+        return DigestAggregate(user=user, cadence=cadence, cutoff=cutoff, groups=[], notification_ids=[])
 
     rows = (
         db.query(models.Notification)
@@ -159,6 +192,7 @@ def aggregate_for_user(
             models.Notification.user_id == user.id,
             models.Notification.created_at >= cutoff,
             models.Notification.read_at.is_(None),
+            models.Notification.event_type.in_(cadence_events),
         )
         .order_by(models.Notification.created_at.asc())
         .all()
@@ -222,10 +256,12 @@ def _summarize_event(event_type: str, payload: dict) -> str:
         return f"{actor} commented on your proposal '{payload.get('proposal_title') or ''}'."
     if event_type == "proposal.entered_voting":
         return f"Voting opened on '{payload.get('proposal_title') or ''}'."
+    if event_type == "proposal.entered_voting.you_vote":
+        return f"Voting opened on '{payload.get('proposal_title') or ''}' — you vote directly."
+    if event_type == "proposal.entered_voting.delegated_to_you":
+        return f"Voting opened on '{payload.get('proposal_title') or ''}' — you vote on others' behalf."
     if event_type == "proposal.closed":
         return f"'{payload.get('proposal_title') or ''}' closed: {payload.get('outcome') or 'resolved'}."
-    if event_type == "sustained_majority.floor_approached":
-        return f"Support is approaching the floor on '{payload.get('proposal_title') or ''}'."
     if event_type == "member.join_request":
         return f"{actor} requested to join {payload.get('org_name') or 'the org'}."
     if event_type == "invitation.accepted":
@@ -498,7 +534,10 @@ def run_one_tick(
     counts = {"daily": 0, "weekly": 0, "quiet": 0, "cleaned": 0}
 
     # Single user-set query — small enough at v1 scale to iterate in
-    # Python. If this becomes hot, slice by tz/cadence with an SQL JOIN.
+    # Python. Phase 13.3: we no longer slice by ``digest_cadence`` (that
+    # column is gone); aggregate_for_user filters by per-event channel
+    # preferences and returns an empty aggregate if the user is opted
+    # into nothing for the cadence in question, so the tick is cheap.
     users = db.query(models.User).all()
 
     for user in users:
@@ -511,8 +550,10 @@ def run_one_tick(
             )
             local_hour = now.astimezone(timezone.utc).hour
 
-        # Daily digest at 9am local.
-        if user.digest_cadence == "daily" and local_hour == DAILY_DIGEST_HOUR:
+        # Daily digest at 9am local. Phase 13.3: aggregate_for_user
+        # checks per-event email_daily preferences; users with no
+        # email_daily opt-ins produce an empty aggregate and skip.
+        if local_hour == DAILY_DIGEST_HOUR:
             try:
                 aggregate = aggregate_for_user(db, user, "daily", now=now)
                 if not aggregate.is_empty:
@@ -522,8 +563,9 @@ def run_one_tick(
                 log.exception("digest tick: daily failed for user=%s", user.id)
                 db.rollback()
 
-        # Weekly digest on Monday 9am local.
-        if user.digest_cadence == "weekly" and local_hour == WEEKLY_DIGEST_HOUR:
+        # Weekly digest on Monday 9am local. Same per-event channel
+        # filter as daily but using email_weekly opt-ins.
+        if local_hour == WEEKLY_DIGEST_HOUR:
             try:
                 local_now = _user_local_now(user, now)
                 if local_now.weekday() == WEEKLY_DIGEST_WEEKDAY:
@@ -535,16 +577,24 @@ def run_one_tick(
                 log.exception("digest tick: weekly failed for user=%s", user.id)
                 db.rollback()
 
-        # Quiet-hours queue flush at 9am local.
-        if user.quiet_hours_enabled and local_hour == QUIET_HOURS_END:
+        # Quiet-hours queue flush at the user's configured end-of-window
+        # hour. Phase 13.3: per-user adjustable via User.quiet_hours_end
+        # (HH:MM string); fall back to the platform default if unset.
+        if user.quiet_hours_enabled:
             try:
-                n = flush_quiet_hours_queue(db, user)
-                counts["quiet"] += n
+                from notification_emit import _parse_hhmm_hour as _hh
+                user_end_hour = _hh(getattr(user, "quiet_hours_end", None), QUIET_HOURS_END)
             except Exception:  # noqa: BLE001
-                log.exception(
-                    "digest tick: quiet-hours flush failed for user=%s", user.id,
-                )
-                db.rollback()
+                user_end_hour = QUIET_HOURS_END
+            if local_hour == user_end_hour:
+                try:
+                    n = flush_quiet_hours_queue(db, user)
+                    counts["quiet"] += n
+                except Exception:  # noqa: BLE001
+                    log.exception(
+                        "digest tick: quiet-hours flush failed for user=%s", user.id,
+                    )
+                    db.rollback()
 
     # Tail step: 90-day cleanup.
     try:

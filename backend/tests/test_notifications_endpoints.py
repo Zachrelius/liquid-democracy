@@ -356,7 +356,7 @@ def test_mark_all_read_zero_unread_returns_zero(client, test_db):
 
 def test_get_preferences_default_state_all_false(client, test_db):
     """Opt-in default: a user with no NotificationPreference rows sees
-    every event-channel pair as False."""
+    every event-channel pair as False (4 channels per event in 13.3)."""
     user = _make_user(test_db, "pref_default")
     test_db.commit()
 
@@ -364,14 +364,20 @@ def test_get_preferences_default_state_all_false(client, test_db):
     assert resp.status_code == 200
     body = resp.json()
 
-    # All 12 events present; every channel is False.
+    # All registry events present; every channel is False.
     assert set(body["preferences"].keys()) == {ev.key for ev in EVENT_REGISTRY}
     for prefs in body["preferences"].values():
-        assert prefs == {"in_app": False, "email": False}
+        assert prefs == {
+            "in_app": False, "email_immediate": False,
+            "email_daily": False, "email_weekly": False,
+        }
 
+    # Phase 13.3: digest_cadence is GONE from the response.
+    assert "digest_cadence" not in body
     # Top-level defaults match the User model defaults.
-    assert body["digest_cadence"] == "real_time"
     assert body["quiet_hours_enabled"] is False
+    assert body["quiet_hours_start"] == "21:00"
+    assert body["quiet_hours_end"] == "09:00"
     assert body["timezone"] is None
     assert body["notification_intro_dismissed"] is False
 
@@ -384,15 +390,21 @@ def test_get_preferences_reflects_existing_rows(client, test_db):
     ))
     test_db.add(models.NotificationPreference(
         user_id=user.id, event_type="comment.replied",
-        channel="email", enabled=True,
+        channel="email_daily", enabled=True,
     ))
     user.timezone = "America/Los_Angeles"
     test_db.commit()
 
     resp = client.get("/api/notifications/preferences", headers=_auth(user))
     body = resp.json()
-    assert body["preferences"]["comment.replied"] == {"in_app": True, "email": True}
-    assert body["preferences"]["follow.requested"] == {"in_app": False, "email": False}
+    assert body["preferences"]["comment.replied"]["in_app"] is True
+    assert body["preferences"]["comment.replied"]["email_daily"] is True
+    assert body["preferences"]["comment.replied"]["email_immediate"] is False
+    assert body["preferences"]["comment.replied"]["email_weekly"] is False
+    assert body["preferences"]["follow.requested"] == {
+        "in_app": False, "email_immediate": False,
+        "email_daily": False, "email_weekly": False,
+    }
     assert body["timezone"] == "America/Los_Angeles"
 
 
@@ -408,11 +420,14 @@ def test_patch_preferences_partial_update_creates_audit_event(client, test_db):
         "/api/notifications/preferences",
         json={
             "preferences": {
-                "comment.replied": {"in_app": True, "email": True},
+                "comment.replied": {
+                    "in_app": True, "email_daily": True,
+                },
                 "follow.requested": {"in_app": True},
             },
-            "digest_cadence": "daily",
             "quiet_hours_enabled": True,
+            "quiet_hours_start": "22:00",
+            "quiet_hours_end": "08:00",
             "timezone": "America/Los_Angeles",
             "notification_intro_dismissed": True,
         },
@@ -420,10 +435,13 @@ def test_patch_preferences_partial_update_creates_audit_event(client, test_db):
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["preferences"]["comment.replied"] == {"in_app": True, "email": True}
-    assert body["preferences"]["follow.requested"] == {"in_app": True, "email": False}
-    assert body["digest_cadence"] == "daily"
+    assert body["preferences"]["comment.replied"]["in_app"] is True
+    assert body["preferences"]["comment.replied"]["email_daily"] is True
+    assert body["preferences"]["follow.requested"]["in_app"] is True
+    assert "digest_cadence" not in body
     assert body["quiet_hours_enabled"] is True
+    assert body["quiet_hours_start"] == "22:00"
+    assert body["quiet_hours_end"] == "08:00"
     assert body["timezone"] == "America/Los_Angeles"
     assert body["notification_intro_dismissed"] is True
 
@@ -437,8 +455,9 @@ def test_patch_preferences_partial_update_creates_audit_event(client, test_db):
     details = audit[0].details
     assert "changes" in details
     changes = details["changes"]
-    assert changes["digest_cadence"] == {"old": "real_time", "new": "daily"}
     assert changes["quiet_hours_enabled"] == {"old": False, "new": True}
+    assert changes["quiet_hours_start"] == {"old": "21:00", "new": "22:00"}
+    assert changes["quiet_hours_end"] == {"old": "09:00", "new": "08:00"}
     assert "preferences" in changes
     assert changes["preferences"]["comment.replied"]["in_app"] == {
         "old": False, "new": True,
@@ -453,8 +472,8 @@ def test_patch_preferences_no_change_no_audit(client, test_db):
     resp = client.patch(
         "/api/notifications/preferences",
         json={
-            "digest_cadence": "real_time",   # already the default
             "quiet_hours_enabled": False,    # already the default
+            "quiet_hours_start": "21:00",     # already the default
         },
         headers=_auth(user),
     )
@@ -481,17 +500,58 @@ def test_patch_preferences_unknown_event_type_400(client, test_db):
     assert "Unknown event_type" in resp.json()["detail"]
 
 
-def test_patch_preferences_bad_cadence_400(client, test_db):
-    user = _make_user(test_db, "pref_bad_cadence")
+def test_patch_preferences_rejects_digest_cadence_400(client, test_db):
+    """Phase 13.3: the legacy digest_cadence field is rejected with a
+    clear error message so old client code surfaces the issue
+    immediately."""
+    user = _make_user(test_db, "pref_reject_cadence")
     test_db.commit()
 
     resp = client.patch(
         "/api/notifications/preferences",
-        json={"digest_cadence": "hourly"},
+        json={"digest_cadence": "daily"},
         headers=_auth(user),
     )
     assert resp.status_code == 400
     assert "digest_cadence" in resp.json()["detail"]
+    assert "retired" in resp.json()["detail"].lower()
+
+
+def test_patch_preferences_bad_quiet_hours_format_400(client, test_db):
+    user = _make_user(test_db, "pref_bad_qh")
+    test_db.commit()
+
+    resp = client.patch(
+        "/api/notifications/preferences",
+        json={"quiet_hours_start": "9pm"},
+        headers=_auth(user),
+    )
+    assert resp.status_code == 400
+    assert "quiet_hours_start" in resp.json()["detail"]
+
+
+def test_patch_preferences_quiet_hours_persist(client, test_db):
+    """Phase 13.3: quiet_hours_start/end persist across save/reload."""
+    user = _make_user(test_db, "qh_persist")
+    test_db.commit()
+
+    resp = client.patch(
+        "/api/notifications/preferences",
+        json={
+            "quiet_hours_enabled": True,
+            "quiet_hours_start": "23:30",
+            "quiet_hours_end": "07:15",
+        },
+        headers=_auth(user),
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Reload and verify persistence.
+    resp = client.get("/api/notifications/preferences", headers=_auth(user))
+    body = resp.json()
+    assert body["quiet_hours_enabled"] is True
+    assert body["quiet_hours_start"] == "23:30"
+    assert body["quiet_hours_end"] == "07:15"
 
 
 def test_patch_preferences_idempotent_upsert(client, test_db):
@@ -529,10 +589,10 @@ def test_unsubscribe_via_token_flips_email_pref_off(client, test_db):
     from email_service import generate_unsubscribe_token
 
     user = _make_user(test_db, "unsub_user")
-    # Pre-set email pref ON so we can confirm flip to OFF.
+    # Phase 13.3: pre-set email_immediate ON so we can confirm flip to OFF.
     test_db.add(models.NotificationPreference(
         user_id=user.id, event_type="comment.replied",
-        channel="email", enabled=True,
+        channel="email_immediate", enabled=True,
     ))
     test_db.commit()
 
@@ -543,17 +603,19 @@ def test_unsubscribe_via_token_flips_email_pref_off(client, test_db):
     assert body["success"] is True
     assert body["event_type"] == "comment.replied"
 
-    pref = (
-        test_db.query(models.NotificationPreference)
-        .filter(
-            models.NotificationPreference.user_id == user.id,
-            models.NotificationPreference.event_type == "comment.replied",
-            models.NotificationPreference.channel == "email",
+    # Phase 13.3 unsubscribe flips ALL three email channels off.
+    for channel in ("email_immediate", "email_daily", "email_weekly"):
+        pref = (
+            test_db.query(models.NotificationPreference)
+            .filter(
+                models.NotificationPreference.user_id == user.id,
+                models.NotificationPreference.event_type == "comment.replied",
+                models.NotificationPreference.channel == channel,
+            )
+            .first()
         )
-        .first()
-    )
-    assert pref is not None
-    assert pref.enabled is False
+        assert pref is not None
+        assert pref.enabled is False
 
 
 def test_unsubscribe_via_token_creates_row_when_absent(client, test_db):
@@ -567,17 +629,18 @@ def test_unsubscribe_via_token_creates_row_when_absent(client, test_db):
     assert resp.status_code == 200
     assert resp.json()["success"] is True
 
-    pref = (
-        test_db.query(models.NotificationPreference)
-        .filter(
-            models.NotificationPreference.user_id == user.id,
-            models.NotificationPreference.event_type == "follow.requested",
-            models.NotificationPreference.channel == "email",
+    for channel in ("email_immediate", "email_daily", "email_weekly"):
+        pref = (
+            test_db.query(models.NotificationPreference)
+            .filter(
+                models.NotificationPreference.user_id == user.id,
+                models.NotificationPreference.event_type == "follow.requested",
+                models.NotificationPreference.channel == channel,
+            )
+            .first()
         )
-        .first()
-    )
-    assert pref is not None
-    assert pref.enabled is False
+        assert pref is not None
+        assert pref.enabled is False
 
 
 def test_unsubscribe_invalid_token_returns_user_friendly_failure(client, test_db):
@@ -605,17 +668,24 @@ def test_unsubscribe_unknown_event_type_returns_failure(client, test_db):
 # GET /api/notifications/registry
 # ---------------------------------------------------------------------------
 
-def test_get_registry_returns_12_entries(client, test_db):
+def test_get_registry_returns_13_entries(client, test_db):
+    """Phase 13.3: registry has 13 events. Phase 13 had 12; floor_approached
+    deleted; you_vote + delegated_to_you added (12 - 1 + 2 = 13)."""
     user = _make_user(test_db, "reg_user")
     test_db.commit()
 
     resp = client.get("/api/notifications/registry", headers=_auth(user))
     assert resp.status_code == 200
     body = resp.json()
-    assert len(body["events"]) == 12
+    assert len(body["events"]) == 13
     keys = {ev["key"] for ev in body["events"]}
     expected = {ev.key for ev in EVENT_REGISTRY}
     assert keys == expected
+    # The two new specializations are present.
+    assert "proposal.entered_voting.you_vote" in keys
+    assert "proposal.entered_voting.delegated_to_you" in keys
+    # The deleted event is gone.
+    assert "sustained_majority.floor_approached" not in keys
     # Every entry has non-empty label, description, category.
     for ev in body["events"]:
         assert ev["label"] and ev["description"] and ev["category"]
