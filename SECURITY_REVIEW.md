@@ -494,3 +494,59 @@ The notification system inherits the platform's existing trust tiers. A casual t
 - Notification analytics (open rates, CTR). Out of scope per spec; would change the storage profile by adding tracking pixels or click-through redirects.
 - Encryption-at-rest of notification payloads in the database. The `payload` column is plain JSON; payload contents inherit whatever encryption-at-rest the host DB provides (Railway managed Postgres encrypts by default). Per-row payload encryption would require a key-management story we don't have today.
 - Rate-limiting on the unsubscribe endpoint. The endpoint requires a signed token, so brute-forcing a target user's unsubscribe is not feasible in a meaningful timeframe; if signed-token expiry shortened or secret rotation happened, this would warrant revisiting.
+
+---
+
+## Public Org Landing Pages (Phase 14, 2026-05-06)
+
+Phase 14 introduces public landing pages at `/{slug}` for orgs whose join policy is `invite_only_public`, `approval_required`, or `open`. The fourth value `invite_only_secret` (renamed from the legacy `invite_only` to preserve current behavior on existing orgs) keeps an org fully undiscoverable. The threat model below covers what's now exposed without authentication and the design decisions that shape the exposure.
+
+### What's exposed without authentication
+
+The new `GET /api/orgs/{slug}/public` endpoint requires no auth and returns:
+
+- Org `slug`, `name`, `description`, and `join_policy`
+- Org logo URL (if a logo was uploaded via Phase 12.7's branding flow)
+- Org branding `primary_color` and `accent_color` (if configured)
+- Org `intro_text` (markdown content, if a steward set one)
+
+A logged-in caller gets the same response shape as a logged-out caller — auth state doesn't affect the response. The matching `OrgPublicLanding.jsx` component renders this data publicly on `/{slug}`.
+
+Stewards opting their org into `invite_only_public`, `approval_required`, or `open` are explicitly choosing this exposure. The Org Settings policy selector spells out what each option exposes; the spec documents it as a deliberate steward decision, not an opaque platform default.
+
+### Indistinguishability of secret orgs from non-existent ones
+
+Both `invite_only_secret` orgs and non-existent slugs return the same 404 response from `GET /api/orgs/{slug}/public` and `POST /api/orgs/{slug}/join-request`. A scraper trying random slugs cannot tell whether the slug is unused or belongs to a secret org. This is a deliberate posture — without it, a 403 / different-shaped 404 would reveal that a secret-named org exists, which defeats the secrecy guarantee.
+
+The same indistinguishability rule applies to the `DELETE /api/orgs/{slug}/join-request` endpoint and the existing legacy `POST /api/orgs/{slug}/join` endpoint (Phase 14 hardened the legacy endpoint to match for defense-in-depth).
+
+### Migration of existing `invite_only` orgs
+
+Phase 14's migration `c0a3e5d12f4a` renames every `join_policy='invite_only'` row to `'invite_only_secret'` to preserve current behavior — no org has its public visibility silently flipped on by deploying this pass. Stewards who want a public landing page must explicitly opt in by changing their org's policy to `invite_only_public`, `approval_required`, or `open` via the Org Settings page.
+
+### Join requests and pending member visibility
+
+Pending join requests (created via `POST /api/orgs/{slug}/join-request` for `approval_required` orgs) create an `OrgMembership` row with `status='pending_approval'`. These rows are NOT visible via the public endpoint or to non-admins. Only users with the `member.approve_join` permission (Stewards and Admins by default per the role-permissions matrix from Phase 12 Stage 2) can see pending requests, via the admin members page.
+
+The `member.join_request` notification (Phase 13) fires only to those same approve-permission holders. Other members of the org don't see notifications about pending requests.
+
+### Markdown rendering in `intro_text`
+
+The `intro_text` field is markdown-rendered using the same renderer the platform uses for proposal deliberation bodies (`renderMarkdown.js`). The same XSS protections apply — no raw HTML, no `<script>` tags, no `javascript:` URLs in links. The 5000-character length cap on `intro_text` (enforced backend-side via Pydantic and frontend-side via textarea maxlength) limits the surface area of any future renderer bug.
+
+Future audit consideration: when the markdown renderer is updated (e.g., dependency upgrade), re-verify that the new version still strips dangerous constructs. The intro_text field has a wider audience than proposal bodies (anyone with the URL vs. only members), so a renderer regression would have a larger blast radius here.
+
+### `?next=` redirect parameter on Login / Register
+
+Phase 14 added minimal `?next=` support to the Login flow so post-auth, users return to the org splash they came from. The implementation validates that `next` is a same-origin relative path (rejects `//host/path` protocol-relative values, absolute URLs to other hosts, and `javascript:` schemes) before redirecting. A rendered link of the form `/login?next=/{slug}` is the only path that gets users back to the splash post-auth.
+
+Open-redirect risk: bounded. The validator restricts `next` to relative paths starting with `/`. Pre-Phase-14, no `?next=` support existed — the dispatch incorrectly described this as "Phase 9-era functionality"; the frontend dev surfaced and patched the gap as part of Cluster F. Worth a future audit pass to confirm the Login + Register flows both validate consistently and to extend coverage to any other auth-redirect entry points.
+
+### Deferred (out of scope for Phase 14)
+
+- SEO / robots / sitemap. No meta tags, no robots directives, no sitemap.xml. Default browser behavior. Public splash pages may be indexed by search engines via crawler discovery, but the platform doesn't actively help. Future work should consider per-policy opt-in (e.g., `invite_only_public` orgs may want robots: noindex while `open` orgs may want indexability) and steward-level overrides.
+- Public org browser at `/explore`. No public list of all open / approval-required orgs across the platform. Prospective members reach orgs via direct URL share. Future pass when there are enough orgs to warrant browsing — that pass will need its own privacy review (e.g., should `approval_required` orgs be in the directory by default?).
+- Analytics on splash page views. No "X people viewed your org page this week." Engagement-loop adjacent; deliberately deferred.
+- Org-level invite-link generation (a single URL anyone can use to auto-join, separate from per-email invitations). Different feature; would need its own threat model around link sharing and revocation.
+- Sub-org public landing pages. Sub-orgs are not exposed via the public endpoint; only top-level orgs have splash pages. Future Phase 13.5 / 14.x candidate work would need a sub-org-level public-page design with its own permission gates.
+- Custom CSS / HTML in the intro field. Markdown-only by design; HTML escape hatches would expand the XSS surface significantly without clear product benefit.
