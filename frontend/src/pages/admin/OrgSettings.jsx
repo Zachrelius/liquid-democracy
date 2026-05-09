@@ -58,6 +58,61 @@ function isValidHex(hex) {
   return typeof hex === 'string' && /^#[0-9a-fA-F]{6}$/.test(hex);
 }
 
+// Phase 17 F1 — Tie Resolution section.
+//
+// Eligible methods per voting method, in spec D3 dropdown order. Method
+// values match the backend tie_resolution.py constants exactly; the
+// labels + descriptions are the user-facing copy from the help page so
+// the dropdown microcopy and the help-page details stay in sync.
+//
+// Platform defaults (D4): approval=broader_approval_base,
+// ranked_choice=random_seed. The frontend pre-populates with these when
+// settings.tie_resolution[voting_method] is absent so the dropdowns
+// always reflect what the backend would actually do.
+const TIE_RESOLUTION_DEFAULT_APPROVAL = 'broader_approval_base';
+const TIE_RESOLUTION_DEFAULT_RANKED_CHOICE = 'random_seed';
+
+const TIE_METHODS_APPROVAL = [
+  {
+    value: 'broader_approval_base',
+    label: 'Broader approval base',
+    desc: 'Tied options are compared by how broadly each is co-approved. The most cross-supported option wins.',
+  },
+  {
+    value: 'expand_winners',
+    label: 'Expand winners (seat all tied)',
+    desc: 'All tied options become winners (the proposal closes with multiple winners).',
+  },
+  {
+    value: 'earliest_decisive_vote',
+    label: 'Earliest decisive vote',
+    desc: 'The tied option whose support reached its final count earliest wins.',
+  },
+  {
+    value: 'random_seed',
+    label: 'Random with seed',
+    desc: "A deterministic random selection using the proposal's ID and end time. Verifiable by anyone.",
+  },
+];
+
+const TIE_METHODS_RANKED_CHOICE = [
+  {
+    value: 'expand_winners',
+    label: 'Expand winners (seat all tied)',
+    desc: 'All tied options become winners (the proposal closes with multiple winners).',
+  },
+  {
+    value: 'earliest_decisive_vote',
+    label: 'Earliest decisive vote',
+    desc: 'The tied option whose support reached its final count earliest wins.',
+  },
+  {
+    value: 'random_seed',
+    label: 'Random with seed',
+    desc: "A deterministic random selection using the proposal's ID and end time. Verifiable by anyone.",
+  },
+];
+
 export default function OrgSettings() {
   const { currentOrg, refreshOrgs } = useOrg();
   const toast = useToast();
@@ -121,6 +176,21 @@ export default function OrgSettings() {
   const [introText, setIntroText] = useState('');
   const [savingIntro, setSavingIntro] = useState(false);
 
+  // Phase 17 F1 — Tie Resolution section state.
+  //
+  // Staged locally so the steward can pick + cancel without persisting.
+  // Hydrated in the same effect that sets `settings`, falling back to
+  // platform defaults (D4) when the org's settings JSON omits the
+  // tie_resolution dict or one of its keys. Save fires a PATCH against
+  // /api/orgs/{slug} with `settings.tie_resolution = {approval,
+  // ranked_choice}`; the backend B5 validator rejects invalid method
+  // values with HTTP 400.
+  const [tieApprovalMethod, setTieApprovalMethod] =
+    useState(TIE_RESOLUTION_DEFAULT_APPROVAL);
+  const [tieRankedChoiceMethod, setTieRankedChoiceMethod] =
+    useState(TIE_RESOLUTION_DEFAULT_RANKED_CHOICE);
+  const [savingTieResolution, setSavingTieResolution] = useState(false);
+
   useEffect(() => {
     if (currentOrg) {
       setName(currentOrg.name);
@@ -171,6 +241,27 @@ export default function OrgSettings() {
       // helper treats empty string as null, so we hydrate empty when the
       // field is missing/null.
       setIntroText(typeof s.intro_text === 'string' ? s.intro_text : '');
+
+      // Phase 17 F1 — Tie resolution lives at settings.tie_resolution
+      // {approval, ranked_choice}. Hydrate from the org's stored values
+      // if present and eligible; otherwise platform defaults (D4). The
+      // get_org_tie_resolution_method helper on the backend does the
+      // exact same fallback so the dropdowns always reflect what the
+      // backend would actually use.
+      const tr = (s && typeof s.tie_resolution === 'object' && s.tie_resolution)
+        || {};
+      const approvalEligible = TIE_METHODS_APPROVAL.map(m => m.value);
+      const rcEligible = TIE_METHODS_RANKED_CHOICE.map(m => m.value);
+      setTieApprovalMethod(
+        approvalEligible.includes(tr.approval)
+          ? tr.approval
+          : TIE_RESOLUTION_DEFAULT_APPROVAL,
+      );
+      setTieRankedChoiceMethod(
+        rcEligible.includes(tr.ranked_choice)
+          ? tr.ranked_choice
+          : TIE_RESOLUTION_DEFAULT_RANKED_CHOICE,
+      );
     }
   }, [currentOrg]);
 
@@ -314,6 +405,31 @@ export default function OrgSettings() {
       toast.error(err.message || 'Failed to save intro text');
     } finally {
       setSavingIntro(false);
+    }
+  }
+
+  async function handleSaveTieResolution() {
+    // Phase 17 F1 — PATCH /api/orgs/{slug} with the per-section
+    // settings.tie_resolution payload. The backend B5 validator rejects
+    // unknown method values with HTTP 400; defensive surface that to
+    // the user even though the dropdown can't produce an invalid value
+    // unless the eligibility tuples drift between FE + BE.
+    setSavingTieResolution(true);
+    try {
+      await api.patch(`/api/orgs/${currentOrg.slug}`, {
+        settings: {
+          tie_resolution: {
+            approval: tieApprovalMethod,
+            ranked_choice: tieRankedChoiceMethod,
+          },
+        },
+      });
+      await refreshOrgs();
+      toast.success('Tie resolution saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save tie resolution');
+    } finally {
+      setSavingTieResolution(false);
     }
   }
 
@@ -816,6 +932,110 @@ export default function OrgSettings() {
             </div>
           </label>
         </div>
+      </section>
+
+      {/* Phase 17 F1 — Tie Resolution.
+          Steward configures one method per voting method (approval +
+          ranked-choice / STV); when a proposal closes with a tie, the
+          configured method runs automatically and the resolution is
+          recorded as part of the result. Permission-gated on the
+          existing org.edit_settings (Steward + Admin by default).
+          Members without that permission see a read-only render of the
+          current values so the section is still informative. */}
+      <section className="space-y-3">
+        <div className="flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Tie Resolution
+          </h2>
+          <a
+            href="/help/voting-methods"
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-[var(--brand-accent)] hover:underline"
+          >
+            Learn more &rarr;
+          </a>
+        </div>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+          <p className="text-xs text-gray-500">
+            What happens when a proposal vote results in a tie. Each
+            voting method has its own setting; sub-orgs inherit the
+            parent org&apos;s configuration.
+          </p>
+
+          {canEditOrgSettings ? (
+            <>
+              <div className="space-y-2">
+                <label className="block text-xs text-gray-500">
+                  Approval voting
+                </label>
+                <select
+                  value={tieApprovalMethod}
+                  onChange={e => setTieApprovalMethod(e.target.value)}
+                  className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] bg-white"
+                >
+                  {TIE_METHODS_APPROVAL.map(m => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400">
+                  {TIE_METHODS_APPROVAL.find(m => m.value === tieApprovalMethod)?.desc}
+                </p>
+              </div>
+
+              <div className="space-y-2 pt-2 border-t border-gray-100">
+                <label className="block text-xs text-gray-500">
+                  Ranked choice / STV
+                </label>
+                <select
+                  value={tieRankedChoiceMethod}
+                  onChange={e => setTieRankedChoiceMethod(e.target.value)}
+                  className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] bg-white"
+                >
+                  {TIE_METHODS_RANKED_CHOICE.map(m => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-400">
+                  {TIE_METHODS_RANKED_CHOICE.find(m => m.value === tieRankedChoiceMethod)?.desc}
+                </p>
+              </div>
+            </>
+          ) : (
+            <div className="space-y-2 text-sm text-gray-700">
+              <div>
+                <span className="text-xs text-gray-500">Approval voting:</span>{' '}
+                <span className="font-medium">
+                  {TIE_METHODS_APPROVAL.find(m => m.value === tieApprovalMethod)?.label
+                    || tieApprovalMethod}
+                </span>
+              </div>
+              <div>
+                <span className="text-xs text-gray-500">Ranked choice / STV:</span>{' '}
+                <span className="font-medium">
+                  {TIE_METHODS_RANKED_CHOICE.find(m => m.value === tieRankedChoiceMethod)?.label
+                    || tieRankedChoiceMethod}
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 italic">
+                Read-only &mdash; you don&apos;t have permission to change
+                organization settings.
+              </p>
+            </div>
+          )}
+        </div>
+        {canEditOrgSettings && (
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleSaveTieResolution}
+              disabled={savingTieResolution}
+              className="px-5 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+            >
+              {savingTieResolution ? 'Saving…' : 'Save tie resolution'}
+            </button>
+          </div>
+        )}
       </section>
 
       {/* Sustained-Majority Voting (Phase 8 — demoted to collapsed-by-default in 9.6;
