@@ -1,8 +1,5 @@
-import { useState, useMemo } from 'react';
-import api from '../api';
-import { useOrg } from '../OrgContext';
-import { useToast } from './Toast';
-import { useConfirm } from './ConfirmDialog';
+import { useMemo } from 'react';
+import TieResolutionBanner from './TieResolutionBanner';
 
 /**
  * RCVResultsPanel — round-by-round breakdown for ranked-choice (IRV / STV) results.
@@ -19,21 +16,14 @@ import { useConfirm } from './ConfirmDialog';
  *     options: [{id, label, description}],   // optional; falls back to proposal.options
  *     option_labels: { id: label }            // optional alternate
  *   }
+ *
+ * Phase 17 F2 + B6 frontend cleanup — the manual admin "resolve tie" UI
+ * (handler + button row) was removed in this pass. Ties are now auto-
+ * resolved at advance-to-passed time via the org's configured method
+ * (see backend tie_resolution.py). Resolved ties surface here as a
+ * <TieResolutionBanner> rendered above the winner display.
  */
 export default function RCVResultsPanel({ tally, proposal }) {
-  const { currentOrg, userOrgs, isAdmin } = useOrg();
-  const toast = useToast();
-  const confirm = useConfirm();
-  const [resolving, setResolving] = useState(false);
-
-  // Phase 8.5 — proposals are always parent-org-owned (sub_org_id is the
-  // scope discriminator, not org_id). Resolve to the parent slug so admin
-  // actions still target the right route handler when currentOrg is a
-  // sub-org.
-  const parentSlug = currentOrg?.parent_org_id
-    ? userOrgs.find(o => o.id === currentOrg.parent_org_id)?.slug
-    : currentOrg?.slug;
-
   const optionLabelMap = useMemo(() => {
     const m = {};
     const fromTally = Array.isArray(tally?.options) ? tally.options : [];
@@ -64,27 +54,6 @@ export default function RCVResultsPanel({ tally, proposal }) {
     return Number(v).toFixed(2);
   }
 
-  async function handleResolveTie(optionId) {
-    const ok = await confirm({
-      title: 'Resolve Tie',
-      message: `Select "${labelOf(optionId)}" as the winning option? This cannot be undone.`,
-      destructive: false,
-    });
-    if (!ok) return;
-    setResolving(true);
-    try {
-      await api.post(`/api/orgs/${parentSlug}/proposals/${proposal.id}/resolve-tie`, {
-        selected_option_id: optionId,
-      });
-      toast.success('Tie resolved');
-      window.location.reload();
-    } catch (e) {
-      toast.error(e.message);
-    } finally {
-      setResolving(false);
-    }
-  }
-
   // Determine maximum count in any single round (for bar scaling)
   const maxRoundCount = tally.rounds.reduce((max, r) => {
     const counts = Object.values(r.option_counts || {});
@@ -103,41 +72,24 @@ export default function RCVResultsPanel({ tally, proposal }) {
         )}
       </div>
 
-      {/* Tie banners (final-round tie) */}
+      {/* Phase 17 F2 — auto-resolved tie banner. Replaces the old admin
+          "select the winning option" amber callout (B6 frontend cleanup):
+          ties now auto-resolve at advance-to-passed time via the org's
+          configured method, so there is no manual UI to surface here.
+          When tally.tied is true but tie_resolution is absent (legacy
+          closed proposals from before this pass — D7 says we don't
+          backfill), we render a low-key informational note instead of
+          the previous admin-action callout. */}
+      {tieResolution && (
+        <TieResolutionBanner
+          tieResolution={tieResolution}
+          labelOf={labelOf}
+        />
+      )}
       {tied && !tieResolution && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
-          <p className="text-sm font-medium text-amber-800">
+          <p className="text-sm text-amber-800">
             Tied final round — {winners.length} option{winners.length !== 1 ? 's' : ''} tied at the final step.
-          </p>
-          {isAdmin && (
-            <div className="mt-2 space-y-1">
-              <p className="text-xs text-amber-700">As admin, select the winning option:</p>
-              <div className="flex flex-wrap gap-2">
-                {winners.map(wid => (
-                  <button
-                    key={wid}
-                    onClick={() => handleResolveTie(wid)}
-                    disabled={resolving}
-                    className="text-xs px-3 py-1 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50"
-                  >
-                    {labelOf(wid)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-      {tieResolution && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-          <p className="text-sm text-blue-800">
-            Tie resolved. Selected winner:{' '}
-            <strong>{labelOf(tieResolution.selected_option_id)}</strong>
-            {tieResolution.resolved_at && (
-              <span className="text-xs text-blue-600 ml-1">
-                on {new Date(tieResolution.resolved_at).toLocaleDateString()}
-              </span>
-            )}
           </p>
         </div>
       )}

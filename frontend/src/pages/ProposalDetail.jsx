@@ -4,7 +4,9 @@ import api from '../api';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 // Phase 12.5 F2 — per-control permission gating.
-import { useHasPermission } from '../hooks/useHasPermission';
+// Phase 17 F2/B6 — useHasPermission was previously consumed by the
+// proposal.resolve_tie gate inside ApprovalResultsPanel; that manual UI
+// is gone in this pass. The import is removed alongside the handler.
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 import VerifyEmailInlineNote from '../components/VerifyEmailInlineNote';
@@ -18,6 +20,8 @@ import ErrorMessage from '../components/ErrorMessage';
 import RankedBallot from '../components/RankedBallot';
 import RCVResultsPanel from '../components/RCVResultsPanel';
 import RCVSankeyChart from '../components/RCVSankeyChart';
+// Phase 17 F2 — auto-resolved tie banner shared across approval + RCV panels.
+import TieResolutionBanner from '../components/TieResolutionBanner';
 import SustainedMajorityPanel from '../components/SustainedMajorityPanel';
 import LinkedPolisCard from '../components/LinkedPolisCard';
 import CommentThread from '../components/CommentThread';
@@ -278,13 +282,14 @@ function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerif
 }
 
 function ApprovalResultsPanel({ tally, proposal }) {
-  const { currentOrg, userOrgs } = useOrg();
-  // Phase 12.5 F2 — Resolve-tie button gated on `proposal.resolve_tie`.
-  const canResolveTie = useHasPermission('proposal.resolve_tie');
-  const toast = useToast();
-  const confirm = useConfirm();
-  const [resolving, setResolving] = useState(false);
-
+  // Phase 17 F2 + B6 frontend cleanup — the manual admin "resolve tie" UI
+  // (handler + button row) was removed in this pass. Ties now auto-resolve
+  // at advance-to-passed time via the org's configured tie-resolution
+  // method (see backend tie_resolution.py + advance_proposal). The
+  // resolution surfaces here as a TieResolutionBanner above the bar
+  // chart. The `proposal.resolve_tie` permission key remains in the
+  // registry but is no longer consumed anywhere in the frontend; backend
+  // dropped its own consumer in B6.
   if (!tally || !tally.option_approvals) return null;
 
   const options = proposal.options || [];
@@ -294,36 +299,7 @@ function ApprovalResultsPanel({ tally, proposal }) {
   const winners = tally.winners || [];
   const tied = tally.tied;
   const tieResolution = tally.tie_resolution || proposal.tie_resolution;
-
-  // Phase 8.5 — proposals always belong to the parent org (sub-org-scoped
-  // proposals still set org_id=parent.id; sub_org_id is the only scope
-  // discriminant). Always resolve the parent slug so admin actions reach
-  // the correct route handler when currentOrg happens to be a sub-org.
-  const parentSlug = currentOrg?.parent_org_id
-    ? userOrgs.find(o => o.id === currentOrg.parent_org_id)?.slug
-    : currentOrg?.slug;
-
-  async function handleResolveTie(optionId) {
-    const label = optionLabels[optionId] || optionId;
-    const ok = await confirm({
-      title: 'Resolve Tie',
-      message: `Select "${label}" as the winning option? This cannot be undone.`,
-      destructive: false,
-    });
-    if (!ok) return;
-    setResolving(true);
-    try {
-      await api.post(`/api/orgs/${parentSlug}/proposals/${proposal.id}/resolve-tie`, {
-        selected_option_id: optionId,
-      });
-      toast.success('Tie resolved');
-      window.location.reload();
-    } catch (e) {
-      toast.error(e.message);
-    } finally {
-      setResolving(false);
-    }
-  }
+  const labelOf = (id) => optionLabels[id] || id;
 
   // Item 5: when proposal is in voting, the winner(s) shown are provisional.
   // Surface a tense-aware callout. Closed proposals keep the existing
@@ -351,44 +327,46 @@ function ApprovalResultsPanel({ tally, proposal }) {
         </div>
       )}
 
-      {/* Tie banners */}
+      {/* Phase 17 F2 — auto-resolved tie banner (replaces the manual
+          admin "select the winning option" callout — B6 frontend cleanup).
+          tieResolution is the audit record persisted at advance-to-passed
+          time; its absence on a tied proposal means the proposal closed
+          before this pass shipped (D7: no backfill) and we surface a
+          plain "tied" note instead. */}
+      {tieResolution && (
+        <TieResolutionBanner
+          tieResolution={tieResolution}
+          labelOf={labelOf}
+        />
+      )}
       {tied && !tieResolution && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
           <p className="text-sm font-medium text-amber-800">
-            Tied result \u2014 {winners.length} options received {optionApprovals[winners[0]]} approvals each
-          </p>
-          {/* Phase 12.5 F2 — gated on `proposal.resolve_tie`. */}
-          {canResolveTie && (
-            <div className="mt-2 space-y-1">
-              <p className="text-xs text-amber-700">Select the winning option:</p>
-              <div className="flex flex-wrap gap-2">
-                {winners.map(wid => (
-                  <button key={wid} onClick={() => handleResolveTie(wid)} disabled={resolving}
-                    className="text-xs px-3 py-1 bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50">
-                    {optionLabels[wid] || wid}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-      {tieResolution && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-          <p className="text-sm text-blue-800">
-            Tie resolved. Selected winner: <strong>{optionLabels[tieResolution.selected_option_id] || tieResolution.selected_option_id}</strong>
-            {tieResolution.resolved_at && <span className="text-xs text-blue-600 ml-1">on {new Date(tieResolution.resolved_at).toLocaleDateString()}</span>}
+            Tied result &mdash; {winners.length} option{winners.length !== 1 ? 's' : ''} received {optionApprovals[winners[0]]} approval{optionApprovals[winners[0]] !== 1 ? 's' : ''} each.
           </p>
         </div>
       )}
 
-      {/* Horizontal bar chart */}
+      {/* Horizontal bar chart.
+          Phase 17 F2: post-tie-resolution `tally.winners` is already
+          mutated to the chosen-winners set by the backend (see
+          routes/proposals.py::_maybe_resolve_tie). isWinner therefore
+          reflects the resolved truth. isSelectedWinner is kept as a
+          legacy-shape compatibility hook so old admin-resolved
+          proposals (selected_option_id) and new auto-resolved proposals
+          (chosen_winners) both render the gold-star marker. */}
       <div className="space-y-2">
         {options.map(opt => {
           const count = optionApprovals[opt.id] || 0;
           const pct = maxApprovals > 0 ? (count / maxApprovals) * 100 : 0;
           const isWinner = winners.includes(opt.id);
-          const isSelectedWinner = tieResolution?.selected_option_id === opt.id;
+          const isSelectedWinner = tieResolution
+            ? (
+                tieResolution.selected_option_id === opt.id
+                || (Array.isArray(tieResolution.chosen_winners)
+                  && tieResolution.chosen_winners.includes(opt.id))
+              )
+            : false;
           return (
             <div key={opt.id}>
               <div className="flex items-center justify-between text-sm mb-0.5">
