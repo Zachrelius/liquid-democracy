@@ -461,6 +461,15 @@ def test_25_approval_tally_basic():
     assert tally.total_ballots_cast == 3
     assert tally.not_cast == 1
     assert tally.total_eligible == 4
+    # Phase 17 B3.1 — ballots field exposes per-ballot approval sets
+    # for broader_approval_base tie resolution. u1/u2/u3 cast non-empty
+    # ballots; u4 didn't vote.
+    assert len(tally.ballots) == 3
+    assert sorted(map(sorted, tally.ballots)) == sorted([
+        sorted([opt_a, opt_b]),
+        sorted([opt_a]),
+        sorted([opt_b, opt_c]),
+    ])
 
 
 def test_26_approval_tally_tie_with_equal_counts():
@@ -520,6 +529,9 @@ def test_28_approval_tally_abstain_counted():
     assert tally.total_abstain == 1
     assert tally.not_cast == 1
     assert tally.option_approvals.get("opt_a") == 1
+    # Phase 17 B3.1 — abstain ballots (empty approval lists) do NOT
+    # contribute to the ballots field; only u1's [opt_a] should appear.
+    assert tally.ballots == [["opt_a"]]
 
 
 # ===========================================================================
@@ -641,6 +653,14 @@ def test_34_approval_tally_with_delegation():
     assert tally.option_approvals["opt_b"] == 3  # u1 + u2 + u3
     assert tally.total_ballots_cast == 3
     assert tally.not_cast == 0
+    # Phase 17 B3.1 — ballots field includes the delegated ballot too:
+    # u1 [opt_a, opt_b], u2 [opt_b], u3 (via delegation to u1) [opt_a, opt_b].
+    assert len(tally.ballots) == 3
+    assert sorted(map(sorted, tally.ballots)) == sorted([
+        sorted(["opt_a", "opt_b"]),
+        sorted(["opt_b"]),
+        sorted(["opt_a", "opt_b"]),
+    ])
 
 
 # ===========================================================================
