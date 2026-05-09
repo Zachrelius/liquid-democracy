@@ -958,6 +958,95 @@ def _emit_proposal_status_notifications(
             )
 
 
+def _maybe_resolve_tie(
+    proposal: models.Proposal,
+    tally,
+    voting_method: str,
+    db: Session,
+    *,
+    current_user_id: Optional[str],
+) -> None:
+    """Phase 17 — auto-resolve a tie at advance-to-passed time.
+
+    Called from both ``advance_proposal`` (global) and
+    ``advance_org_proposal`` (org-scoped) when a tally returns
+    ``tied=True AND len(winners) > 1``. Loads the org's configured
+    tie-resolution method, runs the resolver, persists the audit record
+    to ``proposal.tie_resolution`` JSON, mutates ``tally.winners`` in
+    place so downstream consumers (results page, ProposalResults schema)
+    see the post-resolution set, and writes the
+    ``proposal.tie_resolved`` audit log row.
+
+    ``tally.winners`` is mutated by the route after auto-resolution; the
+    pure tally functions in ``delegation_engine`` remain method-agnostic
+    and return the un-resolved tied set (per spec line 433). ``tally.tied``
+    intentionally stays ``True`` after resolution (D9) — the F2 results-
+    page banner reads both fields to surface "this proposal had a tie,
+    resolved via X."
+
+    Defensive (B4.1, spec lines 270-272): if ``random_seed`` is selected
+    and ``proposal.voting_end is None``, the resolver raises
+    ``RuntimeError`` — that signals the route reached the passed branch
+    without going through the voting branch (a bug elsewhere). We bubble
+    that up as HTTP 500 so the failure is visible.
+    """
+    # Local imports: keep the tie-resolution module out of the proposals.py
+    # import graph for callers that never hit a tie path, and avoid any
+    # cycle if tie_resolution / org_config later need anything from here.
+    from tie_resolution import resolve_tie
+    from org_config import get_org_tie_resolution_method
+
+    if not (getattr(tally, "tied", False) and len(getattr(tally, "winners", []) or []) > 1):
+        return
+
+    org = db.get(models.Organization, proposal.org_id) if proposal.org_id else None
+    method = get_org_tie_resolution_method(org, voting_method)
+
+    try:
+        result = resolve_tie(method, list(tally.winners), proposal, tally, db)
+    except RuntimeError as exc:
+        # B4.1 — random_seed requires voting_end. None at resolution time
+        # means the advance path didn't pass through the "voting" branch
+        # that sets voting_end; surface as 500 rather than silently picking
+        # something else.
+        log.error(
+            "tie resolution failed for proposal id=%s method=%s: %s",
+            proposal.id, method, exc,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Tie resolution invariant violated: "
+                f"{exc}"
+            ),
+        ) from exc
+
+    proposal.tie_resolution = {
+        "method": result.method,
+        "input_winners": result.input_winners,
+        "chosen_winners": result.chosen_winners,
+        "seed": result.seed,
+        "metadata": result.metadata,
+        "applied_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # Mutate tally.winners in place so downstream consumers see the
+    # resolved winners (tally.tied stays True for transparency — D9).
+    tally.winners = result.chosen_winners
+
+    log_audit_event(
+        db,
+        action="proposal.tie_resolved",
+        target_type="proposal",
+        target_id=proposal.id,
+        actor_id=current_user_id,
+        details={
+            "method": result.method,
+            "input_winners": result.input_winners,
+            "chosen_winners": result.chosen_winners,
+        },
+    )
+
+
 @router.post("/{proposal_id}/advance", response_model=schemas.ProposalOut)
 def advance_proposal(
     proposal_id: str,
@@ -1017,12 +1106,20 @@ def advance_proposal(
         if proposal.voting_method == "approval":
             # Approval proposals pass if quorum met and at least one option has votes
             if isinstance(tally, ApprovalTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
+                _maybe_resolve_tie(
+                    proposal, tally, "approval", db,
+                    current_user_id=current_user.id,
+                )
                 next_status = "passed"
             else:
                 next_status = "failed"
         elif proposal.voting_method == "ranked_choice":
             # RCV/STV passes if quorum met and at least one winner emerged
             if isinstance(tally, RCVTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
+                _maybe_resolve_tie(
+                    proposal, tally, "ranked_choice", db,
+                    current_user_id=current_user.id,
+                )
                 next_status = "passed"
             else:
                 next_status = "failed"

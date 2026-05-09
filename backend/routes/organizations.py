@@ -2318,14 +2318,23 @@ def advance_org_proposal(
             proposal.voting_end = body.voting_end
     elif next_status == "passed":
         from delegation_engine import engine as delegation_engine, ApprovalTally, RCVTally
+        from routes.proposals import _maybe_resolve_tie
         tally = delegation_engine.compute_tally(proposal, db)
         if proposal.voting_method == "approval":
             if isinstance(tally, ApprovalTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
+                _maybe_resolve_tie(
+                    proposal, tally, "approval", db,
+                    current_user_id=current_user.id,
+                )
                 next_status = "passed"
             else:
                 next_status = "failed"
         elif proposal.voting_method == "ranked_choice":
             if isinstance(tally, RCVTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
+                _maybe_resolve_tie(
+                    proposal, tally, "ranked_choice", db,
+                    current_user_id=current_user.id,
+                )
                 next_status = "passed"
             else:
                 next_status = "failed"
