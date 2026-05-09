@@ -102,6 +102,57 @@ ELIGIBLE_METHODS_RANKED_CHOICE = (
 
 
 # ---------------------------------------------------------------------------
+# Settings validator
+# ---------------------------------------------------------------------------
+
+# Map of voting_method -> eligible-methods tuple. Drives both the
+# `validate_tie_resolution_settings` validator and the
+# `get_org_tie_resolution_method` helper in `org_config.py`.
+_ELIGIBLE_BY_VOTING_METHOD: dict[str, tuple[str, ...]] = {
+    "approval": ELIGIBLE_METHODS_APPROVAL,
+    "ranked_choice": ELIGIBLE_METHODS_RANKED_CHOICE,
+}
+
+
+def validate_tie_resolution_settings(value: dict) -> dict:
+    """Validate a settings.tie_resolution dict.
+
+    Allowed keys: ``"approval"``, ``"ranked_choice"``. Other keys are
+    silently dropped (forward-compat: future voting methods can be added
+    without breaking existing PATCH bodies that happen to carry an
+    unknown key). Allowed values per key: methods from the corresponding
+    eligibility tuple (``ELIGIBLE_METHODS_APPROVAL`` /
+    ``ELIGIBLE_METHODS_RANKED_CHOICE``).
+
+    Raises ``ValueError`` if any value isn't an eligible method for its
+    voting_method, or if ``value`` itself isn't a dict. Returns the
+    validated dict (with unknown keys filtered out).
+
+    Wired into ``routes/organizations.py::update_organization`` so a
+    PATCH /api/orgs/{slug} that includes ``settings.tie_resolution``
+    fails with 400 on an invalid method, mirroring how
+    default_pass_threshold / default_quorum_threshold validation works.
+    """
+    if not isinstance(value, dict):
+        raise ValueError(
+            "tie_resolution must be an object with keys 'approval' and/or "
+            "'ranked_choice'."
+        )
+    cleaned: dict[str, str] = {}
+    for vm, eligible in _ELIGIBLE_BY_VOTING_METHOD.items():
+        if vm not in value:
+            continue
+        method = value[vm]
+        if not isinstance(method, str) or method not in eligible:
+            raise ValueError(
+                f"Invalid tie-resolution method {method!r} for "
+                f"voting_method {vm!r}."
+            )
+        cleaned[vm] = method
+    return cleaned
+
+
+# ---------------------------------------------------------------------------
 # Result container
 # ---------------------------------------------------------------------------
 

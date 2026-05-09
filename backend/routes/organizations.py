@@ -482,6 +482,24 @@ def update_organization(
                     detail=f"{tkey} must be between 0.0 and 1.0 inclusive",
                 )
 
+        # Phase 17 B5 — tie_resolution validation. Same pre-merge shape:
+        # invalid method on either voting_method fails the whole PATCH
+        # cleanly with HTTP 400. Unknown keys (e.g., a future
+        # "score_voting") are silently dropped by the validator for
+        # forward-compat. The validator returns the cleaned dict, which
+        # we substitute back into body.settings so the merge below stores
+        # only the valid subset.
+        if "tie_resolution" in body.settings:
+            from tie_resolution import validate_tie_resolution_settings
+            try:
+                body.settings["tie_resolution"] = (
+                    validate_tie_resolution_settings(
+                        body.settings["tie_resolution"]
+                    )
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+
         # Phase 15 Cluster S §S3 — sub_org_role_transferability validation.
         # Steward toggle is locked ON: rejecting an explicit False keeps
         # the resolution helper's invariant (Steward always transfers)
