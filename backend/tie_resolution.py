@@ -311,7 +311,11 @@ def _resolve_earliest_decisive_vote(
             .all()
         )
         for v in rows:
-            ranking = getattr(v, "ranking", None) or []
+            ballot = getattr(v, "ballot", None) or {}
+            ranking = ballot.get("ranking")
+            if ranking is None:
+                ranking = getattr(v, "ranking", None)
+            ranking = ranking or []
             if ranking and ranking[0] in tied_set:
                 final_counts[ranking[0]] = final_counts.get(ranking[0], 0) + 1
         for oid in tied_set:
@@ -339,8 +343,17 @@ def _resolve_earliest_decisive_vote(
         # a binary vote bumps "yes"/"no" (not relevant here since binary
         # has no tie path).
         bumped: list[str] = []
-        approvals = getattr(v, "approvals", None)
-        ranking = getattr(v, "ranking", None)
+        # Production Vote rows store ballot data in v.ballot JSON dict
+        # (keys: "approvals" for approval votes, "ranking" for RCV votes).
+        # Tests may pass SimpleNamespace shims with attributes directly;
+        # prefer ballot dict but fall back to attribute access for shims.
+        ballot = getattr(v, "ballot", None) or {}
+        approvals = ballot.get("approvals")
+        if approvals is None:
+            approvals = getattr(v, "approvals", None)
+        ranking = ballot.get("ranking")
+        if ranking is None:
+            ranking = getattr(v, "ranking", None)
         if approvals:
             bumped = [oid for oid in approvals if oid in tied_set]
         elif ranking:

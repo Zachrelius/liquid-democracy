@@ -390,13 +390,11 @@ class TestResolveTieFunctions:
         """When votes record approvals via the runtime attribute on Vote
         rows, A's decisive vote at t=10s beats B's at t=20s → A wins.
 
-        Note: production Vote rows currently store approvals in
-        ``Vote.ballot["approvals"]``; the Wave 1+2 resolver reads them via
-        ``getattr(v, "approvals", None)``. We assemble Vote rows that
-        expose ``approvals`` directly (via SimpleNamespace) and then
-        intercept ``db.query`` to feed those rows in. This isolates the
-        timestamp-ordering logic without coupling to the underlying ballot
-        storage shape."""
+        This test isolates the timestamp-ordering logic via SimpleNamespace
+        shims with attribute-style ``approvals`` access. The resolver's
+        attribute-fallback path (used for these shims) is exercised here;
+        production Vote-row ``ballot`` dict access is exercised by
+        ``test_earliest_decisive_vote_reads_ballot_dict`` below."""
         org = _make_org(test_db, "edv-org")
         author = _make_user(test_db, "edv-author")
         make_org_membership(
@@ -450,6 +448,66 @@ class TestResolveTieFunctions:
         assert r.chosen_winners == [oids[0]]
         assert oids[0] in r.metadata["decisive_timestamps"]
         assert oids[1] in r.metadata["decisive_timestamps"]
+
+    def test_earliest_decisive_vote_reads_ballot_dict(self, test_db):
+        """Regression: production Vote rows store approvals/ranking in
+        ``Vote.ballot`` JSON dict, not as direct attributes. The resolver
+        must read ``v.ballot["approvals"]`` (and ranking) for real ballots,
+        not ``getattr(v, "approvals", None)``. Without this fix the
+        resolver always falls back to random_seed for production data —
+        breaking one of the four advertised methods silently.
+
+        This test creates real ``models.Vote`` rows with ``ballot=
+        {"approvals": [oid]}`` and confirms timestamp ordering selects A
+        over B."""
+        org = _make_org(test_db, "edv-ballot-org")
+        author = _make_user(test_db, "edv-ballot-author")
+        v1 = _make_user(test_db, "edv-ballot-v1")
+        v2 = _make_user(test_db, "edv-ballot-v2")
+        v3 = _make_user(test_db, "edv-ballot-v3")
+        v4 = _make_user(test_db, "edv-ballot-v4")
+        for u in (author, v1, v2, v3, v4):
+            make_org_membership(
+                test_db, org_id=org.id, user_id=u.id, role="steward",
+            )
+        p = _make_approval_proposal(
+            test_db, author, org, option_labels=["A", "B"],
+        )
+        oids = _option_ids(test_db, p)
+        base = datetime(2026, 5, 9, 12, 0, 0, tzinfo=timezone.utc)
+        # A reaches its final count of 2 at t=10s; B reaches 2 at t=20s.
+        # Expected: A wins.
+        for user, approvals_oid, t_offset in [
+            (v1, oids[0], 0),
+            (v3, oids[1], 5),
+            (v2, oids[0], 10),
+            (v4, oids[1], 20),
+        ]:
+            test_db.add(models.Vote(
+                proposal_id=p.id,
+                user_id=user.id,
+                cast_by_id=user.id,
+                vote_value=None,
+                is_direct=True,
+                ballot={"approvals": [approvals_oid]},
+                cast_at=base + timedelta(seconds=t_offset),
+            ))
+        test_db.flush()
+
+        tally = _make_tally_stub(
+            option_approvals={oids[0]: 2, oids[1]: 2},
+            winners=[oids[0], oids[1]],
+        )
+        r = resolve_tie(
+            "earliest_decisive_vote", [oids[0], oids[1]], p, tally, test_db,
+        )
+        assert r.method == "earliest_decisive_vote"
+        assert r.chosen_winners == [oids[0]]
+        # Both decisive timestamps should be recorded.
+        assert oids[0] in r.metadata["decisive_timestamps"]
+        assert oids[1] in r.metadata["decisive_timestamps"]
+        # Confirm we did NOT silently fall back to random_seed.
+        assert r.metadata.get("fallback") != "random_seed"
 
     def test_unknown_method_raises_value_error(self):
         """resolve_tie('not_a_method', ...) → ValueError."""
