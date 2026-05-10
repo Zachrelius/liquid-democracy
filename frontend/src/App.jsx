@@ -60,6 +60,8 @@ import PolisHelp from './pages/PolisHelp';
 import RolePermissionsHelp from './pages/RolePermissionsHelp';
 import NotificationsHelp from './pages/NotificationsHelp';
 import OrganizationsHelp from './pages/OrganizationsHelp';
+// Phase 19 D1 — public help page for the public-delegate surface.
+import PublicDelegatesHelp from './pages/PublicDelegatesHelp';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Landing from './pages/Landing';
@@ -204,6 +206,7 @@ export default function App() {
         <Route path="/help/role-permissions" element={<RolePermissionsHelp />} />
         <Route path="/help/notifications" element={<NotificationsHelp />} />
         <Route path="/help/organizations" element={<OrganizationsHelp />} />
+        <Route path="/help/public-delegates" element={<PublicDelegatesHelp />} />
 
         {/* ------------------------------------------------------------- */}
         {/* Auth flows — no auth required, no org context                 */}
