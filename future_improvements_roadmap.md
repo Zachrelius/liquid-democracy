@@ -27,19 +27,9 @@ Each active-queue and backlog item carries a brief rationale and rough scope ske
 
 ## Active Queue
 
-### 1. Org-Configurable Tie Resolution
+### 1. Org-Configurable Tie Resolution — ✅ Complete (Phase 17, shipped 2026-05-09)
 
-**Why now:** Z's stated dislike of the current default — admin decides ties after the fact — is concrete and well-grounded. Resolving ties post-hoc is exactly the kind of decision that's controversial in the moment and uncontroversial when declared up-front. This has been on the deferred list for a while; it deserves to ship.
-
-**Scope sketch:**
-- Org-level setting selecting tie-resolution method, declared at org setup (or in admin settings, with the strong default being "set this once and don't touch it").
-- Method options to consider: deterministic-arbitrary (alphabetical / earliest-created / seeded), broader-approval-base (in approval voting, the tied option co-approved with more additional options wins), earliest-cast-decisive-vote, status-quo-wins (if one option represents "no change"), multi-winner promotion (proposal allows N winners and there are N+1 tied options). Final method list is a design decision in the spec.
-- Backend: tabulation layer reads the configured method and applies it during result computation rather than producing an unresolved tie.
-- Frontend: org admin settings UI to select the method; per-method copy explaining the tradeoffs; results display surfaces "tie resolved by [method]" rather than waiting for admin action.
-- Migration: existing orgs default to a sensible method (likely deterministic-arbitrary with seed) rather than preserving the manual-resolution behavior. Existing unresolved-tie proposals get handled as a one-time backfill.
-- Help page section explaining when each method is appropriate.
-
-**Non-goals for first pass:** Per-proposal override of org default (can come later); tie resolution for multi-winner STV beyond what `pyrankvote` already produces (its built-in handling is the baseline).
+Phase 17 shipped the org-configurable tie-resolution layer. Four automatic methods (`broader_approval_base`, `expand_winners`, `earliest_decisive_vote`, `random_seed`); per-voting-method org config (`Organization.settings.tie_resolution = {approval, ranked_choice}`) gated by existing `org.edit_settings`; eager resolution at advance-to-passed time writes a verifiable audit record to `Proposal.tie_resolution` JSON; frontend banner on results panels explains the resolution. The previously-shipped manual admin-resolves endpoint was removed in the same pass (B6 expanded scope per Z's call). Deferred items per spec §"What this pass is NOT": per-proposal override, `admin_resolves` method, per-sub-org override, binary tie resolution, historical backfill, `status_quo_wins` and `alphabetical` methods. See spec `phase17_tie_resolution_spec.md` and PROGRESS.md Phase 17 entry for full detail.
 
 ---
 
