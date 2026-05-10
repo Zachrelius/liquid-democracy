@@ -129,7 +129,13 @@ export default function UserProfile() {
   async function handleRequestDelegate() {
     setActionFeedback('');
     try {
-      const res = await api.post('/api/delegations/request', {
+      // Phase 18 F1 — delegation surfaces are org-scoped. Use the parent
+      // org slug (proposalLinkOrg already walks up from sub-org).
+      if (!proposalLinkOrg?.slug) {
+        setActionFeedback('Cannot send delegation request: no organization context');
+        return;
+      }
+      const res = await api.post(`/api/orgs/${proposalLinkOrg.slug}/delegations/request`, {
         delegate_id: id,
         topic_id: null,
         chain_behavior: 'accept_sub',

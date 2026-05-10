@@ -726,16 +726,20 @@ export default function ProposalDetail() {
       // delegate situations on sub-org proposals (Decision 10 moment 2). This
       // is independent of the proposal scope; we always need it to render the
       // "your delegate isn't in [Sub-Org]" branch.
-      try {
-        const dels = await api.get('/api/delegations');
-        setDelegations(dels);
-      } catch {/* ignore — branch will simply not fire */}
+      // Phase 18 F1 — delegations are now per-org. linkOrg already resolves
+      // to the parent slug whether currentOrg is the parent or a sub-org.
+      if (linkOrg?.slug) {
+        try {
+          const dels = await api.get(`/api/orgs/${linkOrg.slug}/delegations`);
+          setDelegations(dels);
+        } catch {/* ignore — branch will simply not fire */}
+      }
     } catch (e) {
       setError(e.message || 'Failed to load proposal');
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, linkOrg?.slug]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
