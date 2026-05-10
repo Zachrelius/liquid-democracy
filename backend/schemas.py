@@ -470,6 +470,11 @@ class EscalationResolveRequest(BaseModel):
 class DelegationUpsert(BaseModel):
     delegate_id: str
     topic_id: Optional[str] = None  # None = global
+    # Phase 18 (D4 / B3): optional sub-org scope. When set, the resulting
+    # row is "global within this sub-org" — applies to every topic of that
+    # sub-org. The route validates that the sub-org belongs to the parent
+    # org from the URL prefix.
+    sub_org_id: Optional[str] = None
     chain_behavior: str = "accept_sub"
 
     @field_validator("delegate_id")
@@ -480,6 +485,13 @@ class DelegationUpsert(BaseModel):
     @field_validator("topic_id")
     @classmethod
     def validate_topic_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return _validate_uuid(v)
+        return v
+
+    @field_validator("sub_org_id")
+    @classmethod
+    def validate_sub_org_id(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
             return _validate_uuid(v)
         return v
@@ -498,6 +510,12 @@ class DelegationOut(BaseModel):
     delegator_id: str
     delegate_id: str
     delegate: UserOut
+    # Phase 18: org_id + sub_org_id surfaced so the FE can render the
+    # "scope" label correctly (org-wide vs sub-org-wide vs topic-scoped).
+    # Both are nullable in 18a (backfill running) and become non-null on
+    # org_id post-18b. sub_org_id stays optional.
+    org_id: Optional[str] = None
+    sub_org_id: Optional[str] = None
     topic_id: Optional[str]
     topic: Optional[TopicOut]
     chain_behavior: str
@@ -514,6 +532,10 @@ class DelegationOut(BaseModel):
 class DelegationIntentCreate(BaseModel):
     delegate_id: str
     topic_id: Optional[str] = None
+    # Phase 18 (D4 / D5 / B3): same sub-org scope shape as DelegationUpsert.
+    # The resulting Delegation row created at activate-time inherits both
+    # ``org_id`` (from the URL prefix) and ``sub_org_id`` (from this body).
+    sub_org_id: Optional[str] = None
     chain_behavior: str = "accept_sub"
 
     @field_validator("delegate_id")
@@ -524,6 +546,13 @@ class DelegationIntentCreate(BaseModel):
     @field_validator("topic_id")
     @classmethod
     def validate_topic_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            return _validate_uuid(v)
+        return v
+
+    @field_validator("sub_org_id")
+    @classmethod
+    def validate_sub_org_id(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
             return _validate_uuid(v)
         return v
@@ -541,6 +570,10 @@ class DelegationIntentOut(BaseModel):
     delegator_id: str
     delegate_id: str
     delegate: UserSearchResult
+    # Phase 18: surface org / sub-org scope on the intent so the FE can
+    # display "intent for org X" / "intent for sub-org Y" before activation.
+    org_id: Optional[str] = None
+    sub_org_id: Optional[str] = None
     topic_id: Optional[str]
     topic: Optional[TopicOut]
     chain_behavior: str
@@ -1029,6 +1062,9 @@ class FollowRequestOut(BaseModel):
     requester: UserSearchResult
     target_id: str
     target: UserSearchResult
+    # Phase 18 (D2): follow requests carry org context. Nullable in 18a,
+    # NOT NULL post-18b.
+    org_id: Optional[str] = None
     status: str
     permission_level: Optional[str]
     message: Optional[str]
@@ -1044,6 +1080,8 @@ class FollowRelationshipOut(BaseModel):
     follower: UserSearchResult
     followed_id: str
     followed: UserSearchResult
+    # Phase 18 (D2): follow relationships carry org context.
+    org_id: Optional[str] = None
     permission_level: str
     created_at: datetime
 
