@@ -8,10 +8,23 @@ This project runs Claude Code with `--dangerously-skip-permissions` enabled. The
 
 ## Reading order at session start
 
-1. `PROGRESS.md` — canonical session passdown, what's shipped through the most recent phase
-2. The active spec for the phase you're working on (e.g., `phase9_7_invitation_flow_spec.md`)
+1. The active phase doc for the pass you're working on (e.g., `phase19_public_delegate_pages_spec.md`). As of Phase 19 this is one merged dispatch+spec doc — read it FIRST and read it FULL before touching code.
+2. `PROGRESS.md` — canonical session passdown, what's shipped through the most recent phase
 3. `TECHNICAL_SUMMARY.md` — architecture overview if you need orientation
 4. `future_improvements_roadmap.md` — forward-looking scope; reference but don't assume anything in it is being built unless a spec says so
+
+## Spec format convention (Phase 19+)
+
+Each pass ships as **one document** at the repo root:
+
+- **X.0 passes:** `phaseXX_<short-name>_spec.md` (e.g., `phase19_public_delegate_pages_spec.md`).
+- **Sub-numbered passes:** `phaseXX_Y_<short-name>_spec.md` with an **underscore** between the major and minor — `phase18_5_*`, **not** `phase18.5_*`. Dots in filenames make tab-completion + grep noisy; the underscore convention is locked here.
+
+The doc carries both dispatch framing and the full spec body. Top half: goal, branch + merge, **verification matrix** (a dedicated table with rows for each pre-merge check + columns for "required" / "notes" — replaces the older scattered "Pre-merge gate set" + "Operational notes" treatment), suggested team structure, sequence, load-bearing decisions, operational watch-outs, closeout reporting. Bottom half: status block, locked decisions, what-IS / what-ISN'T, clusters (B / F / D / G / etc.), operational notes, followups.
+
+Code-team session start reads the phase doc first (see the reading order above). The pre-Phase-19 convention of a separate ephemeral chat-only "dispatch prompt" is **deprecated** — don't write a separate dispatch artifact for new passes. Existing pre-Phase-19 specs are not retroactively converted; they continue to ship as-is until each gets retired.
+
+Worked examples to look at when authoring or reviewing a new spec: `phase19_public_delegate_pages_spec.md` and `phase18_5_infrastructure_spec.md`.
 
 ## Default team structure
 
