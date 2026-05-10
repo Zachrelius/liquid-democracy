@@ -2565,3 +2565,82 @@ QA agent dispatched post-deploy. **6 PASS / 4 DEFERRED / 0 FAIL.** The QA agent'
 ### Pass-summary
 
 **Phase 18 shipped clean to production with one merge, one critical pre-merge bug catch (B1a downgrade SQLite-portability), and zero scope expansions during implementation — the spec's pass-sizing-check held (4 real clusters + B + F + D + G; 29 new tests, no novel infrastructure, two-phase migration with a heuristic backfill).** The Phase 4c retrofit-completeness pattern that was tracked across multiple closeouts is **CLOSED**: `Delegation`, `DelegationIntent`, `FollowRelationship`, `FollowRequest` all carry `org_id` (and `sub_org_id` for delegation tables); read sites filter by org; routes are under `/api/orgs/{slug}/`; `graph_store` partitions by org; `delegation.org_id_backfilled` audit events captured backfill provenance. **The original cross-org leakage Z observed** (Friend A's gamenights-only delegation showing in demo's network graph; C&Z's gamenights-scoped global delegation tally-leaking into demo) is now structurally fixed at the schema level, not by accidental side-effect filters. Backend test count 1076 → 1105 (+29 net); frontend bundle 361.81 → 362.24 kB gzipped (+0.43 kB). Three procedural lessons reinforced: (a) HARD disjoint file scopes between parallel agents prevented the Phase 17 commit-attribution race; (b) the "agent appears stuck" signal merits investigation but the response can be precautionary (no work was lost); (c) prod-snapshot Docker round-trip is the right shape for heavy-backfill migration verification — worth promoting to a standard tool. The Phase 13 arc gate set continues to do its job, AND the new bash start.sh local prod-like check (per project memory) caught a real downgrade bug before deploy.
+
+---
+
+## Phase 18.5 — Infrastructure (shipped 2026-05-10, master `0b599ed`)
+
+Three small infrastructure items in a single-agent pass: real `pg_smoke.py --mode actual-upgrade` flag (closing the Phase 15 G5 PROGRESS-vs-reality gap that two consecutive prior passes referenced); fix for the `DELETE /api/orgs/{slug}/delegations/intents/{id}` 503 bug surfaced in Phase 18 QA; and CLAUDE.md update recording the Phase 19+ merged spec+dispatch convention.
+
+**Cluster B — Backend (commits `94e9a1d`, `2acef63`):**
+
+- **B1 — `pg_smoke.py --mode actual-upgrade` flag promoted (commit `94e9a1d`):**
+  - Most-correct basis: `seed_phase15_actual_upgrade.py` (already tracked) — full `reshape(engine)` / `seed(engine)` / `verify(engine)` contract.
+  - New CLI: `--mode actual-upgrade --prior-revision <rev> [--sample-data-script <path>]`. Pipeline: `_create_all` → `stamp prior` → optional `reshape(engine)` → optional `seed(engine)` → `alembic upgrade head` → optional `verify(engine)` → spot-check.
+  - New `_validate_prior_revision()` helper aborts cleanly with a clear error if the prior_revision doesn't exist in the alembic chain.
+  - Disposition of untracked one-off scripts: 2 deleted (`phase13_3_actual_upgrade_path_check.py` + `phase14_actual_upgrade_path_check.py` — pure duplication of the new flag); 2 promoted from untracked-on-disk to tracked (`seed_phase13_3_actual_upgrade.py` + `seed_phase14_actual_upgrade.py` — retained as canonical worked examples).
+  - Verification (all PASS): `--prior-revision e9419ee5906f` (Phase 18b head — mechanical), `--prior-revision d2a17cb3e45c` (Phase 17 head — real chain traversal), `--prior-revision b9e2f4a17c83 --sample-data-script scripts/seed_phase14_actual_upgrade.py` (full end-to-end with seed+verify), regression `--mode upgrade --prior-revision e9419ee5906f` still passes, bad-rev correctly aborts.
+  - **Phase 19's pre-merge gate set can now reference the actual-upgrade gate with confidence.**
+
+- **B2 — DELETE 503 fix + regression test (commit `2acef63`):**
+  - **Root cause:** FastAPI's default-serializer-on-204 quirk. The `cancel_intent` endpoint had `status_code=204` decorator but returned implicit `None`, so FastAPI emitted a 204 response with `content-type: application/json` + empty body. Per RFC 7230, a 204 must have no message body and no content-type header. Cloudflare/Railway's edge proxy rejected the malformed 204 with 503 even though the cancel logic + DB commit succeeded.
+  - **Fix:** explicit `return Response(status_code=204)`. Same pattern already in use at `routes/organizations.py::cancel_join_request`. Local repro confirmed pre-fix `content-type: application/json` on 204 → post-fix `content-type: None`.
+  - **Regression test:** new file `backend/tests/test_phase_18_5_infrastructure.py` with 3 tests covering the success path + intent-not-found + cross-org-mismatch.
+  - **Incidental tech debt surfaced (per spec D3 lock — flagged not preemptively fixed):** ~10 other DELETE endpoints in `routes/` use the same implicit-None-on-204 pattern. Logged as new audit Item 47 (Tier 2) for a future cleanup sweep.
+
+**Cluster D — Documentation (commits `a09f02b`, `6fcb270`):**
+
+- **D1 — CLAUDE.md update for Phase 19+ merged spec+dispatch convention (commit `a09f02b`):**
+  - Reading-order section: phase doc moved to position 1 (was position 2 behind PROGRESS.md) with "read FIRST and FULL" framing.
+  - New "Spec format convention (Phase 19+)" section between reading order and team structure: locks `phaseXX_Y_*` underscore-not-dot filename rule, documents dispatch+spec doc structure including verification matrix as a dedicated table, deprecates separate-chat-dispatch-prompt, names `phase19_public_delegate_pages_spec.md` + `phase18_5_infrastructure_spec.md` as worked examples.
+  - File now 152 lines (was 139); under 200-line cap.
+  - Per spec D4 lock: convention-recording, NOT redesign. No other CLAUDE.md sections touched.
+
+- **D2 — Audit doc edit-history entry (commit `6fcb270`):**
+  - Phase 18.5 closeout entry: marks Phase 15 G5 escalation **RESOLVED** (closes deferred-promotion call-outs from Phase 13.3 + Phase 14 + Phase 17 + Phase 18 closeouts; the gate now exists as `--mode actual-upgrade`).
+  - DELETE 503 bug **RESOLVED** (referencing the QA observation rather than a discrete numbered audit item — the bug was logged in Phase 18 closeout's "New tech debt logged" §6 but never assigned a number).
+  - **New Item 47 (Tier 2):** the ~10-other-DELETE-endpoints implicit-None-on-204 pattern. Frequency suggests a future cleanup sweep is appropriate, not preemptive per-endpoint fixes.
+
+### Phase 18.5 pre-merge gate results
+
+- **Backend tests: 1105 → 1108 (+3 net)** — full pytest suite green in 3:27; new file passes 3/3.
+- **PG smoke `--mode upgrade --prior-revision e9419ee5906f`: PASS.**
+- **PG smoke `--mode actual-upgrade --prior-revision e9419ee5906f`: PASS.** **The new flag works as documented.** First pass where this gate is real, not a spec-vs-reality gap. Phase 19+ specs can reference it with confidence.
+- **W-START-CHECK + bash start.sh: PASS.** Local `bash start.sh` ran `alembic upgrade head` cleanly through the chain (no Phase 18.5 migrations to apply — no schema changes), then started uvicorn 1-worker; "Digest scheduler launched." line present; "Application startup complete." (Port-bind error after startup-complete was a leftover process from earlier Phase 18 verification; not a startup-logic failure — the app's startup logic ran fine before uvicorn tried to bind to port 8000.)
+- **W-OBSERVABILITY-CHECK: PASS.** `railway logs --service backend` streamed live prod requests pre-push.
+- **Frontend build: N/A.** No frontend changes this pass.
+- **File-count check: 9 files, +746/-559** (net +187; the deletions are the 2 superseded `*_actual_upgrade_path_check.py` scripts).
+
+### Production deploy
+
+- Pushed master `0b599ed` to origin → Railway auto-deploy.
+- **Backend-only deploy** — no frontend changes, so the bundle hash stayed at `index-BavOAP42.js` (Phase 18's bundle). `poll_deploy.py`'s bundle-hash heuristic timed out at 720s as expected (existing tech debt: audit Item 15 — "`poll_deploy.py` bundle-hash heuristic incomplete; nginx-only or backend-only deploys leave the bundle hash unchanged"). **Deploy verified via Railway status:** latest backend deployment at `2026-05-10T19:03:22Z` reports `status: SUCCESS` + instance `status: RUNNING`. `/api/health` returns `{"status":"ok","version":"0.1.0"}`. The poll-script timeout is informational, not a deploy failure.
+
+### Phase 18.5 commit list (on master via merge `0b599ed`)
+
+- `94e9a1d` Phase 18.5 B1: promote pg_smoke.py --mode actual-upgrade flag
+- `2acef63` Phase 18.5 B2: fix DELETE delegation intent 503 + regression test
+- `a09f02b` Phase 18.5 D1: CLAUDE.md update — Phase 19+ merged spec convention
+- `6fcb270` Phase 18.5 D2: tech_debt_audit_2026-05.md edit-history entry
+- `0b599ed` Merge phase-18-5/infrastructure: Phase 18.5 (Infrastructure)
+
+### Process notes
+
+1. **Single-agent dispatch worked cleanly** — B1+B2+D1+D2 sequentially in one agent (per spec's "single-agent pass, ~60-90 min total"). No cross-agent staging concerns. Total agent runtime ~12 min.
+
+2. **Phase 15 G5 closure pattern reinforces the spec/reality verification lesson.** Phase 17 closeout flagged the gap. Phase 18 closeout escalated it to Tier 1 after the second consecutive pass referenced the non-existent gate. Phase 18.5 actually landed it. **Pattern lesson now captured in the audit doc:** PROGRESS-vs-reality drift on infrastructure claims (gates, flags, tooling promotions) is a recurring risk — closeout claims need verification against the codebase before downstream specs rely on them. The discipline going forward: when a spec writes "use the X gate," the spec author should `grep` for X first to confirm it exists.
+
+3. **DELETE 503 root cause was hypothesis #4 (Pydantic / FastAPI serializer quirk), not the predicted #1 (audit logging exception swallowing).** The agent diagnosed via local repro showing pre-fix `content-type: application/json` on 204; the implicit-None pattern is documented in FastAPI as the canonical cause of malformed 204s. The pattern of "edge proxy rejects malformed 204 with 503" is worth flagging as a general gotcha — when seeing 503 on an endpoint that's supposed to return 204, check the response shape before assuming a backend exception.
+
+4. **Incidental tech debt surfaced and held the line on D3 lock.** The agent found the implicit-None pattern at ~10 other DELETE endpoints during diagnosis but did NOT preemptively fix them — logged as Item 47 instead. This is the right discipline: the spec's D3 lock said "small expansion of fix scope is fine; large expansion → flag for follow-up pass." Sweeping 10 endpoints would have been a large expansion.
+
+5. **`poll_deploy.py` bundle-hash heuristic incomplete** — fired again on this backend-only deploy (timed out at 720s with bundle unchanged). Existing tech debt; not in scope for this pass; deploy verified via Railway status instead. Future audit refresh could promote this to Tier 2 (it's been observed multiple times now).
+
+### New tech debt logged
+
+1. **Item 47: implicit-None-on-204 pattern at ~10 other DELETE endpoints** (Tier 2). Same root cause as the DELETE intent 503 fix in B2. Future cleanup sweep should grep for `status_code=204` decorators across `routes/` and confirm each handler returns `Response(status_code=204)` explicitly rather than implicit None.
+2. **`poll_deploy.py` bundle-hash heuristic** — observed yet again on this backend-only deploy. Existing audit item (#15 territory); promote to Tier 2 in next refresh.
+
+### Pass-summary
+
+**Phase 18.5 shipped clean to production with three small infrastructure items: a real `pg_smoke.py --mode actual-upgrade` flag (closing the long-running Phase 15 G5 gap that two prior passes referenced), a targeted fix for the DELETE intent 503 bug (FastAPI implicit-None-on-204 quirk → explicit `Response(status_code=204)`), and a CLAUDE.md update recording the Phase 19+ merged spec+dispatch convention.** Backend test count 1105 → 1108 (+3 net for the new regression test file). No migrations, no frontend changes — backend-only deploy (poll script's bundle-hash heuristic timed out as expected; deploy verified via Railway status SUCCESS + RUNNING). The Phase 15 G5 escalation in the audit doc is now RESOLVED. **Phase 19's pre-merge gate set can reference the actual-upgrade gate with confidence going forward.** Single-agent pass, ~12 min agent runtime, ~60-90 min total wall-clock per spec estimate. The spec/reality verification discipline is now captured in audit lessons: when a spec writes "use the X gate," verify X exists in the codebase before downstream specs rely on it.
