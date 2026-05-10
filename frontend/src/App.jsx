@@ -70,6 +70,12 @@ import Demo from './pages/Demo';
 // Phase 14 F2 — public org landing page; lives at the bare /{slug} URL and
 // renders the splash for non-members and members alike (no auto-redirect).
 import OrgPublicLanding from './pages/OrgPublicLanding';
+// Phase 19 — public delegate page surfaces (F1 management, F2 public,
+// F4 browse, F5 approver dashboard).
+import DelegateProfile from './pages/DelegateProfile';
+import Delegates from './pages/Delegates';
+import DelegatePublic from './pages/DelegatePublic';
+import DelegateApplicationsReview from './pages/DelegateApplicationsReview';
 
 function Layout({ children }) {
   return (
@@ -321,6 +327,59 @@ export default function App() {
             <ProtectedRoute>
               <OrgProvider>
                 <OrgScopedLayout><UserProfile /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 19 F1 — viewer's own delegate page management surface. */}
+        <Route
+          path="/:org_slug/delegate-profile"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><DelegateProfile /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 19 F4 — org-scoped public delegate browse page. Visible to
+            all org members; the backend endpoint also serves non-members
+            for publicly-listed orgs (matching org public landing semantics). */}
+        <Route
+          path="/:org_slug/delegates"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><Delegates /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 19 F2 — public-facing per-delegate page. Reads the browse
+            endpoint and the user's profile to render the page; visibility
+            gates are enforced server-side (404 when not allowed). */}
+        <Route
+          path="/:org_slug/delegates/:handle_or_username"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><DelegatePublic /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 19 F5 — approver-only dashboard for delegate applications
+            (the new public_accepting submission flow). Page-level gates on
+            `delegate_application.approve` and renders an inline 403 to
+            non-approvers (no AdminRoute wrapper because the link is also
+            permission-gated in the nav, but we keep the page itself
+            tolerant of direct URL navigation by non-approvers). */}
+        <Route
+          path="/:org_slug/delegate-applications"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><DelegateApplicationsReview /></OrgScopedLayout>
               </OrgProvider>
             </ProtectedRoute>
           }
