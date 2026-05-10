@@ -137,6 +137,28 @@ def upgrade() -> None:
     inspector = sa.inspect(bind)
     existing_tables = set(inspector.get_table_names())
 
+    # ----- 0. PG-specific: explicitly create the ``delegate_profile_visibility``
+    # ENUM type before the ``batch_alter_table.add_column`` call below uses
+    # it. ``op.create_table`` with sa.Enum columns auto-emits ``CREATE TYPE``
+    # on PG (so we DON'T pre-create ``org_delegate_page_visibility`` here —
+    # ``op.create_table`` handles that one). But ``batch_alter_table.add_
+    # column`` does NOT auto-emit ``CREATE TYPE`` in ALTER paths — alembic's
+    # batch impl skips the type-create step. Without this explicit ``.create
+    # (...)`` call the prod deploy fails with ``UndefinedObject: type
+    # "delegate_profile_visibility" does not exist`` on the
+    # ``ALTER TABLE delegate_profiles ADD COLUMN visibility`` statement
+    # (step 2 below).
+    #
+    # On SQLite this is a no-op since SQLite doesn't have a native ENUM
+    # type — sa.Enum becomes a CHECK-constrained VARCHAR. ``checkfirst=True``
+    # makes the create idempotent on PG so re-runs against an already-
+    # migrated schema are safe.
+    delegate_profile_visibility_enum = sa.Enum(
+        "private", "public", "public_accepting",
+        name="delegate_profile_visibility",
+    )
+    delegate_profile_visibility_enum.create(bind, checkfirst=True)
+
     # ----- 1. Create org_delegate_profiles. -----
     if "org_delegate_profiles" not in existing_tables:
         op.create_table(
@@ -196,6 +218,7 @@ def upgrade() -> None:
                         sa.Enum(
                             "private", "public", "public_accepting",
                             name="delegate_profile_visibility",
+                            create_type=False,  # we created it explicitly above (step 0)
                         ),
                         nullable=False,
                         server_default="public_accepting",  # D8
