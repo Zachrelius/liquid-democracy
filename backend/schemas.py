@@ -1793,6 +1793,37 @@ class OrgDelegateProfileOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PublicDelegatePageOut(BaseModel):
+    """Phase 19 — response shape for ``GET /api/orgs/{slug}/delegates/
+    {handle_or_username}`` (public read of any delegate's per-org page).
+
+    Combines user identity + OrgDelegateProfile intro + topics that are
+    non-``private`` (per D12: page renders both ``public`` and
+    ``public_accepting`` topics; ``private`` topics are hidden).
+
+    Auth: caller's view is gated by ``effective_page_visibility`` on the
+    target ``OrgDelegateProfile``:
+      - ``public``  → anyone may view (anonymous OK)
+      - ``private_delegators`` → only approved followers in this org
+      - ``private`` → 404 (owner uses ``/delegate-profile`` instead)
+
+    The list endpoint surfaces only ``public_accepting`` users (D11);
+    this single-page endpoint surfaces any user with a non-``private``
+    page so transparent-only delegates are reachable via direct URL.
+    """
+
+    user_id: str
+    username: str
+    display_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    delegate_handle: Optional[str] = None
+    org_id: str
+    org_slug: str
+    org_name: str
+    intro: Optional[str] = None
+    topics: list[_OrgDelegateProfileTopicOut] = Field(default_factory=list)
+
+
 class OrgDelegateProfilePatch(BaseModel):
     """Body for ``PATCH /api/orgs/{slug}/delegate-profile``. Both fields
     optional — the route applies whichever fields are present.

@@ -473,3 +473,137 @@ def browse_org_delegates(
 
     # ----- Pagination (offset-based, matches notifications.py:262). -----
     return payload[offset : offset + limit]
+
+
+@org_delegates_router.get(
+    "/{org_slug}/delegates/{handle_or_username}",
+    response_model=schemas.PublicDelegatePageOut,
+)
+def public_delegate_page(
+    org_slug: str,
+    handle_or_username: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(auth_utils.get_optional_user),
+):
+    """Phase 19 — public read of any delegate's per-org page.
+
+    Resolves ``handle_or_username`` against ``User.delegate_handle`` first
+    (D10 — handle takes precedence), falling back to ``User.username``.
+    Per D12: page renders both ``public`` and ``public_accepting`` topics;
+    ``private`` topics are hidden. The browse endpoint surfaces only
+    ``public_accepting`` users (D11), but a transparent-only delegate is
+    still reachable via this single-page endpoint.
+
+    Auth gate via ``OrgDelegateProfile.effective_page_visibility(db)``:
+      - ``public``  → anyone may view (anonymous OK).
+      - ``private_delegators`` → must be approved follower in this org
+        (Phase 18 follow-org-scoping: ``FollowRelationship`` row with
+        ``org_id = page_org_id`` AND status approved).
+      - ``private`` → 404 (owner uses ``/delegate-profile`` instead).
+
+    404 covers both "no such user/page" and "page exists but you can't
+    see it" so existence isn't leaked.
+    """
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    # Handle takes precedence; fall back to username (D10).
+    target = (
+        db.query(models.User)
+        .filter(models.User.delegate_handle == handle_or_username)
+        .first()
+    )
+    if target is None:
+        target = (
+            db.query(models.User)
+            .filter(models.User.username == handle_or_username)
+            .first()
+        )
+    if target is None:
+        raise HTTPException(status_code=404, detail="Delegate not found")
+
+    odp = (
+        db.query(models.OrgDelegateProfile)
+        .filter(
+            models.OrgDelegateProfile.user_id == target.id,
+            models.OrgDelegateProfile.org_id == org.id,
+        )
+        .first()
+    )
+    if odp is None:
+        raise HTTPException(status_code=404, detail="Delegate page not found")
+
+    effective = odp.effective_page_visibility(db)
+    if effective == "private":
+        raise HTTPException(status_code=404, detail="Delegate page not found")
+    if effective == "private_delegators":
+        # Owner sees their own page; otherwise must be an approved follower
+        # in this org.
+        if current_user is None or current_user.id != target.id:
+            if current_user is None:
+                raise HTTPException(status_code=404, detail="Delegate page not found")
+            is_approved_follower = (
+                db.query(models.FollowRelationship)
+                .filter(
+                    models.FollowRelationship.follower_id == current_user.id,
+                    models.FollowRelationship.followed_id == target.id,
+                    models.FollowRelationship.org_id == org.id,
+                )
+                .first()
+                is not None
+            )
+            if not is_approved_follower:
+                raise HTTPException(status_code=404, detail="Delegate page not found")
+
+    # Topics: only non-private (public + public_accepting per D12).
+    topic_rows = (
+        db.query(models.DelegateProfile)
+        .filter(
+            models.DelegateProfile.user_id == target.id,
+            models.DelegateProfile.org_id == org.id,
+            models.DelegateProfile.visibility.in_(("public", "public_accepting")),
+        )
+        .all()
+    )
+    # Resolve topic names in one query.
+    topic_ids = [tp.topic_id for tp in topic_rows]
+    name_by_topic_id: dict[str, str] = {}
+    if topic_ids:
+        for tid, name in (
+            db.query(models.Topic.id, models.Topic.name)
+            .filter(models.Topic.id.in_(topic_ids))
+            .all()
+        ):
+            name_by_topic_id[tid] = name
+
+    topics_out = [
+        schemas._OrgDelegateProfileTopicOut(
+            id=tp.id,
+            topic_id=tp.topic_id,
+            topic_name=name_by_topic_id.get(tp.topic_id),
+            bio=tp.bio or "",
+            position_statement=tp.position_statement,
+            visibility=tp.visibility,
+            public_accepting_submitted_at=tp.public_accepting_submitted_at,
+            public_accepting_approved_at=tp.public_accepting_approved_at,
+            public_accepting_approved_by_id=tp.public_accepting_approved_by_id,
+            public_accepting_denied_comment=tp.public_accepting_denied_comment,
+        )
+        for tp in topic_rows
+    ]
+
+    return schemas.PublicDelegatePageOut(
+        user_id=target.id,
+        username=target.username,
+        display_name=target.display_name,
+        avatar_url=target.avatar_url,
+        delegate_handle=target.delegate_handle,
+        org_id=org.id,
+        org_slug=org.slug,
+        org_name=org.name,
+        intro=odp.intro,
+        topics=topics_out,
+    )
