@@ -10,7 +10,8 @@ PURE LAYER (no DB access)
   compute_tally_pure()  — iterate users, aggregate results
 
 GRAPH LAYER (thread-safe in-memory NetworkX store)
-  DelegationGraphStore  — per-topic DiGraphs for cycle detection
+  DelegationGraphStore  — per-org × per-topic DiGraphs for cycle detection
+                           (Phase 18 partitioned by org)
 
 SERVICE LAYER (DB access lives here, calls pure functions)
   DelegationService     — fetches data, builds ProposalContext, delegates to pure layer
@@ -637,42 +638,86 @@ def _compute_rcv_tally_pure(
 
 class DelegationGraphStore:
     """
-    Keeps one directed graph per topic (plus a global graph for topic=None).
-    Each edge  delegator -> delegate  represents an active delegation.
+    Phase 18 (B2.3): partitioned by org. Storage shape is
+    ``Dict[Optional[str], Dict[Optional[str], nx.DiGraph]]`` — outer key is
+    ``org_id`` and inner key is ``topic_id`` (with ``None`` for the org's
+    "global" graph i.e. topic-less delegations).
 
-    Thread-safe: a single lock guards all mutations.
+    The outer ``org_id=None`` bucket is the **legacy / unscoped** bucket.
+    It exists for two reasons:
+      1. backwards-compat with pre-Phase-18 callers that hadn't yet been
+         updated to thread ``org_id`` (Backend Agent #3 fixes the callers
+         in routes/delegations.py + routes/follows.py within the same pass);
+      2. unit tests that exercise the cycle-detection / neighborhood
+         primitives without setting up a full org context.
+
+    Cycle detection is per-org natural — cross-org cycles aren't possible
+    post-fix because cross-org delegation doesn't exist.
+
+    ``compute_voting_weight(user_id, org_id)`` walks ancestors only within
+    the specified org's graph; cross-org weight inflation goes away.
+
+    Thread-safe: a single lock guards all mutations. The lock is one
+    global lock (not per-org) because partition is a data-shape concern,
+    not a concurrency boundary.
     """
 
     GLOBAL_KEY = "__global__"
 
     def __init__(self) -> None:
-        self._graphs: dict[str, nx.DiGraph] = {}
+        # outer key: org_id (None = legacy/unscoped bucket)
+        # inner key: topic_id (None = the org's __global__ graph)
+        self._graphs: dict[Optional[str], dict[Optional[str], nx.DiGraph]] = {}
         self._lock = Lock()
 
-    def _key(self, topic_id: Optional[str]) -> str:
-        return topic_id if topic_id else self.GLOBAL_KEY
-
-    def _get_or_create(self, topic_id: Optional[str]) -> nx.DiGraph:
-        k = self._key(topic_id)
-        if k not in self._graphs:
-            self._graphs[k] = nx.DiGraph()
-        return self._graphs[k]
+    def _get_or_create(
+        self, org_id: Optional[str], topic_id: Optional[str]
+    ) -> nx.DiGraph:
+        org_bucket = self._graphs.setdefault(org_id, {})
+        if topic_id not in org_bucket:
+            org_bucket[topic_id] = nx.DiGraph()
+        return org_bucket[topic_id]
 
     def rebuild_from_db(self, db: Session) -> None:
-        """Replace all in-memory graphs with the current DB state."""
+        """Replace all in-memory graphs with the current DB state.
+
+        Phase 18: pre-creates one per-org bucket per Organization row, then
+        loads every Delegation row that has ``org_id IS NOT NULL``. Rows
+        with ``org_id IS NULL`` (which can exist transiently between the
+        18a and 18b migration deploys) are SKIPPED — they're not yet
+        placeable in the partitioned structure. Post-18b they don't exist.
+        """
         with self._lock:
             self._graphs = {}
-            delegations: list[models.Delegation] = db.query(models.Delegation).all()
+            # Pre-create per-org buckets so subsequent lookups can
+            # distinguish "no delegations yet" from "unknown org."
+            for org in db.query(models.Organization).all():
+                self._graphs.setdefault(org.id, {})
+            delegations: list[models.Delegation] = db.query(
+                models.Delegation
+            ).filter(models.Delegation.org_id.isnot(None)).all()
             for d in delegations:
-                g = self._get_or_create(d.topic_id)
+                g = self._get_or_create(d.org_id, d.topic_id)
                 g.add_edge(d.delegator_id, d.delegate_id)
 
     def would_create_cycle(
-        self, delegator_id: str, delegate_id: str, topic_id: Optional[str]
+        self,
+        delegator_id: str,
+        delegate_id: str,
+        topic_id: Optional[str],
+        org_id: Optional[str] = None,  # TODO Phase 18 B3: make required
     ) -> bool:
+        """Check whether the (delegator → delegate) edge would create a
+        cycle within the org's graph(s).
+
+        Phase 18: cycle detection is per-org. Within the org, both the
+        topic-specific graph and the org's global graph (topic_id=None)
+        are checked, since a topic delegation can chain through a global
+        one and vice versa.
+        """
         with self._lock:
             for tid in (topic_id, None):
-                g = self._get_or_create(tid)
+                g = self._get_or_create(org_id, tid)
                 if self._edge_creates_cycle(g, delegator_id, delegate_id):
                     return True
         return False
@@ -685,46 +730,101 @@ class DelegationGraphStore:
         return has_cycle
 
     def add_delegation(
-        self, delegator_id: str, delegate_id: str, topic_id: Optional[str]
+        self,
+        delegator_id: str,
+        delegate_id: str,
+        topic_id: Optional[str],
+        org_id: Optional[str] = None,  # TODO Phase 18 B3: make required
     ) -> None:
         with self._lock:
-            g = self._get_or_create(topic_id)
+            g = self._get_or_create(org_id, topic_id)
             if delegator_id in g:
                 for old in list(g.successors(delegator_id)):
                     g.remove_edge(delegator_id, old)
             g.add_edge(delegator_id, delegate_id)
 
     def remove_delegation(
-        self, delegator_id: str, topic_id: Optional[str]
+        self,
+        delegator_id: str,
+        topic_id: Optional[str],
+        org_id: Optional[str] = None,  # TODO Phase 18 B3: make required
     ) -> None:
         with self._lock:
-            g = self._get_or_create(topic_id)
+            g = self._get_or_create(org_id, topic_id)
             if delegator_id in g:
                 for d in list(g.successors(delegator_id)):
                     g.remove_edge(delegator_id, d)
 
     def get_neighborhood(
-        self, user_id: str, topic_id: Optional[str] = None
+        self,
+        user_id: str,
+        topic_id: Optional[str] = None,
+        org_id: Optional[str] = None,  # TODO Phase 18 B3: make required
     ) -> tuple[set[str], list[tuple[str, str, Optional[str]]]]:
+        """Return (nodes, edges) for the user's neighborhood.
+
+        Phase 18: scoped to the specified ``org_id``'s partition. When
+        ``org_id`` is None, the legacy/unscoped bucket is consulted (for
+        backwards-compat tests) — NOT the union across all orgs (that
+        would re-introduce the cross-org leak this whole pass exists to
+        fix). Admin tools that need a true cross-org view should call
+        :meth:`get_neighborhood_all_orgs`.
+        """
         nodes: set[str] = {user_id}
         edges: list[tuple[str, str, Optional[str]]] = []
-        topic_keys = [self._key(topic_id)] if topic_id else list(self._graphs.keys())
-        for key in topic_keys:
-            if key not in self._graphs:
+        org_bucket = self._graphs.get(org_id, {})
+        topic_keys = [topic_id] if topic_id is not None else list(org_bucket.keys())
+        for tid in topic_keys:
+            g = org_bucket.get(tid)
+            if g is None or user_id not in g:
                 continue
-            g = self._graphs[key]
-            tid = None if key == self.GLOBAL_KEY else key
-            if user_id in g:
-                for nb in g.successors(user_id):
-                    nodes.add(nb)
-                    edges.append((user_id, nb, tid))
-                for nb in g.predecessors(user_id):
-                    nodes.add(nb)
-                    edges.append((nb, user_id, tid))
+            for nb in g.successors(user_id):
+                nodes.add(nb)
+                edges.append((user_id, nb, tid))
+            for nb in g.predecessors(user_id):
+                nodes.add(nb)
+                edges.append((nb, user_id, tid))
         return nodes, edges
 
-    def compute_voting_weight(self, user_id: str) -> int:
-        g = self._graphs.get(self.GLOBAL_KEY)
+    def get_neighborhood_all_orgs(
+        self, user_id: str
+    ) -> tuple[set[str], list[tuple[str, str, Optional[str], Optional[str]]]]:
+        """Return (nodes, edges) for the user's neighborhood across every
+        org's graph — admin/forensic helper.
+
+        Edges are 4-tuples ``(src, dst, topic_id, org_id)`` so the caller
+        can reconstruct which org each edge came from. Used by
+        ``/api/admin/delegation-graph`` (renamed
+        ``system_delegation_graph_all_orgs``) where cross-org visibility is
+        the documented behavior.
+        """
+        nodes: set[str] = {user_id}
+        edges: list[tuple[str, str, Optional[str], Optional[str]]] = []
+        for org_id, org_bucket in self._graphs.items():
+            for tid, g in org_bucket.items():
+                if user_id not in g:
+                    continue
+                for nb in g.successors(user_id):
+                    nodes.add(nb)
+                    edges.append((user_id, nb, tid, org_id))
+                for nb in g.predecessors(user_id):
+                    nodes.add(nb)
+                    edges.append((nb, user_id, tid, org_id))
+        return nodes, edges
+
+    def compute_voting_weight(
+        self,
+        user_id: str,
+        org_id: Optional[str] = None,  # TODO Phase 18 B3: make required
+    ) -> int:
+        """Voting weight = 1 + ancestors-in-org's-global-graph.
+
+        Phase 18: only walks the specified org's global delegation graph.
+        Cross-org weight inflation (the pre-fix bug where someone with
+        delegators in two orgs got their weights summed) is gone.
+        """
+        org_bucket = self._graphs.get(org_id, {})
+        g = org_bucket.get(None)  # the org's __global__ graph
         if g is None or user_id not in g:
             return 1
         try:
@@ -732,6 +832,26 @@ class DelegationGraphStore:
         except nx.NetworkXError:
             predecessors = set()
         return 1 + len(predecessors)
+
+    def compute_voting_weight_all_orgs(self, user_id: str) -> int:
+        """Cross-org voting weight — admin/forensic helper.
+
+        Sum of ancestors across every org's global graph. Used by the
+        ``system_delegation_graph_all_orgs`` admin endpoint where the
+        cross-org union is the documented behavior. Production app code
+        should call :meth:`compute_voting_weight` instead.
+        """
+        total = 0
+        for org_bucket in self._graphs.values():
+            g = org_bucket.get(None)
+            if g is None or user_id not in g:
+                continue
+            try:
+                predecessors = nx.ancestors(g, user_id)
+            except nx.NetworkXError:
+                predecessors = set()
+            total += len(predecessors)
+        return 1 + total
 
 
 # ---------------------------------------------------------------------------
@@ -826,9 +946,25 @@ class DelegationService:
         proposal_topics = [pt.topic_id for pt in proposal.proposal_topics]
         voting_method = getattr(proposal, "voting_method", "binary") or "binary"
 
-        # All delegations indexed by delegator → topic_id
+        # All delegations indexed by delegator → topic_id.
+        #
+        # Phase 18 (B2.1): scoped to the proposal's org. Pre-fix this
+        # loaded every Delegation row platform-wide, which is the
+        # diagnostic's load-bearing tally read leak (Case 3 / Case 4 in
+        # the C&Z prod scenario). Post-fix only delegations whose
+        # ``org_id`` matches the proposal's ``org_id`` enter the context.
+        # Defensive fallback: when the proposal has no ``org_id`` (legacy
+        # / unit-test fixtures pre-Phase-4c), fall back to the unscoped
+        # query so existing tests don't regress. Real production proposals
+        # always carry an ``org_id`` since Phase 4.
+        proposal_org_id = getattr(proposal, "org_id", None)
+        delegation_query = db.query(models.Delegation)
+        if proposal_org_id is not None:
+            delegation_query = delegation_query.filter(
+                models.Delegation.org_id == proposal_org_id
+            )
         all_delegations: dict[str, dict[Optional[str], DelegationData]] = {}
-        for row in db.query(models.Delegation).all():
+        for row in delegation_query.all():
             dd = DelegationData(
                 delegator_id=row.delegator_id,
                 delegate_id=row.delegate_id,
@@ -885,10 +1021,19 @@ class DelegationService:
         """
         Returns (delegate_id, delegation_row) or None.
         Used by routes that need the ORM delegation object.
+
+        Phase 18 (B2.1): both ORM lookups (per-topic + global fallback)
+        now filter on ``org_id == proposal.org_id`` so a global
+        delegation in org X cannot resolve a vote on a proposal in org Y.
+        Defensive fallback: when ``proposal.org_id`` is None (legacy /
+        unit-test fixtures pre-Phase-4c) the filter is skipped so existing
+        tests don't regress.
         """
         proposal = db.get(models.Proposal, proposal_id)
         if proposal is None:
             return None
+
+        proposal_org_id = getattr(proposal, "org_id", None)
 
         topic_ids = [pt.topic_id for pt in proposal.proposal_topics]
         precedences: dict[str, int] = {
@@ -900,17 +1045,25 @@ class DelegationService:
         sorted_topics = sorted(topic_ids, key=lambda t: precedences.get(t, 9999))
 
         for topic_id in sorted_topics:
-            row = db.query(models.Delegation).filter(
+            q = db.query(models.Delegation).filter(
                 models.Delegation.delegator_id == user_id,
                 models.Delegation.topic_id == topic_id,
-            ).first()
+            )
+            if proposal_org_id is not None:
+                q = q.filter(models.Delegation.org_id == proposal_org_id)
+            row = q.first()
             if row:
                 return row.delegate_id, row
 
-        global_row = db.query(models.Delegation).filter(
+        global_q = db.query(models.Delegation).filter(
             models.Delegation.delegator_id == user_id,
             models.Delegation.topic_id.is_(None),
-        ).first()
+        )
+        if proposal_org_id is not None:
+            global_q = global_q.filter(
+                models.Delegation.org_id == proposal_org_id
+            )
+        global_row = global_q.first()
         if global_row:
             return global_row.delegate_id, global_row
 
