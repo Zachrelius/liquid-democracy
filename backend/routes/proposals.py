@@ -805,14 +805,22 @@ def _is_delegate_target_for_proposal(
     ``topic_id`` is one of the proposal's topics (or ``topic_id IS NULL``
     for global delegations). Returns False for topicless proposals
     (delegated_to_you doesn't fire when there's no topic to scope on).
+
+    Phase 18 (B2.2): adds ``org_id == proposal.org_id`` filter so a
+    delegation made in org X doesn't surface ``delegated_to_you``
+    notifications for a proposal in org Y. The defensive fallback for
+    legacy proposals with no ``org_id`` keeps the pre-fix behavior.
     """
     topic_ids = [pt.topic_id for pt in proposal.proposal_topics]
     if not topic_ids:
         return False
+    proposal_org_id = getattr(proposal, "org_id", None)
     q = db.query(models.Delegation.id).filter(
         models.Delegation.delegate_id == user_id,
         models.Delegation.topic_id.in_(topic_ids),
     )
+    if proposal_org_id is not None:
+        q = q.filter(models.Delegation.org_id == proposal_org_id)
     return db.query(q.exists()).scalar() or False
 
 
@@ -825,14 +833,22 @@ def _has_delegated_away_for_proposal(
     Counts a row in ``delegations`` where ``delegator_id == user_id`` and
     ``topic_id`` is one of the proposal's topics. Topicless proposals
     treat all recipients as not-delegated (you_vote candidates).
+
+    Phase 18 (B2.2): adds ``org_id == proposal.org_id`` filter so a
+    delegation in org X doesn't suppress ``you_vote`` notifications for
+    a proposal in org Y. The defensive fallback for legacy proposals with
+    no ``org_id`` keeps the pre-fix behavior.
     """
     topic_ids = [pt.topic_id for pt in proposal.proposal_topics]
     if not topic_ids:
         return False
+    proposal_org_id = getattr(proposal, "org_id", None)
     q = db.query(models.Delegation.id).filter(
         models.Delegation.delegator_id == user_id,
         models.Delegation.topic_id.in_(topic_ids),
     )
+    if proposal_org_id is not None:
+        q = q.filter(models.Delegation.org_id == proposal_org_id)
     return db.query(q.exists()).scalar() or False
 
 
@@ -1407,10 +1423,21 @@ def get_vote_graph(
     ).all():
         private_follow_ids.add(rel.follower_id)
 
+    # Phase 18 (B2.2): scope delegators_to_me to the proposal's org so
+    # the per-proposal vote-graph privacy resolution doesn't leak
+    # cross-org delegators' identities into the rendered graph. The
+    # defensive fallback for legacy proposals with no ``org_id`` keeps the
+    # pre-fix behavior.
     delegators_to_me: set[str] = set()
-    for d in db.query(models.Delegation).filter(
+    delegators_q = db.query(models.Delegation).filter(
         models.Delegation.delegate_id == current_user.id,
-    ).all():
+    )
+    proposal_org_id = getattr(proposal, "org_id", None)
+    if proposal_org_id is not None:
+        delegators_q = delegators_q.filter(
+            models.Delegation.org_id == proposal_org_id
+        )
+    for d in delegators_q.all():
         # Only reveal name if they delegate via a private follow relationship
         if d.delegator_id in private_follow_ids:
             delegators_to_me.add(d.delegator_id)
