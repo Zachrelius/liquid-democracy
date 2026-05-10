@@ -224,7 +224,12 @@ def test_followed_voter_full_visibility(client, test_db):
     topic = _topic(test_db)
     viewer = _user(test_db, "viewer", "Viewer Person")
     followed = _user(test_db, "friend", "Hiroshi H.")
-    # viewer follows `followed`
+    # viewer follows `followed`. Phase 18: this test exercises the
+    # vote-graph privacy lookup which currently uses an unscoped
+    # FollowRelationship query (routes/proposals.py::get_vote_graph at
+    # line ~1411). Leaving org_id=None matches the production lookup
+    # shape — the privacy decision is account-level even though
+    # delegation row data has been org-scoped.
     test_db.add(models.FollowRelationship(
         follower_id=viewer.id,
         followed_id=followed.id,

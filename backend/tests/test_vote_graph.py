@@ -422,15 +422,23 @@ def test_08_privacy_private_delegator_to_me_has_visible_ballot(client, test_db):
     viewer = _user(test_db, "viewer")  # current user
     follower = _user(test_db, "follower")  # privately delegates to viewer
     # Follower follows viewer with delegation_allowed permission.
+    # Phase 18: this test exercises the vote-graph privacy resolution
+    # which currently uses an account-level FollowRelationship lookup
+    # (routes/proposals.py::get_vote_graph reads relationships without
+    # an org filter). Leaving org_id=None keeps the test exercising the
+    # legacy lookup shape; the production query is org-scoped via the
+    # delegation row, not the follow row.
     test_db.add(models.FollowRelationship(
         follower_id=follower.id,
         followed_id=viewer.id,
         permission_level="delegation_allowed",
     ))
     # And actually delegates to viewer (private delegation, no public profile).
+    # Match the proposal's org so _build_context picks up the chain.
     test_db.add(models.Delegation(
         delegator_id=follower.id,
         delegate_id=viewer.id,
+        org_id=getattr(topic, "org_id", None),
         topic_id=None,
         chain_behavior="accept_sub",
     ))

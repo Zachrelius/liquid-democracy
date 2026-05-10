@@ -2,6 +2,13 @@
 Phase 3a tests — delegation permissions, follow flow, vote visibility, and cascade revocation.
 
 All tests use an in-memory SQLite DB (via the `db` fixture) and the helpers in conftest.py.
+
+Phase 18 update: ``_revoke_dependent_delegations`` gained a required
+``org_id`` kwarg, and the relationship-table constructors now thread
+``org_id``. The helpers below pass ``org_id=None`` for the legacy
+unscoped tests (the 18a backfill window allows NULL); the cascade-
+revocation tests construct an explicit ``Organization`` so ``org_id``
+is meaningful.
 """
 
 import pytest
@@ -10,6 +17,7 @@ from sqlalchemy.orm import Session
 import models
 from permissions import can_delegate_to, can_see_votes, public_delegate_topic_ids
 from audit_utils import log_audit_event
+from role_seed import seed_default_roles_for_org
 from tests.conftest import (
     make_user, make_topic, make_proposal, cast_direct_vote, set_delegation,
 )
@@ -18,6 +26,14 @@ from tests.conftest import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _make_org(db: Session, slug: str = "p3a") -> models.Organization:
+    o = models.Organization(name=slug.title(), slug=slug, description="", settings={})
+    db.add(o)
+    db.flush()
+    seed_default_roles_for_org(db, o.id)
+    return o
+
 
 def make_delegate_profile(
     db: Session,
@@ -36,10 +52,13 @@ def make_follow_relationship(
     follower: models.User,
     followed: models.User,
     permission_level: str = "view_only",
+    *,
+    org_id: str | None = None,
 ) -> models.FollowRelationship:
     r = models.FollowRelationship(
         follower_id=follower.id,
         followed_id=followed.id,
+        org_id=org_id,
         permission_level=permission_level,
     )
     db.add(r)
@@ -52,10 +71,13 @@ def make_follow_request(
     requester: models.User,
     target: models.User,
     message: str | None = None,
+    *,
+    org_id: str | None = None,
 ) -> models.FollowRequest:
     req = models.FollowRequest(
         requester_id=requester.id,
         target_id=target.id,
+        org_id=org_id,
         status="pending",
         message=message,
     )
@@ -176,22 +198,32 @@ def test_full_follow_request_to_delegation_flow(db):
 # ---------------------------------------------------------------------------
 
 def test_revoke_follow_cascades_to_delegation(db, store):
+    """Phase 18 (B3): _revoke_dependent_delegations now requires an
+    ``org_id`` kwarg. Both follow and delegation are constructed in the
+    same org so the scoped revocation finds the row to cascade.
+    """
     from routes.follows import _revoke_dependent_delegations
 
+    org = _make_org(db, "rev_casc_org")
     alice = make_user(db, "alice")
     bob = make_user(db, "bob")
     health = make_topic(db, "health")
 
     # Set up: alice follows bob with delegation_allowed, has a delegation
-    make_follow_relationship(db, alice, bob, "delegation_allowed")
+    make_follow_relationship(db, alice, bob, "delegation_allowed", org_id=org.id)
     delegation = set_delegation(db, store, alice, bob, health)
+    # Tag the delegation with the same org so the scoped query finds it.
+    delegation.org_id = org.id
+    db.flush()
     db.commit()
 
     # Sanity: delegation exists
     assert db.get(models.Delegation, delegation.id) is not None
 
-    # Revoke follow — should cascade
-    revoked = _revoke_dependent_delegations(db, alice.id, bob.id, alice.id)
+    # Revoke follow — should cascade (org-scoped).
+    revoked = _revoke_dependent_delegations(
+        db, alice.id, bob.id, alice.id, org_id=org.id,
+    )
     db.flush()
 
     assert delegation.id in revoked
@@ -202,20 +234,27 @@ def test_revoke_follow_cascades_to_delegation(db, store):
 
 
 def test_revoke_follow_does_not_cascade_when_public_profile_exists(db, store):
-    """If delegation is covered by a public profile, revocation shouldn't remove it."""
+    """If delegation is covered by a public profile, revocation shouldn't
+    remove it. Phase 18: org_id threaded through both rows.
+    """
     from routes.follows import _revoke_dependent_delegations
 
+    org = _make_org(db, "rev_pub_org")
     alice = make_user(db, "alice")
     bob = make_user(db, "bob")
     health = make_topic(db, "health")
 
     # Bob is a public delegate for health — profile covers the delegation
     make_delegate_profile(db, bob, health)
-    make_follow_relationship(db, alice, bob, "delegation_allowed")
+    make_follow_relationship(db, alice, bob, "delegation_allowed", org_id=org.id)
     delegation = set_delegation(db, store, alice, bob, health)
+    delegation.org_id = org.id
+    db.flush()
     db.commit()
 
-    revoked = _revoke_dependent_delegations(db, alice.id, bob.id, alice.id)
+    revoked = _revoke_dependent_delegations(
+        db, alice.id, bob.id, alice.id, org_id=org.id,
+    )
     db.flush()
 
     # Delegation should NOT have been revoked because the profile covers it

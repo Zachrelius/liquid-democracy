@@ -144,9 +144,23 @@ def _make_proposal_with_topic(
 def _delegate(
     db: Session, *, delegator: models.User, delegate_user: models.User,
     topic: models.Topic | None,
+    org: models.Organization | None = None,
 ) -> None:
+    """Phase 18: Delegation rows now carry ``org_id``. Inferred from the
+    topic when one is provided (the delegation engine's ``_build_context``
+    filters on ``proposal.org_id``, so the test setup must mirror that
+    shape or the delegation won't enter the resolver). When neither
+    ``topic`` nor ``org`` is given, the delegation lands as ``org_id=None``
+    — only valid in the 18a transitional window before B1b flips NOT NULL.
+    """
+    org_id = None
+    if topic is not None:
+        org_id = topic.org_id
+    elif org is not None:
+        org_id = org.id
     db.add(models.Delegation(
         delegator_id=delegator.id, delegate_id=delegate_user.id,
+        org_id=org_id,
         topic_id=topic.id if topic else None,
     ))
     db.flush()

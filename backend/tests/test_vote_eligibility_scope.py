@@ -346,15 +346,22 @@ def test_tally_excludes_non_member_delegated_chain(test_db):
         test_db, w["bob"], org_id=w["parent"].id, sub_org_id=w["sub_a"].id,
     )
     # alice global delegation to bob.
+    # Phase 18: thread parent org_id so the delegation matches the new
+    # schema and _build_context's proposal.org_id filter still finds it
+    # for tally resolution. graph_store.add_delegation now requires the
+    # org_id kwarg to land in the right partition.
     delegation = models.Delegation(
         delegator_id=w["alice"].id,
         delegate_id=w["bob"].id,
+        org_id=w["parent"].id,
         topic_id=None,
         chain_behavior="accept_sub",
     )
     test_db.add(delegation)
     test_db.flush()
-    graph_store.add_delegation(w["alice"].id, w["bob"].id, None)
+    graph_store.add_delegation(
+        w["alice"].id, w["bob"].id, None, org_id=w["parent"].id,
+    )
 
     # bob votes yes directly.
     test_db.add(models.Vote(
@@ -378,7 +385,9 @@ def test_tally_excludes_non_member_delegated_chain(test_db):
     finally:
         # Clean up the in-memory graph store so it doesn't bleed into other
         # tests in the same process.
-        graph_store.remove_delegation(w["alice"].id, None)
+        graph_store.remove_delegation(
+            w["alice"].id, None, org_id=w["parent"].id,
+        )
 
 
 def test_tally_cross_org_excludes_non_member(test_db):
