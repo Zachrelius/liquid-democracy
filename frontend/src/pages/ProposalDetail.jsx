@@ -25,6 +25,8 @@ import TieResolutionBanner from '../components/TieResolutionBanner';
 import SustainedMajorityPanel from '../components/SustainedMajorityPanel';
 import LinkedPolisCard from '../components/LinkedPolisCard';
 import CommentThread from '../components/CommentThread';
+// Phase 19 F3 — inline rationale composer for the user's own vote.
+import MyVoteRationaleBox from '../components/MyVoteRationaleBox';
 import { colorForOption } from '../components/voteFlowGraphUtils';
 import renderMarkdown from '../utils/renderMarkdown';
 import { urlFor } from '../utils/urls';
@@ -1221,6 +1223,15 @@ export default function ProposalDetail() {
                   emailVerified={user?.email_verified}
                 />
               )}
+              {/* Phase 19 F3 — inline rationale composer. Only renders
+                  when the user has a vote on this proposal (the
+                  component self-gates on hasVote). Uses linkOrg slug
+                  (parent-org rooted) for the deep link. */}
+              <MyVoteRationaleBox
+                proposalId={id}
+                slug={linkOrg?.slug}
+                hasVote={!!(myVote?.vote_value || myVote?.approvals?.length || myVote?.ranking?.length)}
+              />
             </div>
           )}
 

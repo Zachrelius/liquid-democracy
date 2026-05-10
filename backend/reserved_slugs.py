@@ -7,9 +7,12 @@ checked against this set on creation.
 """
 
 RESERVED_SLUGS = {
-    "admin", "api", "app", "assets", "auth", "blog", "demo", "docs",
-    "forgot-password", "help", "info", "invite", "login", "logout", "o",
-    "orgs", "pricing", "privacy", "public", "register", "reset-password",
-    "security", "settings", "setup", "signup", "static", "support", "terms",
-    "test", "tests", "uploads", "verify-email", "why",
+    "admin", "api", "app", "assets", "auth", "blog", "delegates", "demo",
+    "docs", "forgot-password", "help", "info", "invite", "login", "logout",
+    "o", "orgs", "pricing", "privacy", "public", "register",
+    "reset-password", "security", "settings", "setup", "signup", "static",
+    "support", "terms", "test", "tests", "uploads", "verify-email", "why",
 }
+# Phase 19 G1: 'delegates' added to reserve the per-org delegate browse URL
+# `/{slug}/delegates`. Without this, a user could claim handle `delegates`
+# (or an org slug `delegates`) and collide with the browse URL.

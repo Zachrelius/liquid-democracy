@@ -668,18 +668,23 @@ def test_unsubscribe_unknown_event_type_returns_failure(client, test_db):
 # GET /api/notifications/registry
 # ---------------------------------------------------------------------------
 
-def test_get_registry_returns_13_entries(client, test_db):
-    """Phase 13.3: registry has 13 events. Phase 13 had 12; floor_approached
-    deleted; you_vote + delegated_to_you added (12 - 1 + 2 = 13)."""
+def test_get_registry_returns_all_entries(client, test_db):
+    """Registry returns every event in EVENT_REGISTRY. Phase 13.3 baseline
+    was 13 events (Phase 13 had 12; floor_approached deleted; you_vote +
+    delegated_to_you added = 12 - 1 + 2 = 13). Phase 19 added 4 more
+    (delegate_application_submitted/approved/denied,
+    delegation_revoked_by_delegate) bringing the total to 17. The
+    assertion below derives the count from EVENT_REGISTRY directly so
+    future event additions don't require touching this test."""
     user = _make_user(test_db, "reg_user")
     test_db.commit()
 
     resp = client.get("/api/notifications/registry", headers=_auth(user))
     assert resp.status_code == 200
     body = resp.json()
-    assert len(body["events"]) == 13
-    keys = {ev["key"] for ev in body["events"]}
     expected = {ev.key for ev in EVENT_REGISTRY}
+    assert len(body["events"]) == len(expected)
+    keys = {ev["key"] for ev in body["events"]}
     assert keys == expected
     # The two new specializations are present.
     assert "proposal.entered_voting.you_vote" in keys
