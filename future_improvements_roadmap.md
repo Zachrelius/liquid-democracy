@@ -2,537 +2,293 @@
 
 ## Overview
 
-This document is the canonical sequencing plan for all post-Phase-4 development. The platform is feature-complete enough to be pilot-ready, but the strategic goal is to reach **pilot-ideal** before recruiting any real organization. Once a pilot org is on the platform, breaking changes become expensive and fast iteration slows. Better to close the remaining gaps now, using internal testing for validation, than to rush to recruit and then be constrained by real users during the most important build-out period.
+This is the forward-looking planning doc for what the platform builds next. It replaces the prior pilot-readiness sequencing plan, which served its purpose: the platform is now feature-complete enough that a real org can be onboarded as soon as one is recruited. The prior doc is preserved as `Archive/future_improvements_roadmap 2026-05-09.md`; for shipped-work history see `PROGRESS.md` (Phase 9+) and `docs/PROGRESS_archive_phase1-8.md` (earlier).
 
-**Sequencing principle:** de-risk infrastructure changes before building features that depend on them, do cheap cleanup before stacking new complexity on top, and prefer passes that can be thoroughly internally tested with seed data over passes whose main value is only measurable with real users.
+### Operating context
 
-This roadmap reflects the sequence agreed on 2026-04-21, with subsequent insertions: Phase 7B (network graph) on 2026-04-22, Phase 6.5 (EA Demo Landing) on 2026-04-24, Phase 7C (Sankey, split from 7B) on 2026-04-25, and Phase 7.5 (Privacy and Access Hardening) on 2026-04-26 in response to a Security & Trust page audit. Earlier versions of this document are preserved in `Archive/`.
+- **Real-pilot signal is on an unknown timeline.** Z is recruiting but doesn't control when an org lands. The friend pilot (board game group) already paid out its main value during org-creation and invite-flow validation; it isn't expected to generate significant new feedback going forward.
+- **Build cadence is not gated on user feedback.** When a real pilot lands, their requests preempt this list. Until then, items in this doc proceed on their own merits.
+- **The AI coding team executes faster than human recruiting timelines.** "Wait for signal" is rarely the right answer when an item has clear standalone value.
+- **Estimates remain in passes, not weeks.** Sequencing is by priority, not duration.
 
----
+### Organizing principle
 
-## Sequence
+Three buckets:
 
-The passes are listed in the order they should be built. Each has a short rationale for its position. Detailed scope lives in the pass sections below.
+1. **Active queue** — items worth dispatching in roughly the order listed. Priority order is approximate; specific dispatch order can shuffle based on what's convenient to bundle.
+2. **Backlog** — real items, lower priority than the active queue. Picked up between active-queue passes or when something nudges them up.
+3. **Research / open questions** — items needing design thinking before they're spec-ready. Discussed before built.
 
-1. **Phase 5 — Permission-Alignment Mini-Pass.** ✅ Complete. Cleanup of three clustered frontend/backend permission-alignment issues plus modal dialog replacement of blocking `alert()`/`confirm()` calls.
-2. **Phase 6 — Multi-Option Voting Pass A: Approval Voting.** ✅ Complete. Full scaffolding for multi-option proposals (ballot storage, delegation engine branching, proposal-type-aware frontend, org config) shipped with approval voting. 136 backend tests passing (35 new). Suite J browser tests defined (15 tests). Toast success audit done. PostgreSQL smoke test pass — 2 deployment bugs fixed (Dockerfile CRLF normalization, start.sh bootstrap ordering).
-3. **Phase 6.5 — EA Demo Landing and Public Deployment.** ✅ Complete. New public landing surface (`/`, `/about`, `/demo`), persona quick-login, demo-org auto-join on email-verify, Resend HTTP API for transactional email (Gmail SMTP blocked from Railway). Live at `https://www.liquiddemocracy.us` with HTTPS via Let's Encrypt.
-4. **Phase 7 — Multi-Option Voting Pass B: RCV and STV.** ✅ Complete (2026-04-25). Ranked ballots on the Phase 6 scaffolding. Drag-to-rank UI (`@hello-pangea/dnd`), `pyrankvote==2.0.6` integration, multi-winner STV with fractional transfer display, round-by-round elimination breakdown, tied-final-round admin resolution. 191 backend tests passing (+46). Suite K 18/18. PostgreSQL smoke test pass. Live on prod with verified delegation inheritance. Network visualization redesign deferred to Phase 7B as planned.
-5. **Phase 7B — Vote Network Visualization for Multi-Option.** ✅ Complete (2026-04-25). Method-aware vote network with binary preserved as-is and approval/RCV using a new option-attractor D3 force layout. Suite M 11/11 pass. 200 backend tests. **Phase 7B.1** polish landed same day: voter→option arrows (gray-400; full opacity for approval, 1.0/0.3/0 opacity decay for RCV), wired option toggles + collapsible controls, drifting option attractors via `optionAnchorForce`, pre-tick simulation, "Currently winning" copy on in-progress proposals. Suite M extension 8/8 (combined 19/19). Screenshots committed at `test_results/phase7B1_screenshots/`.
-6. **Phase 7C — Round-by-Round Elimination Sankey for RCV/STV.** Standard Sankey-style visualization showing how votes transfer between options across elimination rounds. Standalone visualization that lives alongside the network graph on RCV/STV proposal detail pages. Split from 7B because it's a different visualization with its own design considerations and shares no code with the network graph.
-7. **Phase 7.5 — Privacy and Access Hardening.** Inserted 2026-04-26 after a Security & Trust page audit found that platform admin access is broader than the page's "private by default, access requires consent" framing implies. The `/api/admin/audit` endpoint returns full vote-by-vote attribution; `/api/admin/delegation-graph` returns the system-wide delegation graph; both are gated only by the global `is_admin` flag. This pass narrows that access, adds operator audit visibility, and gives users a way to see who has accessed their data. Real institutional-privacy work that should land before any pilot org signs up — until it does, the page can't honestly claim consent-gated access.
-8. **Phase 8 — Sustained-Majority Voting Windows.** The "stable result" semantics for multi-option need multi-option to exist, and it's governance-critical to have in place before any org runs binding decisions. Also validates our snapshot/tally infrastructure.
-9. **Phase 9 — Polis Integration (Embedded).** Biggest single feature gap. Does meaningful work only with real deliberation content, so it benefits from the platform being otherwise feature-complete before we start.
-10. **Phase 10 — Engagement Layer.** ✅ Complete (2026-05-03). Proposal comments (markdown, one-level reply threading, 15-min edit window, soft-delete) + PWA configuration (manifest, service worker, offline fallback, home-screen install via vite-plugin-pwa). Profile pictures shipped earlier in Phase 9.8 and were dropped from this pass.
-11. **Phase 11 — URL Routing Refactor.** ✅ Complete (2026-05-03). Path-based org URLs (`/{org-slug}/proposals`, `/{org-slug}/admin/sub-orgs/{sub-slug}/members`, etc.) — the originally-spec'd shape that Phase 4c deferred. OrgContext URL-derives `currentOrg`; localStorage demoted to "last-used hint at sign-in" only. Reserved-words slug validation added; lint script catches collisions. urlFor helper centralizes URL construction across the frontend. No redirect grace period — old flat paths fall through to catch-all per Z's call.
-12. **Phase 12 — Configurable Role Permissions (Stage 1).** Replaces the hardcoded moderator-permissions scaffolding from Phase 4 Cleanup with a proper data-model-driven permission system. Save for near the end because the hardcoded version is functional and this is really about extensibility.
+Plus standing rhythms (audit refresh, doc hygiene), a known-issues / tech debt section, and Tier 3 (scale-dependent or deployment-context-specific). Phase numbers are assigned at spec time, not in this doc.
 
-**Items deferred past this sequence:** alternative delegation strategies (2.1), AI delegation agents (2.3), delegate report cards (2.4), accessibility audit (2.5), i18n (2.6), advanced analytics (2.7), notification system (2.8), and all Tier 3 items. These remain valuable and are documented below, but they are not in the path to pilot-ideal.
-
-**Note on time estimates:** Previous versions of this roadmap included week-long estimates per item. Those reflected human-team heuristics and have been removed — the multi-agent Claude Code team has been delivering passes in hours. Any estimate provided during planning should be calibrated to the team's actual pace, not the roadmap.
+Each active-queue and backlog item carries a brief rationale and rough scope sketch. Items with external dependencies or natural triggers note them.
 
 ---
 
-## Phase 5 — Permission-Alignment Mini-Pass
+## Active Queue
 
-### Rationale
+### 1. Org-Configurable Tie Resolution
 
-Three technical debt items from Phase 4 all stem from the same pattern: the frontend doesn't reflect the backend's permission reality. Fixing them together is cheaper than piecemeal, and doing it before the next feature pass means we start with a cleaner baseline. Bundled with this: replace blocking JavaScript dialogs (`alert()`, `confirm()`) with in-DOM modal/toast components. This is better UX and removes a real QA blocker — Claude-in-Chrome cannot interact with native dialogs, so any test path that hits an `alert()` or `confirm()` stalls.
+**Why now:** Z's stated dislike of the current default — admin decides ties after the fact — is concrete and well-grounded. Resolving ties post-hoc is exactly the kind of decision that's controversial in the moment and uncontroversial when declared up-front. This has been on the deferred list for a while; it deserves to ship.
 
-### Scope
+**Scope sketch:**
+- Org-level setting selecting tie-resolution method, declared at org setup (or in admin settings, with the strong default being "set this once and don't touch it").
+- Method options to consider: deterministic-arbitrary (alphabetical / earliest-created / seeded), broader-approval-base (in approval voting, the tied option co-approved with more additional options wins), earliest-cast-decisive-vote, status-quo-wins (if one option represents "no change"), multi-winner promotion (proposal allows N winners and there are N+1 tied options). Final method list is a design decision in the spec.
+- Backend: tabulation layer reads the configured method and applies it during result computation rather than producing an unresolved tie.
+- Frontend: org admin settings UI to select the method; per-method copy explaining the tradeoffs; results display surfaces "tie resolved by [method]" rather than waiting for admin action.
+- Migration: existing orgs default to a sensible method (likely deterministic-arbitrary with seed) rather than preserving the manual-resolution behavior. Existing unresolved-tie proposals get handled as a one-time backfill.
+- Help page section explaining when each method is appropriate.
 
-**Frontend permission alignment:**
-- Admin route guard distinguishes admin-only pages from moderator-accessible pages (currently `AdminRoute` uses `isModeratorOrAdmin`, permitting moderators to access `/admin/settings` via direct URL even though it's hidden from nav)
-- Admin Members page shows the correct member list when viewed by a moderator (currently shows 0 members — likely a backend query filter issue)
-- Unverified users see disabled or hidden vote/delegate buttons rather than fully-accessible UI that errors on click
-
-**Dialog replacement:**
-- Replace all `alert()` calls with toast notifications (new component if one doesn't exist)
-- Replace all `confirm()` calls with in-DOM modal dialogs (new component or reuse existing modal patterns)
-- Audit the codebase for any remaining `window.alert` / `window.confirm` / `prompt` usage and convert
-
-**Scope is intentionally narrow.** No new features, no refactoring outside these specific items, no URL routing work. Full spec in `phase5_spec.md`.
-
-### Non-goals
-
-- URL routing refactor (deferred to Phase 11)
-- Notification system (deferred)
-- Broader accessibility audit (deferred)
+**Non-goals for first pass:** Per-proposal override of org default (can come later); tie resolution for multi-winner STV beyond what `pyrankvote` already produces (its built-in handling is the baseline).
 
 ---
 
-## Phase 6 — Multi-Option Voting Pass A: Approval Voting ✅ Complete
+### 2. Public Delegate Pages
 
-### Rationale
+**Why now:** Liquid democracy as a system *is* the delegate ecosystem. Right now the public delegate surface is thin — there's a delegate profile with a bio field and a list of votes, but no real space for a delegate to introduce themselves, explain their thinking, or build the kind of accountable public identity that makes someone want to delegate to them. This is high-leverage for the platform's identity and a real differentiator vs. systems where delegation is anonymous or transactional.
 
-Ship the full multi-option voting scaffolding — ballot storage, delegation engine branching, proposal-type-aware frontend, org config — with approval voting as the only multi-option method initially supported. Approval has trivial tabulation (count approvals per option), which means if something breaks during internal testing, we know the bug is in the scaffolding, not the counting algorithm. Debugging a broken RCV implementation where you can't tell whether the bug is in ballot storage, delegation resolution, or tabulation is painful; de-risk by building scaffolding against the simplest case first.
+**Scope sketch:**
+- Expanded public delegate page with: longer-form intro / "about me" content (likely markdown), per-vote rationale explanations (delegate can attach a short writeup to their votes explaining why they voted that way), topic-by-topic positioning statements ("on housing I generally favor X"), and a clean URL surface.
+- Per-vote rationale is the most novel piece — delegates leave a comment-like artifact tied to their vote that's visible to anyone viewing their public profile or the proposal's vote breakdown.
+- Likely interactions with the comments system (Phase 10) — possibly the rationale is a special comment type, or possibly it's its own table. Spec should evaluate both.
+- Frontend: redesigned delegate profile page; rationale-attached UI in the vote-cast flow for public delegates; "see delegate's reasoning" links wherever public-delegate votes appear.
+- Backend: delegate-content tables, rationale CRUD endpoints, delegate-search ranking signals (so delegates with fleshed-out profiles surface higher than placeholder ones).
+- Help page on "being a public delegate" — what to write, how to think about accountability.
 
-### Scope
-
-**Data model:**
-- `Proposal.voting_method` enum (`binary`, `approval`, `ranked_choice`) — all three enum values defined now even though only binary and approval ship this pass. This avoids a migration for the enum in Phase 7.
-- `Proposal.num_winners` integer (default 1) — relevant for RCV/STV later, no effect on binary or approval for now
-- `ProposalOption` table: `(id, proposal_id, label, description, display_order)`. Binary proposals don't use it; approval proposals do.
-- `Vote.ballot` JSON field for richer payloads: `{"approvals": [option_ids]}` for approval. `vote_value` stays for binary back-compat.
-- `VoteSnapshot` extended to store ballot data for multi-option proposals
-- `Organization.settings` gets `allowed_voting_methods` array, default `["binary", "approval"]` for new orgs
-
-**Delegation engine:**
-- Branch resolution on `proposal.voting_method`
-- For approval: delegator inherits delegate's full approval set
-- Chain behavior (`accept_sub` / `revert_direct` / `abstain`) only kicks in when delegate submitted no ballot at all; a partial approval set inherits as-is
-- Strict-precedence delegation strategy only — other strategies (`majority_of_delegates`, `weighted_majority`) are binary-only for now and UI should reflect this
-
-**Backend:**
-- Proposal creation endpoint accepts `voting_method`, `num_winners`, and `options[]`
-- Approval tabulation endpoint / logic (count approvals per option, identify winner(s))
-- Results endpoint returns method-appropriate payload
-
-**Frontend:**
-- Proposal creation form: voting method selector, options editor (add/remove/reorder with labels and descriptions), conditional fields
-- Proposal detail page: ballot UI dispatches on voting method — approval is a checkbox list of options
-- Results display: bar chart of approvals per option with winner highlighted
-- Delegate profile pages display multi-option votes compactly (e.g., "approved 2 of 4 options")
-- Org admin settings: enable/disable voting methods per org
-
-**Documentation:**
-- Plain-language help page explaining approval voting ("when should I use this vs. binary?"). The page is extensible to RCV/STV in the next pass.
-
-### Non-goals
-
-- RCV, IRV, STV (Phase 7)
-- Plurality, STAR, score, Condorcet methods (not planned)
-- Multi-winner approval (Phase 7's STV covers the proportional multi-winner case)
-- Amendments during the voting window (unrelated feature)
-- Sustained-majority interaction (handled in Phase 8)
+**Non-goals for first pass:** Delegate-to-delegate Q&A, follower comments on delegate profiles, formal endorsement systems. Those are research-bucket extensions if the basic surface lands well.
 
 ---
 
-## Phase 6.5 — EA Demo Landing and Public Deployment ✅ Complete
+### 3. Sustained-Majority Fix
 
-### Rationale
+**Why now:** The feature shipped in Phase 8 is currently known-broken and disabled by default. That's tech debt, not a deferred feature. It's not load-bearing for any current use case, but leaving a broken feature visibly disabled in admin settings is the kind of thing a real pilot org will ask about, and "we shipped it but it doesn't work" is an awkward answer.
 
-Z is attending EA events in roughly the next week and wants something concrete to show. The platform is feature-complete enough to demo (binary and approval voting both work, multi-tenant orgs, public delegates, follow/permission system, delegation graphs for binary at least). The gap is that there's no public-facing entry surface — visitors arriving at `liquiddemocracy.us` would currently hit a login wall with no context about what they're looking at.
+**Scope sketch:**
+- Diagnostic pass first: what specifically is broken? The Phase 9.8 C1 fix addressed `support_ever_established` in the worker; the Phase 12.8 audit Item 5 flagged `build_status` had a parallel bug in the read path. Whether one or both of those is the load-bearing issue here, or whether there's a third issue, needs a real look at the code before scoping the fix.
+- Fix whatever the diagnostic surfaces. Likely scope: align worker and read-path semantics, ensure floor-breach logic correctly gates on prior establishment, verify the snapshot cadence matches the threshold-evaluation cadence, confirm the failure-mode transitions (`fail` / `extend` / `escalate`) work as specified.
+- Browser-verify the full lifecycle on prod with a test proposal that crosses and re-crosses the threshold.
+- Re-enable as a non-default org setting, with help-page documentation. Don't flip the platform default until at least one real org has used it successfully.
 
-This pass is a tactical insertion ahead of Phase 7. It doesn't change the platform's voting/delegation behavior. It adds a marketing-style landing surface, makes one-click demo persona login work in production, wires real SMTP, and ships the platform to a real URL via Railway.
-
-The longer roadmap is unchanged. Phase 7 (RCV/STV) resumes after this pass.
-
-### Scope
-
-**Public landing surface (frontend):**
-- `/` landing page with hero, three CTA buttons (Try Demo / About / Sign In), brief feature pitches, footer
-- `/about` project explanation, case for liquid democracy, GitHub link
-- `/demo` persona picker (one-click login as alice/dr_chen/carol/dave/frank/admin) plus a register-your-own option
-- Routing change: unknown URLs redirect to `/` instead of `/login`
-
-**Backend:**
-- New `is_public_demo` setting separate from `debug` — gates demo-specific behaviors in production
-- New `POST /api/auth/demo-login` endpoint for password-free persona login (gated by `is_public_demo`)
-- Auto-add new registrants to the demo org when `is_public_demo=true`
-- `GET /api/auth/demo-users` exposed when `is_public_demo=true` (currently debug-only)
-
-**Email transport (replaced Gmail SMTP after Railway block discovered):**
-- Resend HTTP API integration via abstracted email service interface
-- `email_service.py` refactored to support multiple transports (Resend for prod, console for dev)
-- Documented Gmail App Password setup as fallback in DEPLOYMENT.md
-
-**Railway deployment:**
-- First-time setup: Railway account, GitHub integration, managed PostgreSQL, env var configuration
-- DNS: `liquiddemocracy.us` pointed at Railway, HTTPS via Let's Encrypt
-- Initial seed via `docker exec`
-- End-to-end smoke test on the deployed instance (register, real email verification, vote, delegate)
-
-**Documentation:**
-- `DEPLOYMENT.md` updated with Railway + Resend guide, demo data management, deploy gotchas catalog (CRLF, apex domain, free-tier constraints)
-- `PROGRESS.md` Phase 6.5 section with live URL
-
-Full spec in `phase6_5_spec.md`.
-
-### Non-goals
-
-- Phase 7 (RCV/STV) — resumed after this pass
-- Phase 11 URL routing refactor — demo uses current flat URLs
-- Periodic demo data auto-reset (manual reset only for now, documented)
-- Content moderation (Z monitors manually for the EA timeframe)
-- Analytics, visitor tracking, multi-environment setup
-- Demo-specific UI polish beyond the landing pages
+**Non-goals:** Real-time evaluation; sustained-majority metrics in deliberation phase; cross-org sustained-majority analytics. These were all deferred from the original Phase 8 scope and remain deferred.
 
 ---
 
-## Phase 7 — Multi-Option Voting Pass B: RCV and STV ✅ Complete
+### 4. Demo Data Cleanup + Easy Manual Reset
 
-### Rationale
+**Why now:** The demo deployment at `liquiddemocracy.us` is the platform's sales surface. Right now the demo data is functional (post-Phase-7C.1 it shows the privacy boundary correctly, voter names are realistic, etc.) but it's not curated for telling a compelling story about what liquid democracy *does*. A real pilot recruitment conversation is going to lead to "let me show you" — and the demo should be tight enough that it sells without needing Z to narrate around its rough edges.
 
-Ranked ballots on top of validated scaffolding. Edge cases (tie-breaking during elimination, batch elimination, Meek vs. Scottish STV, partial rankings) live in the tabulation layer, isolated from the storage and delegation layers we've already validated.
+**Scope sketch:**
+- Demo data audit: walk through the demo as a first-time visitor would, list what's confusing / weak / missing. Likely findings: proposal mix doesn't show off the full feature surface (binary + approval + RCV + STV all need representative live examples in different lifecycle states); delegation graph is thin or doesn't tell a story; comments section is empty or near-empty; sub-orgs may or may not be exercised; sustained-majority once fixed should have an example.
+- Curated proposal/vote/delegation/comment seed that exercises each feature as a coherent narrative — e.g., a "city housing policy" proposal with thoughtful comments and a visible delegation chain, an approval-vote "venue selection" proposal showing the option-attractor visualization at its best, an RCV election showing the Sankey, etc.
+- **Easy manual reset path:** a single command (Railway CLI or a simple script Z can run) that wipes and re-seeds the demo data without touching schema or user accounts created on the demo org since last reset. The Phase 7C.1 idempotent additive seed mechanism is the foundation; the reset variant is the destructive sibling.
+- Document the reset path in DEPLOYMENT.md so it's not tribal knowledge.
 
-### Scope
-
-**Data model:**
-- `Vote.ballot` payload extended to support `{"ranking": [option_ids]}` for RCV/STV
-- No new tables — the `ProposalOption` table from Phase 6 is reused
-
-**Backend:**
-- `pyrankvote==2.0.6` integration for IRV and STV tabulation (library was flagged stale per the spec's 18-month threshold; team made deliberate choice given that algorithms are settled math, wrapped in service function for future swappability)
-- Tabulation produces per-round breakdown for visualization (who was eliminated each round, vote transfers)
-- Results endpoint extended to return round-by-round data
-
-**Delegation engine:**
-- Delegator inherits delegate's full ranking
-- Partial ballots inherit as-is (a delegate ranking 2 of 4 is a deliberate choice)
-- Same strict-precedence-only restriction as approval
-
-**Frontend:**
-- Drag-to-rank ballot UI for RCV/STV (`@hello-pangea/dnd`, reused DnD pattern from topic precedence)
-- Round-by-round elimination text/table display via `RCVResultsPanel.jsx`. The richer Sankey-style visual ships in Phase 7C.
-- STV multi-winner display (proportional results with winners per seat, fractional transfer display)
-- Proposal creation form: `num_winners` field when RCV/STV is selected
-- Org admin settings: enable RCV, STV independently
-
-**Documentation:**
-- Help page extended with RCV and STV explanations plus "when to use which method" guidance
-
-### Non-goals
-
-- Network visualization redesign for multi-option proposals (Phase 7B)
-- Round-by-round elimination Sankey visualization (Phase 7C)
-- Alternative delegation strategies with multi-option (Kemeny-Young rank aggregation, proportional approval) — deferred research areas
-- Condorcet methods
+**Non-goals:** Auto-reset on a schedule (Z explicitly doesn't want this); preserving user-created content across resets (the reset is destructive by design); A/B-tested demo content optimization (real pilot recruitment is the signal that would justify that work).
 
 ---
 
-## Phase 7B — Vote Network Visualization for Multi-Option
+### 5. Automated Accessibility Pass
 
-### Rationale
+**Why now:** Standard automated accessibility checks (Lighthouse, axe-core) are cheap, signal-independent, and catch a real subset of WCAG issues. The deeper audit — keyboard navigation flows, screen-reader compatibility, etc. — needs real-user signal or specialized expertise, which we don't have. But the automated layer is pure free wins and worth taking before any pilot org with accessibility needs lands.
 
-The current `VoteFlowGraph` is hardcoded for binary voting: green/red half-plane zones, "yes/no" labels, abstain bottom zone. For approval and ranked-choice proposals it renders nonsensically. This isn't a Phase 6 or Phase 7 regression — the underlying voting and tabulation work correctly. It's a visualization gap that needs dedicated design attention rather than being bundled with feature work.
+**Scope sketch:**
+- Run Lighthouse and axe-core against the major page surfaces: landing pages, login/register, proposal list and detail (all four voting methods), vote graph and Sankey, delegation pages, admin settings, role permissions matrix, notification preferences.
+- Fix what the tools flag at the high-confidence level: missing alt text, color-contrast violations, missing form labels, missing ARIA on custom components, focus-trap issues in modals, keyboard-inaccessible interactive elements.
+- Skip what the tools flag as low-confidence or that requires real-user judgment (e.g., screen-reader narrative quality, complex keyboard navigation patterns in the drag-to-rank UI).
+- Document what was checked and what wasn't, so a future deeper-audit pass knows where to start.
 
-### Direction (locked in 2026-04-22, refined 2026-04-25)
-
-**Network graph: option-attractor force layout.** Each proposal option becomes a fixed/pinned node. Voters are subject to multiple simultaneous forces — attraction toward the options they approved (or ranked, for RCV), plus the standard voter-voter repulsion that keeps nodes from stacking. The simulation runs and each voter settles at force equilibrium, which is one position per voter. Voters with similar approval/ranking patterns naturally cluster together; voters with unusual or conflicting patterns end up centrally located.
-
-This is a force-directed graph with extra attractor nodes — D3's existing force simulation handles the physics natively. Implementation is mostly force tuning, not algorithmic novelty.
-
-**Linear ranking decay for RCV.** First preference pulls hardest (1.0), with weighted decay through lower preferences (0.66, 0.33, then a floor of 0.1 for rank 4+). Linear chosen over exponential because it keeps lower preferences visually meaningful.
-
-**Mitigation controls for high option counts:**
-- Toggle individual option attractors on/off
-- Hover-to-isolate (voters strongly pulled toward hovered option highlighted, others dim)
-- Hide voters who approved/ranked zero options
-- Force parameters tuned empirically based on option count
-
-**Binary voting stays as-is.** The current green/red clustering remains the binary visualization. New component dispatches on `proposal.voting_method` and routes to existing rendering for binary, new option-attractor rendering for approval and RCV.
-
-### Scope
-
-**Network graph:**
-- Component refactor: `VoteFlowGraph` becomes a method-aware dispatcher; `BinaryVoteFlowGraph` extracts existing code unchanged; `OptionAttractorVoteFlowGraph` is new for approval and RCV
-- Backend extension to `GET /api/proposals/{id}/vote-graph`: adds `options` array, `voting_method` field, and per-voter `ballot` field
-- Method-appropriate `clusters` summary (yes/no/abstain for binary; option approval counts for approval; winner + round count for RCV)
-- Method-appropriate detail panel when clicking voter nodes
-
-**Bundled cleanup:**
-- Fix proposal-list "0 of N votes cast" counter that's inaccurate for ranked_choice (vote count aggregator must count Vote rows regardless of which column is populated)
-
-Full spec in `phase7B_spec.md`.
-
-### Non-goals
-
-- Round-by-round elimination Sankey (Phase 7C)
-- Per-option overlap regions, tabbed-per-option, or other layout alternatives explored during planning but rejected
-- Animation of vote transfers
-- Migrating binary to the new architecture (binary visualization stays unchanged)
+**Non-goals:** Full WCAG 2.1 AA compliance audit (defer until pilot signal or specialized expertise); D3 visualization accessibility (text-based alternatives are real work, defer); i18n (separate item, backlog).
 
 ---
 
-## Phase 7C — Round-by-Round Elimination Sankey for RCV/STV ✅ Complete
+### 6. Notifications Polish
 
-Shipped 2026-04-26. D3-Sankey component (`RCVSankeyChart.jsx`) rendering below the network graph on RCV/STV proposal detail pages. Bundled in two Phase 7B.2 polish items: delegator ballot-arrow suppression (`vote_source !== 'direct'` gate in `OptionAttractorVoteFlowGraph.jsx`) and method-aware `VoteGraphLegend` dispatching on `proposal.voting_method`. d3-sankey ^0.12.3 accepted under the same algorithms-don't-change rationale as `pyrankvote==2.0.6`. No backend changes; 200 backend tests still passing. Suite N 8/9 PASS + 1 SKIP-with-reason; Suite M extension 4/4 PASS. Bundle 994 KB → 1,018 KB raw / 285 KB gzipped. Full details in PROGRESS.md.
+**Why now:** The Phase 13/13.x notification system shipped end-to-end (in-app, email, digest cadences, quiet hours, per-event preferences across four channels). It works. What's deferred is rigorous exercise — the friend pilot didn't generate enough volume to surface edge cases, and several end-to-end flows are still in the chrome-deferred verification queue. Worth a focused pass that drains the verification queue, surfaces any gaps, and finishes anything that's been hanging.
 
-### Rationale
+**Scope sketch:**
+- Drain the chrome-deferred queue items related to notifications (items 5–7 in the passdown's queue: multi-org Item 22 routing; email/digest/quiet-hours/unsubscribe end-to-end; multi-recipient voting-opened priority).
+- Audit the notification surface for any "checkbox exists but the underlying detection isn't wired" issues like the `floor_approached` event that was caught and removed in Phase 13.3. The fix-pattern is well-established now; running through the registry to confirm every event actually fires when its trigger condition is met is cheap insurance.
+- Tech debt items from the audit doc that are notifications-adjacent: email theming centralization (audit Item 27 in the doc, deferred until a second org-scoped email exists — sustained-majority's notifications might be the trigger).
+- If there are any "I expected a notification and didn't get one" situations Z has hit during dogfooding, fix those.
 
-Sankey-style flow visualization is the standard for showing how votes transfer between options across elimination rounds. It's a different visualization with different design considerations than the network graph — splitting it from 7B keeps each pass focused. The Sankey shares no code with the network graph; both can live alongside each other on the proposal detail page.
-
-### Scope
-
-**Sankey component:**
-- New component for elimination flow visualization, rendered below the network graph on RCV/STV proposal detail pages
-- Each elimination round is a column; voter blocks flow from option to option as eliminations transfer votes
-- Round labels with eliminated option, transfer counts visible per round
-- Reuses per-round tabulation data already returned by Phase 7's results endpoint — no backend changes expected
-
-**Help page update:**
-- Add explanation of how to read the Sankey
-
-### Non-goals
-
-- Animation of vote transfers between rounds (could be polish; not required for v1)
-- Per-round network graph snapshots ("what did the graph look like at round 2")
-- Sankey for binary or approval voting (these don't have rounds)
+**Non-goals:** Notification analytics; SMS or push channels beyond what's shipped; per-event quiet hours (passdown follow-up item, backlog).
 
 ---
 
-## Phase 7C.1 — Visualization Polish + Privacy Boundary + Demo Data Refresh ✅ Complete
+### 7. Tech Debt Audit Refresh
 
-Shipped 2026-04-27. Backend privacy boundary fix decoupled ballot content from identity visibility (`get_vote_graph` no longer gates `ballot_obj` on `can_see_identity`); the framing is now "we hide who voted what, not what was voted." Frontend gained Sankey Initial + Final columns, anonymous voter arrows + dashed-border treatment + privacy-explanation tooltip, and an inherited-abstain hover qualifier. Seed refresh resolved the deferred "Additive Idempotent Seed Mechanism" item — every seed helper is now skip-if-exists, the placeholder voters were replaced with 27 realistically-named ones, alice follows ~half (13/27) so the privacy boundary is visible in the demo, and `seed_if_empty.py` was relaxed to always run additively. 209 backend tests passing (+9). PG smoke 3-run idempotency PASS. Suite N extension 3/4 PASS + 1 SKIP-with-reason; Suite M extension 6/6 PASS. Full details in PROGRESS.md.
+**Why now:** The 2026-05 audit was a Phase 12.8 artifact. Items have accumulated through 13.x, 14, 15, and 16. The passdown explicitly flags this as a recurring rhythm — every ~10 phases warrants a refresh. We're roughly there. Audit refreshes also tend to surface low-cost cleanups that bundle nicely into a single pass.
 
----
+**Scope sketch:**
+- Walk PROGRESS.md from Phase 13 forward, codebase TODO/FIXME grep, and any new items surfaced during recent passes.
+- Classify into the same TECH_DEBT / Z_ACTION_PENDING / MANUAL_VERIFICATION_GAP lanes, tier-assigned same as before.
+- Bundle Tier-1 fixes into the same pass (the "audit-then-fix-in-same-merge" pattern from Phase 10.2 / 12.8 / 15).
+- Update the existing `docs/tech_debt_audit_2026-05.md` rather than creating a new file (consistent with how it's been edited through several closeouts already).
+- Roadmap Known Issues section gets reconciled against the updated audit.
 
-## Phase 7.5 — Privacy and Access Hardening ✅ Complete
-
-Shipped 2026-04-27. Audit log redaction (`REDACTED_DETAIL_FIELDS` allowlist) gates ballot content out of the default `GET /api/admin/audit` response; new elevated endpoint `GET /api/admin/audit/ballots/{id}` requires a non-empty `reason` query parameter and self-logs the elevation as `admin.audit_ballot_viewed`. System-wide endpoints (`/api/admin/delegation-graph`, `/api/admin/users`) now log access events (`admin.delegation_graph_viewed`, `admin.user_list_viewed`). New `GET /api/users/me/access-log` and a "Data Access History" section on the settings page render the user's accountability trail. Documentation updates in `backend/auth.py` (privilege docstring), `backend/routes/admin.py` (top-of-file comment), `SECURITY_REVIEW.md` (Privileged Access Tiers section), `DEPLOYMENT.md` (Current Deployment Status section). 221 backend tests passing (+12 from Phase 7C.1's 209). PostgreSQL smoke PASS — Python-side JSON filter approach structurally avoids SQLite/PostgreSQL JSON-path divergence. Suite O 9/11 PASS + 1 PASS-with-note + 1 SKIP-with-reason. Full details in PROGRESS.md.
-
-### Rationale
-
-A 2026-04-26 audit of the draft Security & Trust page against the actual codebase found a real gap between the page's claims and the platform's behavior. The page describes the platform as "private by default — no one can see how you voted unless you've explicitly granted them access" and frames the system's structural visibility into user data as an institutional risk handled by audit logs and legal accountability.
-
-In practice, **platform-level admins (`is_admin=True` users) currently have direct readable access to every vote ever cast**, with full identity attribution, through the `/api/admin/audit` endpoint. The audit log records each `vote.cast` event with `actor_id`, `proposal_id`, and the literal `vote_value` or `ballot`. The page's framing is closer to "the system can in principle reconstruct votes" — the actual situation is "an admin endpoint returns every ballot, structured for consumption." Similarly, `/api/admin/delegation-graph` returns the full system-wide delegation graph, and access to this endpoint isn't itself audited.
-
-This isn't a bug per se — it's reasonable that platform admins debugging issues need to see what's happening — but it's broader than what the page claims and broader than what we'd want before a real pilot org signs up. Until this is hardened, the page can't honestly say access is consent-gated.
-
-This pass is also the right place to add user-facing access visibility (a "who has accessed my data" view) as a real institutional-privacy feature rather than an abstract claim.
-
-### Scope
-
-**Restrict ballot-content visibility in the audit endpoint.**
-
-The `/api/admin/audit` endpoint should not return raw `vote_value` or `ballot` data in its default response. Options for the redacted view:
-
-- Replace ballot content with a redacted indicator (e.g., `vote_value: "<redacted>"`) so admins can see *that* a vote was cast without seeing what it was.
-- Provide a separate, more narrowly-gated endpoint (e.g., `/api/admin/audit/ballots`) that requires an additional permission flag beyond `is_admin`, and that itself logs every access to it. Use this only for debugging cases where the ballot content is genuinely needed.
-- The default audit log view continues to show high-level event metadata (action, actor_id, target_id, timestamp, IP) without the ballot itself.
-
-**Audit access to the system-wide delegation graph.**
-
-`/api/admin/delegation-graph` access should itself be logged as an audit event (`admin.delegation_graph_viewed`) including the requesting admin's user ID, IP, and timestamp. This makes the access visible in the same audit log it shouldn't be exempt from.
-
-**Tighten the `is_admin` privilege model documentation.**
-
-Explicitly document — in code comments and in `SECURITY_REVIEW.md` — what platform admins can and cannot see. Currently this is implicit. Make it explicit so future audits can be done against documented expectations.
-
-**User-facing access log.**
-
-Add a "Who has accessed my data" section in the user's settings page. Shows a chronological list of times the user's voting record, delegation pattern, or follow relationships were accessed by anyone other than themselves, including:
-- Other users via the standard visibility rules (followers, public delegate viewers)
-- Platform admins via the audit log
-- Org admins viewing analytics or member lists (where applicable)
-
-The data already exists in the audit log; this is a frontend feature plus a small backend endpoint to query the user's access history. Worth doing because it converts the abstract "we audit everything" claim into something users can actually verify.
-
-**Frame the demo deployment's specific status in DEPLOYMENT.md.**
-
-Document that the current `liquiddemocracy.us` deployment is run informally by Z as platform admin, with no operator agreement or independent oversight. This is a deployment-doc note, not a code change — it ensures anyone reading the deploy docs (including a future planning agent or contributor) understands the current institutional state.
-
-### Non-goals
-
-- Operator-agreement legal frameworks (aspirational, requires real legal work, deferred)
-- Independent oversight body formation (governance work, deferred)
-- E2E-verifiable voting integration (Tier 3 feature for very-high-stakes deployments)
-- Removing platform admin access entirely (the role is still needed for legitimate operations)
-- Encrypting ballot data at rest with admin-inaccessible keys (real cryptographic work, doesn't fit pilot-stage)
-- Org-admin scope tightening (org admins already only see their own org's data; this pass is specifically about platform-level admin access)
-
-### Connection to the Security & Trust page
-
-Once this pass ships, the Security & Trust page can honestly say:
-- Platform admin access is restricted to non-ballot-content metadata by default; access to ballot content requires explicit elevation that is itself audited
-- All access to user data is logged and visible to the user
-- The current demo deployment's specific institutional status is documented
-
-Without this pass, the page has to be more hedged about what "private by default" actually means.
+**Trigger nudge:** If the deferred-items count crosses ~30, this jumps higher in priority. Right now it's around the level where a refresh starts paying off.
 
 ---
 
-## Phase 8 — Sustained-Majority Voting Windows
+### 8. AI Delegation Agents — Polis Seed Statements
 
-### Rationale
+**Why now:** Smallest of the three AI-delegation surfaces, with a real tactical payoff: removing friction from the most labor-intensive part of running a Polis conversation (writing the seed statements). Z has emailed Polis about API access; if that lands, this item becomes immediately spec-able. If Polis declines and self-hosting is the only path, this item bumps Polis self-hosted (currently in research) into the active queue as a prerequisite.
 
-The "stable result" semantics for multi-option sustained-majority need multi-option voting to exist. The feature is governance-critical — any org making binding decisions needs durable consensus protection — and doing it now means test proposals aren't running under snapshot-only semantics that we'd later have to migrate. Also serves as a forcing function to validate our `VoteSnapshot` infrastructure.
+**Scope sketch:**
+- Configurable at org level and/or per-proposal: "auto-generate seed statements from proposal description and context." Off by default; opt-in.
+- Backend: Anthropic API (or compatible) call generating ~5–10 candidate statements; admin-review step before they're sent to Polis; ability for admin to edit/reject candidates before publication.
+- Polis API integration: depends on `data-api` access (waiting on Polis email reply) or self-hosted instance.
+- Cost handling: this is an org-pays or platform-pays decision. For the embedded-Polis case where the platform is Anthropic-on-the-hook, set a per-org rate limit. Document clearly that this feature uses paid AI inference.
+- Frontend: admin UI in proposal-create or polis-create flows to opt in, review generated statements, and publish.
 
-### Scope
+**Hard dependency:** Polis API access (external). If `data-api` isn't available and self-hosting isn't pursued, this item parks until one or the other resolves.
 
-**Data model:**
-- `Organization.settings`: `sustained_majority_default` (bool), `sustained_majority_threshold` (default 0.5), `sustained_majority_floor` (default 0.45), `sustained_majority_failure_mode` (enum: `fail` / `extend` / `escalate`)
-- `Proposal.sustained_majority_enabled` nullable override (null = use org default)
-- `Proposal.status` lifecycle extends with `unresolved` status
-- `VoteSnapshot` taken frequently enough to catch drops below the floor
-
-**Backend:**
-- Background job evaluates snapshots against threshold during active voting windows
-- Drops below floor trigger failure mode:
-  - `fail` — proposal moves to `failed` status
-  - `extend` — voting window extended once (e.g., 48 hours); second drop still fails
-  - `escalate` — proposal moves to `unresolved`, flagged for admin review
-- Multi-option "stable result" semantics: the computed winner shouldn't change in the final N% of the window
-
-**Frontend:**
-- Proposal detail page: sustained-majority indicator showing current support level and distance to floor
-- Historical chart of support over the window
-- Admin settings UI for org-level configuration
-- Proposal creation form: per-proposal override toggle (if allowed by org)
-- Notifications when delegated votes cause approach to the floor
-
-### Non-goals
-
-- Real-time evaluation (per-minute background job is sufficient)
-- Sustained-majority metrics in deliberation phase
+**Non-goals for first pass:** Public AI delegates; private AI advisors; AI-driven moderation of human-submitted statements; AI-summarization of conversation outcomes (could be a later add-on).
 
 ---
 
-## Phase 9 — Polis Integration (Embedded)
+## Backlog
 
-### Rationale
+Items below are real, but not actively prioritized. Picked up between active-queue passes when there's a natural fit, or pulled forward if a trigger condition (real pilot, dogfooding signal, dependency unlock) makes them more relevant.
 
-Biggest single feature gap — the platform can tally but can't deliberate. Done now, with the platform otherwise feature-complete, deliberation gets real content to test against: proposals with options (Phase 6-7), sustained-majority windows (Phase 8), the full permission/role model.
+### Live-Poll Mode UX
 
-### Scope
+The fractional voting durations from Phase 16 enable sub-day voting windows (down to 0.05 days = 72 minutes). There's no dedicated UX for "live poll" framing — a meeting-context use case where votes happen synchronously over minutes, not days, with everyone watching the result update. Worth a pass once there's a use case driving it, but no current one. Real value if a pilot org runs in-meeting decisions.
 
-**Option A (embedded) only.** Self-hosted deployment of Polis is deferred — it's a deployment concern, not a product concern, and pol.is is free for nonprofits and government.
+### Org-Level Invite-Link Generation
 
-- Proposal in `deliberation` phase automatically provisions or manually links a Polis conversation
-- Polis iframe embedded in the proposal detail page's deliberation section
-- `data-xid` parameter wires Polis identity to platform user ID
-- `data-ucw` / `data-ucv` toggled based on proposal phase
-- When deliberation closes and proposal moves to voting, Polis summary (consensus statements, opinion groups) displayed alongside the vote UI
-- Polis data exported via `/api/v3/dataExport` and archived
+A single URL anyone can use to auto-join an org (with whatever join-policy gate the org has set). Currently invitations are per-email. The passdown flags this as a follow-up. Useful for orgs with rapid onboarding (e.g., conference attendees joining a deliberation org), low-priority otherwise.
 
-### Non-goals
+### Public Org Browser (`/explore`)
 
-- Self-hosted Polis (deferred)
-- Auto-generating statements from proposal content (potentially interesting but out of scope)
-- Polis alternatives (Loomio, Decidim) — research items for later
+A discovery surface for public orgs. Useful once 2+ public orgs exist; speculative until then. Phase 14's public landing pages are the prerequisite; this builds on them.
 
----
+### Onboarding / Empty-State UX
 
-## Phase 10 — Engagement Layer ✅ Complete
+When a new user signs up and isn't yet in an org, what do they see? When a new org has zero proposals/members, what's the steward's experience? These first-impression surfaces have accumulated cruft as the platform's grown past their original assumptions. Worth a focused pass when there's signal (or before a recruited pilot org's first session, if one is imminent).
 
-Shipped 2026-05-03. Comments + PWA. Profile pictures landed earlier in Phase 9.8. Comment notifications and WebSocket real-time updates remain explicitly deferred — see Known Issues / Tech Debt below for the deferral rationale.
+### End-User Documentation
 
----
+Help pages are mostly written for stewards/admins. There's no "I just got invited, what do I do?" flow doc. Low-cost, real value once non-Z users start showing up.
 
-## Phase 11 — URL Routing Refactor ✅ Complete
+### Delegate Report Cards / Alignment Scoring
 
-Shipped 2026-05-03. Path-based org URLs across the frontend (`/{org-slug}/...`, sub-orgs nested as `/{org-slug}/admin/sub-orgs/{sub-slug}/...`). OrgContext URL-derives `currentOrg` from `useParams()`; localStorage demoted to "last-used hint at sign-in" only. urlFor helper added at `frontend/src/utils/urls.js` centralizes URL construction. Backend slug-creation gates against a 33-word RESERVED_SLUGS set; one-shot lint script `phase11_check_slug_collisions.py` scans existing slugs. No redirect grace period — old flat URLs fall through to catch-all per Z's decision.
+Useful for large orgs with many public delegates and voting history; low-priority until that scale exists. Auto-generated metrics: voting record, alignment with delegator majority, topic-by-topic alignment scores, what-if comparison ("you would have voted differently 12% of the time"). Real product surface, defer until there's a real ecosystem to sort through.
 
-Subdomain-based multi-tenancy (`gamenights.liquiddemocracy.us`) remains explicitly out of scope per the original Phase 11 non-goal — Tier 3 deferred item.
+### Alternative Delegation Strategies
 
----
+Tag-weighted priority, majority of delegates, weighted majority. The delegation engine already supports the parameter; the UI doesn't. The currently-unused tag-percentage strategy is the closest to a near-term need. Low priority until an org asks.
 
-## Phase 12 — Configurable Role Permissions (Stage 1)
+### AI Delegation Agents — Public AI Delegates
 
-### Rationale
+Org- and/or user-configurable: AI-driven public delegates that read proposals, vote according to declared values, and explain their votes publicly. Real product surface; governance-adjacent (an AI delegate's accountability model differs meaningfully from a human's). Bigger than seed statements; smaller than private advisors. Picks up after seed statements lands and there's signal on whether the AI-delegation surface is something orgs actually want.
 
-Replaces the hardcoded `require_org_moderator_or_admin` scaffolding from Phase 4 Cleanup with a proper data-model-driven permission system. Done near the end because the hardcoded version works — this is really about extensibility for future role needs, not fixing a bug.
+### AI Delegation Agents — Private AI Advisors
 
-### Scope (Stage 1 only)
-
-- `role_permissions` table: `(role_id, org_id, permission_key, enabled)`
-- Permission keys defined as enum: `proposal.create`, `proposal.delete`, `proposal.advance`, `member.approve_join`, `member.suspend`, `member.remove`, `topic.create`, `topic.delete`, `topic.edit`, `org.edit_settings`, `delegate_application.approve`, plus whatever the final action set is
-- Default permission sets seeded for `owner` / `admin` / `moderator` / `member` presets
-- Backend: `has_permission(user, org, permission_key)` helper replaces all role-string comparisons throughout the codebase
-- Migration: existing orgs get default permission sets applied to their existing roles
-
-### Non-goals (deferred)
-
-- Stage 2: admin UI for editing the permission matrix
-- Stage 3: multi-admin approval workflows for destructive actions
-- Custom roles beyond the four presets
-
----
-
-## Deferred Features (Post-Sequence)
-
-These remain valuable but are not in the path to pilot-ideal. They'll be revisited after Phase 12 based on what pilots actually need.
-
-### Periodic Demo Data Auto-Reset
-
-Phase 6.5 ships with manual demo data reset only. Once the demo gets real visitor traffic, an automated nightly or weekly reset will likely be wanted to keep the demo experience consistent. Implementation: scheduled job that wipes and re-seeds the demo org's data while leaving the schema and demo personas intact. Don't build until there's evidence it's needed.
-
-### Additive Idempotent Seed Mechanism ✅ Resolved in Phase 7C.1 (2026-04-27)
-
-Phase 7C.1 made every seed helper skip-if-exists (`_cast_*`, `_set_delegation`, `_set_precedence`, `_register_delegate`, `_create_follow_relationship`) and relaxed `seed_if_empty.py` so it always runs additively on container start. PostgreSQL smoke verified 3 successive seed runs against the same DB produce identical row counts with zero duplicate-key errors. New content added in future passes lands additively; existing visitor data is preserved bit-for-bit. See PROGRESS.md "Phase 7C.1" for full detail.
-
-### Formal Operator Agreements and Independent Oversight
-
-The Security & Trust page's promise of "legal accountability for anyone operating the platform" is currently aspirational — the platform is run informally by its founder. Real institutional follow-through means: published operator terms describing what platform operators are bound to, independent oversight body with ideologically diverse staffing and consensus governance, formal mechanisms for accountability when operator behavior is questioned. This is governance work as much as it is technical, and it's gated on the platform reaching a scale where it actually matters. Phase 7.5 covers the technical access-restriction side; this is the institutional follow-through.
+User-configurable: a personal AI prompted with the user's values, advising on votes and optionally auto-voting with summary or escalation-on-unclear. Largest of the three AI surfaces. UX is hairy — when does the AI auto-vote vs. escalate? How does the user audit the advisor's reasoning? The API key handling question is real here: at any scale, this needs to be user-BYO-key (the platform shouldn't be on the hook for usage bills tied to per-user advisors).
 
 ### Encrypted Ballot Storage
 
-For future deployments where the trust model needs to be stronger than "operators are bound by audit logs and legal accountability," ballot content could be encrypted at rest with keys that are inaccessible to platform operators. Real cryptographic work — likely involves user-side key management or a trusted third-party key escrow. Deferred because the institutional-privacy approach is sufficient for the platform's current scale and use cases, and getting cryptographic ballot privacy right requires more design work than fits a single roadmap item.
+For deployments where the trust model needs to be stronger than "operators bound by audit logs and legal accountability." Real cryptographic work; user-side or escrowed key management; not a fit for current pilot scale. From the prior roadmap, kept here for completeness.
 
-### Alternative Delegation Strategies (formerly 2.1)
+### Periodic Demo Data Auto-Reset
 
-Additional resolution strategies on top of strict-precedence: tag-weighted priority, majority of delegates, weighted majority. The delegation engine is already structured to support these via the `delegation_strategy` parameter. Restricted to binary voting; multi-option with these strategies is open research (Kemeny-Young, proportional approval).
+Z has explicitly said this isn't needed; the manual-reset path (active-queue item 4) is the preferred answer. Kept on the backlog for completeness — if demo traffic ever grows enough that manual reset becomes a chore, this becomes the answer.
 
-### AI Delegation Agents (formerly 2.3)
+### Formal Operator Agreements / Independent Oversight
 
-Two complementary approaches: on-device advisor (AI recommends, user approves, every vote is direct) and in-system AI delegate (`user_type: ai_agent`, subject to strict transparency requirements — confirmation model, public rationale, no AI-to-AI chains). Data model already supports this.
-
-### Delegate Report Cards and Alignment Scoring (formerly 2.4)
-
-Automatic "report cards" for delegates: voting record, alignment with delegator majority, topic-by-topic alignment scores, and comparison views showing where a delegator would have voted differently.
-
-### Org-Configurable Tie Resolution Methods
-
-Phase 6 ships with admin-resolves-tie as the only mechanism. Long-term direction: orgs declare their tie-resolution method at org setup ("declared up front so it's much less controversial than in the moment"). Candidate methods: deterministic arbitrary (alphabetical, earliest-created, seed-based), broader-approval-base (tied option co-approved with more additional options wins), early-voting preference, multi-winner acceptance for proposals that allow it, status-quo-wins. Worth revisiting once we have real pilot data on how often ties happen and how orgs feel about resolution.
-
-### Accessibility Audit — WCAG 2.1 AA (formerly 2.5)
-
-Systematic accessibility review covering keyboard navigation, screen reader compatibility, color contrast, focus management, ARIA labels, form accessibility, and text-based alternatives for the delegation graph.
-
-### Multi-Language Support (formerly 2.6)
-
-i18n via React's framework. Extract user-facing strings into translation files. Spanish as first additional language.
-
-### Advanced Analytics and Reporting (formerly 2.7)
-
-Delegation network health metrics, participation trends, voter engagement lifecycle, deliberation-quality-correlated-with-vote-margins, exportable governance reports.
-
-### Notification System — Email and In-App (formerly 2.8)
-
-Configurable digests (daily/weekly) plus expanded in-app notification center. Per-category user preferences.
+The Security & Trust page's promise of "legal accountability for anyone operating the platform" is currently aspirational. Real institutional follow-through (operator terms, oversight body, accountability mechanisms) is governance work as much as technical, and gated on the platform reaching a scale where it actually matters. The Phase 7.5 work covered the technical access-restriction side; this is the institutional follow-through.
 
 ---
 
-## Tier 3: Long-Term or Scale-Dependent
+## Research / Open Questions
 
-These become relevant at larger scale or for specific deployment contexts. Not planned for the path to pilot-ideal.
+Items that need design thinking before they're spec-ready. Discussion-bucket, not dispatch-bucket.
 
-### 3.1 Native Mobile Apps
+### Group Governance Experiments — Platform Eating Its Own Cooking
 
-React Native or fully native apps. Only justified at scale where the PWA isn't sufficient.
+This is the most distinctive item on the doc. The platform's value proposition is that organizations can govern themselves with liquid democracy; the platform itself is, currently, governed by a single-Steward hierarchy. Three sub-questions, all interconnected:
 
-### 3.2 Citizens' Council Management Module
+- **Multi-admin approval for some actions.** Destructive actions (deleting an org, removing a member, changing permission matrix) could require N-of-M admin agreement rather than a single admin's call. The data model from Phase 12 (configurable role permissions) is most of the prerequisite; what's missing is the workflow layer (a request that's pending until enough admins ratify it).
+- **Operating without a Steward.** Currently every org has a Steward; what does it look like to have an org with only Admins, where authority is distributed? What breaks? What needs a designated final-decision-maker and what doesn't?
+- **Electing Admins and Stewards via the voting system itself.** The flagship version. An org's leadership is itself the output of liquid-democracy votes. Term lengths? Recall mechanisms? What if the voting system has a bug and no one is elected? What's the bootstrap when the org is first created?
 
-Random selection with demographic stratification, term management, meeting scheduling, expert testimony coordination, legislative drafting workflow feeding into liquid democracy votes.
+This is the kind of feature surface that genuinely differentiates the platform — a clear "look, the platform governs itself" demo story. It's also large enough that scoping it requires real design conversation. Worth its own discussion when Z is ready to design it; unlikely to be the next-up item but high-leverage when it ships.
 
-### 3.3 Federation / Inter-Org Collaboration
+### Polis Self-Hosted
 
-Proposals and deliberations spanning multiple organizations with their own delegation structures voting on a shared proposal.
+Currently embedded-only; self-hosted was deferred as a deployment concern. **Conditional bump:** if Polis declines `data-api` access for the embedded version, self-hosting becomes the prerequisite for the active-queue item (AI seed statements) and bumps into the active queue. Tracking the Polis email reply.
 
-### 3.4 Formal Penetration Testing
+If pursued: add Polis's Docker components to the platform's docker-compose configuration; deployment pattern documented; data sovereignty story documented for orgs that want it.
+
+### AI Delegate API Key Handling
+
+Cross-cuts all three AI delegation surfaces but is most acute for private advisors. The question: who pays for inference, and how is that billed/limited?
+
+- **Platform-pays:** simple UX, but the platform is on the hook for usage at any scale, and abuse mitigation becomes a real engineering problem.
+- **Org-pays:** org admin provides the API key, advisors within that org consume it. Reasonable for AI seed statements (org-driven). Awkward for private advisors (user-driven, org-billed).
+- **User-BYO-key:** user provides their own API key. Cleanest separation but adds friction; many users won't have an API key.
+- **Hybrid:** small free tier (platform-paid), then user-BYO for heavier use.
+
+Worth its own design conversation before any AI delegation feature ships at scale, even though seed statements (active-queue) is small enough to land with a hardcoded answer.
+
+### Org-Configurable Tie Resolution — Method Set
+
+The active-queue tie-resolution item assumes the spec will pick a method set. The actual list of supported methods is itself a design question worth a conversation before specing. Candidates noted in the active-queue scope; final list TBD.
+
+---
+
+## Standing Rhythms
+
+These aren't features; they're recurring activities that should happen on cadence.
+
+- **Tech debt audit refresh** every ~10 phases. Currently item 7 in the active queue; recurs after.
+- **Roadmap doc hygiene** at major arc transitions. The forward-looking doc should never get stale enough to be unrecognizable; archive + rewrite when it does. Prior versions live in `Archive/` with date suffixes.
+- **Browser verification queue drainage** when Chrome is reliably available. Currently 8 items deep per the passdown; these accumulate every chrome-deferred pass. Worth a half-day every few passes to drain.
+- **CLAUDE.md updates** when new operational lessons surface. Phase 15 G2 added the Tailwind footgun note; future passes should keep doing this proactively.
+- **PROGRESS.md split** when the file crosses ~250 KB again. The Phase-1-through-8 split happened during Phase 11; the next natural cut would be around Phase 16 → 17 if it grows that way.
+
+---
+
+## Tier 3 — Long-Term or Scale-Dependent
+
+Become relevant at larger scale or for specific deployment contexts. Not planned for the current build cadence.
+
+### Native Mobile Apps
+
+React Native or fully native. Only justified at scale where the PWA isn't sufficient.
+
+### Citizens' Council Management Module
+
+Random selection with demographic stratification, term management, meeting scheduling, expert testimony coordination, legislative drafting workflow feeding into liquid democracy votes. A module for a specific governance use case.
+
+### Federation / Inter-Org Collaboration
+
+Proposals and deliberations spanning multiple organizations with their own delegation structures, voting on a shared proposal.
+
+### Formal Penetration Testing
 
 Professional security firm audit. Required for municipal government adoption.
 
-### 3.5 End-to-End Verifiable Voting Integration
+### End-to-End Verifiable Voting Integration
 
-ElectionGuard or similar E2E-V technology for the highest-stakes votes in the graduated security model.
+ElectionGuard or similar E2E-V technology for the highest-stakes votes in a graduated security model.
 
-### 3.6 Data Portability and Interoperability
+### Data Portability and Interoperability
 
 Export/import standards for moving organizational data between platform instances or integrating with other civic tech tools (Decidim, CONSUL, Loomio).
 
-### 3.7 Quadratic Voting / Conviction Voting
+### Quadratic Voting / Conviction Voting
 
-Alternative voting mechanisms offered as additional proposal types alongside standard liquid democracy votes.
+Alternative voting mechanisms offered as additional proposal types.
 
-### 3.8 Blockchain Audit Trail (Optional)
+### Blockchain Audit Trail (Optional)
 
 Periodically hash the audit log and publish the hash to a public blockchain as a timestamped integrity proof. Not for voting itself.
 
-### 3.9 Self-Hosted Polis Deployment
+### Subdomain-Based Multi-Tenancy
 
-Add Polis's Docker components to the platform's docker-compose configuration for orgs that want full data sovereignty over their deliberations.
+`gamenights.liquiddemocracy.us` style. Phase 11 explicitly kept this out of scope.
 
 ---
 
@@ -540,11 +296,11 @@ Add Polis's Docker components to the platform's docker-compose configuration for
 
 ### Confirmed Integration Candidates
 
-| Platform | Purpose | Integration Type | Planned Phase |
-|----------|---------|-----------------|---------------|
-| **Polis** | Structured deliberation | Embed (iframe + XID); self-hosted deferred | Phase 9 |
-| **GitHub** | Open-source contribution, issue tracking | OAuth login, repo links | Post-sequence |
-| **Slack/Discord** | Notifications, community discussion | Webhooks, bot | With notification system |
+| Platform | Purpose | Integration Type | Status |
+|----------|---------|-----------------|--------|
+| **Polis** | Structured deliberation | Embed (iframe + XID); self-hosted research | Embedded shipped Phase 9; self-hosted conditional |
+| **GitHub** | Open-source contribution, issue tracking | OAuth login, repo links | Backlog |
+| **Slack/Discord** | Notifications, community discussion | Webhooks, bot | With future notification expansion |
 | **ElectionGuard** | E2E verifiable voting for high-stakes | SDK integration | Tier 3 |
 
 ### Potential Integration Candidates (Needs Research)
@@ -560,35 +316,15 @@ Add Polis's Docker components to the platform's docker-compose configuration for
 
 ## Known Issues / Tech Debt
 
-For the comprehensive working list (resolved + deferred + Z-action items + manual-verification gaps), see `docs/tech_debt_audit_2026-05.md` (Phase 12.8 audit). The list below is the curated long-term planning view; items are added when they're meaningful enough to plan a future pass around and removed when they ship.
+For the canonical working list (resolved + deferred + Z-action items + manual-verification gaps), see `docs/tech_debt_audit_2026-05.md`. The audit doc is the source of truth; this section is a curated long-term-planning view.
 
-**Tier 2 deferred (small, future cleanup pass candidates)**
-- **`is_polis_admin` not exposed on PolisOut schema** (Phase 9 Session 3 #1, audit Item 6) — frontend uses heuristic (creator OR moderator/admin OR sub-org admin) to gate Polis admin controls. Backend remains source of truth via 403, but the heuristic re-implements per-route auth logic. Estimated ~1.5 hours.
-- **PolisDetail linked-from indicator is N+1** (Phase 9 Session 3 #2, audit Item 7) — fetches full proposal list per detail render. Needs new backend endpoint querying proposals by linked_polis_id. Estimated ~2 hours.
-- **Polis stats N+1 in `_resolve_linked_polises`** (`backend/routes/proposals.py:109-111`, audit Item 8) — loop calls `polis_service.get_participation_stats` once per Polis ID. Documented as deferred; pick up if a proposal grows enough linked Polises to surface measurable latency. Estimated ~2 hours.
-- **PublicConfigContext.jsx `react-refresh/only-export-components` lint warning** (Phase 9 Session 3 #5, audit Item 9) — same pattern on AuthContext / OrgContext / ConfirmDialog / Toast. Splitting all 5 hooks into sibling files would clear the warnings in one cleanup pass. Estimated ~1.5 hours.
-- **`audit_log` composite index gap** (Phase 9.5 #2, audit Item 10) — rate-limit query has no composite index. Non-issue at current scale; needs a migration when audit_log grows. Estimated ~1 hour.
-- **`org_slug` parameter optional on `/api/users/search`** (Phase 9.9 #1, audit Item 11) — backward compat preserved; legacy/admin tools could still hit the unscoped path. Audit external callers + flip to required. Estimated ~1.5 hours.
-- **`vite-plugin-pwa` peer-version override** (Phase 10 #2, audit Item 12) — remove when vite-plugin-pwa supports vite 8 natively. Estimated ~5 minutes (one-line removal).
-- **Comment-viewer eligibility helper inlined in `routes/comments.py`** (Phase 10 #1, audit Item 13) — should consolidate into shared `scope.py` once a third caller arrives (currently 2). Estimated ~1 hour.
-- **`slowapi.limiter.reset()` autouse fixture pattern** (Phase 10.2 #3, audit Item 14) — same fixture in 2 test files; promote to conftest.py at the 3rd caller. Estimated ~20 minutes.
-- **`poll_deploy.py` bundle-hash heuristic incomplete** (Phase 10.2 #1, audit Item 15) — only fires on JS source changes; nginx-only or backend-only deploys time out. Add `--mode` flag and/or `/api/version` endpoint with deployed git SHA. Estimated ~2 hours.
-- **`tests/smoke/` requires backend `.venv`** (Phase 10.2 #2, audit Item 16) — pick up when smoke wires into CI. Estimated ~1 hour.
-- **Two intentional Stage-1-preserved tier checks** (Phase 12 Stage 1 #2, audit Item 17) — moderators-may-only-advance-own-proposals at `routes/organizations.py:1525` and `routes/proposals.py:580`. Becomes configurable via a new `manage_others_proposals` permission key. Estimated ~1.5 hours (registry addition + migration row insertion + tier-check replacement + tests).
-- **AdminRoute and AdminOnlyRoute functionally indistinguishable** (Phase 12.6 #2, audit Item 18) — could merge into one `PermissionRoute` component. Estimated ~1.5 hours.
-- **PWA placeholder icons** (Phase 10 #5, audit Item 19) — design-blocked; waiting on Z-provided platform brand mark.
-- **Email theming centralization helper** (Phase 12.7 tech debt #3, spec F.1 #3) — currently invitation-only; no other org-scoped emails exist yet. Worth ~1-2 hours when a second org-scoped email lands (likely Phase 13 notifications).
+The audit doc is due for a refresh (active-queue item 7) — entries have accumulated through 13.x / 14 / 15 / 16. Until the refresh ships, the doc's existing classifications are the reference.
 
-**Tier 3 deferred (real work; needs proper specing)**
-- **`User.email_verified_at` column gap** (Phase 9.5 #1, audit Item 20) — schema change + backfill + migration + audit query update. Estimated ~3 hours.
-- **Fresh-deploy seed mirror in `database.create_tables()` band-aid** (Phase 9.5 #3, audit Item 21) — workaround for create_all+stamp-head asymmetry from Phase 8.6's start.sh ordering fix. Worth revisiting when the alembic chain gets squashed. Estimated ~6 hours.
-- **`routes/proposals.py:578-580` flat path duplicates org-scoped advance endpoint** (Phase 12 Stage 1 #5, audit Item 23) — caller audit + deprecation period decision + cutover + tests. Estimated ~3 hours.
-- **`org_middleware.py` coarse-tier dependencies retire candidate** (Phase 12 Stage 1 #3, audit Item 24) — call-site audit + gradual replacement + permission-key additions where needed. Estimated ~3 hours.
-- **"Reset to defaults" button on permissions matrix** (Phase 12 Stage 2 #5, audit Item 25) — modal + bulk-PATCH semantics + audit event design + tests. Estimated ~3 hours.
-
-**Test-depth audit refresh candidates (extend Phase 10.2's framework)**
-- **Pattern of "feature surface gated by role rather than permission" elsewhere** (Phase 12.5 #6, audit Item 30) — Phase 12.5 F2 surfaced the high-value sites; other places still use role-tier gating cosmetically. Worth a dedicated audit pass enumerating every role-comparison site. Estimated ~3 hours.
-- **Route-guard family was a 12.5 audit gap** (Phase 12.6 #3, audit Item 31) — extend `docs/test_depth_audit_2026-05.md` to cover frontend route guards as a documented class. Estimated ~2 hours.
+Current high-level shape:
+- ~25 deferred Tier-2 items, mostly small (1–2 hours each), waiting for natural bundling triggers.
+- ~5 Tier-3 items needing real specing (alembic chain squash, flat-path deprecation, etc.).
+- A handful of Z-action-pending items (Railway volume provisioning, prod diagnostic runs).
+- Browser verification queue (8 items) blocked on Chrome connection availability.
 
 ---
 
@@ -596,7 +332,7 @@ For the comprehensive working list (resolved + deferred + Z-action items + manua
 
 If you're interested in implementing any item on this roadmap:
 
-1. Open a GitHub issue referencing the phase number or feature name
-2. Discuss the approach in the issue before writing code
-3. Submit a PR with tests
-4. Update this document when an item is completed or moved to active development
+1. Open a GitHub issue referencing the item name.
+2. Discuss the approach in the issue before writing code.
+3. Submit a PR with tests.
+4. Update this document when an item is completed or shifted.
