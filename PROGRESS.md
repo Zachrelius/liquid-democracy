@@ -2413,3 +2413,155 @@ Org-configurable per-voting-method tie resolution shipped: four automatic method
 ### Pass-summary
 
 **Phase 17 shipped clean to production with one merge, one critical pre-merge bug catch (the `_resolve_earliest_decisive_vote` ballot-shape bug), and one Wave-3 scope expansion (B6 full admin-resolves removal per Z's Option A) — all surfaced and resolved before push.** Org stewards now configure tie resolution per voting method via Org Settings; ties auto-resolve at advance-to-passed time using the configured method; the resolution writes a verifiable audit record (`Proposal.tie_resolution` JSON) that the F2 banner reads and explains; `random_seed` results are anyone-verifiable via the documented sha256 + mod-2^32 + sorted-input + `random.choice` recipe. The manual admin-resolves endpoint that the spec assumed was dead is removed; the auto-resolution path is the only closure mechanism going forward. Backend test count 1039 → 1076 (+37 net); frontend bundle 360.08 → 361.81 kB gzipped (+1.73 kB). Two procedural lessons for future passes: (a) `git add` carefully when other people may have unstaged work in the same files; (b) parallel-wave agents racing on a shared index need lead-level commit-attribution sanity checks before push, even when their file scopes look disjoint. The Phase 13 arc gate set continues to do its job — the bug-in-Wave-1 surfaced during B7 integration-test writing, exactly the layer it was meant to catch.
+
+---
+
+## Phase 18 — Delegation Org-Scoping Fix (shipped 2026-05-10, master `b8a9a27`)
+
+Closes the Phase 4c multi-tenancy retrofit gap surfaced via friend-pilot dogfooding (`delegation_org_scoping_diagnostic_2026-05.md`). The four relationship tables (`Delegation`, `DelegationIntent`, `FollowRelationship`, `FollowRequest`) gain `org_id` (and `sub_org_id` for delegation tables); 15+ `db.query(models.Delegation)` read sites filter by org; routes move to `/api/orgs/{slug}/delegations/*` and `/api/orgs/{slug}/follows/*` (clean break, no compat aliases); `graph_store` partitions by org with cycle detection per-org. Two-phase migration with three-sweep backfill. The Phase 4c retrofit-completeness pattern that was tracked across Phase 12 and Phase 17 closeouts is **CLOSED**.
+
+**Cluster B — Backend (commits `d9184fa`, `58a89a8`, `b577c8d`, `f14f5e7`, `5559186`, `4f39309`, `d6ae763`, `ec7537b`, `e306d74`, `9edadc2`, `7f22e1f`, `56ac896`):**
+
+- **B1a: Two-phase migration phase 1** `219205801d2c_phase_18a_delegation_org_scoping_nullable.py` (down_revision `d2a17cb3e45c`, Phase 17's chain-only). Adds nullable `org_id` (and `sub_org_id` where applicable) to all four relationship tables. Updates `Delegation` and `DelegationIntent` unique constraints from `(delegator_id, topic_id)` to `(delegator_id, org_id, sub_org_id, topic_id)`. **Three-sweep backfill** with structured `delegation.org_id_backfilled` audit events per row:
+  - **Sweep 1 — topic-scoped:** `UPDATE FROM topics` joining `topic_id`. Single SQL statement for all topic-scoped rows.
+  - **Sweep 2 — single-shared-org globals:** `topic_id IS NULL` rows where delegator+delegate share exactly one org get backfilled to that org.
+  - **Sweep 3 — multi-shared-org globals (D1 heuristic):** `topic_id IS NULL` rows where parties share multiple orgs use "delegate's most recent vote `cast_at` per org" heuristic, fallback to delegation's `updated_at`. Logs INFO with chosen org + alternatives + tiebreak reason for forensic audit. Returns NULL with WARNING (does NOT fail) on pathological data — B1b's pre-flight check catches those at constraint application.
+- **B1a follow-up: `1cc8f3f27717_phase_18a_followup_followrel_uniqueness.py`** updates `uq_follow_relationship` → `(follower_id, followed_id, org_id)` and `uq_follow_request_requester_target` → `(requester_id, target_id, org_id)` so the same pair can have separate per-org follow rows.
+- **B1b: NOT NULL flip** `e9419ee5906f_phase_18b_org_id_not_null.py` (down_revision `1cc8f3f27717`). **Pre-flight gate:** `SELECT COUNT(*) WHERE org_id IS NULL` per table; aborts loudly with row IDs if any are non-zero (Z's manual intervention required). After pre-flight passes, `ALTER COLUMN org_id SET NOT NULL` on all four tables via batch_alter_table (SQLite-portable). `sub_org_id` stays nullable (sub-orgs are optional scope per D4).
+- **B2.1: `delegation_engine` core + graph_store partition** (commit `b577c8d`):
+  - `_build_context` (line 831) now `db.query(models.Delegation).filter(models.Delegation.org_id == proposal.org_id).all()` — closes the case-3 tally-leak surface.
+  - `find_delegate` ORM lookups also filter on `proposal.org_id`.
+  - `DelegationGraphStore` repartitioned to `Dict[org_id, Dict[topic_id, DiGraph]]`. Every method (`add_delegation`, `remove_delegation`, `would_create_cycle`, `get_neighborhood`, `compute_voting_weight`, `rebuild_from_db`) gains an `org_id` parameter. Two new helpers — `get_neighborhood_all_orgs` and `compute_voting_weight_all_orgs` — for admin/forensic tools that intentionally want the cross-org union.
+  - `rebuild_from_db` iterates `db.query(models.Organization).all()`, pre-creates per-org buckets, skips `org_id IS NULL` rows (defensive — they don't exist post-B1b but the rebuild handles the partial-deploy window gracefully).
+- **B2.2: Route-layer org_id filtering at remaining sites** (commit `f14f5e7`):
+  - `routes/admin.py`: function `system_delegation_graph` renamed to `system_delegation_graph_all_orgs` (HTTP path `/api/admin/delegation-graph` UNCHANGED to avoid frontend break); new sibling `GET /api/admin/orgs/{slug}/delegation_graph` for org-scoped admin queries.
+  - `routes/proposals.py`: `_is_delegate_target_for_proposal`, `_has_delegated_away_for_proposal`, `delegators_to_me` all filter on `proposal.org_id`.
+  - `routes/users.py::delegation_tree`: gained optional `?org_id=` query parameter.
+  - `routes/organizations.py:2546`: switched analytics from indirect `topic_id.in_(org_topic_ids)` filter to direct `Delegation.org_id == org.id`.
+  - `routes/delegates.py::_delegation_count`: gained `org_id` parameter; `_build_public_delegate` threads each profile's `org_id`.
+- **B3: Write-side org plumbing + URL prefix move** (commits `5559186`, `4f39309`):
+  - `routes/delegations.py`: full file moves to `/api/orgs/{slug}/delegations/*`. Old prefix REMOVED entirely (clean break). Every endpoint extracts `org_id` from `require_org_membership`. Sub-org fan-out collapse wired (POST `/api/orgs/{slug}/delegations/request` accepts optional `sub_org_id` body field — single-row write for "Only [SubOrg]" case; "Only parent-org topics" still fans out, documented as known-suboptimal). `activate_intents_for_follow` gained `org_id` kwarg propagating intent → delegation per D5.
+  - `routes/follows.py`: full file moves to `/api/orgs/{slug}/follows/*`. Same shape. `_revoke_dependent_delegations` scoped to follow's `org_id` — revoking a follow in X doesn't cascade-revoke delegations in Y.
+- **B3.4: graph_store call-site threading** (commit `ec7537b`) — Backend Agent #2 made graph_store params `Optional[str] = None` to avoid mid-flight ordering races; B3 threaded `org_id` through 13 callers in `routes/delegations.py` + `routes/follows.py`.
+- **B5: Test seed cleanup** (commit `58a89a8`) — `seed_data.py` Delegation/DelegationIntent/FollowRelationship/FollowRequest constructors thread `org_id`.
+- **B7: `backend/tests/test_phase_18_delegation_org_scoping.py`** (commit `e306d74`) — new file, **29 tests**, 1503 lines. The 17 spec-named tests + 12 regression coverage. Plus updates to 12 existing test files (commit `9edadc2`) for new URL surface and constructor shapes (`test_delegation_intents.py`, `test_delegation_network_isolation.py`, `test_phase3a_permissions.py`, `test_notification_emissions.py`, `test_phase13_3_emission_priority.py`, `test_seed_idempotency.py`, `test_user_endpoint_auth.py`, `test_vote_eligibility_scope.py`, `test_vote_graph.py`, `test_vote_graph_privacy.py`, `test_delegation_scope.py`, `conftest.py`). The misleading comment in `test_delegation_scope.py:263` ("No special path. No new pure-layer code is required.") replaced with Phase-18-anchored copy + meta-test (`test_phase_8_5_test_comment_updated`) guards against re-introduction.
+- **Backend test count: 1076 → 1105 (+29 net).**
+
+**Cluster F — Frontend (commits `7e3f68a`, `66dadbb`, `d9d6542`):**
+
+- **F1: `Delegations.jsx` rebuilt around per-org concept** — page reads `currentOrg` from OrgContext; API calls move to `/api/orgs/{slug}/delegations/...`; header reads "Your delegation network in {OrgName}"; small `<select>` org-switcher next to the H1 (visible only when 2+ parent orgs); sub-orgs deliberately NOT in switcher (delegations are parent-org rows in the new model). `currentOrg` null redirects to `/orgs`.
+- **F2: DelegateModal sub-org fan-out collapse** — "Only [SubOrg]" radio path now creates a single Delegation row instead of fan-out. `createTopicScopedDelegations` retained but only handles the "parent topics" mode now; `'sub:X'` is collapsed inline in `ResultCard.doDelegate`. "Only parent-org topics" still fans out (documented as known-suboptimal — would need a `scope_modifier` column for a clean single-row representation).
+- **F3: Follow surfaces under `/api/orgs/{slug}/follows/*`** — all five files updated (`Delegations.jsx`, `DelegateModal.jsx`, `FollowRequests.jsx`, `UserProfile.jsx`, `ProposalDetail.jsx`). 21 call sites updated; zero `/api/delegations/` or `/api/follows/` references remain in `frontend/src/`.
+- **F4: Frontend tests DEFERRED** per Phase 17 audit Item 42 ("Frontend test framework absent"). Browser verification covers the load-bearing F1+F2+F3 surfaces.
+- **Bundle delta: 361.81 → 362.24 kB gzipped (+0.43 kB).** Build clean, zero Tailwind warnings.
+
+**Cluster D — Documentation (commits `09b2eb2`, `57372ca`):**
+
+- **`SECURITY_REVIEW.md`** — Phase 18 update note covering the schema-level Phase 4c gap, the three-sweep backfill heuristic with INFO-level audit logging of the C&Z multi-shared-org case, the URL prefix move, the FollowRelationship retrofit's structural rationale (preventing back-door delegation leak via `delegation_allowed` follows), the per-org graph_store partition, and the new `delegation.org_id_backfilled` audit event. Forward-only audit log per D8.
+- **`CLAUDE.md` operational lessons** — added "Test fixtures must mirror production storage shape" (Phase 17 ballot-shape bug as canonical example) and "Phase 4c multi-tenancy retrofit is closed (Phase 18, 2026-05-10)" with the rule that future relationship tables must carry `org_id` from day one.
+- **`docs/tech_debt_audit_2026-05.md`** — Phase 18 closeout edit-history entry marking Phase 4c retrofit-completeness CLOSED. Plus four new audit items (Item 43: graph_store race window; Item 44: routes/admin.py system graph long-term shape; Item 45: Phase 8.5 "Only parent-org topics" fan-out as known-suboptimal; Item 46: `UnderstandingDelegationsHelp.jsx` deferred — none of these are in scope for Phase 18).
+- **`future_improvements_roadmap.md`** — Phase 18 active-queue entry added with ✅ Complete; downstream items #3-9 renumbered.
+- **`backend/tests/test_delegation_scope.py:263`** misleading comment ("No special path. No new pure-layer code is required.") replaced with Phase-18-anchored copy. Meta-test `test_phase_8_5_test_comment_updated` guards re-introduction.
+
+### Phase 18 pre-merge gate results
+
+- **Backend tests: 1076 → 1105 (+29 net)** — full pytest suite green in 3:29; Phase 18 file passes 29/29.
+- **PG smoke `--mode both --prior-revision d2a17cb3e45c`: PASS.** Both fresh-DB and upgrade-from-prior-revision modes green; full Phase 18 chain (B1a + 18a follow-up + B1b) runs cleanly on PG.
+- **PG smoke `--mode actual-upgrade`: SKIPPED (Z's Option A — accept existing coverage, escalate the gap).** Second pass relying on a non-existent gate (Phase 17 closeout flagged the Phase 15 G5 PROGRESS-vs-reality mismatch; Phase 18 hit it again). The strong actual-upgrade-path test would be belt-and-suspenders over what's already in place: PG smoke `--mode upgrade` ran the migration on real PG; B7 backfill tests cover the sweep1/sweep2/sweep3 logic with synthetic data; bash start.sh ran end-to-end with the migration applied to demo data; **and a prod-snapshot round-trip via Docker PG18 verified the actual prod data path**. The G5 gap is escalated to Tier 1 in audit doc per Z's call (was Tier 2 / unflagged); recommendation is to land the `--mode actual-upgrade` flag as its own infrastructure pass before Phase 19 since two consecutive specs have now relied on a non-existent gate.
+- **W-START-CHECK PASS** — local `bash start.sh` (with venv activated) ran alembic upgrade head cleanly through the full Phase 18 chain, then started uvicorn 1-worker. "Digest scheduler launched." line present. "Application startup complete." Backfill summary printed:
+  ```
+  Phase 18a backfill summary:
+    delegations: sweep1=57, sweep2=1, sweep3=0, warnings=0
+    intents: sweep1=2, sweep2=0, sweep3=0, warnings=0
+    follow_relationships: delegation_allowed=16, view_only=15, warnings=0
+    follow_requests: delegation_allowed=0, view_only=4, warnings=0
+  ```
+  (Local SQLite has different demo data than prod; sweep3 didn't trigger locally. Prod-snapshot test below covered sweep3.)
+- **Prod-snapshot verification** (the gate added in Z's clarification on this pass): `pg_dump` from prod via Docker PG18 → restore to local Docker PG → `alembic upgrade head` → SELECT verify. Three rounds of testing (B1a alone, B1a+followup, B1a+followup+B1b). Final state: alembic head `e9419ee5906f`, **zero NULLs across all four tables**, `delegations.org_id` NOT NULL, `delegations.sub_org_id` nullable. Backfill summary on prod data: `delegations: sweep1=57, sweep2=2, sweep3=1, warnings=0`. **C&Z heuristic outcome (logged for audit per Z's instruction):** delegation `dab9c4b4-e51f-4f6f-9c6a-540720bc72aa` (claireandzachary→Zachary, both members of demo + gamenights) — **chose demo (`835bc570-...`)**, alternative was gamenights (`edfef608-...`), tiebreak `max_vote_cast_at`, vote activity timestamps `demo: 2026-05-10T11:26 vs gamenights: 2026-05-03T15:40`. **Note: demo recency was skewed by lead's Phase 17 verification activity earlier today (logging in as Steward to verify Phase 17 F1).** If Z's intuition would have picked gamenights, post-merge correction is a 30-second UI revoke + re-create per Z's pre-merge clarification.
+- **File-count check: 38 files, +4576/-280** (across both Phase 18 implementation and the diagnostic doc that was imported as the first commit).
+- **W-OBSERVABILITY-CHECK: PASS.** `railway logs --service backend` streamed live prod requests pre-push.
+- **Frontend build: clean.** `npm run build` succeeded with zero Tailwind class warnings; bundle 362.24 kB gzipped.
+
+### Production deploy
+
+- Pushed master `b8a9a27` to origin → Railway auto-deploy.
+- `poll_deploy.py`: bundle flipped `index-C1ArZv3G.js` → `index-BavOAP42.js`; backend non-502 throughout; smoke 5/5 PASS.
+- `https://www.liquiddemocracy.us/api/health` → 200 `{"status":"ok","version":"0.1.0"}`.
+
+### Phase 18 commit list (on master via merge `b8a9a27`)
+
+- `280e835` Phase 18 setup: import delegation org-scoping diagnostic to master
+- `d9184fa` Phase 18 B1a: two-phase migration phase 1 — nullable columns + backfill + constraint update
+- `58a89a8` Phase 18 B5: thread org_id through test seeds
+- `b577c8d` Phase 18 B2.1: org_id filtering in delegation_engine + graph_store per-org partition
+- `f14f5e7` Phase 18 B2.2: org_id filtering in routes/admin + proposals + users + organizations + delegates
+- `5559186` Phase 18 B3.1: routes/delegations.py — URL move + write-side org plumbing + sub-org fan-out collapse + activate_intents propagation
+- `4f39309` Phase 18 B3.2: routes/follows.py — URL move + write-side org plumbing + _revoke_dependent_delegations org-scoped
+- `d6ae763` Phase 18 B3.3: followup migration — FollowRelationship + FollowRequest unique constraint includes org_id
+- `ec7537b` Phase 18 B3.4: thread org_id into graph_store callers in routes/delegations + routes/follows
+- `09b2eb2` Phase 18 D (partial): SECURITY_REVIEW + CLAUDE.md operational lessons
+- `7e3f68a` Phase 18 F3: follow surfaces under /api/orgs/{slug}/follows/* prefix
+- `66dadbb` Phase 18 F2: DelegateModal sub-org fan-out collapse
+- `d9d6542` Phase 18 F1: Delegations.jsx rebuilt around per-org concept
+- `e306d74` Phase 18 B4 + D: test_phase_18_delegation_org_scoping.py + Cluster D comment update
+- `9edadc2` Phase 18 B4 (cleanup): update existing test files for new URL surface + constructor shapes
+- `57372ca` Phase 18 D (rest): audit doc + roadmap edits
+- `56ac896` Phase 18 gate fixes: B1a downgrade SQLite-portable + privacy test
+- `7f22e1f` Phase 18 B1b: ALTER COLUMN org_id SET NOT NULL on the four relationship tables
+- `b8a9a27` Merge phase-18/delegation-org-scoping: Phase 18 (Delegation Org-Scoping Fix)
+
+### Browser verification (`phase18_qa_report.md`)
+
+QA agent dispatched post-deploy. **6 PASS / 4 DEFERRED / 0 FAIL.** The QA agent's auto-login is the demo-org Steward "admin" test account, not Z's account, so Z-specific row-level visibility checks (the C&Z row in demo's graph; the Imperatoricus row in gamenights' graph; the org-switcher with multi-parent-org user) are deferred to next session.
+
+**Verified:**
+- F1.a: `/demo/delegations` header reads "Your delegation network in **Demo Organization**"
+- F2 (source-confirmed): `DelegateModal.jsx:80-108` implements the 3-branch scope fan-out collapse exactly as spec'd
+- F3: All follow + delegation calls go to `/api/orgs/demo/*`; old `/api/delegations/*` and `/api/follows/*` return 404 (clean break confirmed)
+- URL clean-break: `/api/delegations/network`, `/api/follows/requests/incoming`, `/api/delegations/graph` all 404; `/api/orgs/demo/delegations/network` 200
+- DelegationIntent payload carries `org_id` field
+- No console errors on prod page loads
+
+**QA-deferred items (next session):**
+- F1.b: `claireandzachary→Zachary` row visible in demo graph (per backfill heuristic chose demo)
+- F1.c: `Imperatoricus→Zachary` row visible in gamenights graph, NOT in demo graph
+- F1.d: org-switcher visibility for multi-parent-org user
+- Cross-org leakage visual spot-check (the original Friend A / Case 2 / Case 3 visualization)
+
+### Conceptual decisions (from spec §"Conceptual decisions") — all hold
+
+- **D1 (C&Z heuristic):** Implemented as "more-recently-active org by delegate's most recent vote `cast_at`, fallback updated_at, fallback first-by-org-id-ASC." Logged INFO with chosen + alternatives for audit. **Holds.** Outcome on prod data: chose demo (skewed by today's verification activity); Z can correct post-merge if intuition was gamenights.
+- **D2 (Follow tables get org_id):** Implemented. `uq_follow_relationship` and `uq_follow_request_requester_target` widened. **Holds.**
+- **D3 (Routes move under `/api/orgs/{slug}/`):** Implemented. Old prefixes REMOVED entirely (clean break). 21 frontend call sites updated. **Holds.**
+- **D4 (`sub_org_id` on Delegation + DelegationIntent):** Implemented. Stays nullable per spec. **Holds.**
+- **D5 (DelegationIntent activation propagates org context):** `activate_intents_for_follow` gained `org_id` kwarg; activated Delegation row carries the intent's `org_id`. **Holds.**
+- **D6 (Two-phase migration):** Implemented as `219205801d2c` (B1a) + `1cc8f3f27717` (followup) + `e9419ee5906f` (B1b). Pre-flight gate in B1b catches any NULL leftovers. **Holds.**
+- **D7 (graph_store per-org partition + cycle detection per-org):** Implemented. **Holds.**
+- **D8 (Audit log forward-only):** No retroactive backfill of existing `delegation.created` / `follow.requested` etc. audit entries. New `delegation.org_id_backfilled` audit event captures backfill provenance. **Holds.**
+- **D9 (No user-communication surface):** No banner, no email — silent infrastructure. **Holds.**
+
+### Process notes
+
+1. **Multi-agent staging discipline held this pass.** Lead set explicit disjoint file scopes between Backend Agent #2 (delegation_engine + non-delegations.py route files + graph_store partition) and Backend Agent #3 (routes/delegations.py + routes/follows.py end-to-end with URL prefix move). Backend Agent #4 (tests) waited until B3 settled to know the new API surface. Frontend Agent ran in parallel with B4 since file scopes (frontend/src/) were disjoint from B4's (backend/tests/). **Zero commit-attribution races this pass** — improvement over Phase 17 where two agents staging in parallel on shared index produced two muddled commits. Lesson explicitly applied: brief each agent with HARD file-scope boundaries + sanity-check `git diff --cached --stat` before each commit.
+
+2. **First B4 agent appeared hung; was actually done.** Z noticed the testing agent showed no Chrome activity (which was expected — backend tests don't use Chrome) but the agent's output file was 0 bytes for 23 minutes. Lead killed the agent and re-dispatched. The retry agent discovered the original agent had ALREADY completed all the work and committed it (`e306d74` and `9edadc2`); the apparent hang was on a verification step AFTER committing. **No work was lost; only progress visibility.** Lesson for the dispatch playbook: the "agent appears stuck" signal is real, but the kill response can be precautionary rather than corrective. Future agents should commit incrementally so progress shows up in `git log` rather than only at end-of-run, AND should `timeout` every pytest invocation.
+
+3. **B1a downgrade SQLite-portability bug found in pre-merge testing.** The B1a migration's downgrade used `try/except` around `batch_op.drop_constraint()` to handle SQLite's lack of named FK constraints — but `batch_alter_table` defers operation execution to `__exit__`'s `flush()`, so the try/except at the call site couldn't catch the deferred ValueError. Six prior-phase migration cycle tests all failed identically (`Phase 12`, `12.5 ×2`, `12 Stage 2 ×2`, `14`, `15`). Fix: pre-inspect FK + index existence via SA inspector before queuing the drop ops, only call `drop_constraint` / `drop_index` if the named constraint actually exists. Phase 17's "test fixtures must mirror production storage shape" lesson generalizes here — when a try/except can't catch a deferred error, the fix is structural (inspect first), not catch-broader.
+
+4. **Spec/reality reconciliation — `pg_smoke.py --mode actual-upgrade` flag.** Phase 17 closeout flagged that Phase 15 G5's PROGRESS claim of promoting actual-upgrade-path mode to a `--mode actual-upgrade` flag never landed in `backend/scripts/pg_smoke.py`. Phase 18 hit the same gap — the spec called the flag MANDATORY but it doesn't exist. Per Z's Option A call, this pass accepted the existing coverage (PG smoke `--mode upgrade` + B7 backfill tests + bash start.sh + prod-snapshot round-trip) and escalated the gap to Tier 1 in audit doc. **Recommendation:** land the `--mode actual-upgrade` flag (and its companion `--sample-data-script` parameter) as its own infrastructure pass before Phase 19, since two consecutive specs have now relied on a non-existent gate. The promotion is small (~30-60 min) and the next migration-touching pass deserves to have the gate actually work.
+
+5. **Prod-snapshot verification was the load-bearing verification.** Z's pre-merge clarification ("snapshot verify → log chosen-vs-alternative for C&Z → confirm zero NULLs → B1b → merge") was the highest-value gate this pass. The Docker PG18 round-trip (`pg_dump` from prod → restore to local PG18 → `alembic upgrade head` → SELECT verify) caught nothing this pass — the migration is clean — but it's exactly the right shape of test for a heavy-backfill migration. Worth promoting to a standard tool (would naturally pair with the `--mode actual-upgrade` flag landing recommended in process note 4).
+
+### New tech debt logged
+
+1. **Item 43: graph_store DB-vs-graph-mutation race window** (Tier 3) — graph_store mutates after DB commit; small race window. Per diagnostic §8 F2.
+2. **Item 44: `routes/admin.py::system_delegation_graph_all_orgs` long-term shape** (Tier 3) — kept cross-org for forensic admin work; whether org-scoped should be the default is worth a future design conversation.
+3. **Item 45: Phase 8.5 "Only parent-org topics" fan-out as known-suboptimal** (Tier 3) — clean single-row representation would require a `scope_modifier` column.
+4. **Item 46: `UnderstandingDelegationsHelp.jsx` deferred from Phase 18** — frontend agent's per-org copy on Delegations.jsx provides UX reinforcement; help-page would need nav-link integration.
+5. **`pg_smoke.py --mode actual-upgrade` flag missing — escalated to Tier 1 in audit doc** (was Tier 2 / unflagged). Two consecutive passes have now relied on a non-existent gate.
+6. **Backend bug: `DELETE /api/orgs/demo/delegations/intents/{id}` returns 503 while succeeding.** Surfaced by QA agent during F3 verification. State correctly transitions to `cancelled` but HTTP code is wrong. UX/HTTP-status issue, not a data correctness issue. Worth a quick fix in a future pass.
+7. **Browser verification F1.b/F1.c/F1.d + cross-org leakage visual spot-check** queued for next-session Z-account run.
+
+### Pass-summary
+
+**Phase 18 shipped clean to production with one merge, one critical pre-merge bug catch (B1a downgrade SQLite-portability), and zero scope expansions during implementation — the spec's pass-sizing-check held (4 real clusters + B + F + D + G; 29 new tests, no novel infrastructure, two-phase migration with a heuristic backfill).** The Phase 4c retrofit-completeness pattern that was tracked across multiple closeouts is **CLOSED**: `Delegation`, `DelegationIntent`, `FollowRelationship`, `FollowRequest` all carry `org_id` (and `sub_org_id` for delegation tables); read sites filter by org; routes are under `/api/orgs/{slug}/`; `graph_store` partitions by org; `delegation.org_id_backfilled` audit events captured backfill provenance. **The original cross-org leakage Z observed** (Friend A's gamenights-only delegation showing in demo's network graph; C&Z's gamenights-scoped global delegation tally-leaking into demo) is now structurally fixed at the schema level, not by accidental side-effect filters. Backend test count 1076 → 1105 (+29 net); frontend bundle 361.81 → 362.24 kB gzipped (+0.43 kB). Three procedural lessons reinforced: (a) HARD disjoint file scopes between parallel agents prevented the Phase 17 commit-attribution race; (b) the "agent appears stuck" signal merits investigation but the response can be precautionary (no work was lost); (c) prod-snapshot Docker round-trip is the right shape for heavy-backfill migration verification — worth promoting to a standard tool. The Phase 13 arc gate set continues to do its job, AND the new bash start.sh local prod-like check (per project memory) caught a real downgrade bug before deploy.
