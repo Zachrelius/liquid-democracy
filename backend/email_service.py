@@ -68,11 +68,6 @@ _SUBJECTS: dict[str, str] = {
     "invitation.accepted": "{actor_display_name} joined {org_name}",
     "delegate.applied": "New delegate application in {org_name}",
     "delegate.application_decided": "Your delegate application was {decision}",
-    # Phase 19 — public-delegate-page approval workflow + hard-revert events.
-    "delegate_application_submitted": "New public-delegate application in {org_name}",
-    "delegate_application_approved": "Your public-delegate application on {topic_name} was approved",
-    "delegate_application_denied": "Your public-delegate application on {topic_name} was denied",
-    "delegation_revoked_by_delegate": "Your delegation to {delegate_display_name} on {topic_name} was revoked",
     "follow.requested": "{actor_display_name} requested to follow you",
     "follow.approved": "{actor_display_name} approved your follow request",
     "polis.created": "New deliberation in {org_name}",
@@ -414,12 +409,6 @@ def _build_event_template_vars(
         "polis_id": polis_id,
         "support_fraction": payload.get("support_fraction") or "",
         "floor": payload.get("floor") or "",
-        # Phase 19 — public-delegate-page workflow event payload keys.
-        # ``delegate_display_name`` is the public delegate's display name
-        # (used in delegation_revoked_by_delegate). ``denial_comment`` is
-        # the required comment from the approver on a denial.
-        "delegate_display_name": payload.get("delegate_display_name") or "",
-        "denial_comment": payload.get("denial_comment") or "",
         # CTA label is per-event but we don't currently use it as a
         # substitution slot in the templates (button text is hardcoded
         # per template). Kept here for future templates that want it.
@@ -437,11 +426,6 @@ _DEFAULT_CTA_LABELS: dict[str, str] = {
     "invitation.accepted": "View members",
     "delegate.applied": "Review application",
     "delegate.application_decided": "Open organization",
-    # Phase 19 — public-delegate-page workflow CTAs.
-    "delegate_application_submitted": "Review application",
-    "delegate_application_approved": "Open delegate page",
-    "delegate_application_denied": "Open delegate profile",
-    "delegation_revoked_by_delegate": "View delegations",
     "follow.requested": "Review request",
     "follow.approved": "View profile",
     "polis.created": "Open Polis",
@@ -485,22 +469,6 @@ def _build_cta_url(
         if not org_slug:
             return fallback
         return f"{base_url}/{org_slug}/delegates"
-    # Phase 19 — public-delegate-page workflow events.
-    if event_type == "delegate_application_submitted":
-        if not org_slug:
-            return fallback
-        return f"{base_url}/{org_slug}/delegate-applications"
-    if event_type in (
-        "delegate_application_approved",
-        "delegate_application_denied",
-    ):
-        if not org_slug:
-            return fallback
-        return f"{base_url}/{org_slug}/delegate-profile"
-    if event_type == "delegation_revoked_by_delegate":
-        if not org_slug:
-            return fallback
-        return f"{base_url}/{org_slug}/delegations"
     if event_type == "follow.requested":
         return f"{base_url}/follows/incoming"
     if event_type == "follow.approved":

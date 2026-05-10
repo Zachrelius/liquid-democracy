@@ -349,15 +349,6 @@ export default function Nav() {
               >
                 My Delegations
               </NavLink>
-              {/* Phase 19 — public delegate browse for all members. */}
-              <NavLink
-                to={urlFor(navOrg, 'delegates')}
-                className={({ isActive }) =>
-                  `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
-                }
-              >
-                Delegates
-              </NavLink>
 
               {/* Admin dropdown — visible to moderators, admins, stewards on parent-org scope */}
               {showLegacyAdminDropdown && parentSlugForLinks && (
@@ -386,13 +377,7 @@ export default function Nav() {
                         showProposals && { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
                         showTopics && { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
                         showPolises && { to: urlFor(parentSlugForLinks, 'admin-polises'), label: 'Polises' },
-                        showDelegates && { to: urlFor(parentSlugForLinks, 'admin-delegates'), label: 'Delegate Applications (legacy)' },
-                        // Phase 19 F5 — new public_accepting application
-                        // approval surface. Same permission key as the
-                        // legacy admin entry above, but the page itself
-                        // operates against the Phase 19 inline-on-
-                        // DelegateProfile pending state.
-                        showDelegates && { to: urlFor(parentSlugForLinks, 'delegate-applications-review'), label: 'Delegate Applications' },
+                        showDelegates && { to: urlFor(parentSlugForLinks, 'admin-delegates'), label: 'Delegate Applications' },
                         showAnalytics && { to: urlFor(parentSlugForLinks, 'admin-analytics'), label: 'Analytics' },
                         showSubOrgs && { to: urlFor(parentSlugForLinks, 'admin-sub-orgs'), label: 'Sub-Organizations' },
                       ].filter(Boolean).map((item, i) => (
@@ -461,7 +446,7 @@ export default function Nav() {
               </button>
 
               {menuOpen && (
-                <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden">
+                <div className="absolute right-0 top-full mt-2 w-40 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden">
                   {/* My Profile is org-scoped post-Phase 11. Hide when no
                       currentOrg (user is on /settings, /orgs, etc.) — they
                       can reach their profile from any org page. */}
@@ -472,17 +457,6 @@ export default function Nav() {
                       className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
                     >
                       My Profile
-                    </Link>
-                  )}
-                  {/* Phase 19 — quick link to the user's own delegate-page
-                      management surface (org-scoped). */}
-                  {currentOrg && !currentOrg.parent_org_id && (
-                    <Link
-                      to={urlFor(currentOrg, 'delegate-profile')}
-                      onClick={() => setMenuOpen(false)}
-                      className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100"
-                    >
-                      My Delegate Page
                     </Link>
                   )}
                   <Link
@@ -568,14 +542,6 @@ export default function Nav() {
               >
                 My Delegations
               </Link>
-              {/* Phase 19 — mobile delegate browse link. */}
-              <Link
-                to={urlFor(navOrg, 'delegates')}
-                onClick={() => setMobileOpen(false)}
-                className="block py-2 text-sm text-blue-200 hover:text-white"
-              >
-                Delegates
-              </Link>
             </>
           )}
           {/* Phase 16 F3 — mobile mirror of the desktop Notifications link. */}
@@ -602,9 +568,7 @@ export default function Nav() {
                 showProposals && { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
                 showTopics && { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
                 showPolises && { to: urlFor(parentSlugForLinks, 'admin-polises'), label: 'Polises' },
-                showDelegates && { to: urlFor(parentSlugForLinks, 'admin-delegates'), label: 'Delegate Apps (legacy)' },
-                // Phase 19 F5 — mobile mirror.
-                showDelegates && { to: urlFor(parentSlugForLinks, 'delegate-applications-review'), label: 'Delegate Apps' },
+                showDelegates && { to: urlFor(parentSlugForLinks, 'admin-delegates'), label: 'Delegate Apps' },
                 showAnalytics && { to: urlFor(parentSlugForLinks, 'admin-analytics'), label: 'Analytics' },
                 showSubOrgs && { to: urlFor(parentSlugForLinks, 'admin-sub-orgs'), label: 'Sub-Orgs' },
               ].filter(Boolean).map(item => (
@@ -641,16 +605,6 @@ export default function Nav() {
                   className="block py-2 text-sm text-blue-200 hover:text-white"
                 >
                   My Profile
-                </Link>
-              )}
-              {/* Phase 19 — mobile entry to the user's delegate-page management. */}
-              {currentOrg && !currentOrg.parent_org_id && (
-                <Link
-                  to={urlFor(currentOrg, 'delegate-profile')}
-                  onClick={() => setMobileOpen(false)}
-                  className="block py-2 text-sm text-blue-200 hover:text-white"
-                >
-                  My Delegate Page
                 </Link>
               )}
               <Link

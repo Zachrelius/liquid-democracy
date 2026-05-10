@@ -18,7 +18,7 @@ from database import create_tables, get_db, SessionLocal
 from delegation_engine import graph_store
 from settings import settings
 from websocket import manager as ws_manager
-from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars, comments, permissions, role_permissions_routes, org_logos, notifications, delegate_profiles
+from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars, comments, permissions, role_permissions_routes, org_logos, notifications
 
 
 # ---------------------------------------------------------------------------
@@ -183,11 +183,6 @@ app.include_router(votes.router)
 app.include_router(admin.router)
 app.include_router(users.router)
 app.include_router(delegates.router)
-# Phase 19 B4 — per-org public delegate browse endpoint
-# (GET /api/orgs/{slug}/delegates). Mounted as a separate APIRouter so
-# the org-scoped surface lives alongside the legacy /api/delegates/*
-# endpoints (deprecation handled in Cluster G of a later pass).
-app.include_router(delegates.org_delegates_router)
 app.include_router(follows.router)
 app.include_router(organizations.router)
 # Phase 14 B2 — public org landing page endpoint (no-auth GET /api/orgs/{slug}/public).
@@ -211,18 +206,6 @@ app.include_router(org_logos.router)
 # their own notifications and preferences — no role-tier gates per spec
 # Item 30 audit guidance).
 app.include_router(notifications.router)
-# Phase 19 (B3) — public-delegate-page lifecycle endpoints. Mounted on
-# /api/orgs/{slug}/delegate-profile/* per spec — get-or-create the
-# caller's OrgDelegateProfile, edit per-topic DelegateProfile rows,
-# submit/approve/deny the public_accepting workflow, and the user-
-# initiated revert endpoints (soft + hard, with the hard-revert
-# centralized via _revoke_public_origin_delegations_on_topic).
-app.include_router(delegate_profiles.router)
-# Phase 19 (B6) — vote rationale CRUD. Mounted on /api/votes/{vote_id}/
-# rationale (separate APIRouter from votes.router so the URL prefix
-# matches the spec without colliding with the proposal-prefixed vote
-# endpoints).
-app.include_router(votes.rationale_router)
 
 
 # ---------------------------------------------------------------------------

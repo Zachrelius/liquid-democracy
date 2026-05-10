@@ -41,17 +41,6 @@ export function urlFor(org, kind, ...args) {
       const [polisId] = args;
       return `/${slug}/polises/${polisId}`;
     }
-    // Phase 19 — public delegate page surfaces.
-    case 'delegate-profile':
-      return `/${slug}/delegate-profile`;
-    case 'delegates':
-      return `/${slug}/delegates`;
-    case 'delegate-public': {
-      const [handleOrUsername] = args;
-      return `/${slug}/delegates/${handleOrUsername}`;
-    }
-    case 'delegate-applications-review':
-      return `/${slug}/delegate-applications`;
 
     // Org-scoped admin routes
     case 'admin-settings':

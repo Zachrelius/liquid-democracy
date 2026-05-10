@@ -81,12 +81,6 @@ class Organization(Base):
         cascade="all, delete-orphan",
         foreign_keys="SubOrgMembership.sub_org_id",
     )
-    # Phase 19 (B2) — per-org delegate identity rows for this org.
-    delegate_profiles_org: Mapped[list["OrgDelegateProfile"]] = relationship(
-        "OrgDelegateProfile", back_populates="org",
-        foreign_keys="OrgDelegateProfile.org_id",
-        cascade="all, delete-orphan",
-    )
 
 
 class Role(Base):
@@ -315,13 +309,6 @@ class User(Base):
         Boolean, nullable=False, default=False,
         server_default="0",
     )
-    # Phase 19 (D10) — account-level delegate handle. NULL = unset (URL
-    # falls back to ``username`` token at /{slug}/delegates/{token}).
-    # Reserved-slugs collision validated at write time (route layer);
-    # uniqueness enforced at the DB layer via ``uq_users_delegate_handle``.
-    delegate_handle: Mapped[Optional[str]] = mapped_column(
-        String, nullable=True, unique=True, index=True,
-    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
     proposals: Mapped[list["Proposal"]] = relationship("Proposal", back_populates="author")
@@ -336,8 +323,7 @@ class User(Base):
         "TopicPrecedence", back_populates="user"
     )
     delegate_profiles: Mapped[list["DelegateProfile"]] = relationship(
-        "DelegateProfile", back_populates="user",
-        foreign_keys="DelegateProfile.user_id",
+        "DelegateProfile", back_populates="user"
     )
     follow_requests_sent: Mapped[list["FollowRequest"]] = relationship(
         "FollowRequest", foreign_keys="FollowRequest.requester_id", back_populates="requester"
@@ -356,12 +342,6 @@ class User(Base):
     )
     sub_org_memberships: Mapped[list["SubOrgMembership"]] = relationship(
         "SubOrgMembership", back_populates="user"
-    )
-    # Phase 19 (B2) — per-org delegate identity rows.
-    org_delegate_profiles: Mapped[list["OrgDelegateProfile"]] = relationship(
-        "OrgDelegateProfile", back_populates="user",
-        foreign_keys="OrgDelegateProfile.user_id",
-        cascade="all, delete-orphan",
     )
 
 
@@ -577,11 +557,6 @@ class Vote(Base):
     proposal: Mapped["Proposal"] = relationship("Proposal", back_populates="votes")
     user: Mapped["User"] = relationship("User", foreign_keys=[user_id], back_populates="votes")
     cast_by: Mapped["User"] = relationship("User", foreign_keys=[cast_by_id])
-    # Phase 19 (D4) — optional one-to-one rationale row.
-    rationale: Mapped[Optional["DelegateVoteRationale"]] = relationship(
-        "DelegateVoteRationale", back_populates="vote", uselist=False,
-        cascade="all, delete-orphan",
-    )
 
 
 class VoteSnapshot(Base):
@@ -651,41 +626,9 @@ class DelegateProfile(Base):
     )
     bio: Mapped[str] = mapped_column(Text, nullable=False, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    # Phase 19 (D1) — per-topic visibility enum. Replaces the implicit
-    # "having a row = publicly accepting delegation" model with three
-    # explicit states. ``server_default='public_accepting'`` mirrors the
-    # migration's D8 backwards-compat default so existing rows keep
-    # behaving as public-accepting delegates without action.
-    visibility: Mapped[str] = mapped_column(
-        Enum(
-            "private", "public", "public_accepting",
-            name="delegate_profile_visibility",
-        ),
-        nullable=False,
-        default="public_accepting",
-        server_default="public_accepting",
-    )
-    # Phase 19 — optional per-topic position statement (markdown).
-    position_statement: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # Phase 19 (D6) — approval-workflow lifecycle metadata. Pending iff
-    # ``submitted_at IS NOT NULL AND approved_at IS NULL``.
-    public_accepting_submitted_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime, nullable=True,
-    )
-    public_accepting_approved_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime, nullable=True,
-    )
-    public_accepting_approved_by_id: Mapped[Optional[str]] = mapped_column(
-        String, ForeignKey("users.id"), nullable=True,
-    )
-    public_accepting_denied_comment: Mapped[Optional[str]] = mapped_column(
-        Text, nullable=True,
-    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
-    user: Mapped["User"] = relationship(
-        "User", back_populates="delegate_profiles", foreign_keys=[user_id],
-    )
+    user: Mapped["User"] = relationship("User", back_populates="delegate_profiles")
     topic: Mapped["Topic"] = relationship("Topic", back_populates="delegate_profiles")
     organization: Mapped[Optional["Organization"]] = relationship(
         "Organization", back_populates="delegate_profiles", foreign_keys=[org_id]
@@ -693,131 +636,6 @@ class DelegateProfile(Base):
     sub_organization: Mapped[Optional["Organization"]] = relationship(
         "Organization", foreign_keys=[sub_org_id]
     )
-    public_accepting_approved_by: Mapped[Optional["User"]] = relationship(
-        "User", foreign_keys=[public_accepting_approved_by_id],
-    )
-
-
-class OrgDelegateProfile(Base):
-    """Phase 19 (D2) — per-user-per-org delegate identity.
-
-    Each row holds the org-scoped intro markdown + ``page_visibility``
-    setting. A user is a public delegate per-org, not platform-wide.
-
-    ``page_visibility`` enum is two values: ``'private'`` (only the user)
-    and ``'private_delegators'`` (any approved follower in this org per
-    Phase 18 follow-org-scoping). The third logical state — ``'public'``
-    — is DERIVED, not stored: see ``effective_page_visibility(db)``
-    below. Page-visibility is a ceiling; per-topic ``DelegateProfile.visibility``
-    state is the floor; effective visibility is the lower of the two.
-    """
-
-    __tablename__ = "org_delegate_profiles"
-    __table_args__ = (
-        UniqueConstraint(
-            "user_id", "org_id",
-            name="uq_org_delegate_profile_user_org",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(
-        String, ForeignKey("users.id"), nullable=False, index=True,
-    )
-    org_id: Mapped[str] = mapped_column(
-        String, ForeignKey("organizations.id"), nullable=False, index=True,
-    )
-    intro: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    page_visibility: Mapped[str] = mapped_column(
-        Enum(
-            "private", "private_delegators",
-            name="org_delegate_page_visibility",
-        ),
-        nullable=False,
-        default="private",
-        server_default="private",
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=_now, nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=_now, onupdate=_now, nullable=False,
-    )
-
-    user: Mapped["User"] = relationship(
-        "User", back_populates="org_delegate_profiles",
-        foreign_keys=[user_id],
-    )
-    org: Mapped["Organization"] = relationship(
-        "Organization", back_populates="delegate_profiles_org",
-        foreign_keys=[org_id],
-    )
-
-    def effective_page_visibility(self, db) -> str:
-        """The single source of truth for delegate-page visibility.
-
-        Returns one of ``'private'``, ``'private_delegators'``,
-        ``'public'``. Returns ``'public'`` if the user has at least
-        one ``DelegateProfile`` row in this org with
-        ``visibility != 'private'`` (D3 — page-visibility-public is
-        derived, not stored). Otherwise returns the stored
-        ``self.page_visibility``.
-
-        Every render boundary (browse endpoint, delegate-page endpoint,
-        rationale GET, vote graph) must call this — do NOT re-implement
-        the derivation in routes per spec line 326.
-        """
-        # Late import + same-file class reference; using the model
-        # directly avoids a circular import.
-        non_private_topic_count = (
-            db.query(DelegateProfile)
-            .filter(
-                DelegateProfile.user_id == self.user_id,
-                DelegateProfile.org_id == self.org_id,
-                DelegateProfile.visibility != "private",
-            )
-            .count()
-        )
-        if non_private_topic_count > 0:
-            return "public"
-        return self.page_visibility
-
-
-class DelegateVoteRationale(Base):
-    """Phase 19 (D4) — per-vote rationale row.
-
-    One row per ``Vote`` (``vote_id`` is unique). Absence of a row means
-    no rationale. Vote rows themselves stay append-only audit-grade —
-    rationale lives in this side table so editing/deleting a rationale
-    doesn't touch the vote record.
-
-    Visibility on the public delegate page filters to votes whose
-    proposal's primary topic is in non-``'private'`` state for that
-    user-org pair (centralized in ``can_view_vote_rationale`` helper
-    in B6, not duplicated across endpoints).
-    """
-
-    __tablename__ = "delegate_vote_rationales"
-    __table_args__ = (
-        UniqueConstraint(
-            "vote_id",
-            name="uq_delegate_vote_rationale_vote_id",
-        ),
-    )
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    vote_id: Mapped[str] = mapped_column(
-        String, ForeignKey("votes.id"), nullable=False, index=True,
-    )
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=_now, nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=_now, onupdate=_now, nullable=False,
-    )
-
-    vote: Mapped["Vote"] = relationship("Vote", back_populates="rationale")
 
 
 class FollowRequest(Base):
