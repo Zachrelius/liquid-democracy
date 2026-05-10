@@ -270,6 +270,13 @@ These items are correct fixes but blocked on cached responses ageing out. **Toda
 - Description: Platform admins do not have implicit sub-org-admin power outside org families they're a member of. Surfaced when lead tried to add Z to Gloomhaven on his behalf. Correct security posture, but creates friction for backfill / on-behalf-of workflows.
 - Question for Z: Should platform admin be "global override" (can add to any org without being a member) or stay scoped (current security posture)?
 
+### Item 42: Frontend test framework absent
+- Source: PROGRESS.md Phase 17 closeout (logged 2026-05-09)
+- Description: `frontend/package.json` declares no test runner — no vitest, jest, RTL, or jsdom devDeps; `frontend/src/` contains zero `*.test.*` files. Phase 17's F4 cluster (frontend unit tests for OrgSettings tie-resolution dropdowns + ApprovalResultsPanel/RCVResultsPanel banner rendering) was specced assuming a test framework existed and ended up DEFERRED at dispatch time when the frontend agent discovered nothing was installed. Browser verification covered the load-bearing F1 + F2 surfaces; the F4 unit tests would have been belt-and-suspenders, not primary verification.
+- Recommendation: TIER_3 — bootstrap a vitest + jsdom + @testing-library/react harness as its own dedicated pass. Includes: devDep additions + lockfile + `vitest.config.js` + `setupTests.js` + first-wave tests across already-shipped surfaces (Phase 16 F1 form gating, Phase 17 F1 dropdowns + F2 banner, possibly older OrgSettings sections). Treating it as a real cluster of work — not a rider on a feature pass — avoids the Phase 17 mid-pass scope-creep risk again. **When a future feature pass touches frontend in a way where unit tests would meaningfully reduce regression risk, this entry is the trigger to bootstrap the harness in the same pass.**
+- Effort: ~half a pass (infra setup + first-wave tests).
+- Carries forward Phase 17's deferred F4 scope: tests for OrgSettings tie-resolution dropdown rendering + save shape; ApprovalResultsPanel + RCVResultsPanel banner-presence-when-tie / banner-absent-when-no-tie; method-specific copy.
+
 ## Z action pending (not team-fixable; surfaced for tracking)
 
 ### Item 36: Volume provisioning via Railway dashboard
