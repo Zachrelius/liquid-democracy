@@ -26,6 +26,7 @@ function ResultCard({
   onCreateTopicScopedDelegations,
   scopeFilterMode,
   defaultChainBehavior,
+  parentSlug,
 }) {
   const [acting, setActing] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -76,18 +77,34 @@ function ResultCard({
     setActing(true);
     setFeedback('');
     try {
-      // Decision 4-bis — when the user picked a scope-narrowing radio (or the
-      // global "All my scopes" path with topicId === undefined), we expand
-      // into per-topic delegations on the caller side. Otherwise we use the
-      // legacy single-row endpoint to preserve existing behavior bit-for-bit.
-      if (topicId === undefined && onCreateTopicScopedDelegations && scopeFilterMode && scopeFilterMode !== 'all') {
+      // Phase 18 F2 — branches depend on scopeFilterMode for the global
+      // delegate flow (topicId === undefined). Backend now supports:
+      //   - "All my scopes" (`scopeFilterMode === 'all'`) → single row
+      //     with org_id only (no sub_org_id, no topic_id).
+      //   - "Only [SubOrg]" (`scopeFilterMode === 'sub:<id>'`) → single
+      //     row with sub_org_id set, replacing the pre-Phase-18 fan-out.
+      //   - "Only parent-org topics" (`scopeFilterMode === 'parent'`) →
+      //     KEEP fan-out (per-topic rows). Documented as known-suboptimal
+      //     in audit; a clean single-row representation needs a new
+      //     `scope_modifier` column and is out of scope for v1.
+      const isGlobalFlow = topicId === undefined;
+      const isSubOrgScope = isGlobalFlow && typeof scopeFilterMode === 'string' && scopeFilterMode.startsWith('sub:');
+      const isParentOnlyScope = isGlobalFlow && scopeFilterMode === 'parent';
+
+      if (isParentOnlyScope && onCreateTopicScopedDelegations) {
+        // Fan-out: per-topic rows for each parent-only topic. Known-
+        // suboptimal post-Phase-18; tracked in audit (F2 deferred item).
         await onCreateTopicScopedDelegations(user.id, defaultChainBehavior || 'accept_sub');
       } else {
-        await api.post('/api/delegations/request', {
+        const body = {
           delegate_id: user.id,
           topic_id: topicId || null,
           chain_behavior: defaultChainBehavior || 'accept_sub',
-        });
+        };
+        if (isSubOrgScope) {
+          body.sub_org_id = scopeFilterMode.slice(4);
+        }
+        await api.post(`/api/orgs/${parentSlug}/delegations/request`, body);
       }
       setFeedback('Delegation created');
       setTimeout(() => onDone?.(), 600);
@@ -102,7 +119,7 @@ function ResultCard({
     setActing(true);
     setFeedback('');
     try {
-      const res = await api.post('/api/delegations/request', {
+      const res = await api.post(`/api/orgs/${parentSlug}/delegations/request`, {
         delegate_id: user.id,
         topic_id: topicId || null,
         chain_behavior: defaultChainBehavior || 'accept_sub',
@@ -302,10 +319,20 @@ export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
   // copy reflects the value that will actually be persisted.
   const defaultChainBehavior = 'accept_sub';
 
-  // Decision 4-bis — when the viewer chose a narrowed scope, expand the
-  // single "delegate" action into per-topic delegations. The per-topic
-  // endpoint (`/api/delegations/request`) handles permission gating; we
-  // suppress 403s on individual topics so a partial success still applies.
+  // Phase 18 F2 — fan-out is retained ONLY for the "Only parent-org
+  // topics" path. The "Only [SubOrg]" path now writes a single
+  // (org_id=parent, sub_org_id=Y, topic_id=NULL) row inline in
+  // ResultCard.doDelegate; the legacy per-topic fan-out for sub-org scope
+  // has been removed in favor of the cleaner single-row representation.
+  //
+  // Known-suboptimal: "Only parent-org topics" remains as fan-out
+  // (creates N per-topic rows). A clean single-row representation would
+  // need a new `scope_modifier` column on Delegation; that's tracked in
+  // the audit doc (Phase 18 §G) and out of scope for v1.
+  //
+  // The per-topic endpoint handles permission gating per-topic; we
+  // suppress per-topic failures so a partial success still records what
+  // it can.
   async function createTopicScopedDelegations(delegateId, chainBehavior) {
     let topicsForScope = [];
     try {
@@ -314,13 +341,12 @@ export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
       const all = await api.get(`/api/orgs/${parentSlug}/topics`);
       if (scopeFilterMode === 'parent') {
         topicsForScope = all.filter(t => !t.sub_org_id);
-      } else if (scopeFilterMode.startsWith('sub:')) {
-        const subOrgId = scopeFilterMode.slice(4);
-        topicsForScope = all.filter(t => t.sub_org_id === subOrgId);
       }
+      // 'sub:<id>' is no longer routed here — collapsed to single-row in
+      // ResultCard. Other modes ('all', topic-specific) never call this.
     } catch {
       // If we can't fetch topics, fall back to the global-null delegation.
-      await api.post('/api/delegations/request', {
+      await api.post(`/api/orgs/${parentSlug}/delegations/request`, {
         delegate_id: delegateId,
         topic_id: null,
         chain_behavior: chainBehavior,
@@ -330,7 +356,7 @@ export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
 
     if (topicsForScope.length === 0) {
       // Nothing to delegate against for this scope — fall back to global.
-      await api.post('/api/delegations/request', {
+      await api.post(`/api/orgs/${parentSlug}/delegations/request`, {
         delegate_id: delegateId,
         topic_id: null,
         chain_behavior: chainBehavior,
@@ -342,7 +368,7 @@ export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
     // permission gates) so a partial success still records what it can.
     await Promise.all(
       topicsForScope.map(t =>
-        api.post('/api/delegations/request', {
+        api.post(`/api/orgs/${parentSlug}/delegations/request`, {
           delegate_id: delegateId,
           topic_id: t.id,
           chain_behavior: chainBehavior,
@@ -451,6 +477,7 @@ export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
                   onCreateTopicScopedDelegations={createTopicScopedDelegations}
                   scopeFilterMode={scopeFilterMode}
                   defaultChainBehavior={defaultChainBehavior}
+                  parentSlug={parentSlug}
                 />
               ))}
             </div>
