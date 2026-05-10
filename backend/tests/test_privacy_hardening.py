@@ -295,7 +295,11 @@ def test_delegation_graph_logs_access(client, test_db):
     row = rows[0]
     assert row.actor_id == admin.id
     assert row.target_type == "system"
-    assert row.target_id == "system_delegation_graph"
+    # Phase 18 renamed system_delegation_graph -> system_delegation_graph_all_orgs
+    # (HTTP path unchanged; only the function name + audit target_id changed
+    # so the cross-org admin endpoint is distinguishable from the new
+    # org-scoped sibling /api/admin/orgs/{slug}/delegation_graph).
+    assert row.target_id == "system_delegation_graph_all_orgs"
     assert "node_count" in row.details and "edge_count" in row.details
 
 

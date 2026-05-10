@@ -65,6 +65,10 @@ When no migration is added in a pass, the PG smoke is not required. Mention this
 
 **Use SQLite for unit tests, Postgres for migration smoke.** Unit tests run fast on SQLite; migrations need PG smoke before merge because some bugs only surface on Postgres (the Phase 4c JSON mutation bug is the canonical example).
 
+**Test fixtures must mirror production storage shape.** When you mock or stub a model object, use the same field shapes the production code reads — not a convenient adjacent shape. Phase 17's `_resolve_earliest_decisive_vote` ballot-shape bug is the canonical example: the resolver read `getattr(v, "approvals", None)` directly off Vote rows but production stores ballot data in `v.ballot["approvals"]` JSON dict. Unit tests passed because `SimpleNamespace` shims used the wrong shape; the bug would have silently broken one of four advertised methods in production. When tests use shims, include at least one regression test against real model objects with production storage shape.
+
+**Phase 4c multi-tenancy retrofit is closed (Phase 18, 2026-05-10).** Phase 18 retrofitted `org_id` onto the four relationship tables (`Delegation`, `DelegationIntent`, `FollowRelationship`, `FollowRequest`) that the original Phase 4c migration skipped — closing the gap surfaced in `delegation_org_scoping_diagnostic_2026-05.md`. Any future relationship table added to the schema must carry `org_id` from day one (or document a deliberate exemption with rationale, mirroring how `User`, `Topic`-precedence, and `Vote` handle their multi-tenancy concerns). The "treat any cross-org / org-scoped feature as suspect until verified" check applied during diagnostic should now find no instances; if a future audit surfaces a new instance, treat as a regression.
+
 ## Bash command style
 
 With permissions off, you can write bash commands in whatever shape works best — compound chains, heredocs, polling loops, all fine. A few style preferences that stay useful for non-permission reasons:

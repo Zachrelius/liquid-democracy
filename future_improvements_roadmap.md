@@ -33,7 +33,13 @@ Phase 17 shipped the org-configurable tie-resolution layer. Four automatic metho
 
 ---
 
-### 2. Public Delegate Pages
+### 2. Delegation Org-Scoping Fix — ✅ Complete (Phase 18, shipped 2026-05-10)
+
+Phase 18 closed the Phase 4c multi-tenancy retrofit gap surfaced by friend-pilot dogfooding. The four relationship tables (`Delegation`, `DelegationIntent`, `FollowRelationship`, `FollowRequest`) gained `org_id` (and `sub_org_id` for delegation tables); two-phase migration with three-sweep backfill (topic-scoped via `topics.org_id`; single-shared-org globals; multi-shared-org globals via "more-recently-active org by delegate's most recent vote" heuristic with INFO-level audit of chosen + alternative orgs). All 15+ `db.query(models.Delegation)` call sites filter by org. Routes moved to `/api/orgs/{slug}/delegations/*` and `/api/orgs/{slug}/follows/*` (clean break, no compat aliases). `graph_store` partitioned by org with cycle detection per-org. `FollowRelationship` retrofit was structurally required to prevent back-door delegation leak via `delegation_allowed` follows. New audit event `delegation.org_id_backfilled` for forensic completeness. Sub-org fan-out collapsed to single-row write for "Only [SubOrg]" path. Backend test count 1076 → 1105 (29 new + 12 existing files updated). See spec `phase18_delegation_org_scoping_spec.md`, diagnostic `delegation_org_scoping_diagnostic_2026-05.md`, and PROGRESS.md Phase 18 entry. Deferred items: `UnderstandingDelegationsHelp.jsx` page (logged as audit Item 46); `graph_store` race-window fix (Item 43); `routes/admin.py` long-term shape (Item 44); Phase 8.5 "Only parent-org topics" fan-out remains as known-suboptimal (Item 45). The Phase 4c retrofit-completeness pattern that was tracked across multiple closeouts is now CLOSED.
+
+---
+
+### 3. Public Delegate Pages
 
 **Why now:** Liquid democracy as a system *is* the delegate ecosystem. Right now the public delegate surface is thin — there's a delegate profile with a bio field and a list of votes, but no real space for a delegate to introduce themselves, explain their thinking, or build the kind of accountable public identity that makes someone want to delegate to them. This is high-leverage for the platform's identity and a real differentiator vs. systems where delegation is anonymous or transactional.
 
@@ -49,7 +55,7 @@ Phase 17 shipped the org-configurable tie-resolution layer. Four automatic metho
 
 ---
 
-### 3. Sustained-Majority Fix
+### 4. Sustained-Majority Fix
 
 **Why now:** The feature shipped in Phase 8 is currently known-broken and disabled by default. That's tech debt, not a deferred feature. It's not load-bearing for any current use case, but leaving a broken feature visibly disabled in admin settings is the kind of thing a real pilot org will ask about, and "we shipped it but it doesn't work" is an awkward answer.
 
@@ -63,7 +69,7 @@ Phase 17 shipped the org-configurable tie-resolution layer. Four automatic metho
 
 ---
 
-### 4. Demo Data Cleanup + Easy Manual Reset
+### 5. Demo Data Cleanup + Easy Manual Reset
 
 **Why now:** The demo deployment at `liquiddemocracy.us` is the platform's sales surface. Right now the demo data is functional (post-Phase-7C.1 it shows the privacy boundary correctly, voter names are realistic, etc.) but it's not curated for telling a compelling story about what liquid democracy *does*. A real pilot recruitment conversation is going to lead to "let me show you" — and the demo should be tight enough that it sells without needing Z to narrate around its rough edges.
 
@@ -77,7 +83,7 @@ Phase 17 shipped the org-configurable tie-resolution layer. Four automatic metho
 
 ---
 
-### 5. Automated Accessibility Pass
+### 6. Automated Accessibility Pass
 
 **Why now:** Standard automated accessibility checks (Lighthouse, axe-core) are cheap, signal-independent, and catch a real subset of WCAG issues. The deeper audit — keyboard navigation flows, screen-reader compatibility, etc. — needs real-user signal or specialized expertise, which we don't have. But the automated layer is pure free wins and worth taking before any pilot org with accessibility needs lands.
 
@@ -91,7 +97,7 @@ Phase 17 shipped the org-configurable tie-resolution layer. Four automatic metho
 
 ---
 
-### 6. Notifications Polish
+### 7. Notifications Polish
 
 **Why now:** The Phase 13/13.x notification system shipped end-to-end (in-app, email, digest cadences, quiet hours, per-event preferences across four channels). It works. What's deferred is rigorous exercise — the friend pilot didn't generate enough volume to surface edge cases, and several end-to-end flows are still in the chrome-deferred verification queue. Worth a focused pass that drains the verification queue, surfaces any gaps, and finishes anything that's been hanging.
 
@@ -105,7 +111,7 @@ Phase 17 shipped the org-configurable tie-resolution layer. Four automatic metho
 
 ---
 
-### 7. Tech Debt Audit Refresh
+### 8. Tech Debt Audit Refresh
 
 **Why now:** The 2026-05 audit was a Phase 12.8 artifact. Items have accumulated through 13.x, 14, 15, and 16. The passdown explicitly flags this as a recurring rhythm — every ~10 phases warrants a refresh. We're roughly there. Audit refreshes also tend to surface low-cost cleanups that bundle nicely into a single pass.
 
@@ -120,7 +126,7 @@ Phase 17 shipped the org-configurable tie-resolution layer. Four automatic metho
 
 ---
 
-### 8. AI Delegation Agents — Polis Seed Statements
+### 9. AI Delegation Agents — Polis Seed Statements
 
 **Why now:** Smallest of the three AI-delegation surfaces, with a real tactical payoff: removing friction from the most labor-intensive part of running a Polis conversation (writing the seed statements). Z has emailed Polis about API access; if that lands, this item becomes immediately spec-able. If Polis declines and self-hosting is the only path, this item bumps Polis self-hosted (currently in research) into the active queue as a prerequisite.
 

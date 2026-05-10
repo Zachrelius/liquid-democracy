@@ -96,10 +96,17 @@ def _auth(user: models.User) -> dict:
 
 def _add_delegation(
     db, delegator: models.User, delegate: models.User, topic_id=None,
+    *, org_id=None,
 ) -> models.Delegation:
+    """Phase 18: optional org_id (inferred from topic when absent)."""
+    if org_id is None and topic_id is not None:
+        topic = db.get(models.Topic, topic_id)
+        if topic is not None:
+            org_id = topic.org_id
     d = models.Delegation(
         delegator_id=delegator.id,
         delegate_id=delegate.id,
+        org_id=org_id,
         topic_id=topic_id,
         chain_behavior="accept_sub",
     )
@@ -226,6 +233,11 @@ def test_delegation_tree_redacts_identities_per_viewer_relationships(
         is_active=True,
     ))
     # Viewer follows followed_by_viewer.
+    # Phase 18: org_id left None — this test exercises account-level
+    # privacy semantics, not org-scoping. The 18a backfill window
+    # allows NULL org_id; 18b will require revisit if/when this test
+    # runs against a NOT NULL constraint (the test fixture spins up
+    # a fresh schema, so flipping requires updating this row too).
     test_db.add(models.FollowRelationship(
         follower_id=viewer.id,
         followed_id=followed_by_viewer.id,

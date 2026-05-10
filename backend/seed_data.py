@@ -137,13 +137,27 @@ def _set_delegation(
     delegate: models.User,
     topic: Optional[models.Topic],
     chain_behavior: str = "accept_sub",
+    org_id: Optional[str] = None,
+    sub_org_id: Optional[str] = None,
 ) -> None:
     """Idempotent: skip if a delegation row already exists for (delegator, topic).
 
     Phase 7C.1: never overwrite existing delegations — the seed must not stomp
     on real visitor data when re-run additively.
+
+    Phase 18 B5: thread ``org_id`` (and ``sub_org_id``) into the constructor.
+    Topic-scoped rows derive the scope from the topic when not passed; global
+    rows MUST have an explicit ``org_id`` (caller must supply it to keep the
+    Phase 18b NOT NULL flip happy on a fresh-DB seed).
     """
     topic_id = topic.id if topic else None
+    # Derive org_id / sub_org_id from the topic when present and the caller
+    # didn't override. Topics carry org_id since Phase 4c.
+    if topic is not None:
+        if org_id is None:
+            org_id = getattr(topic, "org_id", None)
+        if sub_org_id is None:
+            sub_org_id = getattr(topic, "sub_org_id", None)
     existing = db.query(models.Delegation).filter(
         models.Delegation.delegator_id == delegator.id,
         models.Delegation.topic_id == topic_id,
@@ -157,6 +171,8 @@ def _set_delegation(
         delegate_id=delegate.id,
         topic_id=topic_id,
         chain_behavior=chain_behavior,
+        org_id=org_id,
+        sub_org_id=sub_org_id,
     ))
     db.flush()
     graph_store.add_delegation(delegator.id, delegate.id, topic_id)
@@ -212,8 +228,13 @@ def _create_follow_relationship(
     follower: models.User,
     followed: models.User,
     permission_level: str = "view_only",
+    org_id: Optional[str] = None,
 ) -> models.FollowRelationship:
-    """Idempotent: skip if a FollowRelationship row already exists."""
+    """Idempotent: skip if a FollowRelationship row already exists.
+
+    Phase 18 B5 (D2): follow rows are now org-scoped. Caller threads
+    ``org_id`` from the surrounding context (e.g., the demo org).
+    """
     existing = db.query(models.FollowRelationship).filter(
         models.FollowRelationship.follower_id == follower.id,
         models.FollowRelationship.followed_id == followed.id,
@@ -224,6 +245,7 @@ def _create_follow_relationship(
         follower_id=follower.id,
         followed_id=followed.id,
         permission_level=permission_level,
+        org_id=org_id,
     )
     db.add(rel)
     db.flush()
@@ -235,7 +257,10 @@ def _create_follow_request(
     requester: models.User,
     target: models.User,
     message: Optional[str] = None,
+    org_id: Optional[str] = None,
 ) -> models.FollowRequest:
+    """Phase 18 B5 (D2): follow requests are now org-scoped. Threading
+    ``org_id`` keeps the seed legal post-Phase-18b NOT NULL flip."""
     existing = db.query(models.FollowRequest).filter(
         models.FollowRequest.requester_id == requester.id,
         models.FollowRequest.target_id == target.id,
@@ -247,6 +272,7 @@ def _create_follow_request(
         target_id=target.id,
         status="pending",
         message=message,
+        org_id=org_id,
     )
     db.add(req)
     db.flush()
@@ -892,8 +918,11 @@ def _seed_demo(db: Session) -> dict:
     _set_delegation(db, alice, rights_raj, civil_rights)
     _set_precedence(db, alice, [healthcare, economy, civil_rights, environment, education, defense])
 
-    # ── Dave chains to Alice (global delegation) ───────────────────────────
-    _set_delegation(db, dave, alice, None, chain_behavior="accept_sub")
+    # ── Dave chains to Alice (global delegation, demo-org-scoped) ──────────
+    # Phase 18 B5: global delegations need explicit org_id since they can't
+    # inherit from a topic.
+    _set_delegation(db, dave, alice, None, chain_behavior="accept_sub",
+                    org_id=demo_org.id)
 
     # ── Extra voters — healthcare proposal ────────────────────────────────
     # Group 1 (voters 1–6): Healthcare > Economy precedence → follow Dr. Chen → YES
@@ -1161,23 +1190,25 @@ def _seed_demo(db: Session) -> dict:
     econ_bob.default_follow_policy = "auto_approve_view"
     db.flush()
 
-    # Create follow relationships
+    # Create follow relationships — Phase 18 B5 (D2): all follow rows are
+    # now org-scoped to the demo org for the seed cohort. Real visitor
+    # follows pick up org_id from the request URL (Phase 18 D3).
     # alice follows dr_chen (delegation_allowed — already has healthcare/economy delegations)
-    _create_follow_relationship(db, alice, dr_chen, "delegation_allowed")
+    _create_follow_relationship(db, alice, dr_chen, "delegation_allowed", org_id=demo_org.id)
     # alice follows econ_bob (delegation_allowed)
-    _create_follow_relationship(db, alice, econ_bob, "delegation_allowed")
+    _create_follow_relationship(db, alice, econ_bob, "delegation_allowed", org_id=demo_org.id)
     # alice follows rights_raj (delegation_allowed)
-    _create_follow_relationship(db, alice, rights_raj, "delegation_allowed")
+    _create_follow_relationship(db, alice, rights_raj, "delegation_allowed", org_id=demo_org.id)
     # dave follows alice (delegation_allowed — dave has global delegation to alice)
-    _create_follow_relationship(db, dave, alice, "delegation_allowed")
+    _create_follow_relationship(db, dave, alice, "delegation_allowed", org_id=demo_org.id)
     # carol follows dr_chen (view_only — she votes directly anyway)
-    _create_follow_relationship(db, carol, dr_chen, "view_only")
+    _create_follow_relationship(db, carol, dr_chen, "view_only", org_id=demo_org.id)
     # several voters follow the public delegates
     for u in extra_users[:4]:
-        _create_follow_relationship(db, u, dr_chen, "delegation_allowed")
-        _create_follow_relationship(db, u, econ_bob, "delegation_allowed")
+        _create_follow_relationship(db, u, dr_chen, "delegation_allowed", org_id=demo_org.id)
+        _create_follow_relationship(db, u, econ_bob, "delegation_allowed", org_id=demo_org.id)
     for u in extra_users[4:8]:
-        _create_follow_relationship(db, u, env_emma, "delegation_allowed")
+        _create_follow_relationship(db, u, env_emma, "delegation_allowed", org_id=demo_org.id)
 
     # Phase 7C.1: alice follows roughly half of the new cohort. The other
     # half remain anonymous to alice's view, so when she opens any vote
@@ -1187,19 +1218,21 @@ def _seed_demo(db: Session) -> dict:
     # not all proposals show identical follow / anon ratios.
     alice_follows_indices = [0, 2, 4, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25]
     for idx in alice_follows_indices:
-        _create_follow_relationship(db, alice, extra_users[idx], "view_only")
+        _create_follow_relationship(db, alice, extra_users[idx], "view_only", org_id=demo_org.id)
 
     # Create a pending follow request for alice (from voter08 — follow only, no intent)
     _create_follow_request(
         db, extra_users[7], alice,
         message="Hi Alice, I've been following your advocacy on civil rights "
-                "and would like to see your voting record."
+                "and would like to see your voting record.",
+        org_id=demo_org.id,
     )
     # voter09 sent a request to carol (pending, follow only)
     _create_follow_request(
         db, extra_users[8], carol,
         message="Hey Carol, I heard you vote on everything directly — "
-                "I'd like to follow and see how you vote."
+                "I'd like to follow and see how you vote.",
+        org_id=demo_org.id,
     )
 
     # ── Phase 3b: Delegation intents + frank ──────────────────────────────
@@ -1214,9 +1247,11 @@ def _seed_demo(db: Session) -> dict:
     # Create a delegation intent: voter10 wants to delegate Economy to carol,
     # but carol isn't a public delegate and voter10 doesn't follow her.
     # This shows the intent → approval → activation flow.
+    # Phase 18 B5: thread org_id (and inherit sub_org_id) from the topic.
     voter10_freq = _create_follow_request(
         db, extra_users[9], carol,
-        message="Hi Carol, I'd like to delegate Economy votes to you."
+        message="Hi Carol, I'd like to delegate Economy votes to you.",
+        org_id=demo_org.id,
     )
     # Create the intent
     from datetime import timedelta as _td
@@ -1234,6 +1269,11 @@ def _seed_demo(db: Session) -> dict:
             follow_request_id=voter10_freq.id,
             status="pending",
             expires_at=datetime.now(timezone.utc) + _td(days=30),
+            # Phase 18 B5: inherit org scope from the topic (Economy is
+            # demo-org-scoped). sub_org_id stays NULL since Economy is
+            # parent-org-wide.
+            org_id=getattr(economy, "org_id", None) or demo_org.id,
+            sub_org_id=getattr(economy, "sub_org_id", None),
         ))
         db.flush()
 

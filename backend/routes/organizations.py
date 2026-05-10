@@ -2535,17 +2535,15 @@ def get_org_analytics(
     failed = sum(1 for p in proposals if p.status == "failed")
     voting = sum(1 for p in proposals if p.status == "voting")
 
-    # Delegation patterns
-    # Count members who have delegations on org topics
-    org_topic_ids = [t.id for t in db.query(models.Topic).filter(
-        models.Topic.org_id == org.id
-    ).all()]
-
-    delegating_members = 0
-    if org_topic_ids:
-        delegating_members = db.query(models.Delegation.delegator_id).filter(
-            models.Delegation.topic_id.in_(org_topic_ids),
-        ).distinct().count()
+    # Delegation patterns — Phase 18 (B2.2): switched from indirect
+    # ``topic_id.in_(org_topic_ids)`` filtering to direct
+    # ``Delegation.org_id == org.id``. Pre-fix the topic-indirect filter
+    # was the one accidentally org-aware site, but it missed global
+    # delegations (``topic_id IS NULL``); the direct ``org_id`` filter
+    # catches both topic-scoped and global delegations cleanly.
+    delegating_members = db.query(models.Delegation.delegator_id).filter(
+        models.Delegation.org_id == org.id,
+    ).distinct().count()
 
     # Participation rates per proposal
     participation_rates = []

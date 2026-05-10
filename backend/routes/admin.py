@@ -131,12 +131,28 @@ def simulate_time(
 
 
 @router.get("/delegation-graph", response_model=schemas.DelegationGraph)
-def system_delegation_graph(
+def system_delegation_graph_all_orgs(
     request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_admin),
 ):
-    """System-wide delegation graph for the admin panel. Access is audited."""
+    """System-wide delegation graph (cross-org union) for the admin panel.
+
+    Phase 18: renamed from ``system_delegation_graph`` to make the
+    cross-org behavior explicit. Admins see the union of every org's
+    delegations for forensic work; for org-focused admin work use the
+    sibling :func:`org_scoped_delegation_graph` endpoint at
+    ``/api/admin/orgs/{slug}/delegation_graph`` which scopes to one org.
+
+    The HTTP path stays at ``/api/admin/delegation-graph`` to avoid
+    breaking the existing admin frontend; only the Python function name
+    changes. Access is audited.
+
+    Voting weights here are computed via
+    ``graph_store.compute_voting_weight_all_orgs`` so the rendered weight
+    reflects the cross-org union the admin is looking at, matching the
+    cross-org edges in the same payload.
+    """
     from delegation_engine import graph_store
 
     all_delegations: list[models.Delegation] = db.query(models.Delegation).all()
@@ -166,7 +182,7 @@ def system_delegation_graph(
                     id=uid,
                     display_name=user.display_name,
                     username=user.username,
-                    weight=graph_store.compute_voting_weight(uid),
+                    weight=graph_store.compute_voting_weight_all_orgs(uid),
                     avatar_url=user.avatar_url,
                 )
             )
@@ -175,9 +191,88 @@ def system_delegation_graph(
         db,
         action="admin.delegation_graph_viewed",
         target_type="system",
-        target_id="system_delegation_graph",
+        target_id="system_delegation_graph_all_orgs",
         actor_id=current_user.id,
         details={"node_count": len(nodes), "edge_count": len(edges)},
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+
+    return schemas.DelegationGraph(nodes=nodes, edges=edges)
+
+
+@router.get(
+    "/orgs/{org_slug}/delegation_graph",
+    response_model=schemas.DelegationGraph,
+)
+def org_scoped_delegation_graph(
+    org_slug: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_admin),
+):
+    """Org-scoped delegation graph for admin work focused on a single org.
+
+    Phase 18 (B2.2 / spec line 118): companion to
+    ``system_delegation_graph_all_orgs``. Returns only delegations whose
+    ``org_id`` matches the named org. Voting weights are computed within
+    that org's partition so they're consistent with the rendered edges.
+    Access is audited.
+    """
+    from delegation_engine import graph_store
+
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    org_delegations: list[models.Delegation] = db.query(models.Delegation).filter(
+        models.Delegation.org_id == org.id,
+    ).all()
+
+    node_ids: set[str] = set()
+    edges = []
+    for d in org_delegations:
+        node_ids.add(d.delegator_id)
+        node_ids.add(d.delegate_id)
+        topic_name = d.topic.name if d.topic else None
+        edges.append(
+            schemas.GraphEdge(
+                source=d.delegator_id,
+                target=d.delegate_id,
+                topic_id=d.topic_id,
+                topic_name=topic_name,
+                chain_behavior=d.chain_behavior,
+            )
+        )
+
+    nodes = []
+    for uid in node_ids:
+        user = db.get(models.User, uid)
+        if user:
+            nodes.append(
+                schemas.GraphNode(
+                    id=uid,
+                    display_name=user.display_name,
+                    username=user.username,
+                    weight=graph_store.compute_voting_weight(uid, org_id=org.id),
+                    avatar_url=user.avatar_url,
+                )
+            )
+
+    log_audit_event(
+        db,
+        action="admin.delegation_graph_viewed",
+        target_type="organization",
+        target_id=org.id,
+        actor_id=current_user.id,
+        details={
+            "scope": "org",
+            "org_slug": org_slug,
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+        },
         ip_address=request.client.host if request.client else None,
     )
     db.commit()

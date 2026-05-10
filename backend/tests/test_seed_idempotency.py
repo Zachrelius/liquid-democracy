@@ -149,9 +149,12 @@ def test_03_seed_preserves_visitor_delegation(seed_db):
     ).first()
     assert existing is None, "frank should not have a civil_rights delegation"
 
+    # Phase 18: thread org_id from the topic so the delegation matches
+    # the post-Phase-18 schema shape (B1b will flip org_id to NOT NULL).
     visitor_del = models.Delegation(
         delegator_id=frank.id,
         delegate_id=carol.id,
+        org_id=civil_rights.org_id,
         topic_id=civil_rights.id,
         chain_behavior="abstain",  # distinctive (seed default is accept_sub)
     )
@@ -187,9 +190,15 @@ def test_04_seed_preserves_visitor_follow(seed_db):
     ).first()
     assert existing is None, "frank should not already follow rights_raj"
 
+    # Phase 18: thread org_id from the demo org (both seed users are
+    # members) so the post-Phase-18 schema shape is satisfied.
+    demo_org = seed_db.query(models.Organization).filter(
+        models.Organization.slug == "demo",
+    ).one_or_none()
     visitor_follow = models.FollowRelationship(
         follower_id=frank.id,
         followed_id=rights_raj.id,
+        org_id=demo_org.id if demo_org else None,
         permission_level="delegation_allowed",
     )
     seed_db.add(visitor_follow)

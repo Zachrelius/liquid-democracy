@@ -1,17 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../api';
+import { useOrg } from '../OrgContext';
 import UserLink from './UserLink';
 import Avatar from './Avatar';
 import { timeAgo } from '../utils/timeAgo';
 
-function IncomingCard({ req, onResponded }) {
+function IncomingCard({ req, onResponded, orgSlug }) {
   const [acting, setActing] = useState(false);
   const [feedback, setFeedback] = useState('');
 
   async function respond(status, permissionLevel) {
     setActing(true);
     try {
-      await api.put(`/api/follows/requests/${req.id}/respond`, {
+      await api.put(`/api/orgs/${orgSlug}/follows/requests/${req.id}/respond`, {
         status,
         permission_level: permissionLevel,
       });
@@ -72,14 +73,14 @@ function IncomingCard({ req, onResponded }) {
   );
 }
 
-function OutgoingCard({ req, intent, onCancelled }) {
+function OutgoingCard({ req, intent, onCancelled, orgSlug }) {
   const [acting, setActing] = useState(false);
 
   async function cancel() {
     setActing(true);
     try {
       if (intent) {
-        await api.delete(`/api/delegations/intents/${intent.id}`);
+        await api.delete(`/api/orgs/${orgSlug}/delegations/intents/${intent.id}`);
       }
       onCancelled?.();
     } catch {
@@ -127,17 +128,33 @@ function OutgoingCard({ req, intent, onCancelled }) {
 }
 
 export default function FollowRequests() {
+  // Phase 18 — follow + delegation surfaces are org-scoped. Resolve the
+  // parent-org slug from currentOrg (walk up if currentOrg is a sub-org).
+  const { currentOrg, userOrgs } = useOrg();
+  const orgSlug = useMemo(() => {
+    if (!currentOrg) return null;
+    if (currentOrg.parent_org_id) {
+      const parent = userOrgs.find(o => o.id === currentOrg.parent_org_id);
+      return parent?.slug || null;
+    }
+    return currentOrg.slug;
+  }, [currentOrg, userOrgs]);
+
   const [incoming, setIncoming] = useState([]);
   const [outgoing, setOutgoing] = useState([]);
   const [intents, setIntents] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    if (!orgSlug) {
+      setLoading(false);
+      return;
+    }
     try {
       const [inc, out, ints] = await Promise.all([
-        api.get('/api/follows/requests/incoming'),
-        api.get('/api/follows/requests/outgoing'),
-        api.get('/api/delegations/intents'),
+        api.get(`/api/orgs/${orgSlug}/follows/requests/incoming`),
+        api.get(`/api/orgs/${orgSlug}/follows/requests/outgoing`),
+        api.get(`/api/orgs/${orgSlug}/delegations/intents`),
       ]);
       setIncoming(inc);
       setOutgoing(out);
@@ -145,7 +162,7 @@ export default function FollowRequests() {
     } catch { /* ignore */ } finally {
       setLoading(false);
     }
-  }, []);
+  }, [orgSlug]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -172,7 +189,7 @@ export default function FollowRequests() {
           </h2>
           <div className="space-y-3">
             {pendingIncoming.map(r => (
-              <IncomingCard key={r.id} req={r} onResponded={load} />
+              <IncomingCard key={r.id} req={r} onResponded={load} orgSlug={orgSlug} />
             ))}
           </div>
         </section>
@@ -190,6 +207,7 @@ export default function FollowRequests() {
                 req={r}
                 intent={intentsByReqId[r.id]}
                 onCancelled={load}
+                orgSlug={orgSlug}
               />
             ))}
           </div>

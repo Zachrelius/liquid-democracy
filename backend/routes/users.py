@@ -442,6 +442,7 @@ def get_user(
 @router.get("/{user_id}/delegation-tree", response_model=schemas.DelegationGraph)
 def delegation_tree(
     user_id: str,
+    org_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
@@ -459,12 +460,25 @@ def delegation_tree(
         fail the check are returned with a generic display name + ``None``
         username and avatar so the graph topology remains useful for the
         target's self-view but third-party identities don't leak.
+
+    Phase 18 (B2.2): adds optional ``org_id`` query parameter so the
+    response can be scoped to a single org's partition. The
+    ``graph_store`` is partitioned per-org post-Phase-18; without an
+    ``org_id`` the response would only show the legacy/unscoped bucket
+    (effectively empty in production), so the frontend MUST pass
+    ``org_id`` for the user's currently selected org. The endpoint stays
+    at ``/api/users/...`` per spec line 46 — user identity is
+    account-level even though the page rendering it is org-scoped.
+
+    The chain_behavior lookup at the per-edge level also filters on
+    ``org_id`` so the edge's chain_behavior comes from the correct
+    Delegation row when a user has independent delegations per org.
     """
     user = db.get(models.User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    node_ids, edges = graph_store.get_neighborhood(user_id)
+    node_ids, edges = graph_store.get_neighborhood(user_id, org_id=org_id)
 
     # Pre-compute viewer's follow set and the set of public-delegate user
     # IDs across all topics. Both sets are used inline in the per-node
@@ -508,7 +522,7 @@ def delegation_tree(
                 id=uid,
                 display_name=u.display_name,
                 username=u.username,
-                weight=graph_store.compute_voting_weight(uid),
+                weight=graph_store.compute_voting_weight(uid, org_id=org_id),
                 avatar_url=u.avatar_url,
             ))
         else:
@@ -516,7 +530,7 @@ def delegation_tree(
                 id=uid,
                 display_name="Anonymous user",
                 username="anonymous",
-                weight=graph_store.compute_voting_weight(uid),
+                weight=graph_store.compute_voting_weight(uid, org_id=org_id),
                 avatar_url=None,
             ))
 
@@ -526,11 +540,14 @@ def delegation_tree(
         if tid:
             t = db.get(models.Topic, tid)
             topic_name = t.name if t else None
-        d = db.query(models.Delegation).filter(
+        chain_q = db.query(models.Delegation).filter(
             models.Delegation.delegator_id == src,
             models.Delegation.delegate_id == tgt,
             models.Delegation.topic_id == tid,
-        ).first()
+        )
+        if org_id is not None:
+            chain_q = chain_q.filter(models.Delegation.org_id == org_id)
+        d = chain_q.first()
         graph_edges.append(schemas.GraphEdge(
             source=src, target=tgt,
             topic_id=tid, topic_name=topic_name,

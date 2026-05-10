@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import api from '../api';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
+import { urlFor } from '../utils/urls';
 import TopicBadge from '../components/TopicBadge';
 import DelegateModal from '../components/DelegateModal';
 import FollowRequests from '../components/FollowRequests';
@@ -22,13 +24,13 @@ const CHAIN_OPTIONS = [
 
 
 // ── Delegation Row ─────────────────────────────────────────────────────────
-function DelegationRow({ delegation, topic, onChainChange, onChangeDelegate, onRemove, unverified }) {
+function DelegationRow({ delegation, topic, onChainChange, onChangeDelegate, onRemove, unverified, parentSlug }) {
   const [saving, setSaving] = useState(false);
 
   async function handleChainChange(e) {
     setSaving(true);
     try {
-      await api.put('/api/delegations', {
+      await api.put(`/api/orgs/${parentSlug}/delegations`, {
         delegate_id: delegation.delegate_id,
         topic_id: delegation.topic_id ?? null,
         chain_behavior: e.target.value,
@@ -71,13 +73,13 @@ function DelegationRow({ delegation, topic, onChainChange, onChangeDelegate, onR
 }
 
 // ── Mobile Delegation Card ─────────────────────────────────────────────────
-function DelegationCard({ delegation, topic, onChainChange, onChangeDelegate, onRemove, unverified }) {
+function DelegationCard({ delegation, topic, onChainChange, onChangeDelegate, onRemove, unverified, parentSlug }) {
   const [saving, setSaving] = useState(false);
 
   async function handleChainChange(e) {
     setSaving(true);
     try {
-      await api.put('/api/delegations', {
+      await api.put(`/api/orgs/${parentSlug}/delegations`, {
         delegate_id: delegation.delegate_id,
         topic_id: delegation.topic_id ?? null,
         chain_behavior: e.target.value,
@@ -116,10 +118,36 @@ function DelegationCard({ delegation, topic, onChainChange, onChangeDelegate, on
 // ── Main Page ──────────────────────────────────────────────────────────────
 export default function Delegations() {
   const { user } = useAuth();
-  const { currentOrg } = useOrg();
+  // Phase 18 F1 — page is now per-org. currentOrg is URL-derived
+  // (OrgScopedLayout wraps this route, so loading/accessDenied is handled
+  // upstream). The parent slug drives the org-scoped API URL.
+  const { currentOrg, userOrgs } = useOrg();
+  const navigate = useNavigate();
   const toast = useToast();
   const confirm = useConfirm();
   const unverified = !user?.email_verified;
+
+  // Resolve the parent-org slug. Delegations are per-parent-org (sub-org
+  // delegations are still rows on the parent org with sub_org_id set).
+  // If currentOrg is itself a sub-org, walk up to the parent for routing.
+  const parentOrg = useMemo(() => {
+    if (!currentOrg) return null;
+    if (currentOrg.parent_org_id) {
+      return userOrgs.find(o => o.id === currentOrg.parent_org_id) || null;
+    }
+    return currentOrg;
+  }, [currentOrg, userOrgs]);
+  const parentSlug = parentOrg?.slug || null;
+
+  // Filter the org switcher to parent-org members the user belongs to.
+  // The Nav.jsx OrgSwitcher pattern lives in the global header; this
+  // header-local switcher is a small dropdown that just navigates to
+  // /{slug}/delegations on selection.
+  const switchableOrgs = useMemo(
+    () => userOrgs.filter(o => !o.parent_org_id),
+    [userOrgs]
+  );
+
   const [delegations, setDelegations] = useState([]);
   const [precedences, setPrecedences] = useState([]);
   const [topics, setTopics] = useState([]);
@@ -131,21 +159,22 @@ export default function Delegations() {
   const [savingPrec, setSavingPrec] = useState(false);
 
   const load = useCallback(async () => {
+    if (!parentSlug) {
+      setLoading(false);
+      return;
+    }
     try {
-      const topicsUrl = currentOrg
-        ? `/api/orgs/${currentOrg.slug}/topics`
-        : '/api/topics';
       const [dels, precs, tops] = await Promise.all([
-        api.get('/api/delegations'),
-        api.get('/api/delegations/precedence'),
-        api.get(topicsUrl),
+        api.get(`/api/orgs/${parentSlug}/delegations`),
+        api.get(`/api/orgs/${parentSlug}/delegations/precedence`),
+        api.get(`/api/orgs/${parentSlug}/topics`),
       ]);
       setDelegations(dels);
       setPrecedences(precs);
       setTopics(tops);
-      // Fetch network graph (non-blocking)
+      // Fetch network graph (non-blocking) — org-scoped post-Phase-18.
       try {
-        const net = await api.get('/api/delegations/network');
+        const net = await api.get(`/api/orgs/${parentSlug}/delegations/network`);
         setNetwork(net);
       } catch {/* ignore */}
     } catch (e) {
@@ -153,9 +182,17 @@ export default function Delegations() {
     } finally {
       setLoading(false);
     }
-  }, [currentOrg]);
+  }, [parentSlug]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Phase 18 F1 — defensive redirect: if the wrapper somehow renders us
+  // without a current org (multi-org user without selection), bounce to
+  // /orgs. In normal routing OrgScopedLayout already handles loading +
+  // accessDenied, so this is a belt-and-suspenders guard.
+  if (!currentOrg) {
+    return <Navigate to="/orgs" replace />;
+  }
 
   const topicMap = Object.fromEntries(topics.map(t => [t.id, t]));
 
@@ -177,7 +214,7 @@ export default function Delegations() {
     });
     if (!ok) return;
     try {
-      await api.delete(`/api/delegations/${topicId}`);
+      await api.delete(`/api/orgs/${parentSlug}/delegations/${topicId}`);
       toast.success('Delegation removed');
       load();
     } catch (e) {
@@ -198,7 +235,7 @@ export default function Delegations() {
     setPrecedences(items);
     setSavingPrec(true);
     try {
-      await api.put('/api/delegations/precedence', {
+      await api.put(`/api/orgs/${parentSlug}/delegations/precedence`, {
         ordered_topic_ids: items.map(p => p.topic_id),
       });
     } catch (e) {
@@ -218,7 +255,35 @@ export default function Delegations() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
-      <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">My Delegations</h1>
+      {/* Phase 18 F1 — header reflects per-org scoping. The org-name
+          subhead reminds the viewer that delegations on this page apply
+          only within {currentOrg.name}; multi-org users get a small
+          dropdown to switch between their orgs without leaving. */}
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">My Delegations</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Your delegation network in <span className="font-medium text-gray-700">{parentOrg?.name || currentOrg.name}</span>
+          </p>
+        </div>
+        {switchableOrgs.length > 1 && (
+          <label className="text-xs text-gray-500 flex items-center gap-2">
+            <span>Org:</span>
+            <select
+              value={parentSlug || ''}
+              onChange={(e) => {
+                const next = switchableOrgs.find(o => o.slug === e.target.value);
+                if (next) navigate(urlFor(next, 'delegations'));
+              }}
+              className="text-xs border border-gray-200 rounded-lg px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-[var(--brand-accent)]"
+            >
+              {switchableOrgs.map(o => (
+                <option key={o.id} value={o.slug}>{o.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
 
       {unverified && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
@@ -302,6 +367,7 @@ export default function Delegations() {
                   onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.name, existingDelegation: del })}
                   onRemove={handleRemove}
                   unverified={unverified}
+                  parentSlug={parentSlug}
                 />
               ))}
               {undelegatedTopics.map(t => (
@@ -338,6 +404,7 @@ export default function Delegations() {
               onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.name, existingDelegation: del })}
               onRemove={handleRemove}
               unverified={unverified}
+              parentSlug={parentSlug}
             />
           ))}
           {undelegatedTopics.map(t => (
@@ -411,7 +478,7 @@ export default function Delegations() {
             onClick={() => setNetworkOpen(v => !v)}
             className="w-full flex items-center justify-between px-5 py-3 text-sm font-semibold text-gray-500 uppercase tracking-wide hover:bg-gray-50 transition-colors"
           >
-            <span>Your Delegation Network</span>
+            <span>Your Delegation Network in {parentOrg?.name || currentOrg.name}</span>
             <span className="text-gray-400 text-xs font-normal normal-case">
               {networkOpen ? 'Hide' : 'Show'}
             </span>

@@ -1,4 +1,13 @@
-"""Tests for the delegation intent system (Phase 3b backend)."""
+"""Tests for the delegation intent system (Phase 3b backend).
+
+Phase 18 update: every relationship-table constructor (FollowRequest,
+FollowRelationship, DelegationIntent) now threads ``org_id`` so the rows
+match the post-Phase-18 schema shape (B1b will flip ``org_id`` to NOT
+NULL, at which point any test still passing NULL would fail at insert
+time). The helpers carry an optional ``org_id`` so tests that don't care
+about org context can leave it at ``None`` for the 18a transitional
+window.
+"""
 
 from datetime import datetime, timedelta, timezone
 
@@ -16,18 +25,20 @@ def _now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _make_follow_request(db, requester, target, status="pending"):
+def _make_follow_request(db, requester, target, status="pending", *, org_id=None):
     freq = models.FollowRequest(
-        requester_id=requester.id, target_id=target.id, status=status
+        requester_id=requester.id, target_id=target.id, status=status,
+        org_id=org_id,
     )
     db.add(freq)
     db.flush()
     return freq
 
 
-def _make_follow_rel(db, follower, followed, perm="delegation_allowed"):
+def _make_follow_rel(db, follower, followed, perm="delegation_allowed", *, org_id=None):
     rel = models.FollowRelationship(
-        follower_id=follower.id, followed_id=followed.id, permission_level=perm
+        follower_id=follower.id, followed_id=followed.id,
+        permission_level=perm, org_id=org_id,
     )
     db.add(rel)
     db.flush()
@@ -39,6 +50,8 @@ def _make_intent(db, delegator, delegate, topic, freq, **kwargs):
         delegator_id=delegator.id,
         delegate_id=delegate.id,
         topic_id=topic.id if topic else None,
+        org_id=kwargs.get("org_id"),
+        sub_org_id=kwargs.get("sub_org_id"),
         chain_behavior=kwargs.get("chain_behavior", "accept_sub"),
         follow_request_id=freq.id,
         status="pending",

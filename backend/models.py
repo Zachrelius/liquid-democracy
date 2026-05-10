@@ -481,11 +481,30 @@ class ProposalTopic(Base):
 
 class Delegation(Base):
     __tablename__ = "delegations"
-    __table_args__ = (UniqueConstraint("delegator_id", "topic_id", name="uq_delegation_delegator_topic"),)
+    # Phase 18 (org-scoping retrofit): the unique constraint now includes
+    # ``org_id`` + ``sub_org_id`` so a user can have one global-per-org
+    # delegation per org (and one global-per-sub-org per sub-org). NULL
+    # treatment in PG/SQLite is "distinct," so the constraint allows the
+    # NULL/NULL/NULL row shape (org-wide global) once per (delegator, org).
+    __table_args__ = (
+        UniqueConstraint(
+            "delegator_id", "org_id", "sub_org_id", "topic_id",
+            name="uq_delegation_delegator_org_subor_topic",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     delegator_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     delegate_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
+    # Phase 18: nullable in 18a (backfill running), flipped to NOT NULL in
+    # 18b once the backfill has been verified.
+    org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=True, index=True,
+    )
+    # Phase 18 (D4): sub-org scope is optional and stays nullable post-18b.
+    sub_org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=True, index=True,
+    )
     topic_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("topics.id"), nullable=True, index=True)
     chain_behavior: Mapped[str] = mapped_column(
         Enum("accept_sub", "revert_direct", "abstain", name="chain_behavior"),
@@ -625,11 +644,26 @@ class FollowRequest(Base):
     Kept after approval/denial for audit purposes.
     """
     __tablename__ = "follow_requests"
-    __table_args__ = (UniqueConstraint("requester_id", "target_id", name="uq_follow_request_requester_target"),)
+    # Phase 18 follow-up (1cc8f3f27717): unique key includes ``org_id`` so
+    # the same pair can have separate per-org follow requests. NULL/NULL
+    # rows during the 18a backfill window are distinct under PG/SQLite
+    # NULL semantics.
+    __table_args__ = (
+        UniqueConstraint(
+            "requester_id", "target_id", "org_id",
+            name="uq_follow_request_requester_target_org",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     requester_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     target_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
+    # Phase 18 (D2): follow requests are now org-scoped to prevent
+    # delegation_allowed approvals leaking cross-org. Nullable in 18a;
+    # NOT NULL in 18b once backfill is verified.
+    org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=True, index=True,
+    )
     status: Mapped[str] = mapped_column(
         Enum("pending", "approved", "denied", name="follow_request_status"),
         nullable=False,
@@ -657,11 +691,31 @@ class FollowRelationship(Base):
     or automatically when target has auto_approve_* policy.
     """
     __tablename__ = "follow_relationships"
-    __table_args__ = (UniqueConstraint("follower_id", "followed_id", name="uq_follow_relationship"),)
+    # Phase 18 follow-up (1cc8f3f27717): unique key includes ``org_id`` so
+    # the same pair can co-exist as separate per-org follow rows (the D2
+    # back-door-leak fix). NULL/NULL rows during the 18a backfill window
+    # are distinct under PG/SQLite NULL semantics; once 18b lands and
+    # ``org_id`` is NOT NULL, the constraint is fully meaningful.
+    __table_args__ = (
+        UniqueConstraint(
+            "follower_id", "followed_id", "org_id",
+            name="uq_follow_relationship_org",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     follower_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     followed_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
+    # Phase 18 (D2): follows are now org-scoped to prevent the cross-org
+    # delegation_allowed back-door. Nullable in 18a; NOT NULL in 18b once
+    # backfill is verified. The (follower_id, followed_id) unique constraint
+    # is intentionally LEFT in place for 18a — the production "one
+    # account-level follow per pair" shape is preserved during backfill;
+    # the next pass that exercises per-org follows on the write side will
+    # need to revisit the constraint shape (e.g., add org_id to it).
+    org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=True, index=True,
+    )
     permission_level: Mapped[str] = mapped_column(
         Enum("view_only", "delegation_allowed", name="follow_permission_level"),
         nullable=False,
@@ -743,9 +797,15 @@ class DelegationIntent(Base):
     is approved with delegation_allowed permission.
     """
     __tablename__ = "delegation_intents"
+    # Phase 18: unique constraint extended with org_id + sub_org_id to
+    # match the new Delegation table shape. NULL/NULL/NULL is allowed by
+    # PG/SQLite distinct-NULL semantics, so the constraint only catches
+    # exact (delegator, delegate, org, sub_org, topic) duplicates.
     __table_args__ = (
-        UniqueConstraint("delegator_id", "delegate_id", "topic_id",
-                         name="uq_delegation_intent"),
+        UniqueConstraint(
+            "delegator_id", "delegate_id", "org_id", "sub_org_id", "topic_id",
+            name="uq_delegation_intent_org_subor",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
@@ -754,6 +814,13 @@ class DelegationIntent(Base):
     )
     delegate_id: Mapped[str] = mapped_column(
         String, ForeignKey("users.id"), nullable=False, index=True
+    )
+    # Phase 18: nullable in 18a (backfill running), NOT NULL in 18b.
+    org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=True, index=True,
+    )
+    sub_org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=True, index=True,
     )
     topic_id: Mapped[Optional[str]] = mapped_column(
         String, ForeignKey("topics.id"), nullable=True

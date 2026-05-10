@@ -231,16 +231,32 @@ def set_delegation(
     delegate: models.User,
     topic: models.Topic | None = None,
     chain_behavior: str = "accept_sub",
+    *,
+    org_id: str | None = None,
 ) -> models.Delegation:
+    """Phase 18: optional ``org_id`` parameter so newer tests can thread
+    org context. When ``org_id`` is None (legacy callers in the 18a
+    transitional window) the row lands with ``org_id IS NULL`` — that's
+    OK until B1b flips the NOT NULL constraint. ``org_id`` is also
+    inferred from the topic when topic is provided and ``org_id`` is
+    not explicitly set.
+    """
+    inferred = org_id
+    if inferred is None and topic is not None:
+        inferred = getattr(topic, "org_id", None)
     d = models.Delegation(
         delegator_id=delegator.id,
         delegate_id=delegate.id,
+        org_id=inferred,
         topic_id=topic.id if topic else None,
         chain_behavior=chain_behavior,
     )
     db.add(d)
     db.flush()
-    store.add_delegation(delegator.id, delegate.id, topic.id if topic else None)
+    store.add_delegation(
+        delegator.id, delegate.id, topic.id if topic else None,
+        org_id=inferred,
+    )
     return d
 
 

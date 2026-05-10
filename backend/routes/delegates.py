@@ -15,16 +15,41 @@ from database import get_db
 router = APIRouter(prefix="/api/delegates", tags=["delegates"])
 
 
-def _delegation_count(db: Session, user_id: str, topic_id: str) -> int:
-    return db.query(models.Delegation).filter(
+def _delegation_count(
+    db: Session,
+    user_id: str,
+    topic_id: str,
+    org_id: Optional[str] = None,
+) -> int:
+    """Count delegations to ``user_id`` on ``topic_id``.
+
+    Phase 18 (B2.2): adds an optional ``org_id`` filter so the public
+    delegate's count reflects only delegations within the org scope of
+    the corresponding ``DelegateProfile``. Pre-fix, a delegate active in
+    two orgs got their counts summed across orgs, inflating "popular
+    delegate" numbers (diagnostic §3 row for ``routes/delegates.py:19``).
+    The optional default keeps any future caller that legitimately wants
+    a cross-org count working.
+    """
+    q = db.query(models.Delegation).filter(
         models.Delegation.delegate_id == user_id,
         models.Delegation.topic_id == topic_id,
-    ).count()
+    )
+    if org_id is not None:
+        q = q.filter(models.Delegation.org_id == org_id)
+    return q.count()
 
 
 def _build_public_delegate(db: Session, user: models.User) -> schemas.PublicDelegateOut:
     profiles = [p for p in user.delegate_profiles if p.is_active]
-    counts = {p.topic_id: _delegation_count(db, user.id, p.topic_id) for p in profiles}
+    # Phase 18: pass each profile's ``org_id`` through so the per-topic
+    # counts honor the profile's org scope. Profiles with ``org_id IS
+    # NULL`` (legacy data, pre-Phase-4c) fall through to the no-filter
+    # path and behave as before.
+    counts = {
+        p.topic_id: _delegation_count(db, user.id, p.topic_id, org_id=p.org_id)
+        for p in profiles
+    }
     return schemas.PublicDelegateOut(
         user=schemas.UserSearchResult(
             id=user.id,

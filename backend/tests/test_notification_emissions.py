@@ -683,13 +683,22 @@ def test_delegate_application_decided_negative(client, test_db):
 # ---------------------------------------------------------------------------
 
 def test_follow_requested_emits_to_target(client, test_db):
+    """Phase 18 (D3): follow surface moved to /api/orgs/{slug}/follows/*.
+    Both parties must be members of the org for the org-scoped route to
+    accept the request. The notification itself remains account-level
+    (org_id IS NULL) — Phase 18 doesn't refactor the notification surface
+    per routes/follows.py.
+    """
+    org = _make_org(test_db, "fr_org")
     requester = _make_user(test_db, "fr_req")
     target = _make_user(test_db, "fr_target")
+    make_org_membership(test_db, org_id=org.id, user_id=requester.id, role="member")
+    make_org_membership(test_db, org_id=org.id, user_id=target.id, role="member")
     _opt_in(test_db, target, "follow.requested")
     test_db.commit()
 
     resp = client.post(
-        "/api/follows/request",
+        f"/api/orgs/{org.slug}/follows/request",
         json={"target_id": target.id, "message": "hi"},
         headers=_auth(requester),
     )
@@ -701,12 +710,15 @@ def test_follow_requested_emits_to_target(client, test_db):
 
 
 def test_follow_requested_negative(client, test_db):
+    org = _make_org(test_db, "frn_org")
     requester = _make_user(test_db, "frn_req")
     target = _make_user(test_db, "frn_target")
+    make_org_membership(test_db, org_id=org.id, user_id=requester.id, role="member")
+    make_org_membership(test_db, org_id=org.id, user_id=target.id, role="member")
     test_db.commit()
 
     resp = client.post(
-        "/api/follows/request",
+        f"/api/orgs/{org.slug}/follows/request",
         json={"target_id": target.id, "message": "hi"},
         headers=_auth(requester),
     )
@@ -716,13 +728,16 @@ def test_follow_requested_negative(client, test_db):
 
 
 def test_follow_approved_emits_to_requester_on_respond(client, test_db):
+    org = _make_org(test_db, "fap_org")
     requester = _make_user(test_db, "fap_req")
     target = _make_user(test_db, "fap_target")
+    make_org_membership(test_db, org_id=org.id, user_id=requester.id, role="member")
+    make_org_membership(test_db, org_id=org.id, user_id=target.id, role="member")
     test_db.commit()
 
     # Create a pending request first (without opt-in so requested doesn't notify)
     resp = client.post(
-        "/api/follows/request",
+        f"/api/orgs/{org.slug}/follows/request",
         json={"target_id": target.id, "message": "hi"},
         headers=_auth(requester),
     )
@@ -733,7 +748,7 @@ def test_follow_approved_emits_to_requester_on_respond(client, test_db):
     test_db.commit()
 
     resp2 = client.put(
-        f"/api/follows/requests/{freq_id}/respond",
+        f"/api/orgs/{org.slug}/follows/requests/{freq_id}/respond",
         json={"status": "approved", "permission_level": "view_only"},
         headers=_auth(target),
     )
@@ -744,16 +759,19 @@ def test_follow_approved_emits_to_requester_on_respond(client, test_db):
 
 
 def test_follow_approved_emits_on_auto_approve(client, test_db):
+    org = _make_org(test_db, "fauto_org")
     requester = _make_user(test_db, "fauto_req")
     # auto-approve target
     target = _make_user(
         test_db, "fauto_target", default_follow_policy="auto_approve_view",
     )
+    make_org_membership(test_db, org_id=org.id, user_id=requester.id, role="member")
+    make_org_membership(test_db, org_id=org.id, user_id=target.id, role="member")
     _opt_in(test_db, requester, "follow.approved")
     test_db.commit()
 
     resp = client.post(
-        "/api/follows/request",
+        f"/api/orgs/{org.slug}/follows/request",
         json={"target_id": target.id},
         headers=_auth(requester),
     )
@@ -764,18 +782,21 @@ def test_follow_approved_emits_on_auto_approve(client, test_db):
 
 
 def test_follow_approved_negative(client, test_db):
+    org = _make_org(test_db, "fapn_org")
     requester = _make_user(test_db, "fapn_req")
     target = _make_user(test_db, "fapn_target")
+    make_org_membership(test_db, org_id=org.id, user_id=requester.id, role="member")
+    make_org_membership(test_db, org_id=org.id, user_id=target.id, role="member")
     test_db.commit()
 
     resp = client.post(
-        "/api/follows/request",
+        f"/api/orgs/{org.slug}/follows/request",
         json={"target_id": target.id},
         headers=_auth(requester),
     )
     freq_id = resp.json()["id"]
     resp2 = client.put(
-        f"/api/follows/requests/{freq_id}/respond",
+        f"/api/orgs/{org.slug}/follows/requests/{freq_id}/respond",
         json={"status": "approved", "permission_level": "view_only"},
         headers=_auth(target),
     )
