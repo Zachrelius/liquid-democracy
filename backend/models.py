@@ -644,7 +644,16 @@ class FollowRequest(Base):
     Kept after approval/denial for audit purposes.
     """
     __tablename__ = "follow_requests"
-    __table_args__ = (UniqueConstraint("requester_id", "target_id", name="uq_follow_request_requester_target"),)
+    # Phase 18 follow-up (1cc8f3f27717): unique key includes ``org_id`` so
+    # the same pair can have separate per-org follow requests. NULL/NULL
+    # rows during the 18a backfill window are distinct under PG/SQLite
+    # NULL semantics.
+    __table_args__ = (
+        UniqueConstraint(
+            "requester_id", "target_id", "org_id",
+            name="uq_follow_request_requester_target_org",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     requester_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
@@ -682,7 +691,17 @@ class FollowRelationship(Base):
     or automatically when target has auto_approve_* policy.
     """
     __tablename__ = "follow_relationships"
-    __table_args__ = (UniqueConstraint("follower_id", "followed_id", name="uq_follow_relationship"),)
+    # Phase 18 follow-up (1cc8f3f27717): unique key includes ``org_id`` so
+    # the same pair can co-exist as separate per-org follow rows (the D2
+    # back-door-leak fix). NULL/NULL rows during the 18a backfill window
+    # are distinct under PG/SQLite NULL semantics; once 18b lands and
+    # ``org_id`` is NOT NULL, the constraint is fully meaningful.
+    __table_args__ = (
+        UniqueConstraint(
+            "follower_id", "followed_id", "org_id",
+            name="uq_follow_relationship_org",
+        ),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     follower_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
