@@ -2644,3 +2644,182 @@ Three small infrastructure items in a single-agent pass: real `pg_smoke.py --mod
 ### Pass-summary
 
 **Phase 18.5 shipped clean to production with three small infrastructure items: a real `pg_smoke.py --mode actual-upgrade` flag (closing the long-running Phase 15 G5 gap that two prior passes referenced), a targeted fix for the DELETE intent 503 bug (FastAPI implicit-None-on-204 quirk → explicit `Response(status_code=204)`), and a CLAUDE.md update recording the Phase 19+ merged spec+dispatch convention.** Backend test count 1105 → 1108 (+3 net for the new regression test file). No migrations, no frontend changes — backend-only deploy (poll script's bundle-hash heuristic timed out as expected; deploy verified via Railway status SUCCESS + RUNNING). The Phase 15 G5 escalation in the audit doc is now RESOLVED. **Phase 19's pre-merge gate set can reference the actual-upgrade gate with confidence going forward.** Single-agent pass, ~12 min agent runtime, ~60-90 min total wall-clock per spec estimate. The spec/reality verification discipline is now captured in audit lessons: when a spec writes "use the X gate," verify X exists in the codebase before downstream specs rely on it.
+
+---
+
+## Phase 19 — Public Delegate Pages (shipped 2026-05-10 after revert + hotfix; live on master `cc2b552`)
+
+The full public delegate identity surface: per-org delegate profiles with markdown intro, three-state per-topic visibility (`private` / `public` / `public_accepting`), position statements per topic, per-vote rationale via new `DelegateVoteRationale` table, page-visibility ladder (`private` / `private_delegators` / derived `public`), approval workflow gated by `delegate_application.approve` permission, browse page sorted by delegation_count + recent_rationale_ratio, public read URL pattern `/{slug}/delegates/{handle_or_username}`, hard-revert cascade per D15 (public-origin delegations only — private-origin via DelegationIntent preserved).
+
+**Pass also included a prod incident.** First merge (`7ede628`) crashed prod backend for ~20 min with `UndefinedObject: type "delegate_profile_visibility" does not exist`. Lead reverted (`0573664`) to restore service, diagnosed (FastAPI's `batch_alter_table.add_column` doesn't auto-emit `CREATE TYPE` on PG), applied hotfix (`2941aa0` — explicit `delegate_profile_visibility_enum.create(bind, checkfirst=True)` before the ADD COLUMN that uses it), re-merged via `cc2b552`. Prod recovered + re-deployed cleanly post-hotfix. **Same failure shape as Phase 13's boolean-default datatype mismatch — and the actual-upgrade gate (which Phase 18.5 promoted specifically to catch this class of bug) didn't catch it because of a structural blind spot in its `_create_all` bootstrap. Logged as audit Item 54, Tier 1.**
+
+**Cluster B — Backend (commits `ab1b9fe`, `faecd66`, `6d14509`, `6340255`, `6bd2498`, `11fd326`, `89f95ea`, `83bab63`):**
+
+- **B1 — Schema migration** `47eb5d38eb58_phase_19_public_delegate_pages.py` (down_revision `e9419ee5906f`, Phase 18b's NOT NULL flip). Adds `OrgDelegateProfile` table, `DelegateProfile.{visibility, position_statement, public_accepting_*}` columns, `User.delegate_handle`, `DelegateVoteRationale` table. Backfill: existing `DelegateProfile` rows default to `visibility='public_accepting'` (D8 backwards compat); per-user-org `OrgDelegateProfile` rows created with `page_visibility='private'` (effective `'public'` because the user has `public_accepting` topics). Hotfix `2941aa0`: explicit `delegate_profile_visibility_enum.create(bind, checkfirst=True)` at the top of `upgrade()` before any `batch_op.add_column` references it. `org_delegate_page_visibility` (used in `op.create_table`) auto-creates reliably and doesn't need a pre-create.
+- **B2 — Models + relationships** including the load-bearing `OrgDelegateProfile.effective_page_visibility(self, db)` helper — single source of truth for visibility checks across browse / page / rationale endpoints.
+- **B3 — Lifecycle endpoints** under `/api/orgs/{slug}/delegate-profile/*` (8 endpoints: get/patch/patch-topic/submit-public-accepting/approve/deny/revert-to-public/revert-to-private). Hard-revert per D15: `_revoke_public_origin_delegations_on_topic` helper — single source for the public-origin filter. **Spec/reality reconciliation:** D15 referenced `Delegation.delegation_intent_id` but the column doesn't exist on the model (Wave 1's migration didn't add it). Backend Agent #2 substituted **DelegationIntent-row-existence-based detection** (a delegation is private-origin iff an activated `DelegationIntent` row matches its `(delegator, delegate, org, sub_org, topic)` shape). Works correctly; logged as audit Item 53 — structurally fragile if intent rows ever get cleanup-deleted.
+- **B4 — Browse endpoint** `GET /api/orgs/{slug}/delegates` with offset-based pagination + topic filter + activity-window filter. Default sort: `delegation_count DESC, recent_rationale_ratio DESC`. Permission: org members + non-members for non-`invite_only_secret` orgs.
+- **B5 — Test seed updates**: 3 demo personas (`dr_chen`/`drchen`, `env_emma`/`emmagreen`, `econ_bob`/`bobeconomist`) with mixed visibility states.
+- **B6 — Vote rationale CRUD** (`/api/votes/{id}/rationale` GET/PUT/DELETE) + `can_view_vote_rationale(viewer, vote, db)` helper centralized in `permissions.py`.
+- **B7 — Tests:** `backend/tests/test_phase_19_public_delegate_pages.py` (1955 lines, 67 tests across 14 classes). 64 pass / 3 skipped (skips are blocked on the same Item 53 column gap; will activate when `Delegation.delegation_intent_id` is added). Phase 17's "test fixtures must mirror production storage shape" lesson applied: real `models.Vote(ballot=..., user_id=...)` rows + real `models.OrgMembership` rows; no `SimpleNamespace` shims.
+- **4 new notification events** (`delegate_application_submitted` / `_approved` / `_denied` / `delegation_revoked_by_delegate`) registered in `EVENT_REGISTRY`. `test_get_registry_returns_13_entries` updated to derive count from `len(EVENT_REGISTRY)` (commit `6bd2498`).
+- **Backend gap-fill (commit `83bab63`):** added `GET /api/orgs/{slug}/delegates/{handle_or_username}` (the public-read endpoint F2 needed). Closes D12 for transparent-only delegates (users with `public` topics but no `public_accepting` topics — they're not on browse per D11 but their page should be reachable via direct URL). Auth via `effective_page_visibility`: anonymous gets `public` pages, approved followers also get `private_delegators`, everyone else gets 404. Surfaced by frontend agent as the most load-bearing of 5 API gaps; resolved inline pre-merge.
+
+**Backend test count:** 1108 → 1174 (+66 net); 3 skipped (blocked on Item 53).
+
+**Cluster F — Frontend (commits `f43fdb4`, `4247500`, `be19911`):**
+
+- **F1: `Delegations.jsx` rebuilt around per-org concept**, with the load-bearing **hard-revert confirmation dialog** (named delegators + reversibility framing + soft-alternative button + topic-name typing for >5 affected). Hard-revert dialog has approximate copy because of audit Item 50 (no origin info on the personal-network endpoint). Frontend falls back to all-incoming-delegators with a softening note.
+- **F2: Public delegate page** `/{slug}/delegates/{handle_or_username}` renders both `public` and `public_accepting` topic sections per D12.
+- **F3: Vote rationale UI** in ProposalDetail.jsx via new `MyVoteRationaleBox` component.
+- **F4: Browse page** `/{slug}/delegates`. Filters + sort. Cards link to F2.
+- **F5: Approver dashboard** `/{slug}/delegate-applications`. Per-topic queue with approve / deny (required comment).
+- **F6: Private-delegator viewer count** integrated via Phase 18 follow-org-scoping.
+- **F4 frontend tests** still DEFERRED per Phase 17 audit Item 42 (no test framework). Browser verification is the primary check.
+
+**Bundle delta:** 362.24 → 374.39 kB gzipped (+12.15 kB across F-cluster + help page).
+
+**Cluster D — Documentation (commits `09b2eb2`-style — D1 PublicDelegatesHelp.jsx + D2 SECURITY_REVIEW + D3 audit doc + D4 roadmap + G1 reserved_slugs + G2 deprecate /api/delegates/public):**
+
+- New help page `frontend/src/pages/PublicDelegatesHelp.jsx` covering both delegator + prospective-delegate sides.
+- `SECURITY_REVIEW.md` Phase 19 section: per-topic visibility model + page-visibility ladder + approval workflow + vote rationale visibility logic + D15 hard-revert cascade behavior + follower-scoped visibility gating.
+- `docs/tech_debt_audit_2026-05.md`: Phase 19 closeout edit-history entry + Items 48-55 (5 frontend-API-gap items + 1 spec-reality reconciliation + 2 incident-derived items).
+- `future_improvements_roadmap.md`: Phase 19 marked ✅ Complete.
+- `backend/reserved_slugs.py`: added `'delegates'` to prevent handle collision with browse URL.
+- `routes/delegates.py::list_public_delegates`: deprecated marker on the legacy `/api/delegates/public` endpoint (full removal in a future pass per D17 Cluster G2).
+
+### Phase 19 incident details (Item 54 deep-dive)
+
+**What broke:** Migration `47eb5d38eb58` did `ALTER TABLE delegate_profiles ADD COLUMN visibility delegate_profile_visibility DEFAULT 'public_accepting' NOT NULL` without first creating the PG ENUM type. SQLAlchemy's `sa.Enum(...)` inside `batch_op.add_column` doesn't auto-emit `CREATE TYPE` on PG — only `op.create_table` does. The other Phase 19 enum (`org_delegate_page_visibility` for the new `org_delegate_profiles` table) was inside `op.create_table`, so it auto-created and worked. The one inside `batch_op.add_column` (for the existing `delegate_profiles` table) didn't.
+
+**Why local gates passed:**
+- Backend pytest: 1174/1174 pass on SQLite, which doesn't have native ENUMs (sa.Enum becomes CHECK-constrained VARCHAR). The PG-only bug was invisible.
+- PG smoke `--mode upgrade --prior-revision e9419ee5906f`: PASS. This mode bootstraps via `_create_all` which creates today's full schema (including the new column + enum type), then stamps prior + runs upgrade. The migration's `_maybe_add_column` guard skips the ADD path entirely → migration "succeeds" by no-op'ing.
+- PG smoke `--mode actual-upgrade --prior-revision e9419ee5906f`: PASS. Same `_create_all` bootstrap → same blind spot. **This was the gate Phase 18.5 promoted specifically to catch this class of bug** — it doesn't, because of the bootstrap-via-create_all pattern.
+- `bash start.sh`: PASS on local SQLite (already at head from prior runs).
+- W-START-CHECK: same.
+
+**What would have caught it:** the prod-snapshot Docker round-trip pattern Phase 18 used (pg_dump from prod → restore to local PG18 → `alembic upgrade head`). The migration's ADD COLUMN code path against a real prior-schema PG would have raised UndefinedObject the same way prod did. Phase 18 used this pattern as the load-bearing verification; Phase 19 dropped it (assumed the actual-upgrade gate was sufficient post-Phase-18.5). The lesson: **the prod-snapshot Docker round-trip is still load-bearing for migration passes that touch existing tables, until the actual-upgrade gate's structural blind spot is fixed.**
+
+**Recovery sequence:**
+1. Bundle flipped at ~5 min mark; backend stayed 502 (poll script kept reporting `backend_ok=False`).
+2. After 12 min the lead caught the timeout, immediately checked `railway logs --service backend` → found the UndefinedObject traceback within 30 sec.
+3. `git revert -m 1 7ede628 --no-edit` → push → ~5 min for Railway to redeploy the prior backend → service restored.
+4. Hotfix written + tested against prod-snapshot Docker round-trip (which DID reproduce the original crash without the fix and DID succeed with the fix).
+5. `git revert 0573664` (revert-the-revert to restore the Phase 19 file changes) + `git merge --no-ff phase-19/...` (incorporate the hotfix commit) → push → re-deploy → success.
+
+**Total downtime: ~20 min** (from poll-timeout-detection through revert deploy completion). Friend pilot impact minimal (single-user). For a real pilot org this would have been more material — surfaces the Tier 1 priority of fixing Item 54 before another migration-heavy pass.
+
+### Phase 19 pre-merge gate results (corrected post-hotfix)
+
+- **Backend tests: 1108 → 1174 (+66 net)** + 3 skipped (blocked on Item 53). Full pytest in 3:31.
+- **PG smoke `--mode both`: PASS.**
+- **PG smoke `--mode actual-upgrade --prior-revision e9419ee5906f`: PASS** — but the gate's structural blind spot (Item 54) means a PASS here didn't catch the real bug.
+- **W-START-CHECK + bash start.sh: PASS.**
+- **W-OBSERVABILITY-CHECK: PASS.**
+- **Frontend build: clean** (no Tailwind warnings, bundle 374.39 kB gzipped).
+- **File-count: 31 files, +7667/-31** (across the original Phase 19 work; the hotfix added 23 lines on top).
+- **Prod-snapshot Docker round-trip (added post-incident as the actual load-bearing verification):** PASS with the hotfix. Original code without the hotfix correctly reproduced the prod crash. This is now the standing recommendation for migration-heavy passes (per Item 54).
+
+### Production deploy sequence
+
+- **First deploy (`7ede628`):** backend crashed with UndefinedObject; ~20 min downtime.
+- **Revert (`0573664`):** service restored.
+- **Hotfix merged + re-deployed (`cc2b552`):** bundle `index-DLTjB_mS.js`, alembic head `47eb5d38eb58`, both ENUM types created, 4 OrgDelegateProfiles + 6 DelegateProfiles + 2 DelegateVoteRationales backfilled. Health 200. Smoke 5/5 PASS (one transient 502 during initial deploy restart, cleared on retry).
+
+### Phase 19 commit list (on master via merge `cc2b552`)
+
+- `ab1b9fe` Phase 19 B1: schema migration
+- `faecd66` Phase 19 B2: models + relationships + effective_page_visibility helper
+- `6d14509` Phase 19 B5: seed_data.py — demo public delegates
+- `b577c8d`-style Phase 19 B3 + B6: lifecycle endpoints + vote rationale CRUD + 4 new notification events (commit `6340255`)
+- `89f95ea` Phase 19 B7: test_phase_19_public_delegate_pages.py — 67 tests across 14 classes
+- `11fd326` Phase 19 B4: GET /api/orgs/{slug}/delegates browse endpoint
+- `6bd2498` Phase 19 D-fix: derive notification-registry count from EVENT_REGISTRY
+- `f43fdb4` Phase 19 F1+F2+F4+F5: public delegate pages + browse + approval UI
+- `4247500` Phase 19 F3: vote-rationale composer in ProposalDetail
+- `83bab63` Phase 19 backend gap-fill: public read endpoint for delegate page (D12)
+- `be19911` Phase 19 D1: PublicDelegatesHelp.jsx help page + route registration
+- `1121222` Phase 19 D2 + D3 + D4: SECURITY_REVIEW + audit doc Items 48-53 + roadmap mark Phase 19 Complete
+- `f9ee5eb` Phase 19 G1 + G2: reserved_slugs.delegates + deprecate /api/delegates/public
+- `7ede628` Merge phase-19 (FIRST attempt — caused the outage)
+- `0573664` Revert "Merge phase-19" (restore service)
+- `2941aa0` Phase 19 hotfix: explicit CREATE TYPE for delegate_profile_visibility on PG
+- `f15dd89` Reapply "Merge phase-19" (revert-the-revert)
+- `cc2b552` Re-merge phase-19 with hotfix (final live state)
+
+### Browser verification (`phase19_qa_report.md`)
+
+QA agent dispatched post-deploy on the cc2b552 build. **4 PASS / 0 FAIL / 2 DEFERRED + 1 PASS-by-source.**
+
+**Verified live:**
+- F4 browse: 3 delegates listed (Emma 21, Dr. Chen 17, Raj 1); econ_bob correctly absent. Topic filter works; sort works.
+- F2 public page: drchen header/intro/topics + "Delegate to" CTAs render. **Critically: emmagreen's page renders BOTH "Transparent only" Economy AND "Accepting delegation" Environment per D12.** This is the load-bearing visual confirmation that the public-read endpoint gap-fill (Item 48 → `83bab63`) closed correctly.
+- F1 own page: PASS structurally; hard-revert dialog DEFERRED (admin has no public topics with delegators to trigger it; bundle source confirms full wiring including soft-alternative + reversibility framing).
+- F5 approver dashboard: PASS (loads + permission gate works + Approve/Deny present with required comment).
+- URL clean-break: 3 new endpoints all 200.
+
+**One minor bug found:** F4 delegate card in-page click doesn't navigate to F2 (direct URL works). Likely React Router setup issue. Logged as audit Item 55, Tier 3.
+
+**QA-deferred:** F1 hard-revert dialog live trigger (no public topics for admin); F3 rationale write live (admin has no votes — would mutate seed counts). Both PASS-by-source; both queued for next session if a test account with appropriate state is available.
+
+### Conceptual decisions (D1-D15) — all hold
+
+- **D1 (per-topic visibility enum):** Implemented as 3-state stored. **Holds.**
+- **D2 (per-org delegate identity):** New `OrgDelegateProfile` table, per-(user_id, org_id). **Holds.**
+- **D3 (page-visibility ladder, public derived):** `effective_page_visibility(db)` helper enforces. Visual confirmation via F2 across multiple personas. **Holds.**
+- **D4 (vote rationale schema):** New `DelegateVoteRationale` table, one row per vote. **Holds.**
+- **D5 (voting record visibility follows topic visibility):** Tested via `TestVoteRationaleVisibility` class. **Holds.**
+- **D6 (approval workflow):** `delegate_application.approve` permission key (already existed from Phase 12 Stage 1). Approve / deny flows wired with required-comment-on-deny. Auto-approve when org has no approvers (audit log row `delegate_profile.public_accepting_auto_approved`). **Holds.**
+- **D7 (transition behaviors):** Soft revert (`public_accepting → public`) leaves delegations; hard revert (`public/public_accepting → private`) cascades to public-origin delegations only. **Holds with the D15 reconciliation note (private-origin detected via DelegationIntent proxy, not FK column).**
+- **D8 (backwards compat):** Existing `DelegateProfile` rows default `visibility='public_accepting'`. Verified on prod (4 of 6 rows are `public_accepting`; the others are new seed personas in `public` and `private` for testing). **Holds.**
+- **D9 (page_visibility default `private`):** Migration's backfill creates per-(user, org) OrgDelegateProfile with `page_visibility='private'`. **Holds.**
+- **D10 (handle account-level + reserved-slugs):** `User.delegate_handle` unique nullable; URL pattern `/{slug}/delegates/{handle_or_username}`; `'delegates'` added to reserved_slugs. **Holds.**
+- **D11 (browse semantics):** Browse lists only `public_accepting` users; sort by delegation_count + rationale_ratio. **Holds.**
+- **D12 (page renders both public + public_accepting topics):** **Verified live via emmagreen's F2 page rendering both topic sections.** Closure for transparent-only delegates required the gap-fill endpoint (Item 48 → `83bab63`). **Holds.**
+- **D13 (past-vote rationale UI available for any past vote):** Implemented; visibility filters at render time. **Holds.**
+- **D14 (scope discipline):** Out-of-scope items (delegate-to-delegate Q&A, endorsements, AI summaries, etc.) all stayed out. **Holds.**
+- **D15 (hard-revert public-origin only):** Implemented via DelegationIntent-row-existence-based detection (since `Delegation.delegation_intent_id` column doesn't exist — Item 53). 3 skipped tests in `TestHardRevertPreservesPrivateDelegations` will activate when the column is added. **Holds with Item 53 reconciliation.**
+
+### Process notes
+
+1. **Multi-agent staging discipline held** through 5+ parallel agent dispatches (Wave 1, Wave 2 + Wave 3 parallel, Frontend, Cluster D+G). Hard disjoint file scopes prevented commit-attribution races.
+
+2. **Item 54 is the load-bearing tech-debt outcome of this incident.** The actual-upgrade gate that Phase 18.5 promoted specifically to catch Phase-13-shape bugs (boolean-default datatype mismatch was the canonical example) didn't catch a Phase-19-shape bug of the same class (PG-specific migration code path issue) because the gate's `_create_all` bootstrap structurally pre-creates the schema-state the migration is supposed to build. **Until Item 54 is fixed, the prod-snapshot Docker round-trip (Phase 18's pattern) is required for migration-heavy passes** — added to the recommended pre-merge gate set in audit doc.
+
+3. **Spec/reality reconciliation, third occurrence of the pattern.** Phase 17 spec said `TieResolutionRequest` was dead (it was live). Phase 18 spec said `Delegation.delegation_intent_id` existed (it didn't). Phase 19 spec also referenced `Delegation.delegation_intent_id` (still doesn't exist). The pattern: planning agents trust prior closeout claims + write specs against assumed code state. The countermeasure: **planning agents should grep the codebase for any code-reference assertions in a spec before locking decisions** (a 30-second grep would have caught the Item 53 issue both times). Worth flagging as a soft process note, not a CLAUDE.md update.
+
+4. **Merged spec+dispatch format observation (Phase 19 was the first natively-formatted pass).** See "Format feedback for Z" section below.
+
+### New tech debt logged (Phase 19 + incident)
+
+- **Item 48 (Tier 3): Public-read endpoint for transparent-only delegates** — RESOLVED inline (`83bab63`).
+- **Item 49 (Tier 2):** No list endpoint for pending delegate applications.
+- **Item 50 (Tier 3):** No origin info on incoming-delegations endpoint.
+- **Item 51 (Tier 3):** MyVoteStatus shape doesn't include vote_id.
+- **Item 52 (Tier 2):** VoteFlowGraph rationale icons missing.
+- **Item 53 (Tier 3):** `Delegation.delegation_intent_id` column not added; DelegationIntent-row-existence proxy in use.
+- **Item 54 (Tier 1):** `pg_smoke.py --mode actual-upgrade` structural blind spot when migrations add columns `_create_all` also creates. Same shape as Phase 13 bug; gate ran PASS but prod failed. Until fixed, prod-snapshot Docker round-trip is required for migration-heavy passes.
+- **Item 55 (Tier 3):** F4 delegate card in-page click navigation broken.
+
+### Format feedback for Z (re: merged spec+dispatch convention)
+
+Z asked for evaluation of the new format. Working through Phase 19 in the merged convention from session start through closeout, here's the read:
+
+**What worked well:**
+- **Single-doc reading pattern.** Reading `phase19_public_delegate_pages_spec.md` once at session start gave me everything: goal, branch convention, verification matrix, team structure, sequence, locked decisions, full cluster bodies, operational notes, followups. Zero context-switching to a separate dispatch artifact.
+- **Verification matrix table is genuinely better than the previous prose `Pre-merge gate set` bullet list.** Scannable, checkable, easy to map to "did I do this." Doc agents (especially the Cluster D+G agent) noticed this independently — they cited "read-once-find-everything" as a real time-saver.
+- **`Load-bearing decisions surfaced` subsection at the top** with D1-D15 numbers gave me a quick scan of the spec without reading the full body, then I could jump to specific D-numbers when working on those clusters. Particularly useful for D15 (hard-revert) and D12 (transparent-only page rendering) which were referenced repeatedly in agent dispatches.
+- **`What this pass IS / IS NOT`** sections (kept in the spec body, not duplicated in the dispatch framing) gave a clear scope boundary without bloating the dispatch.
+
+**What was lost vs separate dispatch prompts:**
+- **Nothing material.** The dispatch framing covers everything I'd have wanted in a separate prompt. No information was missing; nothing required cross-referencing to a chat-only artifact.
+- One small note: the dispatch framing is slightly longer than typical chat dispatches (~85 lines vs maybe 40-60 in chat). But the length is justified by the verification matrix + decisions list, which add real value.
+
+**One gap surfaced by Phase 19's incident:** the verification matrix doesn't include "prod-snapshot Docker round-trip" as a checkbox. Per Item 54, this is now load-bearing for migration-heavy passes (until the actual-upgrade gate's structural blind spot is fixed). **Recommendation:** add a row to the verification matrix template — "Prod-snapshot Docker round-trip (required for migrations touching existing tables)." Phase 18 used this pattern naturally; Phase 19 dropped it assuming the actual-upgrade gate covered the same ground; outage resulted.
+
+**Net assessment:** the merged format is a strict improvement over separate dispatch prompts. **Keep it.** No need to revert. The verification matrix structure is the most concrete win — making it more comprehensive (per the Item 54 lesson) is the obvious next refinement.
+
+### Pass-summary
+
+**Phase 19 shipped to production after a revert + hotfix cycle.** The full public delegate identity surface is live: per-org profiles with three-state per-topic visibility, per-vote rationale, drafting + private_delegators + public visibility ladder, approval workflow, browse + public-page + management-page + approver-dashboard surfaces, all integrated with Phase 18's org-scoped delegation foundation. Backend test count 1108 → 1174 (+66 net); frontend bundle 362.24 → 374.39 kB gzipped (+12.15 kB). The original deploy crashed prod for ~20 min on a missing PG `CREATE TYPE` that local gates (including the actual-upgrade gate Phase 18.5 promoted specifically to catch this class of bug) didn't catch — surfaced as audit Item 54 (Tier 1). Eight new audit items logged total (Items 48-55), one resolved inline (Item 48). All D1-D15 conceptual decisions held with two reconciliation notes (D15 via DelegationIntent proxy per Item 53; D12 via inline gap-fill per Item 48). The merged spec+dispatch format worked cleanly throughout the pass — recommend keeping it; the verification matrix table should add a "prod-snapshot Docker round-trip" row per the Item 54 lesson.
