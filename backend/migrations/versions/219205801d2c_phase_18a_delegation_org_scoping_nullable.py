@@ -889,16 +889,18 @@ def downgrade() -> None:
         existing_cols = {c["name"] for c in inspector.get_columns(table)}
         if col_name not in existing_cols:
             return
+        # Pre-inspect FK + index existence so we don't queue ops that fail
+        # at batch flush time. SQLite often doesn't store FK constraint
+        # names the way batch_alter_table expects, and try/except at the
+        # call site can't catch the deferred ValueError that fires during
+        # __exit__'s flush().
+        existing_fks = {fk.get("name") for fk in inspector.get_foreign_keys(table)}
+        existing_indexes = {ix.get("name") for ix in inspector.get_indexes(table)}
         with op.batch_alter_table(table, schema=None) as batch_op:
-            try:
+            if fk_name in existing_fks:
                 batch_op.drop_constraint(fk_name, type_="foreignkey")
-            except Exception:
-                # SQLite may not have the FK as a named constraint; ignore.
-                pass
-            try:
+            if ix_name in existing_indexes:
                 batch_op.drop_index(ix_name)
-            except Exception:
-                pass
             batch_op.drop_column(col_name)
 
     if "delegations" in inspector.get_table_names():
