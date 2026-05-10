@@ -146,7 +146,9 @@ def upsert_delegation(
             detail=delegation_denied_message(body.topic_id),
         )
 
-    if graph_store.would_create_cycle(current_user.id, body.delegate_id, body.topic_id):
+    if graph_store.would_create_cycle(
+        current_user.id, body.delegate_id, body.topic_id, org_id=org_id,
+    ):
         raise HTTPException(
             status_code=409,
             detail="This delegation would create a cycle in the delegation graph",
@@ -193,8 +195,10 @@ def upsert_delegation(
         )
         db.commit()
         db.refresh(existing)
-        graph_store.remove_delegation(current_user.id, body.topic_id)
-        graph_store.add_delegation(current_user.id, body.delegate_id, body.topic_id)
+        graph_store.remove_delegation(current_user.id, body.topic_id, org_id=org_id)
+        graph_store.add_delegation(
+            current_user.id, body.delegate_id, body.topic_id, org_id=org_id,
+        )
         return existing
     else:
         delegation = models.Delegation(
@@ -224,7 +228,9 @@ def upsert_delegation(
         )
         db.commit()
         db.refresh(delegation)
-        graph_store.add_delegation(current_user.id, body.delegate_id, body.topic_id)
+        graph_store.add_delegation(
+            current_user.id, body.delegate_id, body.topic_id, org_id=org_id,
+        )
         return delegation
 
 
@@ -286,7 +292,7 @@ def revoke_delegation(
     )
     db.delete(delegation)
     db.commit()
-    graph_store.remove_delegation(current_user.id, resolved_topic_id)
+    graph_store.remove_delegation(current_user.id, resolved_topic_id, org_id=org_id)
 
 
 # ---------------------------------------------------------------------------
@@ -304,7 +310,11 @@ def delegation_graph(
     membership: models.OrgMembership = Depends(require_org_membership),
 ):
     org_id = membership.org_id
-    node_ids, edges = graph_store.get_neighborhood(current_user.id)
+    # Phase 18: get_neighborhood is now per-org partitioned (B2.1). Pass
+    # org_id so we read from the right bucket — without it, the unscoped
+    # legacy bucket is consulted and the user's edges look invisible
+    # post-Phase-18b.
+    node_ids, edges = graph_store.get_neighborhood(current_user.id, org_id=org_id)
 
     nodes = []
     for uid in node_ids:
@@ -315,7 +325,7 @@ def delegation_graph(
                     id=uid,
                     display_name=user.display_name,
                     username=user.username,
-                    weight=graph_store.compute_voting_weight(uid),
+                    weight=graph_store.compute_voting_weight(uid, org_id=org_id),
                     avatar_url=user.avatar_url,
                 )
             )
@@ -672,7 +682,12 @@ def activate_intents_for_follow(
                 chain_behavior=intent.chain_behavior,
             ))
         db.flush()
-        graph_store.add_delegation(intent.delegator_id, intent.delegate_id, intent.topic_id)
+        graph_store.add_delegation(
+            intent.delegator_id,
+            intent.delegate_id,
+            intent.topic_id,
+            org_id=intent_org_id,
+        )
 
         intent.status = "activated"
         intent.activated_at = now
@@ -732,7 +747,9 @@ def request_delegation(
 
     # ── Has permission already? Create directly ──────────────────────────
     if can_delegate_to(db, current_user.id, body.delegate_id, body.topic_id):
-        if graph_store.would_create_cycle(current_user.id, body.delegate_id, body.topic_id):
+        if graph_store.would_create_cycle(
+            current_user.id, body.delegate_id, body.topic_id, org_id=org_id,
+        ):
             raise HTTPException(status_code=409, detail="Would create a delegation cycle")
 
         existing = db.query(models.Delegation).filter(
@@ -755,7 +772,9 @@ def request_delegation(
             )
             db.add(existing)
         db.flush()
-        graph_store.add_delegation(current_user.id, body.delegate_id, body.topic_id)
+        graph_store.add_delegation(
+            current_user.id, body.delegate_id, body.topic_id, org_id=org_id,
+        )
         log_audit_event(
             db, action="delegation.created",
             target_type="delegation", target_id=existing.id,
@@ -846,7 +865,7 @@ def request_delegation(
                 },
             )
             if perm == "delegation_allowed" and not graph_store.would_create_cycle(
-                current_user.id, body.delegate_id, body.topic_id
+                current_user.id, body.delegate_id, body.topic_id, org_id=org_id,
             ):
                 d = models.Delegation(
                     delegator_id=current_user.id,
@@ -858,7 +877,9 @@ def request_delegation(
                 )
                 db.add(d)
                 db.flush()
-                graph_store.add_delegation(current_user.id, body.delegate_id, body.topic_id)
+                graph_store.add_delegation(
+                    current_user.id, body.delegate_id, body.topic_id, org_id=org_id,
+                )
                 log_audit_event(
                     db, action="delegation.created",
                     target_type="delegation", target_id=d.id,

@@ -91,7 +91,7 @@ def _revoke_dependent_delegations(
                     "reason": "follow_relationship_revoked",
                 },
             )
-            graph_store.remove_delegation(follower_id, d.topic_id)
+            graph_store.remove_delegation(follower_id, d.topic_id, org_id=org_id)
             revoked.append(d.id)
             db.delete(d)
 
