@@ -18,7 +18,7 @@ from database import create_tables, get_db, SessionLocal
 from delegation_engine import graph_store
 from settings import settings
 from websocket import manager as ws_manager
-from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars, comments, permissions, role_permissions_routes, org_logos, notifications
+from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars, comments, permissions, role_permissions_routes, org_logos, notifications, delegate_profiles
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +211,18 @@ app.include_router(org_logos.router)
 # their own notifications and preferences — no role-tier gates per spec
 # Item 30 audit guidance).
 app.include_router(notifications.router)
+# Phase 19 (B3) — public-delegate-page lifecycle endpoints. Mounted on
+# /api/orgs/{slug}/delegate-profile/* per spec — get-or-create the
+# caller's OrgDelegateProfile, edit per-topic DelegateProfile rows,
+# submit/approve/deny the public_accepting workflow, and the user-
+# initiated revert endpoints (soft + hard, with the hard-revert
+# centralized via _revoke_public_origin_delegations_on_topic).
+app.include_router(delegate_profiles.router)
+# Phase 19 (B6) — vote rationale CRUD. Mounted on /api/votes/{vote_id}/
+# rationale (separate APIRouter from votes.router so the URL prefix
+# matches the spec without colliding with the proposal-prefixed vote
+# endpoints).
+app.include_router(votes.rationale_router)
 
 
 # ---------------------------------------------------------------------------

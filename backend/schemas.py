@@ -1742,3 +1742,126 @@ class CommentOut(BaseModel):
     deleted_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Phase 19 — Public delegate pages
+# ---------------------------------------------------------------------------
+
+class _OrgDelegateProfileTopicOut(BaseModel):
+    """One ``DelegateProfile`` row (per-topic) embedded in the org-delegate-
+    profile GET response. Covers every column the frontend needs to render
+    the per-topic editing UI: bio, position_statement, the visibility
+    state machine, and the approval-workflow timestamps so the F1 surface
+    can show pending / approved / denied per topic.
+    """
+
+    id: str
+    topic_id: str
+    topic_name: Optional[str] = None
+    bio: str = ""
+    position_statement: Optional[str] = None
+    visibility: str  # 'private' | 'public' | 'public_accepting'
+    public_accepting_submitted_at: Optional[datetime] = None
+    public_accepting_approved_at: Optional[datetime] = None
+    public_accepting_approved_by_id: Optional[str] = None
+    public_accepting_denied_comment: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrgDelegateProfileOut(BaseModel):
+    """Phase 19 B3 — response shape for ``GET /api/orgs/{slug}/delegate-
+    profile`` (caller's own profile in this org).
+
+    ``effective_page_visibility`` is computed via the centralized helper
+    on ``OrgDelegateProfile.effective_page_visibility(db)``; the route is
+    the single caller — do NOT re-derive in code that consumes this shape.
+    """
+
+    id: str
+    user_id: str
+    org_id: str
+    org_slug: str
+    intro: Optional[str] = None
+    page_visibility: str  # 'private' | 'private_delegators'
+    effective_page_visibility: str  # 'private' | 'private_delegators' | 'public'
+    created_at: datetime
+    updated_at: datetime
+    topics: list[_OrgDelegateProfileTopicOut] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrgDelegateProfilePatch(BaseModel):
+    """Body for ``PATCH /api/orgs/{slug}/delegate-profile``. Both fields
+    optional — the route applies whichever fields are present.
+    """
+
+    intro: Optional[str] = None
+    page_visibility: Optional[str] = None  # 'private' | 'private_delegators'
+
+    @field_validator("page_visibility")
+    @classmethod
+    def _validate_page_visibility(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if v not in ("private", "private_delegators"):
+            raise ValueError(
+                "page_visibility must be 'private' or 'private_delegators'"
+            )
+        return v
+
+
+class DelegateProfileTopicPatch(BaseModel):
+    """Body for ``PATCH /api/orgs/{slug}/delegate-profile/topics/{topic_id}``.
+
+    All fields optional. The ``visibility`` field accepts ``'private'``
+    and ``'public'`` — the route REJECTS direct ``'public_accepting'``
+    transitions (use the dedicated submit endpoint per spec §B3).
+    """
+
+    bio: Optional[str] = None
+    position_statement: Optional[str] = None
+    visibility: Optional[str] = None  # 'private' | 'public'
+
+    @field_validator("visibility")
+    @classmethod
+    def _validate_visibility(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        # NB: 'public_accepting' is intentionally rejected here — it must
+        # go through the submit-public-accepting endpoint (approval gate).
+        if v not in ("private", "public"):
+            raise ValueError(
+                "visibility on PATCH must be 'private' or 'public'; "
+                "use POST .../submit-public-accepting for "
+                "public_accepting transitions"
+            )
+        return v
+
+
+class DelegateApplicationDeny(BaseModel):
+    """Body for ``POST /api/orgs/{slug}/delegate-profile/topics/{topic_id}
+    /deny``. Required non-empty comment per spec §B3.
+    """
+
+    comment: str = Field(min_length=1, max_length=2000)
+
+
+class DelegateVoteRationaleOut(BaseModel):
+    """Phase 19 B6 — response shape for the rationale GET / PUT endpoints."""
+
+    id: str
+    vote_id: str
+    content: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class DelegateVoteRationaleUpsert(BaseModel):
+    """Body for ``PUT /api/votes/{vote_id}/rationale``. Non-empty content."""
+
+    content: str = Field(min_length=1, max_length=10000)

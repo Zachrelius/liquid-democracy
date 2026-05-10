@@ -138,6 +138,36 @@ EVENT_REGISTRY: list[EventDefinition] = [
         description="Your request to follow another user was approved.",
         category="Delegation",
     ),
+    # Phase 19 — public-delegate-page approval workflow + hard-revert.
+    # Distinct from ``delegate.applied`` / ``delegate.application_decided``
+    # (the legacy single-step DelegateApplication surface) — these fire on
+    # the new per-topic ``DelegateProfile.visibility`` lifecycle introduced
+    # in Phase 19 B3. Old surface stays in place; new events ride the same
+    # notification infrastructure.
+    EventDefinition(
+        key="delegate_application_submitted",
+        label="New public-delegate application (Phase 19)",
+        description="Someone submitted a topic for public-accepting delegate approval in an organization where you can review applications.",
+        category="Delegation",
+    ),
+    EventDefinition(
+        key="delegate_application_approved",
+        label="Your public-delegate application was approved",
+        description="An approver accepted your request to become a public-accepting delegate on a topic.",
+        category="Delegation",
+    ),
+    EventDefinition(
+        key="delegate_application_denied",
+        label="Your public-delegate application was denied",
+        description="An approver denied your request to become a public-accepting delegate on a topic; the denial includes a comment.",
+        category="Delegation",
+    ),
+    EventDefinition(
+        key="delegation_revoked_by_delegate",
+        label="A delegate stopped publicly accepting delegation",
+        description="Your public-origin delegation on a topic was revoked because the delegate stopped publicly accepting delegation on it.",
+        category="Delegation",
+    ),
     # ---- Polis ----------------------------------------------------------
     EventDefinition(
         key="polis.created",
