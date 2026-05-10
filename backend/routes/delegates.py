@@ -1,10 +1,11 @@
 """
 Public delegate registration and browsing endpoints.
 """
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, distinct
 from sqlalchemy.orm import Session
 
@@ -13,6 +14,12 @@ import models
 import schemas
 from audit_utils import log_audit_event
 from database import get_db
+
+# Phase 19 G2 — module-level logger for deprecation warnings on the legacy
+# /api/delegates/public endpoint. Replaced by the org-scoped browse at
+# /api/orgs/{slug}/delegates (see ``org_delegates_router`` below). Full
+# removal deferred to a future cleanup pass.
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/delegates", tags=["delegates"])
 
@@ -69,14 +76,28 @@ def _build_public_delegate(db: Session, user: models.User) -> schemas.PublicDele
     )
 
 
-@router.get("/public", response_model=list[schemas.PublicDelegateOut])
+@router.get("/public", response_model=list[schemas.PublicDelegateOut], deprecated=True)
 def list_public_delegates(
+    response: Response,
     topic_id: Optional[str] = Query(None),
     org_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: Optional[models.User] = Depends(auth_utils.get_optional_user),
 ):
     """Browse public delegates, optionally filtered by topic and/or org.
+
+    DEPRECATED (Phase 19 G2): use the org-scoped browse endpoint at
+    ``GET /api/orgs/{slug}/delegates`` instead. The new endpoint is the
+    canonical surface — it honors the per-topic visibility states added in
+    Phase 19 (``private`` / ``public`` / ``public_accepting``), supports
+    sort by delegation count + recent rationale ratio, and is the
+    consumer-side surface for the new public delegate pages.
+
+    This endpoint is preserved for one release to avoid breaking any
+    existing API consumers; full removal is scheduled for a future cleanup
+    pass. Callers receive a ``Deprecation: true`` response header (per
+    draft-ietf-httpapi-deprecation-header) and a one-line server-side
+    log warning per call.
 
     Phase 8.5 (Decision 5): when a `topic_id` is not specified and the viewer
     is authenticated, hide profiles whose ONLY active topics are sub-org topics
@@ -86,6 +107,17 @@ def list_public_delegates(
     Anonymous viewers continue to see all profiles, since we have no scope
     context to filter against.
     """
+    # Phase 19 G2 — deprecation marker: response header (parseable by
+    # API clients) + server-side log warning (visible in Railway logs
+    # so we can track if any active consumers remain before full removal).
+    response.headers["Deprecation"] = "true"
+    response.headers["Link"] = (
+        '</api/orgs/{slug}/delegates>; rel="successor-version"'
+    )
+    logger.warning(
+        "DEPRECATED endpoint hit: GET /api/delegates/public — "
+        "use GET /api/orgs/{slug}/delegates (Phase 19 G2)"
+    )
     q = db.query(models.User).join(
         models.DelegateProfile,
         models.DelegateProfile.user_id == models.User.id,
