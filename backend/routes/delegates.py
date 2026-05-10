@@ -1,9 +1,11 @@
 """
 Public delegate registration and browsing endpoints.
 """
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, distinct
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -13,6 +15,11 @@ from audit_utils import log_audit_event
 from database import get_db
 
 router = APIRouter(prefix="/api/delegates", tags=["delegates"])
+
+# Phase 19 B4 — org-scoped browse endpoint mounted under /api/orgs/{org_slug}.
+# Kept as a separate APIRouter so the existing /api/delegates/* surface can
+# stay intact (Cluster G handles deprecation in a later pass).
+org_delegates_router = APIRouter(prefix="/api/orgs", tags=["delegates"])
 
 
 def _delegation_count(
@@ -223,3 +230,246 @@ def deactivate_delegate_profile(
         actor_id=current_user.id, details={"topic_id": topic_id},
     )
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Phase 19 B4 — Per-org public delegate browse
+# ---------------------------------------------------------------------------
+
+
+def _recent_rationale_ratio(
+    db: Session, user_id: str, *, since: datetime,
+) -> float:
+    """Per spec D11 / B4: ratio of "votes with rationale" to "total votes
+    in past N days" (default 30) for ``user_id``. Returns 0.0 when the
+    user has no votes in the window (the secondary-sort key just sorts
+    those delegates last among equal-delegation-count peers).
+
+    The query joins ``Vote`` to ``DelegateVoteRationale`` via the
+    one-to-one back-reference; we count the rationale rows by
+    ``COUNT(rationale.id)`` so a vote without rationale doesn't inflate
+    the numerator.
+    """
+    total_votes = (
+        db.query(func.count(models.Vote.id))
+        .filter(
+            models.Vote.user_id == user_id,
+            models.Vote.cast_at >= since,
+        )
+        .scalar()
+    ) or 0
+    if total_votes == 0:
+        return 0.0
+    rationale_votes = (
+        db.query(func.count(models.DelegateVoteRationale.id))
+        .join(models.Vote, models.Vote.id == models.DelegateVoteRationale.vote_id)
+        .filter(
+            models.Vote.user_id == user_id,
+            models.Vote.cast_at >= since,
+        )
+        .scalar()
+    ) or 0
+    return float(rationale_votes) / float(total_votes)
+
+
+@org_delegates_router.get("/{org_slug}/delegates")
+def browse_org_delegates(
+    org_slug: str,
+    topic_id: Optional[str] = Query(None),
+    active_within_days: Optional[int] = Query(None, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(auth_utils.get_optional_user),
+):
+    """Phase 19 B4 — public delegate browse for an org.
+
+    Returns delegates with at least one ``DelegateProfile`` row in this
+    org where ``visibility='public_accepting'`` (per D11: ``public``-only
+    transparent delegates are NOT surfaced on the browse page; they're
+    discoverable via direct URL or vote graph).
+
+    Response shape per row:
+        {user_id, display_name, username, delegate_handle, avatar_url,
+         intro, public_topics: [{topic_id, name, visibility}],
+         delegation_count, recent_rationale_ratio}
+
+    Default sort: ``delegation_count DESC, recent_rationale_ratio DESC``
+    (D11 secondary tiebreak: "how transparent are they about their
+    reasoning"). Pagination: offset-based, ``limit`` defaults to 20
+    (existing platform pagination pattern; the spec mentioned cursor-
+    based but the rest of the platform is offset-based — see
+    ``routes/notifications.py`` line 22).
+
+    Filters:
+        ?topic_id=<uuid>             — only delegates ``public_accepting``
+                                       for that specific topic.
+        ?active_within_days=N        — only delegates with at least one
+                                       vote in the past N days (Vote.cast_at).
+
+    Permission:
+        - Org members may always browse.
+        - Non-members may browse only if the org is publicly listed (the
+          existing ``join_policy != 'invite_only_secret'`` semantic;
+          ``invite_only_secret`` orgs return 404 to non-members so their
+          existence isn't confirmed by this endpoint either).
+    """
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    is_member = False
+    if current_user is not None:
+        is_member = (
+            db.query(models.OrgMembership)
+            .filter(
+                models.OrgMembership.user_id == current_user.id,
+                models.OrgMembership.org_id == org.id,
+                models.OrgMembership.status == "active",
+            )
+            .first()
+            is not None
+        )
+    if not is_member:
+        # Non-members may only browse publicly-listed orgs. Secret orgs
+        # return 404 (matching the OrgPublicLanding pattern in routes/
+        # organizations.py:802) so endpoint existence doesn't leak the
+        # org's existence to unauthenticated probes.
+        if org.join_policy == "invite_only_secret":
+            raise HTTPException(status_code=404, detail="Organization not found")
+
+    # ----- Find candidate user IDs: users with at least one
+    # public_accepting topic in this org. -----
+    base_q = (
+        db.query(models.DelegateProfile.user_id)
+        .filter(
+            models.DelegateProfile.org_id == org.id,
+            models.DelegateProfile.visibility == "public_accepting",
+        )
+    )
+    if topic_id is not None:
+        base_q = base_q.filter(models.DelegateProfile.topic_id == topic_id)
+    candidate_user_ids = {row[0] for row in base_q.distinct().all()}
+
+    if not candidate_user_ids:
+        return []
+
+    # ----- Apply activity-window filter if requested. -----
+    if active_within_days is not None:
+        since = (
+            datetime.now(timezone.utc).replace(tzinfo=None)
+            - timedelta(days=active_within_days)
+        )
+        active_user_ids = {
+            row[0] for row in (
+                db.query(models.Vote.user_id)
+                .filter(
+                    models.Vote.user_id.in_(candidate_user_ids),
+                    models.Vote.cast_at >= since,
+                )
+                .distinct()
+                .all()
+            )
+        }
+        candidate_user_ids = candidate_user_ids & active_user_ids
+
+    if not candidate_user_ids:
+        return []
+
+    # ----- Build per-user payloads. We pre-fetch the supporting data so
+    # we don't issue N+1 queries inside the loop. -----
+    users = (
+        db.query(models.User)
+        .filter(models.User.id.in_(candidate_user_ids))
+        .all()
+    )
+    users_by_id = {u.id: u for u in users}
+
+    # Per-user public topics (visibility IN ('public', 'public_accepting'))
+    # joined with the topic name. D12: the page renders both public and
+    # public_accepting topics, so the browse payload also surfaces both
+    # so the FE can show the per-topic label correctly. The per-user
+    # GROUP BY happens client-side in the loop below.
+    topic_rows = (
+        db.query(
+            models.DelegateProfile.user_id,
+            models.DelegateProfile.topic_id,
+            models.DelegateProfile.visibility,
+            models.Topic.name,
+        )
+        .join(models.Topic, models.Topic.id == models.DelegateProfile.topic_id)
+        .filter(
+            models.DelegateProfile.user_id.in_(candidate_user_ids),
+            models.DelegateProfile.org_id == org.id,
+            models.DelegateProfile.visibility.in_(("public", "public_accepting")),
+        )
+        .all()
+    )
+    topics_by_user: dict[str, list[dict]] = {}
+    for uid, tid, vis, name in topic_rows:
+        topics_by_user.setdefault(uid, []).append(
+            {"topic_id": tid, "name": name, "visibility": vis}
+        )
+
+    # Per-user delegation count in this org (D11: per-org count, not
+    # cross-org).
+    delegation_count_rows = (
+        db.query(
+            models.Delegation.delegate_id,
+            func.count(models.Delegation.id),
+        )
+        .filter(
+            models.Delegation.delegate_id.in_(candidate_user_ids),
+            models.Delegation.org_id == org.id,
+        )
+        .group_by(models.Delegation.delegate_id)
+        .all()
+    )
+    delegation_count_by_user = {uid: cnt for uid, cnt in delegation_count_rows}
+
+    # Per-user OrgDelegateProfile (intro lookup).
+    odp_rows = (
+        db.query(models.OrgDelegateProfile)
+        .filter(
+            models.OrgDelegateProfile.user_id.in_(candidate_user_ids),
+            models.OrgDelegateProfile.org_id == org.id,
+        )
+        .all()
+    )
+    odp_by_user = {odp.user_id: odp for odp in odp_rows}
+
+    # Recent rationale ratio (past 30 days; D11 fixed window).
+    rationale_window_start = (
+        datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=30)
+    )
+
+    payload = []
+    for uid in candidate_user_ids:
+        user = users_by_id.get(uid)
+        if user is None:
+            continue  # defensive — should not happen
+        odp = odp_by_user.get(uid)
+        payload.append({
+            "user_id": user.id,
+            "display_name": user.display_name,
+            "username": user.username,
+            "delegate_handle": user.delegate_handle,
+            "avatar_url": user.avatar_url,
+            "intro": odp.intro if odp is not None else None,
+            "public_topics": topics_by_user.get(uid, []),
+            "delegation_count": delegation_count_by_user.get(uid, 0),
+            "recent_rationale_ratio": _recent_rationale_ratio(
+                db, uid, since=rationale_window_start,
+            ),
+        })
+
+    # ----- Default sort: delegation_count DESC, recent_rationale_ratio DESC.
+    payload.sort(
+        key=lambda r: (r["delegation_count"], r["recent_rationale_ratio"]),
+        reverse=True,
+    )
+
+    # ----- Pagination (offset-based, matches notifications.py:262). -----
+    return payload[offset : offset + limit]
