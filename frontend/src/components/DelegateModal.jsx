@@ -119,7 +119,13 @@ function ResultCard({
     setActing(true);
     setFeedback('');
     try {
-      await api.post('/api/follows/request', { target_id: user.id });
+      // Phase 18 — follow surfaces are org-scoped. The parent slug is
+      // already resolved by the parent <DelegateModal>, but ResultCard
+      // doesn't receive it; resolve from currentOrg here.
+      const followOrgSlug = currentOrg?.parent_org_id
+        ? (userOrgs.find(o => o.id === currentOrg.parent_org_id)?.slug || currentOrg.slug)
+        : currentOrg?.slug;
+      await api.post(`/api/orgs/${followOrgSlug}/follows/request`, { target_id: user.id });
       setFeedback('Follow request sent');
     } catch (e) {
       setFeedback(e.message);

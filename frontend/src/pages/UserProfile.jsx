@@ -111,7 +111,14 @@ export default function UserProfile() {
   async function handleFollow() {
     setActionFeedback('');
     try {
-      await api.post('/api/follows/request', { target_id: id });
+      // Phase 18 — follow surfaces are org-scoped. proposalLinkOrg
+      // resolves to the parent-org slug whether we're on the parent or
+      // a sub-org URL.
+      if (!proposalLinkOrg?.slug) {
+        setActionFeedback('Cannot send follow request: no organization context');
+        return;
+      }
+      await api.post(`/api/orgs/${proposalLinkOrg.slug}/follows/request`, { target_id: id });
       setActionFeedback('Follow request sent');
       fetchProfile();
     } catch (e) {
