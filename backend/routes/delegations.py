@@ -19,7 +19,7 @@ Helpers exposed for cross-route reuse:
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -1006,3 +1006,11 @@ def cancel_intent(
         },
     )
     db.commit()
+    # Phase 18.5 B2 — return an explicit empty Response so the 204 doesn't
+    # carry a ``content-type: application/json`` header. FastAPI's default
+    # serializer for an implicit ``return None`` on a 204 route still emits
+    # a JSON content-type with empty body, which Cloudflare/Railway's
+    # edge proxy rejects with a 503 even though the upstream commit
+    # succeeded (Phase 18 QA report observation). The same pattern is used
+    # by ``routes/organizations.py::cancel_join_request``.
+    return Response(status_code=204)
