@@ -207,8 +207,15 @@ def test_cross_scope_delegation_natural_no_vote_in_sub_org_tally(db):
     """Integration-flavored test: a sub-org proposal where one sub-org member
     delegated to a parent-org-only user. The non-member delegate has no vote;
     the delegator's chain-behavior fires; the tally counts it as not_cast.
-    This is the canonical Decision 8 demonstration that no new pure-layer
-    code is required — the existing 'delegate didn't vote' path handles it."""
+
+    Phase 18 closure: post-Phase-18 the delegation_engine layer is org-aware
+    (delegations carry org_id, _build_context filters on proposal.org_id),
+    and Phase 18 closes the original Phase 4c retrofit gap that this comment
+    pre-dated. This test still exercises the chain-behavior fallback for
+    non-member delegates within a single org — separate from the cross-org
+    delegation gating which is now enforced via org_id at the query layer
+    and covered by tests/test_phase_18_delegation_org_scoping.py.
+    """
     # Build a parent + sub-org membership shape.
     parent = _make_org(db, "parent")
     sub = _make_org(db, "sub", parent_org_id=parent.id)
@@ -260,7 +267,9 @@ def test_cross_scope_delegation_natural_no_vote_in_sub_org_tally(db):
     assert tally.not_cast == 1
     assert tally.total_eligible == 2
     # The KEY assertion: non-member-delegate "no vote" landed in not_cast,
-    # exactly as if alice's delegate had simply abstained. No special path.
+    # exactly as if alice's delegate had simply abstained. The cross-org
+    # gating concern that this comment originally elided is closed by
+    # Phase 18 — see tests/test_phase_18_delegation_org_scoping.py.
 
 
 def test_single_org_regression_with_no_sub_org_present(db):
