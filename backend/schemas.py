@@ -714,15 +714,6 @@ class ProposalResults(BaseModel):
     sustained_majority: Optional["SustainedMajorityStatus"] = None
 
 
-class TieResolutionRequest(BaseModel):
-    selected_option_id: str
-
-    @field_validator("selected_option_id")
-    @classmethod
-    def validate_option_id(cls, v: str) -> str:
-        return _validate_uuid(v)
-
-
 # ---------------------------------------------------------------------------
 # Delegation graph
 # ---------------------------------------------------------------------------

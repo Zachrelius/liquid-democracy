@@ -15,9 +15,13 @@ about sub-orgs can safely migrate without behavioral change.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
 
 import models
+
+
+_log = logging.getLogger(__name__)
 
 
 # Two-level hierarchy is locked in by Decision 1, but the loop walks
@@ -102,6 +106,84 @@ def get_default_proposal_thresholds(
     pass_t = settings.get("default_pass_threshold", 0.50)
     quorum_t = settings.get("default_quorum_threshold", 0.40)
     return (pass_t, quorum_t)
+
+
+def get_org_tie_resolution_method(
+    org: Optional[models.Organization],
+    voting_method: str,
+) -> str:
+    """Return the configured tie-resolution method for this org and
+    ``voting_method``. Falls back to platform defaults if the org's
+    settings don't specify a value, or if the stored value isn't an
+    eligible method (defensive fallback for direct-DB-poke / removed-
+    method legacy values).
+
+    ``voting_method`` must be ``'approval'`` or ``'ranked_choice'``.
+    Binary doesn't have a tie-resolution path; callers must not invoke
+    this for binary proposals.
+
+    Mirror of ``get_default_proposal_thresholds`` /
+    ``get_default_proposal_durations``: same Optional[org] +
+    settings.get pattern. Like those helpers, this does NOT walk the
+    parent chain via ``get_org_config`` - sub-orgs inherit parent's
+    setting today (Phase 17 D2: per-sub-org override deferred).
+
+    For ``org=None`` (global proposals - pre-multi-tenancy legacy
+    rows), returns the platform default for the requested
+    voting_method.
+    """
+    # Local import: keeps tie_resolution out of the module-import graph
+    # for the threshold/duration callers that don't need it, and avoids
+    # any possible circular if tie_resolution ever needs org_config.
+    from tie_resolution import (
+        ELIGIBLE_METHODS_APPROVAL,
+        ELIGIBLE_METHODS_RANKED_CHOICE,
+        PLATFORM_DEFAULT_TIE_RESOLUTION_APPROVAL,
+        PLATFORM_DEFAULT_TIE_RESOLUTION_RANKED_CHOICE,
+    )
+
+    if voting_method == "approval":
+        platform_default = PLATFORM_DEFAULT_TIE_RESOLUTION_APPROVAL
+        eligible = ELIGIBLE_METHODS_APPROVAL
+    elif voting_method == "ranked_choice":
+        platform_default = PLATFORM_DEFAULT_TIE_RESOLUTION_RANKED_CHOICE
+        eligible = ELIGIBLE_METHODS_RANKED_CHOICE
+    else:
+        # Defensive: caller passed an unsupported voting_method
+        # (binary doesn't have tie resolution, or a future/typo value).
+        # Log once and fall back to approval's platform default - safest
+        # generic option.
+        _log.warning(
+            "get_org_tie_resolution_method called with unsupported "
+            "voting_method=%r; falling back to approval platform default.",
+            voting_method,
+        )
+        return PLATFORM_DEFAULT_TIE_RESOLUTION_APPROVAL
+
+    if org is None:
+        return platform_default
+
+    settings = org.settings or {}
+    tr_settings = settings.get("tie_resolution")
+    if not isinstance(tr_settings, dict):
+        return platform_default
+
+    stored = tr_settings.get(voting_method)
+    if stored is None:
+        return platform_default
+
+    if stored not in eligible:
+        _log.warning(
+            "Org id=%s has invalid tie-resolution method %r for "
+            "voting_method=%r; falling back to platform default %r.",
+            getattr(org, "id", None),
+            stored,
+            voting_method,
+            platform_default,
+        )
+        return platform_default
+
+    return stored
 
 
 def get_intro_text(org: Optional[models.Organization]) -> Optional[str]:

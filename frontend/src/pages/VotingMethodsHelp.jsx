@@ -70,7 +70,7 @@ export default function VotingMethodsHelp() {
             <li>Each voter checks the boxes next to every option they support.</li>
             <li>Submitting with no boxes checked counts as an abstention (you'll be asked to confirm).</li>
             <li>The option with the most approvals wins.</li>
-            <li>If two or more options tie for the most approvals, an admin resolves the tie.</li>
+            <li>If two or more options tie for the most approvals, the org&apos;s configured tie-resolution method runs automatically (see Tie Resolution below).</li>
           </ol>
         </div>
 
@@ -152,8 +152,9 @@ export default function VotingMethodsHelp() {
         <div className="bg-amber-50 rounded-lg p-4">
           <p className="text-sm text-amber-800">
             <strong>Tied final round:</strong> if elimination ends with two or more options tied for the
-            last winner slot, the result is flagged as <em>tied</em>. An admin can then pick one of the
-            tied finalists to break the tie. The selection is recorded with an audit trail.
+            last winner slot, the org&apos;s configured tie-resolution method runs automatically (see
+            Tie Resolution below). The chosen method, the tied set, and the resolved winner are all
+            recorded with the proposal as a verifiable audit trail.
           </p>
         </div>
 
@@ -179,6 +180,81 @@ export default function VotingMethodsHelp() {
           <strong>Best for STV:</strong> Multi-winner elections where proportional representation is
           desirable &mdash; committees, boards, multi-seat slates.
         </p>
+      </section>
+
+      {/* Phase 17 F3 — Tie Resolution help section.
+          Ties are auto-resolved at advance-to-passed time using the org's
+          configured method. Each method has a different tradeoff; this
+          section documents the four options stewards can pick from in
+          Org Settings. */}
+      <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Tie Resolution</h2>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          Ties are uncomfortable to resolve in the moment. Declaring how
+          you&apos;ll handle them up-front makes the result less controversial
+          and removes the appearance of admin discretion. Each organization
+          picks one method per voting method (Approval, Ranked-Choice / STV);
+          when a proposal closes with a tie, the configured method runs
+          automatically and the resolution is recorded as part of the result.
+        </p>
+
+        <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+          <p className="text-sm font-medium text-gray-700">The four methods:</p>
+
+          <div>
+            <p className="text-sm font-semibold text-gray-700">Broader approval base <span className="text-xs font-normal text-gray-500">(approval voting only)</span></p>
+            <p className="text-sm text-gray-600 leading-relaxed mt-0.5">
+              Among the tied options, the one co-approved alongside the most
+              other options across all ballots wins. Use this when &ldquo;most
+              broadly acceptable option&rdquo; is the right tiebreaker &mdash;
+              the result is the option voters were most willing to support
+              alongside other choices, not just the option with the most
+              standalone support.
+            </p>
+          </div>
+
+          <div>
+            <p className="text-sm font-semibold text-gray-700">Expand winners</p>
+            <p className="text-sm text-gray-600 leading-relaxed mt-0.5">
+              All tied options become winners. Choose this when your org would
+              rather have a bigger winner set than force a single choice. Note:
+              with <code>num_winners=1</code> IRV proposals, this can produce
+              multiple winners &mdash; pick a different method if you need
+              exactly one.
+            </p>
+          </div>
+
+          <div>
+            <p className="text-sm font-semibold text-gray-700">Earliest decisive vote</p>
+            <p className="text-sm text-gray-600 leading-relaxed mt-0.5">
+              The tied option whose support reached its final count earliest
+              wins. Rewards momentum without rewarding &ldquo;voted first
+              overall&rdquo; &mdash; what matters is when each tied option
+              <em> last </em>incremented to its tied total, not when the first
+              ballot was cast.
+            </p>
+          </div>
+
+          <div>
+            <p className="text-sm font-semibold text-gray-700">Random with seed</p>
+            <p className="text-sm text-gray-600 leading-relaxed mt-0.5">
+              A deterministic random selection seeded by the proposal&apos;s ID
+              and end time. Anyone can compute the hash and confirm the result
+              independently. The seed and the tied set are recorded with the
+              proposal so the choice is verifiable after the fact.
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-blue-50 rounded-lg p-4">
+          <p className="text-sm text-blue-800">
+            <strong>How to configure:</strong> stewards and admins with
+            &ldquo;Edit organization settings&rdquo; permission set the
+            tie-resolution method per voting method in{' '}
+            <span className="font-medium">Org Settings &rarr; Tie Resolution</span>.
+            Sub-orgs inherit the parent org&apos;s setting.
+          </p>
+        </div>
       </section>
     </div>
   );

@@ -116,6 +116,14 @@ class ApprovalTally:
     total_eligible: int = 0
     winners: list[str] = field(default_factory=list)
     tied: bool = False
+    # Phase 17 B3.1 — per-ballot approval sets (each inner list is one
+    # voter's approved option_ids). Populated by
+    # `_compute_approval_tally_pure` from the same iteration that builds
+    # `option_approvals`. Consumed by
+    # `tie_resolution._resolve_broader_approval_base`. Ballot identity
+    # is intentionally NOT carried — only the approval sets, which are
+    # already aggregable from the existing approval ballots.
+    ballots: list[list[str]] = field(default_factory=list)
 
     @property
     def votes_cast(self) -> int:
@@ -330,11 +338,25 @@ def _compute_approval_tally_pure(
     user_ids: list[str],
     ctx: ProposalContext,
 ) -> ApprovalTally:
-    """Compute approval tally: count how many ballots approve each option."""
+    """Compute approval tally: count how many ballots approve each option.
+
+    Phase 17 note: this pure tally function stays method-agnostic with
+    respect to tie resolution. When ``tied=True`` and ``len(winners) > 1``
+    the route layer (``routes/proposals.py::advance_proposal`` and the
+    org-scoped equivalent in ``routes/organizations.py``) is responsible
+    for invoking ``tie_resolution.resolve_tie`` and mutating
+    ``tally.winners`` to the resolved set. ``tied`` itself stays ``True``
+    after resolution for transparency (D9). See ``backend/tie_resolution.py``
+    for the resolver contract.
+    """
     option_approvals: dict[str, int] = {}
     total_ballots_cast = 0
     total_abstain = 0
     not_cast = 0
+    # Phase 17 B3.1 — per-ballot approval sets, exposed for
+    # broader_approval_base tie resolution. Empty/abstain ballots are
+    # excluded; only ballots that actually approved options contribute.
+    ballots_seen: list[list[str]] = []
 
     for uid in user_ids:
         result = resolve_vote_pure(uid, ctx)
@@ -349,6 +371,7 @@ def _compute_approval_tally_pure(
             else:
                 for oid in approvals:
                     option_approvals[oid] = option_approvals.get(oid, 0) + 1
+                ballots_seen.append(list(approvals))
 
     # Determine winners: option(s) with highest approval count
     winners: list[str] = []
@@ -366,6 +389,7 @@ def _compute_approval_tally_pure(
         total_eligible=len(user_ids),
         winners=winners,
         tied=tied,
+        ballots=ballots_seen,
     )
 
 
@@ -423,6 +447,14 @@ def _compute_rcv_tally_pure(
 
     option_ids: all valid option_ids on the proposal — needed even when no
     voter ranked them so they appear as 0-vote candidates in the rounds.
+
+    Phase 17 note: as with `_compute_approval_tally_pure`, this pure
+    tally function stays method-agnostic with respect to tie resolution.
+    When `tied=True` and `len(winners) > 1`, the route layer (advance_proposal
+    in routes/proposals.py and the org-scoped equivalent in
+    routes/organizations.py) invokes `tie_resolution.resolve_tie` and
+    mutates `tally.winners` to the resolved set. `tied` stays True after
+    resolution for transparency (D9).
     """
     # Local import — pyrankvote is heavy and only loaded when ranked-choice
     # tabulation actually runs.

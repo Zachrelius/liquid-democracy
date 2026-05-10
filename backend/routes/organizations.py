@@ -482,6 +482,24 @@ def update_organization(
                     detail=f"{tkey} must be between 0.0 and 1.0 inclusive",
                 )
 
+        # Phase 17 B5 — tie_resolution validation. Same pre-merge shape:
+        # invalid method on either voting_method fails the whole PATCH
+        # cleanly with HTTP 400. Unknown keys (e.g., a future
+        # "score_voting") are silently dropped by the validator for
+        # forward-compat. The validator returns the cleaned dict, which
+        # we substitute back into body.settings so the merge below stores
+        # only the valid subset.
+        if "tie_resolution" in body.settings:
+            from tie_resolution import validate_tie_resolution_settings
+            try:
+                body.settings["tie_resolution"] = (
+                    validate_tie_resolution_settings(
+                        body.settings["tie_resolution"]
+                    )
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
+
         # Phase 15 Cluster S §S3 — sub_org_role_transferability validation.
         # Steward toggle is locked ON: rejecting an explicit False keeps
         # the resolution helper's invariant (Steward always transfers)
@@ -2300,14 +2318,23 @@ def advance_org_proposal(
             proposal.voting_end = body.voting_end
     elif next_status == "passed":
         from delegation_engine import engine as delegation_engine, ApprovalTally, RCVTally
+        from routes.proposals import _maybe_resolve_tie
         tally = delegation_engine.compute_tally(proposal, db)
         if proposal.voting_method == "approval":
             if isinstance(tally, ApprovalTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
+                _maybe_resolve_tie(
+                    proposal, tally, "approval", db,
+                    current_user_id=current_user.id,
+                )
                 next_status = "passed"
             else:
                 next_status = "failed"
         elif proposal.voting_method == "ranked_choice":
             if isinstance(tally, RCVTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
+                _maybe_resolve_tie(
+                    proposal, tally, "ranked_choice", db,
+                    current_user_id=current_user.id,
+                )
                 next_status = "passed"
             else:
                 next_status = "failed"
@@ -2466,97 +2493,6 @@ def resolve_escalation(
             "old_status": old_status,
             "new_status": new_status,
             **audit_extra,
-        },
-        ip_address=request.client.host if request.client else None,
-    )
-
-    db.commit()
-    db.refresh(proposal)
-    from routes.proposals import _build_proposal_out
-    return _build_proposal_out(proposal)
-
-
-# ============================================================================
-# Tie Resolution (admin)
-# ============================================================================
-
-@router.post("/{org_slug}/proposals/{proposal_id}/resolve-tie", status_code=200)
-def resolve_tie(
-    org_slug: str,
-    proposal_id: str,
-    body: schemas.TieResolutionRequest,
-    request: Request,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth_utils.get_current_user),
-    admin_membership: models.OrgMembership = Depends(require_org_admin),
-):
-    """Resolve a tie on an approval proposal (admin). Picks the winning option."""
-    org = db.query(models.Organization).filter(
-        models.Organization.slug == org_slug
-    ).first()
-    proposal = db.query(models.Proposal).filter(
-        models.Proposal.id == proposal_id,
-        models.Proposal.org_id == org.id,
-    ).first()
-    if not proposal:
-        raise HTTPException(status_code=404, detail="Proposal not found in this organization")
-
-    if proposal.voting_method not in ("approval", "ranked_choice"):
-        raise HTTPException(
-            status_code=400,
-            detail="Tie resolution is only for approval or ranked-choice proposals",
-        )
-
-    if proposal.status != "passed":
-        raise HTTPException(status_code=400, detail="Proposal must be in passed status to resolve a tie")
-
-    if proposal.tie_resolution is not None:
-        raise HTTPException(status_code=409, detail="Tie has already been resolved")
-
-    # Compute current tally to verify there is a tie
-    from delegation_engine import engine as delegation_engine, ApprovalTally, RCVTally
-    tally = delegation_engine.compute_tally(proposal, db)
-    if isinstance(tally, ApprovalTally):
-        if not tally.tied:
-            raise HTTPException(status_code=400, detail="There is no tie to resolve")
-        tied_pool = tally.winners
-    elif isinstance(tally, RCVTally):
-        if not tally.tied:
-            raise HTTPException(status_code=400, detail="There is no tie to resolve")
-        tied_pool = tally.winners
-    else:
-        raise HTTPException(status_code=400, detail="Tally type does not support tie resolution")
-
-    # Validate selected_option_id is among the tied finalists
-    if body.selected_option_id not in tied_pool:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Option {body.selected_option_id} is not among the tied finalists",
-        )
-
-    # Find the option label
-    option = db.query(models.ProposalOption).filter(
-        models.ProposalOption.id == body.selected_option_id,
-    ).first()
-    option_label = option.label if option else body.selected_option_id
-
-    proposal.tie_resolution = {
-        "selected_option_id": body.selected_option_id,
-        "selected_option_label": option_label,
-        "resolved_by": current_user.id,
-    }
-    db.flush()
-
-    log_audit_event(
-        db,
-        action="proposal.tie_resolved",
-        target_type="proposal",
-        target_id=proposal.id,
-        actor_id=current_user.id,
-        details={
-            "selected_option_id": body.selected_option_id,
-            "selected_option_label": option_label,
-            "tied_winners": tied_pool,
         },
         ip_address=request.client.host if request.client else None,
     )
