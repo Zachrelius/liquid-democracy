@@ -45,17 +45,9 @@ Phase 19 shipped the public-delegate identity surface end-to-end. New `OrgDelega
 
 ---
 
-### 4. Sustained-Majority Fix
+### 4. Sustained-Majority Fix → Stable Result Required — ✅ Complete (Phase 20, shipped 2026-05-10)
 
-**Why now:** The feature shipped in Phase 8 is currently known-broken and disabled by default. That's tech debt, not a deferred feature. It's not load-bearing for any current use case, but leaving a broken feature visibly disabled in admin settings is the kind of thing a real pilot org will ask about, and "we shipped it but it doesn't work" is an awkward answer.
-
-**Scope sketch:**
-- Diagnostic pass first: what specifically is broken? The Phase 9.8 C1 fix addressed `support_ever_established` in the worker; the Phase 12.8 audit Item 5 flagged `build_status` had a parallel bug in the read path. Whether one or both of those is the load-bearing issue here, or whether there's a third issue, needs a real look at the code before scoping the fix.
-- Fix whatever the diagnostic surfaces. Likely scope: align worker and read-path semantics, ensure floor-breach logic correctly gates on prior establishment, verify the snapshot cadence matches the threshold-evaluation cadence, confirm the failure-mode transitions (`fail` / `extend` / `escalate`) work as specified.
-- Browser-verify the full lifecycle on prod with a test proposal that crosses and re-crosses the threshold.
-- Re-enable as a non-default org setting, with help-page documentation. Don't flip the platform default until at least one real org has used it successfully.
-
-**Non-goals:** Real-time evaluation; sustained-majority metrics in deliberation phase; cross-org sustained-majority analytics. These were all deferred from the original Phase 8 scope and remain deferred.
+Phase 20 was a scope-narrowing redesign rather than a fix-the-existing-mechanism pass. The original Phase 8 binary floor mechanic was conceptually flawed (early-window kill-the-proposal exploit: vote yes early in a small sample to set `support_ever_established=True`, then bury under no-votes to force the configured failure mode). Phase 20 deletes the entire mechanism: `is_above_floor`, `is_approaching_floor`, `support_ever_established`, `floor_approached`, `evaluate_binary`, `evaluate_multi_option`, `should_trigger_failure`, `failure_mode` config, `floor` config, `threshold` config, `ALLOWED_FAILURE_MODES`, `extension_window_for`, `STABLE_RESULT_FRACTION` constant, `FLOOR_APPROACH_DELTA`. Replaces with a single unified mechanic — **Stable Result Required**: in the closing fraction of the voting period (`stable_window_fraction`, default 25%), the result must be stable (binary: every snapshot's support ≥ pass_threshold; multi-option: subset-or-superset semantics for adjacent winner sets per D4 worked examples). Destabilization triggers an extension equal to `stable_window_duration`. **During extensions: sliding-window check** — the worker closes the proposal IMMEDIATELY (voting_end = now) when stability is demonstrated for the most recent `stable_window_duration` of snapshots, instead of waiting for the extension's natural deadline. Extension budget is `original_voting_duration × max_extension_fraction` (default 25%), expressed as time budget rather than count of extensions; rounds down to whole `stable_window_duration` chunks (no partial extensions). When budget is exhausted, the proposal force-closes at its current voting_end. New `proposal.extended_by_stability` notification event. Column rename `Proposal.sustained_majority_enabled` → `Proposal.stable_result_required` (alembic `op.alter_column`; SQLite-and-PG-compatible). Old config keys silently ignored. Default stays off platform-wide; flipping waits on real-pilot signal. See spec `phase20_stable_result_required_spec.md` and PROGRESS.md Phase 20 entry. Closes Phase 12.8 audit Item 5 via deletion of the underlying code.
 
 ---
 
