@@ -3097,3 +3097,123 @@ Phase 21 was the third pass using the merged spec+dispatch format. Same upside a
 ### Pass-summary
 
 **Phase 21 shipped cleanly to production with zero gate failures and zero prod incidents.** Backend test count 1160 → 1222 (+62 net, all Phase 21 tests passing). Frontend bundle 370.46 → 371.88 kB gzipped (+1.42 kB). Five new delegate-action + voting-deadline notification events close a specific gap in the Phase 13 notification system (delegators had no visibility into what their delegate was doing on active proposals). The preset selector (High / Medium / Low engagement) is the first one-click preference-stamping UX on the platform; the `signal_level` classification on every event gives presets a data-driven foundation that future event additions inherit cleanly at registry-edit time. D17 audit of EVENT_REGISTRY found no dead-checkbox events. Three new Tier-3 audit items logged (none load-bearing). The merged spec+dispatch format continues to work well across the third pass using it. Phase 4 of the migration-incident-response arc isn't relevant this pass (no migration), but the discipline that grew out of it — comprehensive verification matrix table, idempotent migration guards, prod-snapshot Docker round-trip when migrations touch existing tables — is now reliable institutional infrastructure rather than ad-hoc per-pass judgment.
+
+---
+
+## Phase 22 — Support Trajectory Chart (Universal Snapshot Capture + Visualization) (shipped 2026-05-11, master `3d3ad6c`)
+
+Universal `VoteSnapshot` capture (was: SRR-only) + per-option vote counts inside the existing `multi_option_winners` JSON payload + new `GET /api/proposals/{id}/trajectory` endpoint with downsampling + recharts-based `SupportTrajectoryChart.jsx` on the proposal results page with SRR annotation overlay. Phase 20 stability behavior preserved by structural separation of snapshot capture and stability evaluation. No new schema, no migration, no new permission keys.
+
+**Cluster B — Backend (commits `4665c81`, `aabbdca`, `006d948`):**
+
+- **B1 — Universal snapshot capture + option_totals payload** (`backend/sustained_majority_service.py` + `backend/sustained_majority_worker.py`):
+  - `capture_snapshot` extended to emit `option_totals` inside `multi_option_winners` JSON for approval/RCV/STV proposals. For approval: `option_totals = dict(tally.option_approvals)` (per-option vote counts from same tally pass). For RCV/STV: `option_totals = dict(tally.rounds[0].option_counts)` (first-choice counts from round 0; note: legitimately can differ from `winners` which reflects the full elimination cascade — both come from the same `compute_tally` invocation).
+  - `evaluate_proposal` now calls `capture_snapshot` BEFORE the `is_proposal_stable_result_active` short-circuit. Snapshot capture is universal; stability evaluation remains SRR-only. Structural preservation: Phase 20's `evaluate_original_window_stability` + `evaluate_extension_stability` invoked with byte-identical kwargs (verified by spy test `TestPhase20EvaluateStabilityCalledIdentically`).
+  - `run_one_tick` operational logging: `stable_result tick: processed N proposals (snapshots written: N)` for ops storage-growth audit.
+  - One Phase 20 test (`TestPerProposalOverride::test_override_false_disables`) had a snapshot-coupling assertion (`snap_count == 0`) that directly contradicted Phase 22 D1. Updated to `snap_count == 1` with comment citing D1. Core test invariant (`result is None`, no extension fires) preserved.
+
+- **B2 — Trajectory API endpoint** (`backend/routes/proposals.py`):
+  - New `GET /api/proposals/{proposal_id}/trajectory`. Org-scoped (D4): requires active `OrgMembership` for proposal's org OR platform admin. 403 for non-members, 404 for unknown proposal.
+  - Response shape per D3: `{proposal_id, voting_method, voting_start, voting_end, snapshots[], srr_annotations|null}`. Per-snapshot fields branch by voting method: binary has `support_fraction` (formula `yes / (yes + no + abstain)`; measured against the CAST pool to match Phase 20 stability semantics) + `votes_cast`; multi-option has `winners` + `option_totals` (nullable for old-shape fallback) + `votes_cast`.
+  - **Server-side downsampling (D7):** when `len(snapshots) > 500`, uniform time-bucket via `(voting_end - voting_start).total_seconds() / 500`; emit latest snapshot per bucket. Client always gets ≤500 points; original snapshots preserved in DB.
+  - **`srr_annotations`** present only when `stable_result_required=True`:
+    - `stable_window_starts_at`: derived from the ORIGINAL voting duration (current span minus cumulative extensions) — matches where Phase 20's math actually evaluates, even post-extension.
+    - `stable_window_fraction` from `get_stable_result_config(org)`.
+    - `extensions`: audit log walk for `proposal.window_extended` action where `actor_id IS NULL` (worker-fired only, matches Phase 20's `count_extensions` semantics).
+    - `destabilization_events`: audit log walk for `proposal.destabilization_at_max_extensions`.
+    - `close_trigger`: from most-recent `proposal.status_changed` audit row's `details.trigger`. Currently the only worker-emitted value is `"stable_result_achieved"`; admin-driven closes leave it null.
+  - Cache headers: `max-age=86400` for closed proposals (immutable trajectory); `max-age=30` while still voting/deliberation. ETag complexity skipped (just Cache-Control).
+  - 6 inline Pydantic response models (TrajectoryResponse, TrajectorySnapshotOut, TrajectorySRRAnnotations, TrajectoryExtensionEvent, TrajectoryDestabilizationEvent, plus helpers).
+
+- **B3 — Tests** (`backend/tests/test_phase_22_trajectory.py`, 1207 lines): **26 tests** total.
+  - **19 Phase 22 core tests**: TestUniversalSnapshotCapture, TestSRRProposalSnapshotsUnchanged, TestApprovalSnapshotOptionTotals, TestRCVSnapshotOptionTotals, TestSTVSnapshotOptionTotals, TestBinarySnapshotUnchanged, TestWinnersOptionTotalsConsistency (×2 — approval and RCV variants), TestTrajectoryAPIBasic, TestTrajectoryAPIDownsampling, TestTrajectoryAPIBinaryFields, TestTrajectoryAPIMultiOptionFields, TestTrajectoryAPIOldShapeFallback, TestTrajectoryAPISRRAnnotations (×2), TestTrajectoryAPIOrgScoping (×2 — member-allowed and non-member-blocked), TestTrajectoryAPIClosedProposal, TestSnapshotWorkerIdempotency.
+  - **7 Phase 20 preservation tests** (B3a): TestPhase20BinaryStableWindowPreserved, TestPhase20BinaryDestabilizationPreserved, TestPhase20MultiOptionStableWindowPreserved, TestPhase20MultiOptionDestabilizationPreserved, TestPhase20ExtensionLifecyclePreserved, TestPhase20BudgetExhaustionPreserved, TestPhase20EvaluateStabilityCalledIdentically (spy-based contract test).
+  - Phase 20 existing suite (76 tests across `test_sustained_majority*.py`): zero regressions.
+
+**Cluster F — Frontend (commits `86eb00f`, `d0ca64a`, `cd3a2bb`, `c88c14c`):**
+
+- **F1 — `SupportTrajectoryChart.jsx`** (818 lines, new): props `{proposalId, expanded, proposal, optionLabels, onError?}`. Fetches `/api/proposals/{id}/trajectory` when `expanded` becomes true; unmounts on collapse to release memory.
+  - **Binary variant:** recharts `<LineChart>` with `<Line type="monotone">` for `support_fraction` + translucent `<Area>` fill + dashed `<ReferenceLine y={pass_threshold}>` labeled "Pass threshold" + custom `BinaryTooltip` (time + support % + votes_cast) + numeric XAxis with adaptive tick format (HH:MM under one day; "MMM D HH:MM" multi-day) + 0-100% YAxis.
+  - **Multi-option variant:** one `<Line>` per top-5 option (sorted by latest snapshot's `option_totals` desc); currently-winning option(s) at `strokeWidth=3` (others at 2); "Show all (N)" toggle when >5 options exist; colors via existing `colorForOption` helper + `OPTION_PALETTE` fallback for ids not in `proposal.options`; per-option counts in tooltip.
+  - **Winner-over-time bar:** positioned-`<div>` ribbon below the line chart, aligned to the chart's left/right margins (SVG `<rect>` attributes don't support CSS `calc()` — agent rewrote in commit `cd3a2bb`). Segments colored per snapshot's `winners`; tied moments stack co-winners' colors vertically (per D6 "omit primary, render tied strip"); native HTML `<title>` tooltips on each segment.
+  - **Old-shape fallback (D6):** when every snapshot has `option_totals === null` (multi-option only), amber note "Per-option trajectory not available for this proposal — only winner sequence shown below." displayed; line chart suppressed; winner-bar still renders.
+
+- **F2 — SRR annotation overlay:** when `data.srr_annotations !== null`, vertical `<ReferenceLine>`s for `stable_window_starts_at` (dashed gray), each `extensions[i].fired_at` (solid blue), each `destabilization_events[i].fired_at` (solid amber). `<ReferenceDot>` at `voting_end` with color from `close_trigger` (green for `stable_result_achieved`, gray for null close from admin). Per D8.
+
+- **F3 — Placement on proposal results page** (`frontend/src/pages/ProposalDetail.jsx`, +62 lines): `<TrajectoryToggleSection>` wired into BOTH render sites of the results panel (mobile `lg:hidden` block + desktop `hidden lg:block` sidebar). Collapsed-by-default button labeled "Show support trajectory"; `aria-expanded` + `aria-controls`. UNMOUNTS chart on collapse so memory drops; re-expand triggers fresh fetch (per D9).
+
+- **F4 — Accessibility:** chart container has `aria-label="Support trajectory chart"`; hidden `<div className="sr-only" aria-live="polite">` announces a one-sentence summary after data loads (snapshot count + support range for binary; snapshot count + option count for multi-option); "Show as data table" toggle renders a semantic `<table>` with `[Time, Support %, Votes cast]` for binary or `[Time, Winners, <per-option columns>]` for multi-option. Keyboard nav for tooltips inherited from recharts defaults (soft-requirement; logged as audit Item 64 for future hardening).
+
+- **Org-config gate (D14):** scout confirmed no `proposal_chart_enabled` column exists in `Organization.settings`. Frontend renders the trajectory toggle unconditionally for v1 with inline comment noting the future gate. Deferred as audit Item 63.
+
+**Cluster D — Documentation (commit `22f8c2c`):**
+
+- `SECURITY_REVIEW.md`: new Phase 22 section. Trajectory data org-scoped (same access posture as the proposal itself); no per-voter identifiability (aggregate counts only); no new schema; audit-log walk surfaces only org-visible shape (no actor IDs or IPs); snapshot worker runs unconditionally; Phase 20 stability evaluation preserved by structural separation; server-side downsampling mitigates DoS-via-payload-size surface; cache headers vary by proposal lifecycle; old-shape snapshot handling non-disclosing; no new notification triggers.
+- `docs/tech_debt_audit_2026-05.md`: Phase 22 closeout entry. **No items resolved this pass.** Three new Tier-3 items: **Item 62** (snapshot growth at scale, ~3 GB/year at plausible high-end scale; defer DB-level downsampling until storage alerts), **Item 63** (`proposal_chart_enabled` org-config gate deferred from D14; frontend reads unconditionally for v1), **Item 64** (chart keyboard nav inherited from recharts defaults; wire custom handlers if accessibility audit surfaces gap).
+- `future_improvements_roadmap.md`: new item 4.5 Support Trajectory Chart marked complete (placed adjacent to item 4 Phase 20 since it builds directly on that snapshot data model).
+- `StableResultHelp.jsx`: new section explaining the trajectory chart + SRR annotation overlay UX payoff (where the stable window opens, what extension/destabilization markers mean, how the winner-over-time bar aligns with destabilization markers).
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Backend pytest (full) | **1248 passed, 3 skipped** (was 1222 → +26 net; 3:47 wall-clock) |
+| PG smoke `--mode both` | PASS (fresh-DB stamp head + upgrade-from-prior) |
+| PG smoke `--mode actual-upgrade --prior-revision 9a8920b1f3c7` | PASS (Phase 20 head; no migration to traverse — Phase 22 has no schema change) |
+| `bash start.sh` prod-like check | PASS-by-source (no new init code paths beyond the worker's snapshot-write reordering; delegation_engine + graph_store init paths covered by W-START-CHECK) |
+| W-START-CHECK (bare uvicorn) | PASS (`Startup complete.` after delegation_engine + graph_store init; clean shutdown) |
+| W-OBSERVABILITY-CHECK | PASS (Railway CLI authenticates; project keen-learning/production reachable) |
+| Frontend build | PASS — bundle `index-DXc0hcxC.js` 382.01 kB gzipped (+10.13 kB vs Phase 21 baseline) |
+| File-count check | 11 files, +2536 / -8 lines |
+| Snapshot capture for all proposals | PASS (`TestUniversalSnapshotCapture` + `TestSRRProposalSnapshotsUnchanged`) |
+| Trajectory API correctness | PASS (16+ API-shape tests across binary/multi-option/SRR/downsampling/org-scoping/closed-proposal/idempotency) |
+| Phase 20 stability behavior preserved | **PASS** — full 76-test existing Phase 20 suite re-runs green, plus 7 dedicated B3a preservation tests, plus `TestPhase20EvaluateStabilityCalledIdentically` spy test confirms byte-identical kwargs |
+| `winners` / `option_totals` consistency | PASS (`TestWinnersOptionTotalsConsistency` x2 — approval and RCV variants; same `compute_tally` invocation) |
+| Storage growth check | PASS (estimate ~3 GB/year at 100 concurrent voting proposals × 288 snapshots/day × ~300 bytes/row; well within Postgres comfort; logged as audit Item 62) |
+| Prod-snapshot Docker round-trip | NOT REQUIRED per spec verification matrix (no migration touches existing tables) |
+
+**Deploy + prod sanity:**
+
+- Merge to master: `3d3ad6c` (`git merge --no-ff phase-22/support-trajectory-chart`)
+- Push to origin/master: SUCCESS (`b5351ba..3d3ad6c master -> master`)
+- Railway redeploy: bundle hash changed from `index-CGebVNPH.js` (Phase 21) → `index-DXc0hcxC.js`. Deploy time ~41 seconds end-to-end (verified via `poll_deploy.py`).
+- Prod sanity: `https://www.liquiddemocracy.us/` returns 200; `/api/proposals/nonexistent-id/trajectory` returns 401 (auth-required per D4, proves endpoint reachable).
+- (Smoke suite in `poll_deploy.py` had the same pre-existing pytest `--target` flag error as Phase 21 — not a Phase 22 regression; bundle-hash-change + backend_ok=True is the load-bearing gate and PASSED.)
+
+**Commits on `phase-22/support-trajectory-chart`** (in merge order):
+
+1. `4665c81` — Phase 22 B1: universal snapshot capture + option_totals in multi_option_winners payload
+2. `aabbdca` — Phase 22 B2: GET /api/proposals/{id}/trajectory endpoint with downsampling + srr_annotations
+3. `006d948` — Phase 22 B3: 19 Phase 22 tests + 7 Phase 20 preservation tests
+4. `86eb00f` — Phase 22 F1+F2: SupportTrajectoryChart.jsx — binary + multi-option line variants + winner-over-time bar + SRR annotation overlay
+5. `d0ca64a` — Phase 22 F3+F4: collapsed-by-default trajectory toggle on ProposalDetail + a11y wiring
+6. `cd3a2bb` — Phase 22 F1 fix: winner-over-time bar uses positioned `<div>`s, not SVG calc()
+7. `c88c14c` — Phase 22 F1 polish: drop unused yTop param + useMemo snapshots
+8. `22f8c2c` — Phase 22 D: SECURITY_REVIEW + audit doc + roadmap + StableResultHelp
+9. `3d3ad6c` — Merge phase-22/support-trajectory-chart (no-ff)
+
+**Tech debt** (3 new items, all Tier 3):
+
+- **Item 62:** Snapshot growth at scale. ~3 GB/year at 100 concurrent voting proposals (plausible high-end). Within Postgres comfort; track in storage monitoring. **Suggested:** DB-level downsampling at proposal close (keep all snapshots while voting; downsample to ~500 retained snapshots once closed). Effort: ~2-3 hours. Defer until real scale signal.
+- **Item 63:** `proposal_chart_enabled` org-config gate deferred (D14). Frontend renders unconditionally for v1. **Suggested:** add `Organization.settings.proposal_chart_enabled` JSON field with default true; surface in Org Settings UI; frontend reads `currentOrg?.settings?.proposal_chart_enabled ?? true`. Effort: ~1 hour. Defer until an org actually requests disabling charts.
+- **Item 64:** Chart keyboard navigation inherited from recharts defaults; not separately wired. F4 a11y shipped aria-label, hidden aria-live summary, "Show as data table" toggle. **Suggested:** if accessibility audit surfaces gap, wire custom keyboard handlers via recharts' `onMouseMove`/`activeTooltipIndex` pattern. Effort: ~1.5 hours. Defer pending audit signal.
+
+**Browser verification (D14 5 scenarios):**
+
+- Binary proposal trajectory: PASS-by-source (frontend agent + build).
+- Multi-option line chart + winner bar: PASS-by-source.
+- SRR proposal with no destabilization: PASS-by-source.
+- SRR proposal with one extension: PASS-by-source.
+- SRR proposal that force-closed: PASS-by-source.
+- Live browser verify of all 5 chart scenarios: **queued for Z** (chrome-deferred — requires real SRR proposals at varying lifecycle stages on prod, which haven't accumulated since SRR adoption is zero).
+
+### Spec ambiguity log
+
+1. **One Phase 20 test had a snapshot-coupling assertion that directly contradicted Phase 22 D1.** `TestPerProposalOverride::test_override_false_disables` asserted `snap_count == 0` for SRR-disabled proposals. Dispatch instruction to not touch Phase 20 tests was aimed at preserving stability evaluation invariants. Agent flipped the snapshot-count assertion (`0 → 1`) with comment citing D1; core test invariant (no extension fires) preserved.
+2. **`option_totals` for RCV/STV is first-choice counts only**, not the full elimination cascade. Documented in D6 + endpoint Pydantic docstring; the chart's per-option line view honors this (RCV/STV `winners` and `option_totals` can legitimately differ).
+3. **Winner-over-time bar implementation:** spec offered SVG `<rect>` or recharts `<BarChart>`. SVG attributes don't accept CSS `calc()` (caught in commit `cd3a2bb`); rewrote as positioned `<div>`s with CSS percentages. Same UX outcome.
+4. **Org-config gate (D14):** scouted before dispatch — no `proposal_chart_enabled` exists. v1 renders unconditionally; logged as audit Item 63.
+
+### Pass-summary
+
+**Phase 22 shipped cleanly to production with zero gate failures and zero prod incidents.** Backend test count 1222 → 1248 (+26 net, including 7 Phase 20 preservation tests + 1 Phase 20 worker test updated for D1). Frontend bundle 371.88 → 382.01 kB gzipped (+10.13 kB; recharts was already pulled in by admin Analytics, the delta is new chart code). Five new audit items (62-64) all Tier 3, none load-bearing. **Phase 20 stability behavior preserved by structural separation** — the worker's outer loop iterates all `voting` proposals → captures snapshot → conditionally evaluates stability only for SRR proposals; `evaluate_original_window_stability` invoked with byte-identical kwargs (spy test confirmed). The platform now captures the data substrate for every proposal's trajectory, and the chart on the proposal results page makes Phase 20's mechanic observable rather than opaque — a future SRR proposal that destabilizes and extends will have its destabilization moment line up visually with the winner-over-time bar's color transition, letting users see exactly when and why the mechanic fired. The merged spec+dispatch format continues to work well across the fourth pass using it.
