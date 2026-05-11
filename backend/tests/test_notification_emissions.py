@@ -517,36 +517,32 @@ def test_proposal_closed_negative(client, test_db):
 # removed; the short-circuit is verified below.
 # ---------------------------------------------------------------------------
 
-def test_floor_approached_short_circuited_post_phase_13_3(test_db):
-    """Phase 13.3: _maybe_emit_floor_approached is a no-op now that the
-    event was removed from the registry. Verify it doesn't raise and
-    creates no notification rows."""
-    from sustained_majority_worker import _maybe_emit_floor_approached
-    from sustained_majority import (
-        BinarySnapshotPoint,
-        SustainedMajorityConfig,
-    )
+def test_floor_approached_helper_removed_in_phase_20():
+    """Phase 13.3 short-circuited the floor_approached event by removing it
+    from the registry. Phase 20 finishes the job by deleting the entire
+    floor mechanism, including ``_maybe_emit_floor_approached``,
+    ``SustainedMajorityConfig``, ``support_ever_established``,
+    ``is_above_floor``, and ``evaluate_binary``. This meta-test asserts
+    the deletion held — protects against accidental re-introduction
+    through a future revert or merge."""
+    import sustained_majority_worker
+    import sustained_majority
 
-    org = _make_org(test_db, "smshort")
-    author = _make_user(test_db, "smsh_author")
-    make_org_membership(test_db, org_id=org.id, user_id=author.id, role="admin")
-    proposal = _make_proposal(test_db, author, org, status="voting")
-    test_db.commit()
-
-    snap = BinarySnapshotPoint(
-        simulated_time=datetime.now(timezone.utc).replace(tzinfo=None),
-        yes=46, no=54, abstain=0, total_eligible=100,
+    assert not hasattr(sustained_majority_worker, "_maybe_emit_floor_approached"), (
+        "_maybe_emit_floor_approached should have been removed by Phase 20"
     )
-    config = SustainedMajorityConfig(
-        enabled_default=True, per_proposal_override=True,
-        threshold=0.50, floor=0.45, failure_mode="fail",
+    assert not hasattr(sustained_majority, "SustainedMajorityConfig"), (
+        "SustainedMajorityConfig should have been removed by Phase 20"
     )
-    _maybe_emit_floor_approached(test_db, proposal, [snap], config)  # no-op
-
-    rows = test_db.query(models.Notification).filter(
-        models.Notification.user_id == author.id,
-    ).all()
-    assert rows == []
+    assert not hasattr(sustained_majority, "support_ever_established"), (
+        "support_ever_established should have been removed by Phase 20"
+    )
+    assert not hasattr(sustained_majority, "is_above_floor"), (
+        "is_above_floor should have been removed by Phase 20"
+    )
+    assert not hasattr(sustained_majority, "evaluate_binary"), (
+        "evaluate_binary should have been removed by Phase 20"
+    )
 
 
 # ---------------------------------------------------------------------------

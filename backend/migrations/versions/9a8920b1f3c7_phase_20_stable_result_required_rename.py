@@ -47,9 +47,35 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _proposals_columns(bind) -> set[str]:
+    inspector = sa.inspect(bind)
+    return {c["name"] for c in inspector.get_columns("proposals")}
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     dialect = bind.dialect.name
+
+    # Defensive idempotent check (Phase 19 lesson — pg_smoke + SQLite migration-
+    # cycle tests bootstrap via Base.metadata.create_all which builds today's
+    # schema. The new column name (`stable_result_required`) is already in
+    # models.py, so create_all-bootstrapped DBs already have the new name and
+    # NOT the old one — `op.alter_column` with the old name as source raises
+    # KeyError on SQLite batch_alter_table OR UndefinedColumn on PG. This
+    # pre-check makes the migration a no-op when the schema is already at the
+    # post-rename shape, which is the case for every test fixture and for the
+    # actual-upgrade gate. Real prod still has the old column name and the
+    # rename runs normally.
+    cols = _proposals_columns(bind)
+    if "stable_result_required" in cols:
+        # Already renamed (or create_all-bootstrapped at the new shape).
+        return
+    if "sustained_majority_enabled" not in cols:
+        raise RuntimeError(
+            "Phase 20 migration: proposals table has neither "
+            "'sustained_majority_enabled' nor 'stable_result_required'; "
+            "cannot rename."
+        )
 
     if dialect == "sqlite":
         # SQLite cannot rename a column with a bare ALTER TABLE in older
@@ -76,6 +102,17 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     dialect = bind.dialect.name
+
+    # Mirror of upgrade's idempotent check.
+    cols = _proposals_columns(bind)
+    if "sustained_majority_enabled" in cols:
+        # Already downgraded.
+        return
+    if "stable_result_required" not in cols:
+        raise RuntimeError(
+            "Phase 20 downgrade: proposals table has neither column; "
+            "cannot rename back."
+        )
 
     if dialect == "sqlite":
         with op.batch_alter_table('proposals', schema=None) as batch_op:
