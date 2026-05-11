@@ -46,6 +46,14 @@ log = logging.getLogger(__name__)
 # 90 days per spec Q6.
 NOTIFICATION_RETENTION_DAYS: int = 90
 
+# Phase 21 D7 — dedup window for delegate-action notifications. When a
+# delegate changes their vote three times in 30 minutes, only the first
+# notification fires per delegator; subsequent changes within this window
+# are suppressed. The constant is a code-level UX knob, NOT an env var —
+# changing it requires a redeploy. 1 hour balances "real signal" against
+# "spam."
+DELEGATE_NOTIFICATION_DEDUP_HOURS: int = 1
+
 # Default quiet-hours window (in the user's local timezone). Phase 13.3
 # made this per-user adjustable via ``User.quiet_hours_start`` /
 # ``User.quiet_hours_end`` (HH:MM strings). These constants remain for
@@ -320,6 +328,90 @@ def emit_notification(
             )
 
     return notification
+
+
+# ---------------------------------------------------------------------------
+# Phase 21 — dedup / idempotency helpers
+# ---------------------------------------------------------------------------
+#
+# The five Phase 21 events (delegate.voted, delegate.vote_changed,
+# delegate.posted_rationale, voting.halfway_delegate_silent,
+# voting.halfway_you_havent_voted) target ``proposal`` rows and can be
+# emitted multiple times in response to an underlying state change. Two
+# helpers prevent notification storms:
+#
+#   * ``should_emit_with_dedup`` — time-windowed dedup. Returns True iff a
+#     notification of the same (user, event_type, proposal) tuple has NOT
+#     been emitted within the past ``hours``. Used by the
+#     delegate-action events (D7).
+#
+#   * ``has_ever_emitted`` — permanent idempotency. Returns True iff a
+#     notification of the same tuple has ever been emitted. Used by the
+#     halfway-deadline events (D9), which fire at most once per
+#     (user, proposal) pair.
+#
+# Both filter on ``target_type == "proposal"`` because all five Phase 21
+# events target proposal rows. If a future Phase 21-style event targets a
+# different row type, add a ``target_type`` parameter.
+
+def should_emit_with_dedup(
+    db: Session,
+    user_id: str,
+    event_type: str,
+    target_id: str,
+    hours: int = DELEGATE_NOTIFICATION_DEDUP_HOURS,
+) -> bool:
+    """Return True iff a notification of ``event_type`` targeting the
+    given proposal has NOT been emitted to ``user_id`` within the past
+    ``hours`` hours.
+
+    Used by the Phase 21 delegate-action events (D7) to prevent storms
+    when an underlying state changes multiple times in quick succession.
+
+    Caller is responsible for passing the right ``hours``;
+    ``DELEGATE_NOTIFICATION_DEDUP_HOURS`` is the default and matches the
+    spec's 1-hour window.
+    """
+    cutoff = _now_naive() - timedelta(hours=hours)
+    recent = (
+        db.query(models.Notification)
+        .filter(
+            models.Notification.user_id == user_id,
+            models.Notification.event_type == event_type,
+            models.Notification.target_type == "proposal",
+            models.Notification.target_id == target_id,
+            models.Notification.created_at >= cutoff,
+        )
+        .first()
+    )
+    return recent is None
+
+
+def has_ever_emitted(
+    db: Session,
+    user_id: str,
+    event_type: str,
+    target_id: str,
+) -> bool:
+    """Return True iff a notification of ``event_type`` targeting the
+    given proposal has ever been emitted to ``user_id``.
+
+    Used by the Phase 21 halfway-deadline events (D9), which are one-shot
+    per (user, proposal) pair — the scheduler re-runs every 30 min and
+    must not duplicate. Stronger than ``should_emit_with_dedup``'s
+    time-windowed check; this one has no cutoff.
+    """
+    return (
+        db.query(models.Notification)
+        .filter(
+            models.Notification.user_id == user_id,
+            models.Notification.event_type == event_type,
+            models.Notification.target_type == "proposal",
+            models.Notification.target_id == target_id,
+        )
+        .first()
+        is not None
+    )
 
 
 # ---------------------------------------------------------------------------
