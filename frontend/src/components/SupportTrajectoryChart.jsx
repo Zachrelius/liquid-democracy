@@ -174,9 +174,13 @@ function MultiOptionTooltip({ active, payload, optionLabels }) {
 }
 
 // Winner-over-time ribbon (multi-option only). Renders below the line
-// chart, sharing horizontal margins via the outer ResponsiveContainer.
+// chart and aligns to its X-axis by applying the SAME horizontal pixel
+// margins (leftMargin + rightMargin) as the recharts plot area. Inside
+// those margins, segments are positioned via CSS percentages over the
+// time span. Each segment is a <div> with a native HTML `title` for
+// accessible tooltip on hover (lowest-effort accessible approach per
+// the dispatch). Tied moments stack winners' colors vertically.
 function WinnerOverTimeBar({ snapshots, optionsById, optionLabels, height, leftMargin, rightMargin }) {
-  // Hooks must be called unconditionally before any early returns.
   const data = useMemo(() => {
     if (!snapshots || snapshots.length === 0) return null;
     const tMin = new Date(snapshots[0].captured_at).getTime();
@@ -188,8 +192,9 @@ function WinnerOverTimeBar({ snapshots, optionsById, optionLabels, height, leftM
   if (!snapshots || snapshots.length === 0 || !data) return null;
   const { tMin, span } = data;
 
-  // Build a stable color lookup via option index in the optionLabels
-  // ordering (falls back to OPTION_PALETTE by index).
+  // Color lookup. Index in optionLabels (insertion order) keeps colors
+  // stable across re-renders even when the option isn't in
+  // proposal.options (defensive against API-only ids).
   const ids = optionLabels ? Object.keys(optionLabels) : [];
   const idxOf = (id) => {
     const i = ids.indexOf(id);
@@ -197,77 +202,81 @@ function WinnerOverTimeBar({ snapshots, optionsById, optionLabels, height, leftM
   };
   const colorOf = (id) => colorForOptionId(id, idxOf(id), optionsById);
 
-  // Render via raw SVG inside a ResponsiveContainer so we can use the
-  // chart's px width at render time.
   return (
-    <div style={{ width: '100%', height }}>
-      <ResponsiveContainer width="100%" height={height}>
-        <svg width="100%" height={height} role="img" aria-label="Winner over time">
-          {/* recharts passes width/height to children; using a custom
-              render lets us position rects via 100%-relative widths */}
-          {snapshots.map((snap, i) => {
-            const t = new Date(snap.captured_at).getTime();
-            const nextT = i < snapshots.length - 1
-              ? new Date(snapshots[i + 1].captured_at).getTime()
-              : t + span / Math.max(1, snapshots.length - 1);
-            const leftPct = ((t - tMin) / span) * 100;
-            const widthPct = Math.max(0.1, ((nextT - t) / span) * 100);
-            const winners = Array.isArray(snap.winners) ? snap.winners : [];
-            if (winners.length === 0) {
-              return (
-                <rect
-                  key={`seg-${i}`}
-                  x={`calc(${leftMargin}px + (100% - ${leftMargin + rightMargin}px) * ${leftPct / 100})`}
-                  y={0}
-                  width={`calc((100% - ${leftMargin + rightMargin}px) * ${widthPct / 100})`}
-                  height={height}
-                  fill="#E5E7EB"
-                >
-                  <title>{formatFullTimestamp(snap.captured_at)}: no winner yet</title>
-                </rect>
-              );
-            }
-            if (winners.length === 1) {
-              const id = winners[0];
-              const label = optionLabels?.[id] || id;
-              return (
-                <rect
-                  key={`seg-${i}`}
-                  x={`calc(${leftMargin}px + (100% - ${leftMargin + rightMargin}px) * ${leftPct / 100})`}
-                  y={0}
-                  width={`calc((100% - ${leftMargin + rightMargin}px) * ${widthPct / 100})`}
-                  height={height}
-                  fill={colorOf(id)}
-                >
-                  <title>{formatFullTimestamp(snap.captured_at)}: {label} winning</title>
-                </rect>
-              );
-            }
-            // Tied: stack tied options' colors vertically (each gets
-            // an equal slice of height). Per D6, lean toward "omit"
-            // the primary single-color bar — render only the tied
-            // strip to make the tie visually distinct.
-            const stripeH = height / winners.length;
-            const tiedLabels = winners.map((id) => optionLabels?.[id] || id).join(', ');
+    <div
+      role="img"
+      aria-label="Winner over time"
+      style={{
+        position: 'relative',
+        width: '100%',
+        height,
+        paddingLeft: leftMargin,
+        paddingRight: rightMargin,
+        boxSizing: 'border-box',
+      }}
+    >
+      <div style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: '#F3F4F6', borderRadius: 2 }}>
+        {snapshots.map((snap, i) => {
+          const t = new Date(snap.captured_at).getTime();
+          const nextT = i < snapshots.length - 1
+            ? new Date(snapshots[i + 1].captured_at).getTime()
+            : t + span / Math.max(1, snapshots.length - 1);
+          const leftPct = ((t - tMin) / span) * 100;
+          const widthPct = Math.max(0.1, ((nextT - t) / span) * 100);
+          const winners = Array.isArray(snap.winners) ? snap.winners : [];
+          const baseStyle = {
+            position: 'absolute',
+            left: `${leftPct}%`,
+            width: `${widthPct}%`,
+            top: 0,
+            height: '100%',
+          };
+          if (winners.length === 0) {
             return (
-              <g key={`seg-${i}`}>
-                {winners.map((id, wi) => (
-                  <rect
-                    key={`seg-${i}-${id}`}
-                    x={`calc(${leftMargin}px + (100% - ${leftMargin + rightMargin}px) * ${leftPct / 100})`}
-                    y={wi * stripeH}
-                    width={`calc((100% - ${leftMargin + rightMargin}px) * ${widthPct / 100})`}
-                    height={stripeH}
-                    fill={colorOf(id)}
-                  >
-                    <title>{formatFullTimestamp(snap.captured_at)}: tied — {tiedLabels}</title>
-                  </rect>
-                ))}
-              </g>
+              <div
+                key={`seg-${i}`}
+                title={`${formatFullTimestamp(snap.captured_at)}: no winner yet`}
+                style={{ ...baseStyle, backgroundColor: '#E5E7EB' }}
+              />
             );
-          })}
-        </svg>
-      </ResponsiveContainer>
+          }
+          if (winners.length === 1) {
+            const id = winners[0];
+            const label = optionLabels?.[id] || id;
+            return (
+              <div
+                key={`seg-${i}`}
+                title={`${formatFullTimestamp(snap.captured_at)}: ${label} winning`}
+                style={{ ...baseStyle, backgroundColor: colorOf(id) }}
+              />
+            );
+          }
+          // Tied: stack tied options' colors vertically (each gets an
+          // equal slice of height). Per D6, omit the primary
+          // single-color rect during ties — only the stacked tied
+          // strip renders, making "tied" visually distinct.
+          const stripeH = 100 / winners.length;
+          const tiedLabels = winners.map((id) => optionLabels?.[id] || id).join(', ');
+          return (
+            <div key={`seg-${i}`} style={baseStyle}>
+              {winners.map((id, wi) => (
+                <div
+                  key={`seg-${i}-${id}`}
+                  title={`${formatFullTimestamp(snap.captured_at)}: tied — ${tiedLabels}`}
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    width: '100%',
+                    top: `${wi * stripeH}%`,
+                    height: `${stripeH}%`,
+                    backgroundColor: colorOf(id),
+                  }}
+                />
+              ))}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -315,24 +324,10 @@ function srrReferenceElements(srr, yTop) {
       />
     );
   });
-  // Close marker — placed at the last snapshot's x. Color reflects
-  // the close trigger.
-  if (srr.close_trigger) {
-    const trigger = srr.close_trigger;
-    const color = trigger === 'stable_result_achieved' ? SRR_COLORS.achieved
-                : trigger === 'force_close_budget_exhausted' ? SRR_COLORS.forceClose
-                : SRR_COLORS.voteEnd;
-    elements.push(
-      <ReferenceLine
-        key="srr-close"
-        x="__close__"
-        stroke={color}
-        strokeWidth={2}
-        // The actual x is patched by caller — we render only when we
-        // know voting_end is in range. Placeholder.
-      />
-    );
-  }
+  // Close marker is rendered inline by the caller via <ReferenceDot>
+  // at the voting_end x coordinate, since the y coordinate depends on
+  // the chart variant (binary uses last support_fraction; multi-option
+  // uses chart top). We don't render it here.
   return elements;
 }
 
@@ -552,7 +547,7 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
 
   // Build SRR reference elements (vertical lines). The close marker
   // we render inline via ReferenceDot below since we need y coords.
-  const srrLines = srr ? srrReferenceElements(srr, null).filter((e) => e.key !== 'srr-close') : [];
+  const srrLines = srr ? srrReferenceElements(srr, null) : [];
 
   // ---- Binary chart render ----
   const renderBinaryChart = (height) => (
