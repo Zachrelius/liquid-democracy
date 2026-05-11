@@ -19,28 +19,57 @@ import renderMarkdown from '../../utils/renderMarkdown';
 // every keystroke.
 const INTRO_TEXT_MAX = 5000;
 
-// Phase 9.6 — sustained-majority demotion. Defaults that mirror what the
-// backend uses when keys are absent. Used both for the "expand from
-// nothing" path and for deciding whether the section is currently
-// "customized" (any key present + non-default).
-const SM_DEFAULTS = {
-  sustained_majority_enabled_default: false,
-  sustained_majority_per_proposal_override: true,
-  sustained_majority_threshold: 0.5,
-  sustained_majority_floor: 0.45,
-  sustained_majority_failure_mode: 'fail',
+// Phase 20 — Stable Result Required (renamed from "sustained-majority").
+// Defaults mirror the backend's StableResultConfig defaults (see
+// backend/sustained_majority.py). The old SM keys (floor / failure_mode /
+// threshold) are removed from the schema; orgs that have those keys set
+// from earlier phases simply have them silently ignored.
+const SR_DEFAULTS = {
+  stable_result_enabled_default: false,
+  stable_result_per_proposal_override: true,
+  stable_window_fraction: 0.25,
+  max_extension_fraction: 0.25,
 };
-const SM_KEYS = Object.keys(SM_DEFAULTS);
+const SR_KEYS = Object.keys(SR_DEFAULTS);
 
-// True if any SM key is present in settings AND differs from its default.
-// Used to derive the section-expanded state from existing settings —
-// avoids needing a new backend schema field.
-function smIsCustomized(settings) {
+// True if any SR key is present in settings AND differs from its default.
+// Used to derive the section-expanded state from existing settings.
+// Backwards compat: also expand if the legacy
+// sustained_majority_enabled_default key was present and on (so an org
+// that previously had the feature enabled doesn't see the section
+// silently collapse to "off" after the rename).
+function srIsCustomized(settings) {
   if (!settings) return false;
-  return SM_KEYS.some(k => {
+  if (settings.sustained_majority_enabled_default === true) return true;
+  return SR_KEYS.some(k => {
     if (!Object.prototype.hasOwnProperty.call(settings, k)) return false;
-    return settings[k] !== SM_DEFAULTS[k];
+    return settings[k] !== SR_DEFAULTS[k];
   });
+}
+
+// Phase 20 helper — humanize a duration (seconds) to a short string for
+// the slider helper text. Output samples:
+//   86400 -> "1 day"
+//   3600  -> "1 hour"
+//   1800  -> "30 minutes"
+//   151200 -> "1 day 18 hours"
+function formatDuration(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s} second${s === 1 ? '' : 's'}`;
+  if (s < 3600) {
+    const m = Math.round(s / 60);
+    return `${m} minute${m === 1 ? '' : 's'}`;
+  }
+  if (s < 86400) {
+    const h = Math.floor(s / 3600);
+    const m = Math.round((s % 3600) / 60);
+    if (m === 0) return `${h} hour${h === 1 ? '' : 's'}`;
+    return `${h} hour${h === 1 ? '' : 's'} ${m} minute${m === 1 ? '' : 's'}`;
+  }
+  const d = Math.floor(s / 86400);
+  const h = Math.round((s % 86400) / 3600);
+  if (h === 0) return `${d} day${d === 1 ? '' : 's'}`;
+  return `${d} day${d === 1 ? '' : 's'} ${h} hour${h === 1 ? '' : 's'}`;
 }
 
 // Phase 12.7 F4 — platform default colors (used for the picker initial
@@ -137,10 +166,14 @@ export default function OrgSettings() {
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [showDelete, setShowDelete] = useState(false);
 
-  // Phase 9.6 — sustained-majority section is collapsed by default.
+  // Phase 20 — Stable Result Required section is collapsed by default.
   // Local toggle state, derived from loaded settings: expanded if the
-  // org has explicitly enabled SM or customized any of the keys.
-  const [smExpanded, setSmExpanded] = useState(false);
+  // org has explicitly enabled the feature or customized any of the keys.
+  const [srExpanded, setSrExpanded] = useState(false);
+  // Phase 20 — local saving state for the per-section save button so the
+  // SR section follows the Phase 16 F4 per-section save pattern rather
+  // than relying on the General-section "Save Settings" button.
+  const [savingSr, setSavingSr] = useState(false);
 
   // Phase 12.7 F4 — Branding section local state.
   //
@@ -210,9 +243,9 @@ export default function OrgSettings() {
       setJoinPolicy(currentOrg.join_policy);
       const s = currentOrg.settings || {};
       setSettings(s);
-      // Expand the SM section if the org currently has it on, or if any
-      // SM key is customized away from the default.
-      setSmExpanded(!!s.sustained_majority_enabled_default || smIsCustomized(s));
+      // Expand the SR section if the org currently has it on, or if any
+      // SR key is customized away from the default.
+      setSrExpanded(!!s.stable_result_enabled_default || srIsCustomized(s));
       // Branding state hydration. Backend B4 returns currentOrg.branding
       // as an object with possibly-null fields; missing object is treated
       // as "all unconfigured" -> use platform defaults in the pickers.
@@ -408,6 +441,33 @@ export default function OrgSettings() {
     }
   }
 
+  async function handleSaveStableResult() {
+    // Phase 20 F1 — per-section save for the Stable Result Required block.
+    // Sends only the four SR keys (plus the off-flip clear of the legacy
+    // sustained_majority_enabled_default key when the user collapses the
+    // section). Backend silently ignores any leftover sustained_majority_*
+    // keys; we don't try to actively unset them here.
+    setSavingSr(true);
+    try {
+      const payload = {
+        stable_result_enabled_default: !!settings.stable_result_enabled_default,
+        stable_result_per_proposal_override:
+          settings.stable_result_per_proposal_override !== false,
+        stable_window_fraction: settings.stable_window_fraction
+          ?? SR_DEFAULTS.stable_window_fraction,
+        max_extension_fraction: settings.max_extension_fraction
+          ?? SR_DEFAULTS.max_extension_fraction,
+      };
+      await api.patch(`/api/orgs/${currentOrg.slug}`, { settings: payload });
+      await refreshOrgs();
+      toast.success('Stable Result settings saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save Stable Result settings');
+    } finally {
+      setSavingSr(false);
+    }
+  }
+
   async function handleSaveTieResolution() {
     // Phase 17 F1 — PATCH /api/orgs/{slug} with the per-section
     // settings.tie_resolution payload. The backend B5 validator rejects
@@ -468,9 +528,10 @@ export default function OrgSettings() {
           existing endpoint — only the JSX position of the button
           changed; the lower sections that have no per-section button
           (Voting Defaults / Threshold Defaults / Voting Methods /
-          Sustained-Majority / Deliberation / Public Delegates) are
-          still saved through this same button, since handleSave sends
-          the whole settings object. */}
+          Deliberation / Public Delegates) are still saved through this
+          same button, since handleSave sends the whole settings
+          object. Phase 20 F1 added a per-section save for the Stable
+          Result Required block. */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">General</h2>
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
@@ -1038,16 +1099,20 @@ export default function OrgSettings() {
         )}
       </section>
 
-      {/* Sustained-Majority Voting (Phase 8 — demoted to collapsed-by-default in 9.6;
-          Phase 9.8 W C2 — dropped the "(advanced)" suffix and refreshed the
-          helper copy now that the floor-activation logic is fixed in C1). */}
+      {/* Phase 20 F1 — Stable Result Required (renamed and simplified from
+          the old Phase 8 sustained-majority section). The floor / failure-
+          mode / threshold controls are gone; in their place are two
+          fraction sliders that drive the unified stable-window mechanic
+          on the backend (see backend/sustained_majority.py StableResultConfig).
+          Save uses the per-section Phase 16 F4 pattern via
+          handleSaveStableResult. */}
       <section className="space-y-3">
         <div className="flex items-baseline justify-between">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            Sustained-majority voting
+            Stable Result Required
           </h2>
           <a
-            href="/help/sustained-majority"
+            href="/help/stable-result"
             target="_blank"
             rel="noreferrer"
             className="text-xs text-[var(--brand-accent)] hover:underline"
@@ -1059,24 +1124,23 @@ export default function OrgSettings() {
           <label className="flex items-start gap-3 cursor-pointer">
             <input
               type="checkbox"
-              checked={smExpanded}
+              checked={srExpanded}
               onChange={e => {
                 const on = e.target.checked;
-                setSmExpanded(on);
+                setSrExpanded(on);
                 if (!on) {
-                  // Toggling OFF forces sustained_majority_enabled_default
-                  // to false org-wide regardless of any previous value.
-                  // Other SM keys are left in the settings object so that
-                  // re-enabling restores the previously-saved values.
-                  updateSetting('sustained_majority_enabled_default', false);
+                  // Toggling OFF forces stable_result_enabled_default false
+                  // org-wide regardless of any previous value. Other SR keys
+                  // are left in settings so re-enabling restores them.
+                  updateSetting('stable_result_enabled_default', false);
                 } else {
                   // Toggling ON: seed any missing keys with defaults so
                   // the controls render with sane values.
                   setSettings(prev => {
                     const next = { ...prev };
-                    SM_KEYS.forEach(k => {
+                    SR_KEYS.forEach(k => {
                       if (next[k] === undefined || next[k] === null) {
-                        next[k] = SM_DEFAULTS[k];
+                        next[k] = SR_DEFAULTS[k];
                       }
                     });
                     return next;
@@ -1086,107 +1150,131 @@ export default function OrgSettings() {
               className="mt-0.5 accent-[var(--brand-accent)]"
             />
             <div>
-              <p className="text-sm text-gray-700">Enable sustained-majority voting</p>
+              <p className="text-sm text-gray-700">Enable Stable Result Required</p>
               <p className="text-xs text-gray-400">
-                Off by default. Enable when your organization makes binding decisions that benefit from durable-consensus protection — proposals must maintain support throughout the voting window, not just at close.
+                Off by default. Enable when your organization wants extra
+                assurance that a result has settled — the proposal must
+                show a stable outcome across the closing portion of the
+                voting window, with automatic extensions if it doesn&apos;t.
               </p>
             </div>
           </label>
 
-          {smExpanded && (
-            <div className="space-y-4 pt-2 border-t border-gray-100">
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.sustained_majority_enabled_default ?? false}
-                  onChange={e => updateSetting('sustained_majority_enabled_default', e.target.checked)}
-                  className="mt-0.5 accent-[var(--brand-accent)]"
-                />
+          {srExpanded && (() => {
+            const stableFraction = settings.stable_window_fraction
+              ?? SR_DEFAULTS.stable_window_fraction;
+            const maxExtFraction = settings.max_extension_fraction
+              ?? SR_DEFAULTS.max_extension_fraction;
+            // Sample voting period for the slider helper text. Uses the
+            // org's default voting_days when present, otherwise the
+            // platform-wide default of 7 days. Helps stewards visualize
+            // what the percentage means in human time.
+            const sampleVotingDays = settings.default_voting_days ?? 7;
+            const sampleVotingSeconds = sampleVotingDays * 86400;
+            const stableWindowSeconds = sampleVotingSeconds * stableFraction;
+            const extensionBudgetSeconds = sampleVotingSeconds * maxExtFraction;
+            // Number of extensions (mechanically derived per spec D9).
+            // floor(max_ext / stable_window). When stableFraction is 0 we
+            // can't divide; treat as 0 extensions to avoid Infinity.
+            const extensionsPossible = stableFraction > 0
+              ? Math.floor(maxExtFraction / stableFraction)
+              : 0;
+            return (
+              <div className="space-y-5 pt-2 border-t border-gray-100">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.stable_result_enabled_default ?? false}
+                    onChange={e => updateSetting('stable_result_enabled_default', e.target.checked)}
+                    className="mt-0.5 accent-[var(--brand-accent)]"
+                  />
+                  <div>
+                    <p className="text-sm text-gray-700">Stable Result Required (default for new proposals)</p>
+                    <p className="text-xs text-gray-400">
+                      When enabled, new proposals require a stable result unless the author opts out.
+                    </p>
+                  </div>
+                </label>
+
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.stable_result_per_proposal_override ?? true}
+                    onChange={e => updateSetting('stable_result_per_proposal_override', e.target.checked)}
+                    className="mt-0.5 accent-[var(--brand-accent)]"
+                  />
+                  <div>
+                    <p className="text-sm text-gray-700">Allow per-proposal override</p>
+                    <p className="text-xs text-gray-400">
+                      Authors can opt a single proposal in or out, overriding the org default above.
+                    </p>
+                  </div>
+                </label>
+
                 <div>
-                  <p className="text-sm text-gray-700">Default on for new proposals</p>
-                  <p className="text-xs text-gray-400">
-                    When enabled, new proposals use sustained-majority unless the author opts out.
+                  <label className="block text-xs text-gray-500 mb-1">
+                    Stable window: {Math.round(stableFraction * 100)}% of voting period
+                  </label>
+                  <p className="text-xs text-gray-400 mb-1">
+                    The closing portion of the voting window where the result
+                    must remain stable. Destabilization during this window
+                    triggers an automatic extension.
+                  </p>
+                  <input
+                    type="range"
+                    min={5}
+                    max={50}
+                    value={Math.round(stableFraction * 100)}
+                    onChange={e => updateSetting('stable_window_fraction', parseInt(e.target.value, 10) / 100)}
+                    className="w-full accent-[var(--brand-accent)]"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Final {Math.round(stableFraction * 100)}% of voting period;
+                    a voting period of {sampleVotingDays} day{sampleVotingDays === 1 ? '' : 's'} =
+                    {' '}stable window of {formatDuration(stableWindowSeconds)}.
                   </p>
                 </div>
-              </label>
 
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={settings.sustained_majority_per_proposal_override ?? true}
-                  onChange={e => updateSetting('sustained_majority_per_proposal_override', e.target.checked)}
-                  className="mt-0.5 accent-[var(--brand-accent)]"
-                />
                 <div>
-                  <p className="text-sm text-gray-700">Allow proposal authors to override per-proposal</p>
-                  <p className="text-xs text-gray-400">
-                    Authors can opt a single proposal in or out, overriding the org default above.
+                  <label
+                    className="block text-xs text-gray-500 mb-1"
+                    title="Voting can be extended by up to this fraction of the original voting period if the result destabilizes. Extensions happen in stable-window-duration chunks; voting closes when stability is demonstrated or when the extension budget is exhausted."
+                  >
+                    Maximum total extension: {Math.round(maxExtFraction * 100)}% of voting period
+                  </label>
+                  <p className="text-xs text-gray-400 mb-1">
+                    Cap on the cumulative extension time across all extensions
+                    combined. Set to 0% to log destabilization without granting
+                    any extension.
+                  </p>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={Math.round(maxExtFraction * 100)}
+                    onChange={e => updateSetting('max_extension_fraction', parseInt(e.target.value, 10) / 100)}
+                    className="w-full accent-[var(--brand-accent)]"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Extension budget for a {sampleVotingDays}-day vote: up to
+                    {' '}{formatDuration(extensionBudgetSeconds)}. With current
+                    settings, your proposal can extend up to {extensionsPossible}{' '}
+                    time{extensionsPossible === 1 ? '' : 's'} before force-close.
                   </p>
                 </div>
-              </label>
-
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">
-                  Required support level: {Math.round((settings.sustained_majority_threshold ?? 0.5) * 100)}%
-                </label>
-                <p className="text-xs text-gray-400 mb-1">The headline support level the proposal must reach to pass.</p>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={Math.round((settings.sustained_majority_threshold ?? 0.5) * 100)}
-                  onChange={e => updateSetting('sustained_majority_threshold', parseInt(e.target.value) / 100)}
-                  className="w-full accent-[var(--brand-accent)]"
-                />
               </div>
-
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">
-                  Drop-below floor: {Math.round((settings.sustained_majority_floor ?? 0.45) * 100)}%
-                </label>
-                <p className="text-xs text-gray-400 mb-1">
-                  If support drops below this level during voting, the configured failure mode triggers.
-                </p>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={Math.round((settings.sustained_majority_floor ?? 0.45) * 100)}
-                  onChange={e => updateSetting('sustained_majority_floor', parseInt(e.target.value) / 100)}
-                  className="w-full accent-[var(--brand-accent)]"
-                />
-              </div>
-
-              <div>
-                <p className="text-xs text-gray-500 mb-2">When the floor is breached:</p>
-                <div className="space-y-2">
-                  {[
-                    { value: 'fail', label: 'Fail immediately',
-                      desc: 'The proposal moves to "failed" the moment support dips below the floor.' },
-                    { value: 'extend', label: 'Extend the voting window once',
-                      desc: 'Push voting_end forward to give voters time to recover support. A second breach fails.' },
-                    { value: 'escalate', label: 'Escalate to admin review',
-                      desc: 'The proposal moves to "unresolved" and an admin chooses how to resolve.' },
-                  ].map(opt => (
-                    <label key={opt.value} className="flex items-start gap-3 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="sustainedMajorityFailureMode"
-                        value={opt.value}
-                        checked={(settings.sustained_majority_failure_mode ?? 'fail') === opt.value}
-                        onChange={() => updateSetting('sustained_majority_failure_mode', opt.value)}
-                        className="mt-0.5 accent-[var(--brand-accent)]"
-                      />
-                      <div>
-                        <p className="text-sm text-gray-700">{opt.label}</p>
-                        <p className="text-xs text-gray-400">{opt.desc}</p>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
+            );
+          })()}
+          <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={handleSaveStableResult}
+              disabled={savingSr}
+              className="px-5 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+            >
+              {savingSr ? 'Saving…' : 'Save Stable Result settings'}
+            </button>
+          </div>
         </div>
       </section>
 
@@ -1256,7 +1344,7 @@ export default function OrgSettings() {
           section so users editing org name/description/join-policy see
           a section-adjacent save action. The same button still PATCHes
           the entire settings payload (general + voting defaults + voting
-          methods + sustained-majority + deliberation + public delegates),
+          methods + deliberation + public delegates),
           so this position change is JSX-only. */}
 
       {/* Danger Zone — Phase 12 Stage 2 F7 D4 UI hiding (see isSteward
