@@ -308,16 +308,34 @@ def capture_snapshot(
     else:
         winners: list[str]
         total_cast: int
+        # Phase 22 D2: option_totals computed in the SAME tally pass as
+        # winners + total_ballots_cast, so the chart's per-option line + the
+        # winner-over-time bar are guaranteed consistent. For approval:
+        # per-option approval count. For RCV/STV: first-choice count from
+        # round 0 (deeper elimination rounds are captured separately by the
+        # /results endpoint, not the trajectory snapshot).
+        option_totals: dict[str, float] = {}
         if isinstance(tally, ApprovalTally):
             winners = sorted(tally.winners or [])
             total_cast = tally.total_ballots_cast
             total_abstain = tally.total_abstain
             not_cast = tally.not_cast
+            option_totals = {
+                oid: int(count)
+                for oid, count in (tally.option_approvals or {}).items()
+            }
         elif isinstance(tally, RCVTally):
             winners = sorted(tally.winners or [])
             total_cast = tally.total_ballots_cast
             total_abstain = tally.total_abstain
             not_cast = tally.not_cast
+            if tally.rounds:
+                option_totals = {
+                    oid: float(count)
+                    for oid, count in (tally.rounds[0].option_counts or {}).items()
+                }
+            else:
+                option_totals = {}
         else:
             winners = []
             total_cast = 0
@@ -334,6 +352,7 @@ def capture_snapshot(
             multi_option_winners={
                 "winners": winners,
                 "total_ballots_cast": total_cast,
+                "option_totals": option_totals,
             },
         )
     db.add(snap)

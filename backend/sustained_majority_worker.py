@@ -406,15 +406,20 @@ def evaluate_proposal(
         return None
 
     config = get_stable_result_config(org)
+    # Phase 22 D1: snapshot capture is universal — every voting proposal gets
+    # a snapshot at each worker tick, regardless of SRR-active status. The
+    # snapshot is the data substrate the trajectory chart reads.
+    # Stability evaluation below remains SRR-only — structurally preserving
+    # Phase 20's evaluate_stability invocation contract (kwargs unchanged,
+    # call site unchanged, just guarded behind the active check).
+    capture_snapshot(db, proposal)
+    db.flush()
+
     active = is_proposal_stable_result_active(
         proposal.stable_result_required, config.enabled_default,
     )
     if not active:
         return None
-
-    # 1. Take a fresh snapshot.
-    capture_snapshot(db, proposal)
-    db.flush()
 
     # 2. Read all snapshots (newest last).
     snapshots = _snapshot_points_for(db, proposal)
@@ -574,6 +579,13 @@ def run_one_tick(db: Session) -> int:
                 f"rolling back this proposal and continuing"
             )
             db.rollback()
+    # Phase 22 B1: operational logging for storage growth audit. One snapshot
+    # is written per processed proposal (snapshot capture is now universal,
+    # not SRR-gated). Aggregate roughly = processed * (voting-duration / 5min).
+    log.info(
+        f"stable_result tick: processed {processed} proposals "
+        f"(snapshots written: {processed})"
+    )
     return processed
 
 
