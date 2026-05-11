@@ -76,6 +76,12 @@ _SUBJECTS: dict[str, str] = {
     "follow.requested": "{actor_display_name} requested to follow you",
     "follow.approved": "{actor_display_name} approved your follow request",
     "polis.created": "New deliberation in {org_name}",
+    # Phase 21 — delegate-action + voting-deadline events.
+    "delegate.voted": "Your delegate voted on '{proposal_title}'",
+    "delegate.vote_changed": "Your delegate changed their vote on '{proposal_title}'",
+    "delegate.posted_rationale": "{delegate_display_name} posted reasoning on '{proposal_title}'",
+    "voting.halfway_delegate_silent": "Voting half-elapsed; your delegate hasn't voted on '{proposal_title}'",
+    "voting.halfway_you_havent_voted": "Voting half-elapsed; you haven't voted on '{proposal_title}'",
     "invitation": "You're invited to join {org_name} — Liquid Democracy",
     "digest.daily": "Your Liquid Democracy daily digest",
     "digest.weekly": "Your Liquid Democracy weekly digest",
@@ -420,6 +426,19 @@ def _build_event_template_vars(
         # the required comment from the approver on a denial.
         "delegate_display_name": payload.get("delegate_display_name") or "",
         "denial_comment": payload.get("denial_comment") or "",
+        # Phase 21 — delegate-action + voting-deadline event payload keys.
+        # ``vote_value`` is the rendered vote (binary: "yes"/"no"/"abstain";
+        # approval/RCV: a comma-joined option label list).
+        # ``previous_vote_value`` is the same shape, only present on
+        # ``delegate.vote_changed``. ``rationale_excerpt`` is the first
+        # ~150 chars of a delegate's posted rationale. ``voting_end`` is a
+        # human-readable ISO timestamp. ``percent_elapsed`` is a 0-100 int
+        # (or empty) used in halfway-deadline templates.
+        "vote_value": payload.get("vote_value") or "",
+        "previous_vote_value": payload.get("previous_vote_value") or "",
+        "rationale_excerpt": payload.get("rationale_excerpt") or "",
+        "voting_end": payload.get("voting_end") or "",
+        "percent_elapsed": payload.get("percent_elapsed") or "",
         # CTA label is per-event but we don't currently use it as a
         # substitution slot in the templates (button text is hardcoded
         # per template). Kept here for future templates that want it.
@@ -445,6 +464,13 @@ _DEFAULT_CTA_LABELS: dict[str, str] = {
     "follow.requested": "Review request",
     "follow.approved": "View profile",
     "polis.created": "Open Polis",
+    # Phase 21 — delegate-action + voting-deadline events all route to the
+    # underlying proposal page so the recipient can act on the signal.
+    "delegate.voted": "Open proposal",
+    "delegate.vote_changed": "Open proposal",
+    "delegate.posted_rationale": "Open proposal",
+    "voting.halfway_delegate_silent": "Open proposal",
+    "voting.halfway_you_havent_voted": "Open proposal",
 }
 
 
@@ -469,6 +495,13 @@ def _build_cta_url(
         "proposal.entered_voting",
         "proposal.closed",
         "sustained_majority.floor_approached",
+        # Phase 21 — all 5 new events route to the proposal page so the
+        # recipient can review the delegate's action or cast their own vote.
+        "delegate.voted",
+        "delegate.vote_changed",
+        "delegate.posted_rationale",
+        "voting.halfway_delegate_silent",
+        "voting.halfway_you_havent_voted",
     ):
         if not org_slug or not proposal_id:
             return fallback
