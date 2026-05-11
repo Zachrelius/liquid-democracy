@@ -301,10 +301,10 @@ class ProposalCreate(BaseModel):
     voting_method: str = "binary"
     options: list[OptionCreate] = Field(default=[])
     num_winners: int = Field(default=1, ge=1)
-    # Phase 8 — per-proposal sustained-majority override.
+    # Phase 8 / Phase 20 — per-proposal "Stable Result Required" override.
     # null = inherit org default; True/False = explicit. Server rejects
-    # non-null when org has `sustained_majority_per_proposal_override: false`.
-    sustained_majority_enabled: Optional[bool] = None
+    # non-null when org has `stable_result_per_proposal_override: false`.
+    stable_result_required: Optional[bool] = None
     # Phase 8.5: optional sub-org scope. NULL = parent-org-wide (default).
     # If non-null, all referenced topics must be either parent-org-wide or
     # the same sub-org's; eligibility derives via SubOrgMembership.
@@ -349,10 +349,11 @@ class ProposalUpdate(BaseModel):
     body: Optional[str] = Field(default=None, max_length=50000)
     topics: Optional[list[Any]] = None
     options: Optional[list[OptionCreate]] = None
-    # Phase 8 — per-proposal sustained-majority override (see ProposalCreate).
-    # Use Field with explicit default sentinel so omitted vs. null differ:
-    # we only update the column when the field is present in the payload.
-    sustained_majority_enabled: Optional[bool] = Field(default=None)
+    # Phase 8 / Phase 20 — per-proposal "Stable Result Required" override
+    # (see ProposalCreate). Use Field with explicit default sentinel so
+    # omitted vs. null differ: we only update the column when the field is
+    # present in the payload.
+    stable_result_required: Optional[bool] = Field(default=None)
     # Phase 9 — replace the linked-Polis set on update (omitted = leave alone).
     # When present, the route diffs old vs. new and emits
     # `polis.linked_to_proposal` / `polis.unlinked_from_proposal` per change.
@@ -408,8 +409,9 @@ class ProposalOut(BaseModel):
     updated_at: datetime
     topics: list[ProposalTopicOut] = []
     options: list[OptionOut] = []
-    # Phase 8 — null = inherit org default; True/False = explicit override.
-    sustained_majority_enabled: Optional[bool] = None
+    # Phase 8 / Phase 20 — null = inherit org default; True/False = explicit
+    # override. Renamed in Phase 20 from ``sustained_majority_enabled``.
+    stable_result_required: Optional[bool] = None
     # Phase 8.5 — null for parent-org-wide proposals.
     sub_org_id: Optional[str] = None
     # Phase 9 — structurally-linked Polises. Stored on Proposal.linked_polis_ids
@@ -420,30 +422,48 @@ class ProposalOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class SustainedMajorityStatus(BaseModel):
-    """Phase 8 — sustained-majority status block surfaced on /results.
+class StableResultStatus(BaseModel):
+    """Phase 20 — Stable Result Required status block surfaced on /results.
 
-    Populated only for proposals where sustained-majority is active. `active`
-    is the fully-resolved boolean (per-proposal override applied to org default).
-    `current_support` is the latest snapshot's yes-fraction; `distance_to_floor`
-    is `current_support - floor` (negative means breached).
+    Populated for every proposal; ``active=False`` for proposals where the
+    feature is not in effect (in which case the rest of the fields are at
+    sensible defaults and the frontend hides the block).
+
+    Fields:
+      - ``stable_window_fraction`` / ``max_extension_fraction``: org-level
+        config snapshot (frontend uses to render copy / sliders).
+      - ``extension_budget_*_seconds``: budget tracking. Total = original
+        voting period * max_extension_fraction. Used = sum of all worker-
+        fired extension durations. Remaining = max(0, total - used).
+      - ``in_stable_window``: true iff the current time is past the
+        original voting period's stable-window start.
+      - ``in_extension``: true iff the proposal has had at least one
+        worker-fired extension.
+      - ``stable_window_starts_at``: timestamp when the original voting
+        period's stable window begins. Useful for countdown UI.
+      - ``last_destabilization_at``: most recent timestamp at which an
+        extension fired (or destabilization-at-max-extensions was logged).
+      - ``extension_count``: number of worker-fired extensions to date.
     """
     active: bool = False
-    threshold: float = 0.5
-    floor: float = 0.45
-    failure_mode: str = "fail"
-    # Latest sample stats (binary). Multi-option uses winners_history below.
-    current_support: Optional[float] = None
-    distance_to_floor: Optional[float] = None
-    floor_breached: bool = False
-    approaching_floor: bool = False  # within FLOOR_APPROACH_DELTA (5pp default)
-    # Multi-option only — set when in stable-result window
-    in_stable_result_window: bool = False
-    stable_result_locked: bool = False
-    current_winners: list[str] = []
-    # Bookkeeping
-    extension_count: int = 0
+    stable_window_fraction: float = 0.25
+    max_extension_fraction: float = 0.25
+    extension_budget_total_seconds: int = 0
+    extension_budget_used_seconds: int = 0
+    extension_budget_remaining_seconds: int = 0
+    in_stable_window: bool = False
+    in_extension: bool = False
+    stable_window_starts_at: Optional[datetime] = None
     voting_end: Optional[datetime] = None
+    last_destabilization_at: Optional[datetime] = None
+    extension_count: int = 0
+
+
+# Backwards-compat alias for any consumer still using the old name.
+# Phase 20 (D13): the user-facing rebrand is "Stable Result Required";
+# the legacy class name resolved to the new one for one pass before the
+# alias is removed in a future cleanup.
+SustainedMajorityStatus = StableResultStatus
 
 
 class EscalationResolveRequest(BaseModel):
@@ -740,11 +760,13 @@ class ProposalResults(BaseModel):
     rounds: Optional[list[RCVRoundOut]] = None
     method: Optional[str] = None      # "irv" or "stv"
     num_winners: Optional[int] = None
-    # Phase 8 — sustained-majority status block. Populated for every proposal;
-    # `active=False` for proposals where sustained-majority is not in effect,
-    # in which case the rest of the fields are at defaults and the frontend
-    # hides the block.
-    sustained_majority: Optional["SustainedMajorityStatus"] = None
+    # Phase 8 / Phase 20 — Stable Result Required status block. Populated for
+    # every proposal; ``active=False`` for proposals where the feature is not
+    # in effect, in which case the rest of the fields are at defaults and the
+    # frontend hides the block. Field name kept (``sustained_majority``) for
+    # one pass to avoid breaking the frontend mid-deploy; rename to
+    # ``stable_result`` deferred to a future cleanup.
+    sustained_majority: Optional["StableResultStatus"] = None
 
 
 # ---------------------------------------------------------------------------

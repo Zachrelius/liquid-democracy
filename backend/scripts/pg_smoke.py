@@ -238,7 +238,8 @@ def _smoke_spot_check(db_url: str, label: str) -> None:
     Asserts:
       - Phase 8.5's ``sub_org_memberships`` table exists (the one whose
         creation collided in the 502 incident).
-      - Phase 8's ``proposals.sustained_majority_enabled`` column exists.
+      - Phase 20's ``proposals.stable_result_required`` column exists
+        (renamed from Phase 8's ``proposals.sustained_majority_enabled``).
       - Phase 9's ``polises`` and ``polis_xids`` tables exist.
       - Phase 9's ``proposals.linked_polis_ids`` column exists.
       - alembic_version row matches the chain head.
@@ -257,14 +258,15 @@ def _smoke_spot_check(db_url: str, label: str) -> None:
             )).scalar()
             assert res, f"[{label}] sub_org_memberships table missing"
 
-            # Phase 8's sustained_majority_enabled column on proposals.
+            # Phase 8 / Phase 20 — stable_result_required column on
+            # proposals (renamed from sustained_majority_enabled in Phase 20).
             res = conn.execute(text(
                 "SELECT 1 FROM information_schema.columns "
                 "WHERE table_schema='public' AND table_name='proposals' "
-                "AND column_name='sustained_majority_enabled'"
+                "AND column_name='stable_result_required'"
             )).scalar()
             assert res, (
-                f"[{label}] proposals.sustained_majority_enabled column missing"
+                f"[{label}] proposals.stable_result_required column missing"
             )
 
             # Phase 9's polises table.

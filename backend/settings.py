@@ -43,7 +43,13 @@ class Settings(BaseSettings):
     # Base URL for links in emails
     base_url: str = "http://localhost:5173"
 
-    # Phase 8 — Sustained-Majority worker.
+    # Phase 8 / Phase 20 — Stable Result Required worker (formerly
+    # Sustained-Majority worker; renamed user-facing in Phase 20). The env-var
+    # NAMES retain the legacy `SUSTAINED_MAJORITY_*` prefix for backwards-compat
+    # with prod env files (per spec D15 + spec line 477). Phase 20 also adds
+    # `STABLE_RESULT_*` aliases that resolve to the same fields — see the
+    # `__init__` override below.
+    #
     # Cadence between snapshot+evaluation passes during active voting windows.
     # 5min default balances stale-detection vs DB write volume.
     sustained_majority_check_interval_seconds: int = 300
@@ -68,4 +74,33 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
-settings = Settings()
+def _build_settings() -> Settings:
+    """Build Settings, applying Phase 20 STABLE_RESULT_* env-var aliases.
+
+    Per spec line 477: the env var ``SUSTAINED_MAJORITY_CHECK_INTERVAL_SECONDS``
+    keeps its name (deployed in prod env files; renaming would require a
+    coordinated env-var-edit-and-deploy). Phase 20 adds
+    ``STABLE_RESULT_CHECK_INTERVAL_SECONDS`` and the worker-control aliases
+    that resolve to the same fields. If both are set, the new (STABLE_RESULT_*)
+    name wins so operators can flip cleanly post-rename.
+    """
+    import os as _os
+    overrides: dict[str, object] = {}
+    new_check = _os.environ.get("STABLE_RESULT_CHECK_INTERVAL_SECONDS")
+    if new_check is not None and new_check.strip() != "":
+        try:
+            overrides["sustained_majority_check_interval_seconds"] = int(new_check)
+        except ValueError:
+            pass
+    new_inst = _os.environ.get("STABLE_RESULT_WORKER_INSTANCE_ID")
+    if new_inst is not None:
+        overrides["sustained_majority_worker_instance_id"] = new_inst
+    new_dis = _os.environ.get("STABLE_RESULT_WORKER_DISABLE")
+    if new_dis is not None and new_dis.strip() != "":
+        overrides["sustained_majority_worker_disable"] = new_dis.lower() in (
+            "1", "true", "yes", "on",
+        )
+    return Settings(**overrides)
+
+
+settings = _build_settings()
