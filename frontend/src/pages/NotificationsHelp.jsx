@@ -7,6 +7,10 @@ import HelpBackLink from '../components/HelpBackLink';
  * sustained_majority.floor_approached.
  * Phase 20 F3 — added proposal.extended_by_stability under Proposals
  * (event count goes from 13 to 14).
+ * Phase 21 — five new events (delegate.voted, delegate.vote_changed,
+ * delegate.posted_rationale, voting.halfway_delegate_silent under
+ * Delegation; voting.halfway_you_havent_voted under Proposals) +
+ * preset selector explanation (event count goes from 14 to 19).
  *
  * Route: /help/notifications (public — no `ProtectedRoute` wrapping;
  * mirrors the other /help/* pages).
@@ -39,7 +43,7 @@ export default function NotificationsHelp() {
           Liquid Democracy is built around the idea that you can delegate to people you trust and get on with your life. That means we do not ship a notification system that pings you about everything. Every event-channel pair starts disabled; you choose what you want to be notified about.
         </p>
         <p className="text-sm text-gray-700 leading-relaxed">
-          Open the notification center (the bell icon) and visit Notification preferences in your account settings to enable any of the 14 event types in any of the four channels.
+          Open the notification center (the bell icon) and visit Notification preferences in your account settings to enable any of the 19 event types in any of the four channels.
         </p>
       </section>
 
@@ -63,7 +67,7 @@ export default function NotificationsHelp() {
       </section>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">The 14 event types</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">The 19 event types</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Events are grouped into 5 categories on the preferences page:
         </p>
@@ -83,6 +87,7 @@ export default function NotificationsHelp() {
               <li><strong>Voting opened (you vote on others' behalf)</strong> — voting opened on a proposal whose topic someone has delegated to you. You're voting on their behalf.</li>
               <li><strong>Proposal closed</strong> — a proposal you voted on or authored has reached its final state (passed / failed).</li>
               <li><strong>Voting extended (Stable Result Required)</strong> — a proposal you authored or voted on recently had its voting window extended because the result destabilized in the stable window.</li>
+              <li><strong>Voting half-elapsed; you haven't voted</strong> — voting is at the halfway mark on a proposal you can vote on, you haven't cast a vote, and you don't have a delegate on its topic. A nudge so the deadline doesn't sneak up on you.</li>
             </ul>
             <div className="mt-2 p-3 bg-amber-50/50 border border-amber-200 rounded-lg">
               <p className="text-xs text-gray-700 leading-relaxed">
@@ -104,6 +109,10 @@ export default function NotificationsHelp() {
               <li><strong>Your delegate application</strong> — your delegate application was approved or denied.</li>
               <li><strong>Follow request</strong> — someone requested permission to follow your votes (or to delegate to you).</li>
               <li><strong>Follow approved</strong> — your follow request was approved by the target user.</li>
+              <li><strong>Your delegate cast a vote</strong> — your delegate on this proposal's topic cast their vote. See what they chose; override with your own direct vote if you disagree.</li>
+              <li><strong>Your delegate changed their vote</strong> — your delegate updated their existing vote. Notification includes the previous and new values.</li>
+              <li><strong>Your delegate posted a vote rationale</strong> — your delegate published their reasoning on a proposal where the topic is in public state. Read why before deciding whether to override.</li>
+              <li><strong>Voting half-elapsed; your delegate hasn't voted</strong> — voting is at the halfway mark on a proposal where you have a delegate on its topic, and the delegate has not yet cast a vote. Cast your own direct vote to override the silent delegation if you don't want to wait.</li>
             </ul>
           </div>
           <div>
@@ -113,6 +122,24 @@ export default function NotificationsHelp() {
             </ul>
           </div>
         </div>
+      </section>
+
+      <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Preset selector (Phase 21)</h2>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          With 19 events plus four channels each, choosing every toggle from scratch is tedious. Three presets at the top of the preferences page stamp curated defaults across all events with one click:
+        </p>
+        <ul className="text-sm text-gray-700 leading-relaxed list-disc pl-6 space-y-1">
+          <li><strong>High engagement</strong> — see everything in-app; instant email for critical events; daily digest for standard events; weekly digest for ambient events.</li>
+          <li><strong>Medium engagement</strong> — what matters in-app (critical + standard); daily digest for critical; weekly digest for standard; skip ambient.</li>
+          <li><strong>Low engagement</strong> — critical events only, in-app + weekly catch-up email.</li>
+        </ul>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          After applying a preset, you can tweak any individual event freely — the active preset indicator will switch to "Custom" so you can see you've drifted from the baseline. Click a preset again to reset.
+        </p>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          Some events are always on regardless of preset: invitation accepted, follow approved, and your-delegate-application-decided. These respond to actions you initiated, so silencing them with a preset would be surprising.
+        </p>
       </section>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">

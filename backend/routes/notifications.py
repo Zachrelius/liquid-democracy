@@ -50,6 +50,9 @@ from audit_utils import log_audit_event
 from database import get_db
 from notification_events import (
     EVENT_REGISTRY,
+    PRESET_STAMP_RULES,
+    apply_preset_to_preferences,
+    detect_matching_preset,
     is_known_event_type,
 )
 
@@ -153,6 +156,13 @@ class PreferencesOut(BaseModel):
     per-event email cadence channels; ``quiet_hours_start`` and
     ``quiet_hours_end`` (HH:MM strings) replaced the hardcoded 21:00-09:00
     window.
+
+    Phase 21 added ``matching_preset``: the name of the preference preset
+    (``"high"``, ``"medium"``, ``"low"``) whose stamped values exactly
+    match the user's current non-``always_on`` preferences, or ``None``
+    if no preset matches. The frontend surfaces this as a highlight on
+    the preset selector ("you're on the Medium preset") or a "Custom"
+    indicator.
     """
     preferences: dict[str, ChannelPrefsOut]
     quiet_hours_enabled: bool
@@ -160,6 +170,7 @@ class PreferencesOut(BaseModel):
     quiet_hours_end: str
     timezone: Optional[str]
     notification_intro_dismissed: bool
+    matching_preset: Optional[str] = None
 
 
 class ChannelPrefsPatch(BaseModel):
@@ -193,11 +204,17 @@ class PreferencesPatch(BaseModel):
 
 
 class EventDefinitionOut(BaseModel):
-    """One event-registry entry."""
+    """One event-registry entry.
+
+    Phase 21 added ``signal_level`` (``"critical" | "standard" | "ambient"
+    | "always_on"``) so the frontend's preference-preset selector knows
+    which events each preset stamps and which are always-on.
+    """
     key: str
     label: str
     description: str
     category: str
+    signal_level: str
 
 
 class EventRegistryOut(BaseModel):
@@ -389,6 +406,20 @@ def get_preferences(
         if r.channel in _CHANNEL_FIELDS:
             setattr(by_event[r.event_type], r.channel, bool(r.enabled))
 
+    # Phase 21 — compute matching_preset off a dict-of-dicts view of the
+    # per-event channel preferences. ``detect_matching_preset`` only
+    # examines non-``always_on`` events (preset doesn't stamp them).
+    prefs_for_detect = {
+        ev_key: {
+            "in_app": prefs.in_app,
+            "email_immediate": prefs.email_immediate,
+            "email_daily": prefs.email_daily,
+            "email_weekly": prefs.email_weekly,
+        }
+        for ev_key, prefs in by_event.items()
+    }
+    matching = detect_matching_preset(prefs_for_detect)
+
     return PreferencesOut(
         preferences=by_event,
         quiet_hours_enabled=bool(current_user.quiet_hours_enabled),
@@ -396,6 +427,7 @@ def get_preferences(
         quiet_hours_end=current_user.quiet_hours_end or "09:00",
         timezone=current_user.timezone,
         notification_intro_dismissed=bool(current_user.notification_intro_dismissed),
+        matching_preset=matching,
     )
 
 
@@ -571,6 +603,134 @@ def update_preferences(
 
 
 # ---------------------------------------------------------------------------
+# POST /api/notifications/preferences/apply_preset (Phase 21)
+# ---------------------------------------------------------------------------
+
+class ApplyPresetIn(BaseModel):
+    """Body for ``POST /preferences/apply_preset``. ``preset`` is one of
+    ``"high"``, ``"medium"``, ``"low"``; unknown names return 400.
+    """
+    preset: str
+
+
+@router.post("/preferences/apply_preset", response_model=PreferencesOut)
+def apply_preset(
+    body: ApplyPresetIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 21 — apply a preference preset (``"high"``, ``"medium"``,
+    ``"low"``) to the caller's notification preferences.
+
+    Stamps the preset's curated channel defaults onto every non-``always_on``
+    event in the registry, leaving ``always_on`` events (invitation
+    accepted, follow approved, etc.) untouched.
+
+    Body::
+
+        {"preset": "high" | "medium" | "low"}
+
+    Returns the resulting full PreferencesOut shape (same as
+    ``GET /preferences``) — including the new ``matching_preset`` field,
+    which after this call always equals the applied preset.
+
+    Audited as ``notifications.preset_applied`` with the preset name +
+    change-set (only rows that actually changed).
+
+    Errors
+    ------
+    400 on unknown preset name.
+    """
+    if body.preset not in PRESET_STAMP_RULES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown preset {body.preset!r}; expected one of "
+                f"{sorted(PRESET_STAMP_RULES.keys())}"
+            ),
+        )
+
+    # 1. Build the current dict-of-dicts shape from the user's existing
+    #    preference rows. Absent (event, channel) rows surface as False
+    #    (opt-in default).
+    rows = (
+        db.query(models.NotificationPreference)
+        .filter(models.NotificationPreference.user_id == current_user.id)
+        .all()
+    )
+    current_prefs: dict[str, dict[str, bool]] = {
+        ev.key: {ch: False for ch in _CHANNEL_FIELDS}
+        for ev in EVENT_REGISTRY
+    }
+    for r in rows:
+        if r.event_type not in current_prefs:
+            continue
+        if r.channel in _CHANNEL_FIELDS:
+            current_prefs[r.event_type][r.channel] = bool(r.enabled)
+
+    # 2. Compute the updated shape via the registry helper. always_on
+    #    events fall through unchanged.
+    updated_prefs = apply_preset_to_preferences(body.preset, current_prefs)
+
+    # 3. Upsert one NotificationPreference row per changed (event, channel)
+    #    pair. Skip rows where the new value matches the existing — keeps
+    #    the audit change-set tight and avoids touching DB rows for no-ops.
+    pref_changes: dict[str, dict[str, dict[str, bool]]] = {}
+    for ev_key, channels in updated_prefs.items():
+        old_channels = current_prefs.get(ev_key, {})
+        for channel, new_val in channels.items():
+            if channel not in _CHANNEL_FIELDS:
+                continue
+            old_val = bool(old_channels.get(channel, False))
+            new_val_b = bool(new_val)
+            if old_val == new_val_b:
+                continue
+            row = (
+                db.query(models.NotificationPreference)
+                .filter(
+                    models.NotificationPreference.user_id == current_user.id,
+                    models.NotificationPreference.event_type == ev_key,
+                    models.NotificationPreference.channel == channel,
+                )
+                .first()
+            )
+            if row is None:
+                row = models.NotificationPreference(
+                    user_id=current_user.id,
+                    event_type=ev_key,
+                    channel=channel,
+                    enabled=new_val_b,
+                )
+                db.add(row)
+            else:
+                row.enabled = new_val_b
+            pref_changes.setdefault(ev_key, {})[channel] = {
+                "old": old_val, "new": new_val_b,
+            }
+
+    log_audit_event(
+        db,
+        action="notifications.preset_applied",
+        target_type="user",
+        target_id=current_user.id,
+        actor_id=current_user.id,
+        details={
+            "preset": body.preset,
+            "changes": pref_changes,
+        },
+        ip_address=_client_ip(request),
+    )
+
+    db.commit()
+    db.refresh(current_user)
+
+    # Reuse the GET shape for the response (includes matching_preset, which
+    # after this call should equal body.preset).
+    return get_preferences(db=db, current_user=current_user)
+
+
+# ---------------------------------------------------------------------------
 # GET /api/notifications/registry
 # ---------------------------------------------------------------------------
 
@@ -592,6 +752,7 @@ def get_registry(
                 label=ev.label,
                 description=ev.description,
                 category=ev.category,
+                signal_level=ev.signal_level,
             )
             for ev in EVENT_REGISTRY
         ],

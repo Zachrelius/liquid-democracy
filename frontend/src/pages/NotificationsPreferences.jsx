@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
 import { useToast } from '../components/Toast';
+import { useConfirm } from '../components/ConfirmDialog';
 
 /**
  * Phase 13.3 F1-F5 — notification preferences page at /settings/notifications.
@@ -45,6 +46,29 @@ const CHANNELS = [
 
 const DEFAULT_QUIET_START = '21:00';
 const DEFAULT_QUIET_END = '09:00';
+
+// Phase 21 F2 — preference presets. Three buttons stamp curated channel
+// defaults across non-always-on events using each event's
+// ``signal_level`` classification from the registry. The actual stamping
+// happens server-side (POST /api/notifications/preferences/apply_preset);
+// these definitions only drive the UI label, subtitle, and aria-label.
+const PRESETS = [
+  {
+    key: 'high',
+    label: 'High engagement',
+    subtitle: 'See everything; instant email for important, digests for the rest.',
+  },
+  {
+    key: 'medium',
+    label: 'Medium engagement',
+    subtitle: 'What matters in-app; daily and weekly digests by email.',
+  },
+  {
+    key: 'low',
+    label: 'Low engagement',
+    subtitle: 'Critical only; weekly catch-up by email.',
+  },
+];
 
 // Common IANA timezones, used as a fallback when
 // Intl.supportedValuesOf isn't available (older browsers). Order: continents
@@ -111,6 +135,7 @@ function normalizeTime(value, fallback) {
 
 export default function NotificationsPreferences() {
   const toast = useToast();
+  const confirm = useConfirm();
   const [registry, setRegistry] = useState({ events: [], categories: [] });
   // event_type -> {in_app, email_immediate, email_daily, email_weekly}
   const [prefs, setPrefs] = useState({});
@@ -121,6 +146,20 @@ export default function NotificationsPreferences() {
   const [introDismissed, setIntroDismissed] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Phase 21 F2 — preset selector state.
+  // ``matchingPreset`` mirrors the backend's ``matching_preset`` field from
+  // GET /preferences and PATCH /preferences responses. ``null`` = custom.
+  const [matchingPreset, setMatchingPreset] = useState(null);
+  // The preset key currently being applied (POST in flight), or null. Drives
+  // per-button disabled+spinner state.
+  const [presetApplyingKey, setPresetApplyingKey] = useState(null);
+  // Session-scoped "user has already confirmed once" flag. First click of any
+  // preset triggers the confirmation modal; subsequent clicks within the same
+  // session skip the modal (D21 + dispatch). State, not sessionStorage —
+  // the "session" here is the React tree lifetime, which matches the user's
+  // current page visit.
+  const [presetConfirmedThisSession, setPresetConfirmedThisSession] =
+    useState(false);
 
   const tzOptions = useMemo(() => listTimezones(), []);
 
@@ -140,6 +179,7 @@ export default function NotificationsPreferences() {
       setQuietStart(normalizeTime(p?.quiet_hours_start, DEFAULT_QUIET_START));
       setQuietEnd(normalizeTime(p?.quiet_hours_end, DEFAULT_QUIET_END));
       setIntroDismissed(!!p?.notification_intro_dismissed);
+      setMatchingPreset(p?.matching_preset ?? null);
       // Pre-populate timezone from server, falling back to browser detection
       // ONLY if the user hasn't set one yet. We don't quietly overwrite the
       // server value with the browser's idea — only suggest a default the
@@ -170,6 +210,10 @@ export default function NotificationsPreferences() {
       // No XOR enforcement — email channels are independent booleans.
       return { ...prev, [eventKey]: { ...cur, [channel]: !cur[channel] } };
     });
+    // Phase 21 F2 — optimistically drift to custom. The PATCH response on
+    // save will reconcile (backend re-computes matching_preset and includes
+    // it in the response).
+    setMatchingPreset(null);
   }
 
   function toggleQuietHours() {
@@ -196,12 +240,54 @@ export default function NotificationsPreferences() {
         quiet_hours_end: quietEnd || DEFAULT_QUIET_END,
         timezone: timezone || null,
       };
-      await api.patch('/api/notifications/preferences', body);
+      const resp = await api.patch('/api/notifications/preferences', body);
+      // Phase 21 F2 — reconcile matchingPreset from server. After save, the
+      // backend re-derives whether the current preference set matches one
+      // of the curated presets and reports it on the response.
+      if (resp && Object.prototype.hasOwnProperty.call(resp, 'matching_preset')) {
+        setMatchingPreset(resp.matching_preset ?? null);
+      }
       toast.success('Preferences saved');
     } catch (e) {
       toast.error(e.message || 'Could not save preferences');
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Phase 21 F2 — apply a preset. First click of any preset in the session
+  // triggers a confirmation modal; subsequent clicks skip the modal.
+  async function handleApplyPreset(presetKey) {
+    if (presetApplyingKey) return; // already in flight
+    const preset = PRESETS.find(p => p.key === presetKey);
+    if (!preset) return;
+
+    if (!presetConfirmedThisSession) {
+      const ok = await confirm({
+        title: 'Apply preset?',
+        message: `This will reset your event preferences to the ${preset.label.toLowerCase()} preset. You can adjust individual events afterward. Continue?`,
+      });
+      if (!ok) return;
+      setPresetConfirmedThisSession(true);
+    }
+
+    setPresetApplyingKey(presetKey);
+    try {
+      const resp = await api.post(
+        '/api/notifications/preferences/apply_preset',
+        { preset: presetKey },
+      );
+      if (resp?.preferences) {
+        setPrefs(resp.preferences);
+      }
+      // The server response is the authoritative shape; matching_preset
+      // will equal the applied preset name on success.
+      setMatchingPreset(resp?.matching_preset ?? presetKey);
+      toast.success(`${preset.label} applied`);
+    } catch (e) {
+      toast.error(e.message || 'Could not apply preset');
+    } finally {
+      setPresetApplyingKey(null);
     }
   }
 
@@ -284,6 +370,78 @@ export default function NotificationsPreferences() {
           </button>
         </div>
       )}
+
+      {/* Phase 21 F2 — preset selector. Three buttons stamping curated
+          channel defaults across non-always-on events. The active button
+          (matching the current preference set) is highlighted with a
+          colored ring + background; "Custom" indicator shows when no
+          preset matches. */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+          Quick setup
+        </h2>
+        <p className="text-xs text-gray-500">
+          Pick a starting point. You can adjust any individual event afterward.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {PRESETS.map(preset => {
+            const isActive = matchingPreset === preset.key;
+            const isApplying = presetApplyingKey === preset.key;
+            const isDisabled = !!presetApplyingKey;
+            return (
+              <button
+                key={preset.key}
+                type="button"
+                onClick={() => handleApplyPreset(preset.key)}
+                disabled={isDisabled}
+                aria-label={`Apply ${preset.label.toLowerCase()} preset`}
+                aria-pressed={isActive}
+                className={`text-left rounded-xl border p-4 transition-colors focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] disabled:opacity-60 disabled:cursor-not-allowed ${
+                  isActive
+                    ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-300'
+                    : 'bg-white border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-gray-800">
+                    {preset.label}
+                  </span>
+                  {isApplying && (
+                    <span
+                      className="animate-spin w-4 h-4 border-2 border-[var(--brand-accent)] border-t-transparent rounded-full"
+                      aria-hidden="true"
+                    />
+                  )}
+                  {isActive && !isApplying && (
+                    <span
+                      className="text-[10px] font-semibold uppercase tracking-wide text-blue-700"
+                      aria-hidden="true"
+                    >
+                      Active
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 mt-1 leading-snug">
+                  {preset.subtitle}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+        {matchingPreset === null && (
+          <p
+            className="text-xs text-gray-500 italic"
+            role="status"
+            aria-live="polite"
+          >
+            Custom — you've adjusted from a preset.
+          </p>
+        )}
+        <p className="text-xs text-gray-400">
+          Some events (invitation accepted, follow approved, etc.) are always on
+          because you initiated the action; presets don't change those.
+        </p>
+      </section>
 
       {/* Matrix */}
       <section className="space-y-3">

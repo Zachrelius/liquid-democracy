@@ -61,6 +61,8 @@ from notification_emit import (
     QUIET_HOURS_END,
     _user_local_hour,
     cleanup_expired_notifications,
+    emit_notification,
+    has_ever_emitted,
 )
 from settings import settings
 
@@ -519,6 +521,239 @@ def flush_quiet_hours_queue(
 
 
 # ---------------------------------------------------------------------------
+# Phase 21 (B3 / D5 / D6 / D8 / D9) — halfway-deadline check
+# ---------------------------------------------------------------------------
+#
+# Periodic task that runs on the existing digest scheduler cadence (every
+# tick). For each proposal currently in ``voting`` status whose voting
+# window is between 50% and 100% elapsed, find:
+#
+#   * Users with an active delegation on one of the proposal's topics (or
+#     an org-wide global delegation) whose delegate hasn't voted yet ->
+#     emit ``voting.halfway_delegate_silent`` once per (user, proposal)
+#     pair (idempotent via ``has_ever_emitted``).
+#   * Users without delegation on the proposal's topics who haven't voted
+#     themselves -> emit ``voting.halfway_you_havent_voted``. Same
+#     idempotency check.
+#
+# D5/D6 are mutually exclusive: a user with delegation gets the silent
+# variant; a user without delegation gets the havent_voted variant. Never
+# both per (user, proposal).
+#
+# Implementation note on BackgroundTasks: the scheduler runs outside a
+# request context. ``emit_notification`` requires a ``BackgroundTasks``
+# parameter for its email-immediate path. We pass a fresh in-process
+# instance per emission; its ``.add_task`` list is never executed (no
+# starlette response cycle), so email_immediate sends are forfeit at
+# emit time. The in-app row IS inserted, and digest aggregators
+# (email_daily / email_weekly) pick it up on their next pass. This
+# matches the spec's "halfway events fire from a scheduled job, not from
+# request context" framing.
+
+
+def run_halfway_deadline_check(
+    db: Session, *, now: Optional[datetime] = None,
+) -> dict:
+    """Detect proposals at 50%+ voting elapsed; emit halfway-deadline
+    notifications to qualifying users.
+
+    Returns ``{halfway_delegate_silent: N, halfway_you_havent_voted: N}``.
+
+    Idempotent: ``has_ever_emitted`` is checked per (user, event_type,
+    proposal) before each emit so re-running the task does not duplicate
+    notifications. Per-proposal try/except so one proposal's error
+    doesn't break the iteration.
+    """
+    from sqlalchemy import or_ as _or_  # local to keep scheduler imports tidy
+
+    counts = {
+        "halfway_delegate_silent": 0,
+        "halfway_you_havent_voted": 0,
+    }
+    now_naive = (
+        (now or datetime.now(timezone.utc))
+        .astimezone(timezone.utc)
+        .replace(tzinfo=None)
+    )
+
+    proposals = (
+        db.query(models.Proposal)
+        .filter(
+            models.Proposal.status == "voting",
+            models.Proposal.voting_start.isnot(None),
+            models.Proposal.voting_end.isnot(None),
+        )
+        .all()
+    )
+
+    # Lazy import to avoid circulars at module load.
+    try:
+        from delegation_engine import eligible_voter_ids_for_proposal
+    except Exception:  # noqa: BLE001
+        log.exception("halfway_deadline_check: failed to import eligible_voter_ids_for_proposal")
+        return counts
+
+    for p in proposals:
+        try:
+            window = (p.voting_end - p.voting_start).total_seconds()
+            if window <= 0:
+                continue
+            elapsed = (now_naive - p.voting_start).total_seconds()
+            percent_elapsed = elapsed / window
+            if percent_elapsed < 0.5 or percent_elapsed > 1.0:
+                continue
+
+            topic_ids = [pt.topic_id for pt in p.proposal_topics]
+            try:
+                eligible_ids = eligible_voter_ids_for_proposal(db, p)
+            except Exception:  # noqa: BLE001
+                log.exception(
+                    "halfway_deadline_check: eligible_voter_ids failed for proposal=%s",
+                    p.id,
+                )
+                continue
+
+            for uid in eligible_ids:
+                try:
+                    # Skip if user already voted directly.
+                    direct_vote = (
+                        db.query(models.Vote)
+                        .filter(
+                            models.Vote.proposal_id == p.id,
+                            models.Vote.user_id == uid,
+                        )
+                        .first()
+                    )
+                    if direct_vote is not None:
+                        continue
+
+                    # Find this user's delegation that covers the proposal
+                    # (org-scoped + topic-or-global). If multiple match
+                    # (e.g. global + topic-specific), the topic-specific
+                    # one is the conceptual winner — but for the silent /
+                    # not-silent decision either suffices. We just need
+                    # to know there's at least one and pick a delegate.
+                    delegation_q = db.query(models.Delegation).filter(
+                        models.Delegation.delegator_id == uid,
+                        models.Delegation.org_id == p.org_id,
+                    )
+                    if topic_ids:
+                        delegation_q = delegation_q.filter(
+                            _or_(
+                                models.Delegation.topic_id.is_(None),
+                                models.Delegation.topic_id.in_(topic_ids),
+                            )
+                        )
+                    else:
+                        delegation_q = delegation_q.filter(
+                            models.Delegation.topic_id.is_(None)
+                        )
+                    delegation = delegation_q.first()
+
+                    if delegation is not None:
+                        # User has delegation — emit silent variant only
+                        # if the delegate hasn't voted.
+                        delegate_vote = (
+                            db.query(models.Vote)
+                            .filter(
+                                models.Vote.proposal_id == p.id,
+                                models.Vote.user_id == delegation.delegate_id,
+                            )
+                            .first()
+                        )
+                        if delegate_vote is not None:
+                            continue
+                        if has_ever_emitted(
+                            db, uid, "voting.halfway_delegate_silent", p.id,
+                        ):
+                            continue
+                        delegate_user = db.get(models.User, delegation.delegate_id)
+                        delegate_display = (
+                            (delegate_user.display_name or delegate_user.username)
+                            if delegate_user else "your delegate"
+                        )
+                        payload = {
+                            "proposal_id": p.id,
+                            "proposal_title": p.title,
+                            "delegate_user_id": delegation.delegate_id,
+                            "delegate_display_name": delegate_display,
+                            "voting_end": (
+                                p.voting_end.isoformat() if p.voting_end else None
+                            ),
+                            "percent_elapsed": round(percent_elapsed, 4),
+                        }
+                        emit_notification(
+                            db,
+                            _scheduler_background_tasks(),
+                            event_type="voting.halfway_delegate_silent",
+                            user_id=uid,
+                            org_id=p.org_id,
+                            actor_id=None,
+                            target_type="proposal",
+                            target_id=p.id,
+                            payload=payload,
+                        )
+                        counts["halfway_delegate_silent"] += 1
+                    else:
+                        # No delegation, user hasn't voted -> havent_voted
+                        if has_ever_emitted(
+                            db, uid, "voting.halfway_you_havent_voted", p.id,
+                        ):
+                            continue
+                        payload = {
+                            "proposal_id": p.id,
+                            "proposal_title": p.title,
+                            "voting_end": (
+                                p.voting_end.isoformat() if p.voting_end else None
+                            ),
+                            "percent_elapsed": round(percent_elapsed, 4),
+                        }
+                        emit_notification(
+                            db,
+                            _scheduler_background_tasks(),
+                            event_type="voting.halfway_you_havent_voted",
+                            user_id=uid,
+                            org_id=p.org_id,
+                            actor_id=None,
+                            target_type="proposal",
+                            target_id=p.id,
+                            payload=payload,
+                        )
+                        counts["halfway_you_havent_voted"] += 1
+                except Exception:  # noqa: BLE001
+                    log.exception(
+                        "halfway_deadline_check: per-user emission failed "
+                        "(proposal=%s user=%s); continuing",
+                        p.id, uid,
+                    )
+            # Commit per-proposal so a later proposal's failure can't
+            # roll back successful emissions from earlier proposals.
+            db.commit()
+        except Exception:  # noqa: BLE001
+            log.exception(
+                "halfway_deadline_check: per-proposal failure (proposal=%s); continuing",
+                p.id,
+            )
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+
+    return counts
+
+
+def _scheduler_background_tasks():
+    """Return a fresh ``BackgroundTasks`` instance whose task list is
+    discarded after emission. The scheduler is outside a request context,
+    so any tasks added here never execute — the email-immediate path is
+    a no-op. The in-app row insertion (the load-bearing path for digest
+    aggregation) happens before any background task would run.
+    """
+    from fastapi import BackgroundTasks as _BG
+    return _BG()
+
+
+# ---------------------------------------------------------------------------
 # Hourly tick
 # ---------------------------------------------------------------------------
 
@@ -531,7 +766,34 @@ def run_one_tick(
     cleaned: N}`` for logging / tests.
     """
     now = now or datetime.now(timezone.utc)
-    counts = {"daily": 0, "weekly": 0, "quiet": 0, "cleaned": 0}
+    counts = {
+        "daily": 0,
+        "weekly": 0,
+        "quiet": 0,
+        "cleaned": 0,
+        "halfway_delegate_silent": 0,
+        "halfway_you_havent_voted": 0,
+    }
+
+    # Phase 21 (B3 / D8) — halfway-deadline check runs on every tick. No
+    # hour-of-day gate; idempotency via has_ever_emitted guarantees a
+    # given (user, proposal) pair fires at most once. Wrapped in
+    # try/except so a halfway-check failure doesn't break the rest of
+    # the tick (digests, cleanup).
+    try:
+        halfway_counts = run_halfway_deadline_check(db, now=now)
+        counts["halfway_delegate_silent"] = halfway_counts.get(
+            "halfway_delegate_silent", 0,
+        )
+        counts["halfway_you_havent_voted"] = halfway_counts.get(
+            "halfway_you_havent_voted", 0,
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("digest tick: halfway_deadline_check failed")
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
 
     # Single user-set query — small enough at v1 scale to iterate in
     # Python. Phase 13.3: we no longer slice by ``digest_cadence`` (that

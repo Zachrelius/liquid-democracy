@@ -79,17 +79,18 @@ Phase 20 was a scope-narrowing redesign rather than a fix-the-existing-mechanism
 
 ---
 
-### 7. Notifications Polish
+### 7. Notifications Polish — ✅ Substantially complete (Phase 21, shipped 2026-05-11)
 
-**Why now:** The Phase 13/13.x notification system shipped end-to-end (in-app, email, digest cadences, quiet hours, per-event preferences across four channels). It works. What's deferred is rigorous exercise — the friend pilot didn't generate enough volume to surface edge cases, and several end-to-end flows are still in the chrome-deferred verification queue. Worth a focused pass that drains the verification queue, surfaces any gaps, and finishes anything that's been hanging.
+Phase 21 closed the largest concrete gap in this item: delegators had no visibility into delegate actions (votes cast, votes changed, rationale posted) and there was no halfway-deadline reminder for either delegated voters (delegate silent) or non-delegated voters (you haven't voted). Five new events shipped: `delegate.voted`, `delegate.vote_changed`, `delegate.posted_rationale`, `voting.halfway_delegate_silent`, `voting.halfway_you_havent_voted`. Plus a preset selector (High / Medium / Low engagement) at the top of the preferences page that stamps curated defaults across all events with one click — driven by a new `signal_level` field (`critical` / `standard` / `ambient` / `always_on`) on every `EventDefinition`. Dedup helpers (1-hour window + ever-emitted idempotency) prevent storms when an underlying state changes repeatedly. The halfway-deadline check runs from the existing digest scheduler on every tick; idempotency is structural (via `has_ever_emitted`), not cadence-dependent.
 
-**Scope sketch:**
-- Drain the chrome-deferred queue items related to notifications (items 5–7 in the passdown's queue: multi-org Item 22 routing; email/digest/quiet-hours/unsubscribe end-to-end; multi-recipient voting-opened priority).
-- Audit the notification surface for any "checkbox exists but the underlying detection isn't wired" issues like the `floor_approached` event that was caught and removed in Phase 13.3. The fix-pattern is well-established now; running through the registry to confirm every event actually fires when its trigger condition is met is cheap insurance.
-- Tech debt items from the audit doc that are notifications-adjacent: email theming centralization (audit Item 27 in the doc, deferred until a second org-scoped email exists — sustained-majority's notifications might be the trigger).
-- If there are any "I expected a notification and didn't get one" situations Z has hit during dogfooding, fix those.
+D17 audit of EVENT_REGISTRY surfaced **no dead-checkbox events** — every event in the registry has an active emission site or scheduler hook. Phase 13.3's deletion of `sustained_majority.floor_approached` was the last documented dead-checkbox event in this category.
 
-**Non-goals:** Notification analytics; SMS or push channels beyond what's shipped; per-event quiet hours (passdown follow-up item, backlog).
+**What's NOT covered (still deferred under "Notifications Polish"):**
+- Chrome-deferred queue items 5-7 from the long-running passdown queue (multi-org Item 22 routing; email/digest/quiet-hours/unsubscribe end-to-end; multi-recipient voting-opened priority).
+- Email theming centralization (audit Item 27).
+- Phase 21 audit items 59-61 (halfway-scheduler email_immediate forfeit; dedup race window; CTA org_slug payload gap — pre-existing across emission sites).
+
+A future smaller polish pass can drain those without re-opening this top-level item.
 
 ---
 
