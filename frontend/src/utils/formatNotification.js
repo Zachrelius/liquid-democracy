@@ -43,8 +43,8 @@ export function formatNotification(notif) {
         return `${quoted(p.proposal_title) || 'A proposal'} has closed (${p.status})`;
       }
       return `${quoted(p.proposal_title) || 'A proposal'} has closed`;
-    case 'sustained_majority.floor_approached':
-      return `Support is approaching the floor on ${quoted(p.proposal_title) || 'a proposal'}`;
+    case 'proposal.extended_by_stability':
+      return `Voting was extended on ${quoted(p.proposal_title) || 'a proposal'} (Stable Result Required)`;
     // ---- Membership ---------------------------------------------------
     case 'member.join_request':
       return `${actor(notif)} requested to join ${p.org_name || 'your organization'}`;
@@ -108,8 +108,9 @@ export function notificationHref(notif) {
     return `/${slug}/admin/delegates`;
   }
 
-  // Sustained-majority always points at the proposal in question.
-  if (eventType === 'sustained_majority.floor_approached') {
+  // Phase 20 — Stable Result Required extension events point at the
+  // proposal that just got extended.
+  if (eventType === 'proposal.extended_by_stability') {
     if (targetId) return `/${slug}/proposals/${targetId}`;
   }
 

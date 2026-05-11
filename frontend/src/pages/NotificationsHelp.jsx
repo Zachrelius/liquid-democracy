@@ -5,6 +5,8 @@ import HelpBackLink from '../components/HelpBackLink';
  * Phase 13.3 D1 — updated for per-event cadence + 4-column matrix +
  * three voting-opened event types + adjustable quiet hours + retired
  * sustained_majority.floor_approached.
+ * Phase 20 F3 — added proposal.extended_by_stability under Proposals
+ * (event count goes from 13 to 14).
  *
  * Route: /help/notifications (public — no `ProtectedRoute` wrapping;
  * mirrors the other /help/* pages).
@@ -37,7 +39,7 @@ export default function NotificationsHelp() {
           Liquid Democracy is built around the idea that you can delegate to people you trust and get on with your life. That means we do not ship a notification system that pings you about everything. Every event-channel pair starts disabled; you choose what you want to be notified about.
         </p>
         <p className="text-sm text-gray-700 leading-relaxed">
-          Open the notification center (the bell icon) and visit Notification preferences in your account settings to enable any of the 13 event types in any of the four channels.
+          Open the notification center (the bell icon) and visit Notification preferences in your account settings to enable any of the 14 event types in any of the four channels.
         </p>
       </section>
 
@@ -61,7 +63,7 @@ export default function NotificationsHelp() {
       </section>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">The 13 event types</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">The 14 event types</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Events are grouped into 5 categories on the preferences page:
         </p>
@@ -80,6 +82,7 @@ export default function NotificationsHelp() {
               <li><strong>Voting opened (you vote)</strong> — voting opened on a proposal whose topic you have NOT delegated. You need to vote yourself.</li>
               <li><strong>Voting opened (you vote on others' behalf)</strong> — voting opened on a proposal whose topic someone has delegated to you. You're voting on their behalf.</li>
               <li><strong>Proposal closed</strong> — a proposal you voted on or authored has reached its final state (passed / failed).</li>
+              <li><strong>Voting extended (Stable Result Required)</strong> — a proposal you authored or voted on recently had its voting window extended because the result destabilized in the stable window.</li>
             </ul>
             <div className="mt-2 p-3 bg-amber-50/50 border border-amber-200 rounded-lg">
               <p className="text-xs text-gray-700 leading-relaxed">

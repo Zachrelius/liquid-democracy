@@ -47,7 +47,8 @@ const EVENT_TYPE_CATEGORY = {
   'comment.posted_on_your_proposal': 'Comments',
   'proposal.entered_voting': 'Proposals',
   'proposal.closed': 'Proposals',
-  'sustained_majority.floor_approached': 'Proposals',
+  // Phase 20 — replaces the retired sustained_majority.floor_approached.
+  'proposal.extended_by_stability': 'Proposals',
   'member.join_request': 'Membership',
   'invitation.accepted': 'Membership',
   'delegate.applied': 'Delegation',

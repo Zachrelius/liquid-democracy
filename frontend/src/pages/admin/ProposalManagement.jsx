@@ -160,10 +160,19 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
   const inScopeTopics = scope
     ? topics.filter(t => t.sub_org_id == null || t.sub_org_id === scope)
     : topics.filter(t => t.sub_org_id == null);
-  // Phase 8 — per-proposal sustained-majority override.
+  // Phase 20 — per-proposal Stable Result Required override.
   // null = inherit org default; only writable when org allows the override.
-  const smOverrideAllowed = orgSettings?.sustained_majority_per_proposal_override !== false;
-  const orgSmDefault = orgSettings?.sustained_majority_enabled_default === true;
+  // Backwards-compat: read from the new key first, fall back to the old
+  // sustained_majority_* key for orgs whose settings haven't been resaved.
+  const smOverrideAllowed = (
+    orgSettings?.stable_result_per_proposal_override
+    ?? orgSettings?.sustained_majority_per_proposal_override
+    ?? true
+  ) !== false;
+  const orgSmDefault = (
+    orgSettings?.stable_result_enabled_default
+    ?? orgSettings?.sustained_majority_enabled_default
+  ) === true;
   const [smEnabled, setSmEnabled] = useState(orgSmDefault);
   // Phase 9 — Linked Polises (Decision 2 + 7). When org config has
   // `require_polis_for_new_proposals` true, at least one link is required;
@@ -255,10 +264,11 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
       }
-      // Phase 8 — only send the override when org allows it AND the choice
-      // diverges from the org default; otherwise let null inherit.
+      // Phase 20 — only send the override when org allows it AND the choice
+      // diverges from the org default; otherwise let null inherit. The wire
+      // field rename: sustained_majority_enabled -> stable_result_required.
       if (smOverrideAllowed && smEnabled !== orgSmDefault) {
-        payload.sustained_majority_enabled = smEnabled;
+        payload.stable_result_required = smEnabled;
       }
       // Phase 9 — structurally-recorded Polis links (Decision 2). Server
       // rejects this on parent-org-wide proposals (linked_polis_ids only
@@ -569,7 +579,7 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
         />
       )}
 
-      {/* Phase 8 — Sustained-Majority toggle (only when org allows override) */}
+      {/* Phase 20 — Stable Result Required toggle (only when org allows override). */}
       {smOverrideAllowed && (
         <div className="bg-[#F4F6F9] border border-gray-200 rounded-lg p-4 space-y-2">
           <label className="flex items-start gap-3 cursor-pointer">
@@ -580,11 +590,12 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
               className="mt-0.5 accent-[var(--brand-accent)]"
             />
             <div>
-              <p className="text-sm text-gray-700 font-medium">Sustained-majority voting</p>
+              <p className="text-sm text-gray-700 font-medium">Stable Result Required</p>
               <p className="text-xs text-gray-500">
-                Requires the proposal to maintain support throughout the voting window.
-                Useful for binding decisions; overkill for routine matters.{' '}
-                <Link to="/help/sustained-majority" className="text-[var(--brand-accent)] hover:underline">
+                The result must be stable across the closing portion of the voting
+                window. Destabilization triggers an extension. Useful for high-stakes
+                decisions; overkill for routine matters.{' '}
+                <Link to="/help/stable-result" className="text-[var(--brand-accent)] hover:underline">
                   Learn more →
                 </Link>
               </p>
@@ -693,7 +704,9 @@ export default function ProposalManagement() {
     }
   }
 
-  // Phase 8 — resolve a sustained-majority escalation.
+  // Phase 8 — resolve a legacy sustained-majority escalation. Phase 20
+  // removed the escalate mechanism going forward; this handler is kept
+  // for the rare case that historic proposals still carry status=unresolved.
   async function handleResolveEscalation(proposalId, action, reason = '') {
     try {
       const payload = { action };
@@ -847,7 +860,10 @@ function EscalationResolutionPanel({ proposalId, onResolve }) {
     return (
       <div className="flex flex-col gap-2 w-full">
         <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
-          <strong>Awaiting admin review.</strong> Sustained-majority floor was breached during voting.
+          <strong>Awaiting admin review.</strong> Escalated by the legacy
+          sustained-majority feature (now Stable Result Required). Phase 20
+          removed the escalate mechanism going forward, but legacy
+          escalations remain resolvable here.
         </div>
         <div className="flex flex-wrap gap-2">
           <button
