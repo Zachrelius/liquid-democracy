@@ -1,46 +1,46 @@
 """
-Phase 8 — pure-function tests for sustained-majority evaluation.
+Phase 8 / Phase 20 — pure-function tests for Stable Result Required evaluation.
 
-These tests cover `sustained_majority.py` only. No DB, no fixtures, no I/O.
+These tests cover ``sustained_majority.py`` only. No DB, no fixtures, no I/O.
 The service layer (DB-touching) and worker (time-dependent) live in their
 own test modules.
+
+Phase 20 redesign: the binary "floor" mechanic is gone. The unified mechanic
+is "result stability across the closing portion of the voting window". Tests
+cover the new pure helpers (binary_snapshot_is_stable, winner_set_overlaps,
+evaluate_original_window_stability, evaluate_extension_stability) and the
+config accessor (get_stable_result_config).
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import pytest
 
 from sustained_majority import (
     BinarySnapshotPoint,
     DEFAULTS,
-    FLOOR_APPROACH_DELTA,
+    DestabilizationDecision,
     MultiOptionSnapshotPoint,
-    STABLE_RESULT_FRACTION,
-    SustainedMajorityConfig,
-    evaluate_binary,
-    evaluate_multi_option,
-    extension_window_for,
-    get_sustained_majority_config,
+    StableResultConfig,
+    binary_snapshot_is_stable,
+    evaluate_extension_stability,
+    evaluate_original_window_stability,
+    get_stable_result_config,
     in_stable_result_window,
-    is_above_floor,
-    is_approaching_floor,
-    is_proposal_sustained_majority_active,
-    should_trigger_failure,
-    support_ever_established,
-    winner_stable,
+    is_proposal_stable_result_active,
+    winner_set_overlaps,
 )
 
 
-def _config(**kwargs) -> SustainedMajorityConfig:
+def _config(**kwargs) -> StableResultConfig:
     base = {
         "enabled_default": False,
         "per_proposal_override": True,
-        "threshold": 0.5,
-        "floor": 0.45,
-        "failure_mode": "fail",
+        "stable_window_fraction": 0.25,
+        "max_extension_fraction": 0.25,
     }
     base.update(kwargs)
-    return SustainedMajorityConfig(**base)
+    return StableResultConfig(**base)
 
 
 def _at(seconds_offset: int) -> datetime:
@@ -52,39 +52,65 @@ def _at(seconds_offset: int) -> datetime:
 # Config accessor
 # ---------------------------------------------------------------------------
 
-class TestGetSustainedMajorityConfig:
+class TestGetStableResultConfig:
     def test_defaults_when_settings_empty(self):
-        config = get_sustained_majority_config({})
+        config = get_stable_result_config({})
         assert config.enabled_default is False
         assert config.per_proposal_override is True
-        assert config.threshold == 0.5
-        assert config.floor == 0.45
-        assert config.failure_mode == "fail"
+        assert config.stable_window_fraction == 0.25
+        assert config.max_extension_fraction == 0.25
         assert config.is_default
 
     def test_partial_override(self):
-        config = get_sustained_majority_config({
-            "sustained_majority_failure_mode": "extend",
-            "sustained_majority_floor": 0.40,
+        config = get_stable_result_config({
+            "stable_window_fraction": 0.10,
+            "max_extension_fraction": 0.50,
         })
-        assert config.failure_mode == "extend"
-        assert config.floor == 0.40
+        assert config.stable_window_fraction == 0.10
+        assert config.max_extension_fraction == 0.50
         # untouched keys still take defaults
-        assert config.threshold == 0.5
+        assert config.enabled_default is False
         assert not config.is_default
 
-    def test_corrupt_failure_mode_falls_back_to_fail(self):
-        """Defensive: bad config doesn't blow up the worker."""
-        config = get_sustained_majority_config({
-            "sustained_majority_failure_mode": "bogus",
+    def test_old_sustained_majority_keys_silently_ignored(self):
+        """D13: legacy keys in settings JSON must not raise; just ignored."""
+        config = get_stable_result_config({
+            "sustained_majority_floor": 0.45,
+            "sustained_majority_failure_mode": "extend",
+            "sustained_majority_threshold": 0.6,
+            "sustained_majority_enabled_default": True,  # ignored
         })
-        assert config.failure_mode == "fail"
+        # No error — and defaults applied (legacy enabled_default ignored).
+        assert config.enabled_default is False
+        assert config.is_default
+
+    def test_legacy_keys_alongside_new_keys_uses_new(self):
+        config = get_stable_result_config({
+            "sustained_majority_enabled_default": True,  # ignored
+            "stable_result_enabled_default": True,       # used
+        })
+        assert config.enabled_default is True
+
+    def test_clamps_stable_window_fraction(self):
+        # Below floor.
+        c1 = get_stable_result_config({"stable_window_fraction": 0.01})
+        assert c1.stable_window_fraction == 0.05
+        # Above ceiling.
+        c2 = get_stable_result_config({"stable_window_fraction": 0.99})
+        assert c2.stable_window_fraction == 0.50
+
+    def test_clamps_max_extension_fraction(self):
+        c1 = get_stable_result_config({"max_extension_fraction": -0.5})
+        assert c1.max_extension_fraction == 0.0
+        c2 = get_stable_result_config({"max_extension_fraction": 1.5})
+        assert c2.max_extension_fraction == 1.0
 
     def test_accepts_organization_object(self):
         class _Org:
-            settings = {"sustained_majority_threshold": 0.6}
-        config = get_sustained_majority_config(_Org())
-        assert config.threshold == 0.6
+            settings = {"stable_window_fraction": 0.10}
+            parent_org_id = None
+        config = get_stable_result_config(_Org())
+        assert config.stable_window_fraction == 0.10
 
 
 # ---------------------------------------------------------------------------
@@ -93,619 +119,337 @@ class TestGetSustainedMajorityConfig:
 
 class TestPerProposalOverride:
     def test_null_inherits_org_default_off(self):
-        assert is_proposal_sustained_majority_active(None, False) is False
+        assert is_proposal_stable_result_active(None, False) is False
 
     def test_null_inherits_org_default_on(self):
-        assert is_proposal_sustained_majority_active(None, True) is True
+        assert is_proposal_stable_result_active(None, True) is True
 
-    def test_true_overrides_org_off(self):
-        assert is_proposal_sustained_majority_active(True, False) is True
+    def test_explicit_true_overrides_org_default_off(self):
+        assert is_proposal_stable_result_active(True, False) is True
 
-    def test_false_overrides_org_on(self):
-        assert is_proposal_sustained_majority_active(False, True) is False
+    def test_explicit_false_overrides_org_default_on(self):
+        assert is_proposal_stable_result_active(False, True) is False
 
 
 # ---------------------------------------------------------------------------
-# is_above_floor
+# Binary snapshot stability
 # ---------------------------------------------------------------------------
 
-class TestFloor:
-    """Direct tests of `is_above_floor` — these always pass
-    `support_was_established=True` since they target the post-establishment
-    branch. Pre-establishment behavior is covered separately in
-    `TestFloorActivation`.
+class TestBinarySnapshotIsStable:
+    def _snap(self, yes: int, no: int, abstain: int = 0) -> BinarySnapshotPoint:
+        return BinarySnapshotPoint(
+            simulated_time=_at(0),
+            yes=yes, no=no, abstain=abstain, total_eligible=10,
+        )
+
+    def test_zero_votes_returns_true(self):
+        # Per D3: no destabilizing signal yet.
+        assert binary_snapshot_is_stable(self._snap(0, 0), 0.5) is True
+
+    def test_support_above_threshold_returns_true(self):
+        # 6/10 = 0.6 >= 0.5
+        assert binary_snapshot_is_stable(self._snap(6, 4), 0.5) is True
+
+    def test_support_at_threshold_returns_true(self):
+        # 5/10 = 0.5 >= 0.5
+        assert binary_snapshot_is_stable(self._snap(5, 5), 0.5) is True
+
+    def test_support_below_threshold_returns_false(self):
+        # 4/10 = 0.4 < 0.5
+        assert binary_snapshot_is_stable(self._snap(4, 6), 0.5) is False
+
+    def test_high_pass_threshold(self):
+        # 6/10 = 0.6 < 0.66 (super-majority)
+        assert binary_snapshot_is_stable(self._snap(6, 4), 0.66) is False
+        assert binary_snapshot_is_stable(self._snap(7, 3), 0.66) is True
+
+
+# ---------------------------------------------------------------------------
+# Winner set overlap (multi-option)
+# ---------------------------------------------------------------------------
+
+def _msnap(winners: tuple[str, ...]) -> MultiOptionSnapshotPoint:
+    return MultiOptionSnapshotPoint(
+        simulated_time=_at(0),
+        winners=winners,
+        total_ballots_cast=10,
+        total_eligible=10,
+    )
+
+
+class TestWinnerSetOverlaps:
+    """Cover the 8 worked examples from spec D4. The implementation uses
+    subset-or-superset semantics (one set must contain or be contained by
+    the other), which matches all 8 examples.
     """
-    def test_above_floor(self):
-        snap = BinarySnapshotPoint(
-            simulated_time=_at(0), yes=60, no=40, abstain=0, total_eligible=100,
-        )
-        assert is_above_floor(snap, _config(floor=0.50), True) is True
+    @pytest.mark.parametrize("prev,curr,expected", [
+        # 1. Identity — no change.
+        (("A",), ("A",), True),
+        # 2. Resolution-out (A held, B added as tied option).
+        (("A",), ("A", "B"), True),
+        # 3. Resolution-in (tied {A,B} resolved to A).
+        (("A", "B"), ("A",), True),
+        # 4. Resolution-in (tied {A,B} resolved to B).
+        (("A", "B"), ("B",), True),
+        # 5. Winner swap — unstable.
+        (("A",), ("B",), False),
+        # 6. Displacement with addition — unstable (A gone, C new).
+        (("A", "B"), ("B", "C"), False),
+        # 7. Total displacement — unstable.
+        (("A", "B"), ("C",), False),
+        # 8. Two displaced from larger tie — unstable.
+        (("A", "B", "C"), ("C", "D"), False),
+    ])
+    def test_d4_worked_examples(self, prev, curr, expected):
+        assert winner_set_overlaps(_msnap(curr), _msnap(prev)) is expected
 
-    def test_below_floor(self):
-        snap = BinarySnapshotPoint(
-            simulated_time=_at(0), yes=40, no=60, abstain=0, total_eligible=100,
-        )
-        assert is_above_floor(snap, _config(floor=0.50), True) is False
+    def test_empty_winner_sets_match(self):
+        # Both empty: trivially subset-of-each-other.
+        assert winner_set_overlaps(_msnap(()), _msnap(())) is True
 
-    def test_at_floor_exactly(self):
-        snap = BinarySnapshotPoint(
-            simulated_time=_at(0), yes=50, no=50, abstain=0, total_eligible=100,
-        )
-        # >= floor counts as above (the floor is a "drop below" detector).
-        assert is_above_floor(snap, _config(floor=0.50), True) is True
-
-    def test_zero_ballots_treated_as_above(self):
-        snap = BinarySnapshotPoint(
-            simulated_time=_at(0), yes=0, no=0, abstain=0, total_eligible=100,
-        )
-        assert is_above_floor(snap, _config(floor=0.50), True) is True
-
-    def test_support_fraction_matches_existing_yes_pct_semantics(self):
-        # support_fraction uses yes / (yes+no+abstain) to stay consistent with
-        # the existing ProposalTally.yes_pct (used by `pass_threshold` checks).
-        # 30 yes / 30 no / 40 abstain → support = 30 / 100 = 0.30. A high
-        # abstain count thus drags effective support down — same way it
-        # affects the pass threshold today.
-        snap = BinarySnapshotPoint(
-            simulated_time=_at(0), yes=30, no=30, abstain=40, total_eligible=100,
-        )
-        assert pytest.approx(snap.support_fraction) == 0.30
-        # 0.30 is below 0.45 floor → not above (assuming support was previously
-        # established — see TestFloorActivation for the pre-establishment case).
-        assert is_above_floor(snap, _config(floor=0.45), True) is False
+    def test_empty_to_winner_is_subset(self):
+        # No winners -> some winners: empty is subset of any set.
+        assert winner_set_overlaps(_msnap(("A",)), _msnap(())) is True
 
 
 # ---------------------------------------------------------------------------
-# winner_stable
+# Stable-result-window detection
 # ---------------------------------------------------------------------------
 
-class TestWinnerStable:
-    def _snap(self, winners, t=0):
-        return MultiOptionSnapshotPoint(
-            simulated_time=_at(t),
-            winners=tuple(winners),
-            total_ballots_cast=10,
-            total_eligible=20,
-        )
+class TestInStableResultWindow:
+    def test_outside_window_before_start(self):
+        # 100s window, fraction 0.25 -> stable window starts at +75s.
+        start = _at(0)
+        end = _at(100)
+        # At +50s: well before stable window.
+        assert in_stable_result_window(_at(50), start, end, 0.25) is False
 
-    def test_same_winner(self):
-        assert winner_stable(self._snap(["a"]), self._snap(["a"], t=1)) is True
+    def test_inside_window(self):
+        start = _at(0)
+        end = _at(100)
+        # At +80s: inside the final 25% window (which starts at +75s).
+        assert in_stable_result_window(_at(80), start, end, 0.25) is True
 
-    def test_different_winner(self):
-        assert winner_stable(self._snap(["a"]), self._snap(["b"], t=1)) is False
-
-    def test_set_equality_order_insensitive(self):
-        assert winner_stable(
-            self._snap(["a", "b"]), self._snap(["b", "a"], t=1),
-        ) is True
-
-    def test_subset_change_counts(self):
-        # Ties shrinking from {a,b} to {a} is a winner change.
-        assert winner_stable(
-            self._snap(["a", "b"]), self._snap(["a"], t=1),
-        ) is False
-
-
-# ---------------------------------------------------------------------------
-# in_stable_result_window
-# ---------------------------------------------------------------------------
-
-class TestStableResultWindow:
-    def setup_method(self):
-        self.start = _at(0)
-        self.end = _at(1000)  # 1000-second window
-
-    def test_outside_window_returns_false(self):
-        # 50% elapsed — outside the final 25%
-        assert in_stable_result_window(_at(500), self.start, self.end) is False
-
-    def test_inside_final_25_percent(self):
-        # 80% elapsed — inside the final 25%
-        assert in_stable_result_window(_at(800), self.start, self.end) is True
-
-    def test_boundary_at_75_percent(self):
-        # Exactly at the boundary (1 - 0.25 = 0.75)
-        assert in_stable_result_window(_at(750), self.start, self.end) is True
-
-    def test_just_before_boundary(self):
-        assert in_stable_result_window(_at(749), self.start, self.end) is False
+    def test_at_boundary_open(self):
+        start = _at(0)
+        end = _at(100)
+        # At exactly the boundary +75s.
+        assert in_stable_result_window(_at(75), start, end, 0.25) is True
 
     def test_zero_duration_returns_false(self):
-        assert in_stable_result_window(self.start, self.start, self.start) is False
+        start = _at(50)
+        end = _at(50)
+        assert in_stable_result_window(_at(50), start, end, 0.25) is False
 
 
 # ---------------------------------------------------------------------------
-# evaluate_binary
+# evaluate_original_window_stability — binary
 # ---------------------------------------------------------------------------
 
-class TestEvaluateBinary:
-    def test_no_fire_when_above_floor(self):
-        snap = BinarySnapshotPoint(
-            simulated_time=_at(0), yes=60, no=40, abstain=0, total_eligible=100,
+def _bsnap(t_offset: int, yes: int, no: int, abstain: int = 0) -> BinarySnapshotPoint:
+    return BinarySnapshotPoint(
+        simulated_time=_at(t_offset),
+        yes=yes, no=no, abstain=abstain,
+        total_eligible=max(10, yes + no + abstain),
+    )
+
+
+class TestEvaluateOriginalWindowStabilityBinary:
+    # Voting window: 0 -> 100s. Stable window starts at +75s.
+    voting_start = _at(0)
+    voting_end = _at(100)
+
+    def test_empty_snapshots_not_destabilized(self):
+        d = evaluate_original_window_stability(
+            "binary", [], 0.5, self.voting_start, self.voting_end,
+            now=_at(80), stable_window_fraction=0.25,
         )
-        # Single snapshot that itself establishes support (0.6 >= 0.5
-        # threshold) and is above floor — no fire.
-        decision = evaluate_binary([snap], _config(floor=0.50))
-        assert decision.should_fire is False
-        assert decision.mode is None
+        assert d.destabilized is False
 
-    def test_fires_when_below_floor_after_establishment(self):
-        """Establish support first, then drop below floor → breach fires.
-
-        Updated for Phase 9.8 C1: the prior version of this test passed a
-        single below-floor snapshot and expected an immediate breach. That
-        was the bug — without prior establishment the floor must not fire.
-        Updated to seed an establishing snapshot before the breach snapshot.
-        """
-        established = BinarySnapshotPoint(
-            simulated_time=_at(0), yes=60, no=40, abstain=0, total_eligible=100,
+    def test_before_stable_window_not_destabilized(self):
+        # Snapshot in window but `now` is still before stable window.
+        d = evaluate_original_window_stability(
+            "binary", [_bsnap(60, 3, 7)], 0.5,
+            self.voting_start, self.voting_end,
+            now=_at(60), stable_window_fraction=0.25,
         )
-        breach = BinarySnapshotPoint(
-            simulated_time=_at(60), yes=30, no=70, abstain=0, total_eligible=100,
+        assert d.destabilized is False
+
+    def test_no_in_window_snapshots_not_destabilized(self):
+        d = evaluate_original_window_stability(
+            "binary", [_bsnap(50, 3, 7)], 0.5,
+            self.voting_start, self.voting_end,
+            now=_at(80), stable_window_fraction=0.25,
         )
-        decision = evaluate_binary(
-            [established, breach], _config(floor=0.45, failure_mode="fail"),
+        assert d.destabilized is False
+
+    def test_all_in_window_stable(self):
+        snaps = [_bsnap(50, 6, 4), _bsnap(80, 7, 3), _bsnap(95, 6, 4)]
+        d = evaluate_original_window_stability(
+            "binary", snaps, 0.5, self.voting_start, self.voting_end,
+            now=_at(95), stable_window_fraction=0.25,
         )
-        assert decision.should_fire is True
-        assert decision.mode == "fail"
-        assert "below floor" in decision.reason
-        assert decision.breach_sample["yes"] == 30
-        assert decision.breach_sample["floor"] == 0.45
+        assert d.destabilized is False
 
-    def test_no_fire_when_below_floor_but_never_established(self):
-        """Single early no-vote with no prior support → no breach.
-
-        This is the canonical bug Z surfaced: under the old logic
-        `evaluate_binary` would fire on this single below-floor snapshot.
-        After C1 it must not — support has never been established.
-        """
-        snap = BinarySnapshotPoint(
-            simulated_time=_at(0), yes=0, no=1, abstain=0, total_eligible=100,
+    def test_in_window_breach_destabilizes(self):
+        # In-window snapshot below pass_threshold = destabilization.
+        snaps = [_bsnap(50, 6, 4), _bsnap(80, 4, 6)]  # 0.4 < 0.5
+        d = evaluate_original_window_stability(
+            "binary", snaps, 0.5, self.voting_start, self.voting_end,
+            now=_at(80), stable_window_fraction=0.25,
         )
-        decision = evaluate_binary([snap], _config(floor=0.45))
-        assert decision.should_fire is False
-        assert decision.mode is None
+        assert d.destabilized is True
+        assert d.breach_sample["support_fraction"] == pytest.approx(0.4)
+        assert d.breach_sample["pass_threshold"] == 0.5
 
-    def test_no_fire_with_empty_snapshots(self):
-        """Defensive: an empty snapshot list returns no-fire."""
-        decision = evaluate_binary([], _config(floor=0.45))
-        assert decision.should_fire is False
-
-
-# ---------------------------------------------------------------------------
-# evaluate_multi_option
-# ---------------------------------------------------------------------------
-
-class TestEvaluateMultiOption:
-    def setup_method(self):
-        self.start = _at(0)
-        self.end = _at(1000)
-
-    def _snap(self, winners, t):
-        return MultiOptionSnapshotPoint(
-            simulated_time=_at(t),
-            winners=tuple(winners),
-            total_ballots_cast=10,
-            total_eligible=20,
+    def test_out_of_window_breach_ignored(self):
+        # Snapshot at +50s breaches but is BEFORE stable window start (+75s).
+        snaps = [_bsnap(50, 4, 6), _bsnap(80, 6, 4)]
+        d = evaluate_original_window_stability(
+            "binary", snaps, 0.5, self.voting_start, self.voting_end,
+            now=_at(80), stable_window_fraction=0.25,
         )
-
-    def test_outside_window_no_fire(self):
-        latest = self._snap(["b"], t=500)  # 50% elapsed
-        previous = self._snap(["a"], t=400)
-        decision = evaluate_multi_option(
-            latest, previous, _config(), self.start, self.end, _at(500),
-        )
-        assert decision.should_fire is False
-
-    def test_inside_window_no_previous_no_fire(self):
-        latest = self._snap(["a"], t=800)
-        decision = evaluate_multi_option(
-            latest, None, _config(), self.start, self.end, _at(800),
-        )
-        assert decision.should_fire is False
-
-    def test_inside_window_winner_change_fires(self):
-        latest = self._snap(["b"], t=900)
-        previous = self._snap(["a"], t=800)
-        decision = evaluate_multi_option(
-            latest, previous, _config(failure_mode="escalate"),
-            self.start, self.end, _at(900),
-        )
-        assert decision.should_fire is True
-        assert decision.mode == "escalate"
-        assert "Winner changed" in decision.reason
-        assert decision.breach_sample["previous_winners"] == ["a"]
-        assert decision.breach_sample["current_winners"] == ["b"]
-
-    def test_inside_window_winner_stable_no_fire(self):
-        latest = self._snap(["a"], t=900)
-        previous = self._snap(["a"], t=800)
-        decision = evaluate_multi_option(
-            latest, previous, _config(),
-            self.start, self.end, _at(900),
-        )
-        assert decision.should_fire is False
-
-    def test_boundary_change_at_exactly_25_percent_remaining(self):
-        # Right at the boundary (75% elapsed): the spec requires the window
-        # to be open at this instant. A change here should fire.
-        latest = self._snap(["b"], t=750)
-        previous = self._snap(["a"], t=700)
-        decision = evaluate_multi_option(
-            latest, previous, _config(),
-            self.start, self.end, _at(750),
-        )
-        assert decision.should_fire is True
+        assert d.destabilized is False
 
 
 # ---------------------------------------------------------------------------
-# should_trigger_failure  (top-level dispatch + extend bookkeeping)
+# evaluate_original_window_stability — multi-option
 # ---------------------------------------------------------------------------
 
-class TestShouldTriggerFailure:
-    """Top-level dispatch tests.
+def _msnap_at(t_offset: int, winners: tuple[str, ...]) -> MultiOptionSnapshotPoint:
+    return MultiOptionSnapshotPoint(
+        simulated_time=_at(t_offset),
+        winners=winners,
+        total_ballots_cast=10,
+        total_eligible=10,
+    )
 
-    Updated for Phase 9.8 C1: each binary-failure-mode test now seeds an
-    establishing snapshot (support >= threshold) before the breach snapshot
-    so the new floor-activation gate allows the breach to fire. The prior
-    versions passed a single below-floor snapshot and were exercising the
-    bug (immediate fire on first no-vote).
-    """
-    def setup_method(self):
-        self.start = _at(0)
-        self.end = _at(1000)
 
-    def _established_then_breach(self, breach_yes: int, breach_no: int):
-        """Helper: 60/40 establishing snapshot, then a breach snapshot."""
-        return [
-            BinarySnapshotPoint(
-                simulated_time=_at(50), yes=60, no=40, abstain=0,
-                total_eligible=100,
-            ),
-            BinarySnapshotPoint(
-                simulated_time=_at(100), yes=breach_yes, no=breach_no,
-                abstain=0, total_eligible=100,
-            ),
-        ]
+class TestEvaluateOriginalWindowStabilityMultiOption:
+    voting_start = _at(0)
+    voting_end = _at(100)
 
-    def test_binary_below_floor_fires_fail(self):
-        decision = should_trigger_failure(
-            voting_method="binary",
-            snapshots=self._established_then_breach(30, 70),
-            config=_config(floor=0.45, failure_mode="fail"),
-            voting_start=self.start,
-            voting_end=self.end,
-            now=_at(500),
+    def test_outside_window_not_destabilized(self):
+        snaps = [_msnap_at(60, ("A",))]
+        d = evaluate_original_window_stability(
+            "approval", snaps, 0.5, self.voting_start, self.voting_end,
+            now=_at(60), stable_window_fraction=0.25,
         )
-        assert decision.should_fire is True
-        assert decision.mode == "fail"
+        assert d.destabilized is False
 
-    def test_extend_fires_first_time(self):
-        decision = should_trigger_failure(
-            voting_method="binary",
-            snapshots=self._established_then_breach(30, 70),
-            config=_config(floor=0.45, failure_mode="extend"),
-            voting_start=self.start,
-            voting_end=self.end,
-            now=_at(100),
-            extension_count=0,
+    def test_in_window_overlap_stable(self):
+        snaps = [_msnap_at(50, ("A",)), _msnap_at(80, ("A",))]
+        d = evaluate_original_window_stability(
+            "approval", snaps, 0.5, self.voting_start, self.voting_end,
+            now=_at(80), stable_window_fraction=0.25,
         )
-        assert decision.should_fire is True
-        assert decision.mode == "extend"
+        assert d.destabilized is False
 
-    def test_extend_promotes_to_fail_on_second_breach(self):
-        decision = should_trigger_failure(
-            voting_method="binary",
-            snapshots=self._established_then_breach(30, 70),
-            config=_config(floor=0.45, failure_mode="extend"),
-            voting_start=self.start,
-            voting_end=self.end,
-            now=_at(100),
-            extension_count=1,
+    def test_first_in_window_compared_to_last_out_of_window(self):
+        # D10: first in-window snapshot uses the last-out-of-window snapshot
+        # as its baseline. {A} outside, {B} inside -> destabilization.
+        snaps = [_msnap_at(50, ("A",)), _msnap_at(80, ("B",))]
+        d = evaluate_original_window_stability(
+            "approval", snaps, 0.5, self.voting_start, self.voting_end,
+            now=_at(80), stable_window_fraction=0.25,
         )
-        assert decision.should_fire is True
-        assert decision.mode == "fail"  # promoted
-        assert "second breach" in decision.reason
+        assert d.destabilized is True
+        assert d.breach_sample["previous_winners"] == ["A"]
+        assert d.breach_sample["current_winners"] == ["B"]
 
-    def test_escalate_mode_passes_through(self):
-        decision = should_trigger_failure(
-            voting_method="binary",
-            snapshots=self._established_then_breach(20, 80),
-            config=_config(floor=0.45, failure_mode="escalate"),
-            voting_start=self.start,
-            voting_end=self.end,
-            now=_at(100),
+    def test_in_window_winner_swap_destabilizes(self):
+        snaps = [_msnap_at(80, ("A",)), _msnap_at(95, ("B",))]
+        d = evaluate_original_window_stability(
+            "approval", snaps, 0.5, self.voting_start, self.voting_end,
+            now=_at(95), stable_window_fraction=0.25,
         )
-        assert decision.should_fire is True
-        assert decision.mode == "escalate"
+        assert d.destabilized is True
 
-    def test_binary_below_floor_no_fire_without_establishment(self):
-        """Phase 9.8 C1 regression: a single early no-vote (no prior
-        establishment) must NOT fire even at the top-level dispatch."""
-        snap = BinarySnapshotPoint(
-            simulated_time=_at(50), yes=0, no=1, abstain=0, total_eligible=100,
+    def test_first_in_window_no_prior_snapshot(self):
+        # Only one in-window snapshot, no out-of-window: no comparison
+        # available -> not destabilized.
+        snaps = [_msnap_at(80, ("A",))]
+        d = evaluate_original_window_stability(
+            "approval", snaps, 0.5, self.voting_start, self.voting_end,
+            now=_at(80), stable_window_fraction=0.25,
         )
-        decision = should_trigger_failure(
-            voting_method="binary",
-            snapshots=[snap],
-            config=_config(floor=0.45, failure_mode="fail"),
-            voting_start=self.start,
-            voting_end=self.end,
-            now=_at(50),
-        )
-        assert decision.should_fire is False
+        assert d.destabilized is False
 
-    def test_multi_option_dispatches_to_winner_check(self):
-        s1 = MultiOptionSnapshotPoint(_at(800), ("a",), 10, 20)
-        s2 = MultiOptionSnapshotPoint(_at(900), ("b",), 10, 20)
-        decision = should_trigger_failure(
-            voting_method="approval",
-            snapshots=[s1, s2],
-            config=_config(failure_mode="fail"),
-            voting_start=self.start,
-            voting_end=self.end,
-            now=_at(900),
+    def test_resolution_pair_stable(self):
+        # {A,B} -> {A}: subset, stable.
+        snaps = [_msnap_at(80, ("A", "B")), _msnap_at(95, ("A",))]
+        d = evaluate_original_window_stability(
+            "approval", snaps, 0.5, self.voting_start, self.voting_end,
+            now=_at(95), stable_window_fraction=0.25,
         )
-        assert decision.should_fire is True
-        assert decision.mode == "fail"
-
-    def test_no_snapshots_no_fire(self):
-        decision = should_trigger_failure(
-            voting_method="binary",
-            snapshots=[],
-            config=_config(),
-            voting_start=self.start,
-            voting_end=self.end,
-            now=_at(500),
-        )
-        assert decision.should_fire is False
+        assert d.destabilized is False
 
 
 # ---------------------------------------------------------------------------
-# support_ever_established + floor-activation gate (Phase 9.8 C1)
+# evaluate_extension_stability (sliding-window check)
 # ---------------------------------------------------------------------------
 
-class TestSupportEverEstablished:
-    """The pure helper that gates `is_above_floor`."""
+class TestEvaluateExtensionStability:
+    stable_window_duration = timedelta(seconds=20)
 
-    def test_empty_snapshots(self):
-        assert support_ever_established([], _config()) is False
+    def test_empty_snapshots_returns_false(self):
+        assert evaluate_extension_stability(
+            "binary", [], 0.5, _at(100), self.stable_window_duration,
+        ) is False
 
-    def test_zero_votes_only(self):
+    def test_only_one_snapshot_in_lookback_returns_false(self):
+        # Insufficient lookback per D10.
+        snaps = [_bsnap(95, 6, 4)]
+        assert evaluate_extension_stability(
+            "binary", snaps, 0.5, _at(100), self.stable_window_duration,
+        ) is False
+
+    def test_binary_all_stable_in_lookback_returns_true(self):
+        # 3 snapshots within last 20s, all support >= 0.5.
+        snaps = [_bsnap(85, 6, 4), _bsnap(90, 7, 3), _bsnap(100, 6, 4)]
+        assert evaluate_extension_stability(
+            "binary", snaps, 0.5, _at(100), self.stable_window_duration,
+        ) is True
+
+    def test_binary_one_unstable_in_lookback_returns_false(self):
+        snaps = [_bsnap(85, 6, 4), _bsnap(90, 4, 6), _bsnap(100, 7, 3)]
+        assert evaluate_extension_stability(
+            "binary", snaps, 0.5, _at(100), self.stable_window_duration,
+        ) is False
+
+    def test_binary_old_unstable_outside_lookback_ignored(self):
+        # Old snapshot (well before lookback) was unstable; the lookback
+        # window only includes the recent stable ones.
+        snaps = [_bsnap(50, 4, 6), _bsnap(85, 6, 4), _bsnap(95, 7, 3)]
+        assert evaluate_extension_stability(
+            "binary", snaps, 0.5, _at(100), self.stable_window_duration,
+        ) is True
+
+    def test_multi_option_all_overlap_returns_true(self):
+        snaps = [_msnap_at(85, ("A",)), _msnap_at(95, ("A",))]
+        assert evaluate_extension_stability(
+            "approval", snaps, 0.5, _at(100), self.stable_window_duration,
+        ) is True
+
+    def test_multi_option_swap_returns_false(self):
+        snaps = [_msnap_at(85, ("A",)), _msnap_at(95, ("B",))]
+        assert evaluate_extension_stability(
+            "approval", snaps, 0.5, _at(100), self.stable_window_duration,
+        ) is False
+
+    def test_multi_option_resolution_returns_true(self):
+        snaps = [_msnap_at(85, ("A", "B")), _msnap_at(95, ("A",))]
+        assert evaluate_extension_stability(
+            "approval", snaps, 0.5, _at(100), self.stable_window_duration,
+        ) is True
+
+    def test_multi_option_three_snapshot_chain_with_break(self):
+        # Pair 1: {A} -> {A} OK. Pair 2: {A} -> {B} bad. Returns False.
         snaps = [
-            BinarySnapshotPoint(
-                simulated_time=_at(0), yes=0, no=0, abstain=0, total_eligible=100,
-            ),
+            _msnap_at(82, ("A",)),
+            _msnap_at(90, ("A",)),
+            _msnap_at(98, ("B",)),
         ]
-        assert support_ever_established(snaps, _config()) is False
-
-    def test_single_snapshot_above_threshold(self):
-        snaps = [
-            BinarySnapshotPoint(
-                simulated_time=_at(0), yes=60, no=40, abstain=0, total_eligible=100,
-            ),
-        ]
-        assert support_ever_established(snaps, _config(threshold=0.5)) is True
-
-    def test_at_exact_threshold_counts_as_established(self):
-        # >= comparison — exactly the threshold establishes support.
-        snaps = [
-            BinarySnapshotPoint(
-                simulated_time=_at(0), yes=50, no=50, abstain=0, total_eligible=100,
-            ),
-        ]
-        assert support_ever_established(snaps, _config(threshold=0.5)) is True
-
-    def test_just_below_threshold_not_established(self):
-        # 0.499 < 0.5 → not established.
-        snaps = [
-            BinarySnapshotPoint(
-                simulated_time=_at(0), yes=499, no=501, abstain=0, total_eligible=2000,
-            ),
-        ]
-        assert support_ever_established(snaps, _config(threshold=0.5)) is False
-
-    def test_one_high_snapshot_then_drop_still_established(self):
-        snaps = [
-            BinarySnapshotPoint(
-                simulated_time=_at(0), yes=70, no=30, abstain=0, total_eligible=100,
-            ),
-            BinarySnapshotPoint(
-                simulated_time=_at(60), yes=20, no=80, abstain=0, total_eligible=100,
-            ),
-        ]
-        assert support_ever_established(snaps, _config(threshold=0.5)) is True
-
-
-class TestFloorActivation:
-    """`is_above_floor` no longer fires before support has been established.
-
-    These tests target the bug Z surfaced (Phase 9.8 C1): under the prior
-    behavior a single early no-vote would breach the floor immediately,
-    failing the proposal before anyone had a chance to vote yes. The fix
-    routes through `support_was_established` so the floor only activates
-    after support has crossed the threshold at least once.
-    """
-
-    def _no_vote(self, t: int = 0) -> BinarySnapshotPoint:
-        return BinarySnapshotPoint(
-            simulated_time=_at(t), yes=0, no=1, abstain=0, total_eligible=100,
-        )
-
-    def _yes_vote_majority(self, yes: int, no: int, t: int = 0) -> BinarySnapshotPoint:
-        return BinarySnapshotPoint(
-            simulated_time=_at(t), yes=yes, no=no, abstain=0, total_eligible=100,
-        )
-
-    def test_floor_inactive_before_support_established(self):
-        """Single early no-vote, support never reaches threshold → no breach."""
-        snap = self._no_vote()
-        # Even though support_fraction (0.0) is below floor (0.45), the floor
-        # cannot fire because support has never been established.
-        assert is_above_floor(snap, _config(floor=0.45), False) is True
-
-    def test_floor_active_after_support_crosses_threshold(self):
-        """Support hits 0.5 once, then drops below floor → breach detected."""
-        # Drop snapshot: 30/70 → support 0.3, below floor 0.45.
-        drop = self._yes_vote_majority(yes=30, no=70, t=60)
-        # The caller (`evaluate_binary`) will compute established=True from
-        # the prior 50/50 snapshot in the list — here we model that by
-        # passing established=True directly.
-        assert is_above_floor(drop, _config(floor=0.45), True) is False
-
-    def test_support_established_at_exact_threshold(self):
-        """Support exactly 0.5 → established (>= comparison)."""
-        snaps = [
-            self._yes_vote_majority(yes=50, no=50, t=0),
-            BinarySnapshotPoint(
-                simulated_time=_at(60), yes=20, no=80, abstain=0, total_eligible=100,
-            ),
-        ]
-        config = _config(threshold=0.5, floor=0.45, failure_mode="fail")
-        assert support_ever_established(snaps, config) is True
-        decision = evaluate_binary(snaps, config)
-        # Established + drop to 0.2 below floor 0.45 → fires.
-        assert decision.should_fire is True
-        assert decision.mode == "fail"
-
-    def test_support_not_established_just_below_threshold(self):
-        """Support 0.499 max → not established → no breach when it drops."""
-        snaps = [
-            BinarySnapshotPoint(
-                simulated_time=_at(0), yes=499, no=501, abstain=0,
-                total_eligible=2000,
-            ),
-            BinarySnapshotPoint(
-                simulated_time=_at(60), yes=100, no=900, abstain=0,
-                total_eligible=2000,
-            ),
-        ]
-        config = _config(threshold=0.5, floor=0.45)
-        assert support_ever_established(snaps, config) is False
-        decision = evaluate_binary(snaps, config)
-        assert decision.should_fire is False
-
-    def test_breach_after_establishment_then_drop(self):
-        """Establish 0.7, drop to 0.3 → breach fires."""
-        snaps = [
-            BinarySnapshotPoint(
-                simulated_time=_at(0), yes=70, no=30, abstain=0, total_eligible=100,
-            ),
-            BinarySnapshotPoint(
-                simulated_time=_at(60), yes=30, no=70, abstain=0, total_eligible=100,
-            ),
-        ]
-        config = _config(threshold=0.5, floor=0.45, failure_mode="fail")
-        decision = evaluate_binary(snaps, config)
-        assert decision.should_fire is True
-        assert decision.mode == "fail"
-        assert decision.breach_sample["yes"] == 30
-        assert decision.breach_sample["no"] == 70
-
-    def test_zero_votes_still_no_breach(self):
-        """Regression on the existing zero-votes case: zero ballots = no breach
-        regardless of establishment state."""
-        snap = BinarySnapshotPoint(
-            simulated_time=_at(0), yes=0, no=0, abstain=0, total_eligible=100,
-        )
-        # Pre-establishment: no breach.
-        assert is_above_floor(snap, _config(floor=0.45), False) is True
-        # Post-establishment: still no breach (zero ballots short-circuits).
-        assert is_above_floor(snap, _config(floor=0.45), True) is True
-        # And the empty-history evaluate_binary also returns no-fire.
-        decision = evaluate_binary([snap], _config(floor=0.45))
-        assert decision.should_fire is False
-
-    @pytest.mark.parametrize("failure_mode", ["fail", "extend", "escalate"])
-    def test_existing_failure_modes_unchanged_after_establishment(
-        self, failure_mode,
-    ):
-        """Each failure mode still fires correctly once support has been
-        established and then dropped — the activation gate doesn't suppress
-        legitimate breaches."""
-        snaps = [
-            BinarySnapshotPoint(
-                simulated_time=_at(0), yes=70, no=30, abstain=0, total_eligible=100,
-            ),
-            BinarySnapshotPoint(
-                simulated_time=_at(60), yes=20, no=80, abstain=0, total_eligible=100,
-            ),
-        ]
-        decision = should_trigger_failure(
-            voting_method="binary",
-            snapshots=snaps,
-            config=_config(floor=0.45, failure_mode=failure_mode),
-            voting_start=_at(0),
-            voting_end=_at(1000),
-            now=_at(60),
-            extension_count=0,
-        )
-        assert decision.should_fire is True
-        assert decision.mode == failure_mode
-
-    def test_long_no_vote_stretch_then_establishment_then_drop(self):
-        """Edge case from spec: long stretch of no-votes early, then a flood
-        of yes-votes establishes support, then a flood of no-votes drops it
-        → breach fires only after the second flood."""
-        snaps = [
-            # Early no-votes — would have fired under the old logic.
-            BinarySnapshotPoint(
-                simulated_time=_at(0), yes=0, no=3, abstain=0, total_eligible=100,
-            ),
-            BinarySnapshotPoint(
-                simulated_time=_at(30), yes=0, no=5, abstain=0, total_eligible=100,
-            ),
-            # Yes-vote flood establishes support.
-            BinarySnapshotPoint(
-                simulated_time=_at(60), yes=60, no=10, abstain=0, total_eligible=100,
-            ),
-            # No-vote flood drops support below floor.
-            BinarySnapshotPoint(
-                simulated_time=_at(90), yes=15, no=85, abstain=0, total_eligible=100,
-            ),
-        ]
-        config = _config(floor=0.45, failure_mode="fail")
-        # Establishment: yes (the 60/10 snapshot crosses 0.5).
-        assert support_ever_established(snaps, config) is True
-        # The latest snapshot is below floor → fires.
-        decision = evaluate_binary(snaps, config)
-        assert decision.should_fire is True
-
-        # If we truncate to the pre-establishment portion only, no fire.
-        decision_pre = evaluate_binary(snaps[:2], config)
-        assert decision_pre.should_fire is False
-
-
-# ---------------------------------------------------------------------------
-# Floor-approach detection
-# ---------------------------------------------------------------------------
-
-class TestFloorApproach:
-    def test_within_delta_above_floor(self):
-        # 0.48 with floor=0.45, delta=0.05 → 0.48 <= 0.50 ✓
-        snap = BinarySnapshotPoint(
-            simulated_time=_at(0), yes=48, no=52, abstain=0, total_eligible=100,
-        )
-        assert is_approaching_floor(snap, _config(floor=0.45)) is True
-
-    def test_clearly_above_floor(self):
-        snap = BinarySnapshotPoint(
-            simulated_time=_at(0), yes=70, no=30, abstain=0, total_eligible=100,
-        )
-        assert is_approaching_floor(snap, _config(floor=0.45)) is False
-
-    def test_zero_ballots_not_approaching(self):
-        snap = BinarySnapshotPoint(
-            simulated_time=_at(0), yes=0, no=0, abstain=0, total_eligible=100,
-        )
-        assert is_approaching_floor(snap, _config(floor=0.45)) is False
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def test_extension_window_returns_original_duration():
-    start = _at(0)
-    end = _at(86400)  # 1 day
-    assert extension_window_for(start, end) == timedelta(days=1)
+        assert evaluate_extension_stability(
+            "approval", snaps, 0.5, _at(100), self.stable_window_duration,
+        ) is False

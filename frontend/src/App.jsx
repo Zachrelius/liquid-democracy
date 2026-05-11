@@ -55,7 +55,10 @@ import CreatePolis from './pages/admin/CreatePolis';
 import SubOrgPolises from './pages/admin/SubOrgPolises';
 import Polis from './pages/Polis';
 import VotingMethodsHelp from './pages/VotingMethodsHelp';
-import SustainedMajorityHelp from './pages/SustainedMajorityHelp';
+// Phase 20 F3 — renamed from SustainedMajorityHelp; serves both
+// /help/stable-result (canonical) and /help/sustained-majority (kept as
+// an alias so existing in-app/external links don't 404).
+import StableResultHelp from './pages/StableResultHelp';
 import PolisHelp from './pages/PolisHelp';
 import RolePermissionsHelp from './pages/RolePermissionsHelp';
 import NotificationsHelp from './pages/NotificationsHelp';
@@ -201,7 +204,9 @@ export default function App() {
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
         <Route path="/help/voting-methods" element={<VotingMethodsHelp />} />
-        <Route path="/help/sustained-majority" element={<SustainedMajorityHelp />} />
+        <Route path="/help/stable-result" element={<StableResultHelp />} />
+        {/* Phase 20 F3 — legacy route alias; same component, different URL. */}
+        <Route path="/help/sustained-majority" element={<StableResultHelp />} />
         <Route path="/help/polis" element={<PolisHelp />} />
         <Route path="/help/role-permissions" element={<RolePermissionsHelp />} />
         <Route path="/help/notifications" element={<NotificationsHelp />} />

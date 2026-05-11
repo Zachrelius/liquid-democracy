@@ -435,11 +435,12 @@ class Proposal(Base):
     # still computed at advance-time from voting_start + voting_days.
     deliberation_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     voting_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    # Phase 8: per-proposal sustained-majority override.
+    # Phase 8 / Phase 20: per-proposal "Stable Result Required" override.
     # null = inherit org default; True/False = explicit per-proposal opt-in/out.
     # Authors can only set non-null when org has
-    # `sustained_majority_per_proposal_override: true`.
-    sustained_majority_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # `stable_result_per_proposal_override: true`. Renamed in Phase 20 from
+    # `sustained_majority_enabled` (D12) to align with the user-facing rebrand.
+    stable_result_required: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     # Phase 9: structurally-recorded links to Polis artifacts. List of
     # `polises.id` UUID strings. Null = unset (no structural links); empty
     # list = author explicitly cleared. URL-detected links in the proposal

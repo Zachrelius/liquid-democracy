@@ -1,150 +1,148 @@
 """
-Sustained-Majority Voting Windows — pure evaluation module (Phase 8).
+Stable-Result-Required — pure evaluation module (Phase 20 redesign).
 
-A proposal with sustained-majority enabled must MAINTAIN support across the
-voting window rather than just pass at a single moment. The evaluation here is
-data-in / data-out: callers pass snapshot tallies, configuration values, and
-proposal metadata; this module returns whether failure should fire and which
-mode to apply. No DB access, no I/O — fully testable.
+A proposal with "Stable Result Required" enabled must produce a stable result
+across the closing portion of its voting window. The mechanic is unified across
+voting methods:
 
-Three failure modes:
-  - "fail":     proposal moves directly to `failed` once the floor is breached
-  - "extend":   voting_end is pushed once; a second breach fails the proposal
-  - "escalate": proposal moves to `unresolved` for org-admin resolution
+  - Binary: every snapshot in the stable window must have
+    ``support_fraction >= pass_threshold``.
+  - Multi-option (approval / ranked_choice): every adjacent pair of snapshots
+    in the stable window must have ``frozenset(prev.winners) &
+    frozenset(curr.winners) != frozenset()`` (non-empty intersection).
 
-Multi-option semantics (approval / ranked_choice):
-  Floor doesn't map cleanly. Instead we lock the *result* during the final
-  STABLE_RESULT_FRACTION (default 0.25) of the voting window: any change to the
-  computed winner during that window triggers the configured failure mode.
+The "stable window" is the final ``stable_window_fraction`` (default 0.25) of
+the original voting period. Destabilization in the stable window triggers an
+extension equal to ``stable_window_fraction * original_voting_duration``. The
+total cumulative extension time across all extensions cannot exceed
+``max_extension_fraction * original_voting_duration``.
+
+During an extension the worker uses a sliding-window check
+(``evaluate_extension_stability``): voting can close as soon as the proposal
+has demonstrated stability for the most recent ``stable_window_duration`` of
+snapshots, rather than waiting for the extension's natural ``voting_end``.
+
+Pure module: no DB access, no I/O. Callers feed snapshot rows + config + the
+proposal's voting timestamps and read back a decision.
+
+Phase 20 removes (D1, D13):
+  - The binary "floor" mechanic (``support_ever_established``, ``is_above_floor``,
+    ``is_approaching_floor``, ``FLOOR_APPROACH_DELTA``)
+  - The ``failure_mode`` axis (``fail`` / ``extend`` / ``escalate``); only the
+    extension path remains, plus a force-close on exhausted extension budget.
+  - ``evaluate_binary``, ``evaluate_multi_option``, ``should_trigger_failure``,
+    ``extension_window_for``, ``STABLE_RESULT_FRACTION`` constant.
+
+The filename ``sustained_majority.py`` is preserved for one pass; rename to
+``stable_result.py`` is deferred to a future cleanup (per spec §B4).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional
 
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+#
+# Phase 20 D13: drop ``sustained_majority_floor``,
+# ``sustained_majority_failure_mode``, and ``sustained_majority_threshold``
+# entirely. Add ``stable_window_fraction`` and ``max_extension_fraction``.
+# Rename ``sustained_majority_enabled_default`` ->
+# ``stable_result_enabled_default`` and
+# ``sustained_majority_per_proposal_override`` ->
+# ``stable_result_per_proposal_override``.
+#
+# Old keys present in an org's settings JSON are silently ignored (no migration
+# of values, per spec §G).
 
 DEFAULTS: dict[str, Any] = {
-    "sustained_majority_enabled_default": False,
-    "sustained_majority_per_proposal_override": True,
-    "sustained_majority_threshold": 0.5,
-    "sustained_majority_floor": 0.45,
-    "sustained_majority_failure_mode": "fail",   # fail | extend | escalate
+    "stable_result_enabled_default": False,
+    "stable_result_per_proposal_override": True,
+    "stable_window_fraction": 0.25,
+    "max_extension_fraction": 0.25,
 }
-
-ALLOWED_FAILURE_MODES = ("fail", "extend", "escalate")
-
-# Final fraction of the voting window during which the multi-option winner is
-# locked. Outside this window, winner-changes are ignored.
-STABLE_RESULT_FRACTION = 0.25
-
-# How close to the floor (in absolute support fraction) qualifies as
-# "approaching the floor" for the in-app banner.
-FLOOR_APPROACH_DELTA = 0.05
 
 
 @dataclass(frozen=True)
-class SustainedMajorityConfig:
+class StableResultConfig:
     enabled_default: bool
     per_proposal_override: bool
-    threshold: float
-    floor: float
-    failure_mode: str
+    stable_window_fraction: float       # 0.05 to 0.50
+    max_extension_fraction: float       # 0.0 to 1.0
 
     @property
     def is_default(self) -> bool:
         """True when the config matches all DEFAULTS verbatim."""
         return (
-            self.enabled_default == DEFAULTS["sustained_majority_enabled_default"]
-            and self.per_proposal_override == DEFAULTS["sustained_majority_per_proposal_override"]
-            and abs(self.threshold - DEFAULTS["sustained_majority_threshold"]) < 1e-9
-            and abs(self.floor - DEFAULTS["sustained_majority_floor"]) < 1e-9
-            and self.failure_mode == DEFAULTS["sustained_majority_failure_mode"]
+            self.enabled_default == DEFAULTS["stable_result_enabled_default"]
+            and self.per_proposal_override == DEFAULTS["stable_result_per_proposal_override"]
+            and abs(self.stable_window_fraction - DEFAULTS["stable_window_fraction"]) < 1e-9
+            and abs(self.max_extension_fraction - DEFAULTS["max_extension_fraction"]) < 1e-9
         )
 
 
-def get_sustained_majority_config(org_or_settings: Any) -> SustainedMajorityConfig:
-    """
-    Lazy, defaults-applying accessor for org-level sustained-majority config.
+def _clamp(value: float, lo: float, hi: float) -> float:
+    if value < lo:
+        return lo
+    if value > hi:
+        return hi
+    return value
 
-    Accepts either an Organization model (uses .settings, walking the parent
-    chain via :func:`org_config.get_org_config` per Phase 8.5 Decision 9) or
-    a raw settings dict, which keeps callers simple. Missing keys fall back
-    to DEFAULTS so pre-Phase-8 orgs read clean values without a backfill.
 
-    Phase 8.5: when an Organization is passed and it's a sub-org, each key
-    resolves via the parent-chain walk: sub-org's own setting → parent's
-    setting → DEFAULTS. For parent orgs (parent_org_id IS NULL), the walk
-    degenerates to a single lookup followed by DEFAULTS — bit-for-bit
-    equivalent to the prior ``raw.get(key, DEFAULTS[...])`` pattern. Raw-dict
-    callers (tests, internal worker re-evaluations) keep the old behavior
-    unchanged.
+def get_stable_result_config(org_or_settings: Any) -> StableResultConfig:
     """
-    # Two paths: (1) Organization model — use the parent-chain-aware
-    # get_org_config helper; (2) raw dict — preserve the old direct-lookup
-    # behavior for tests and internal consumers that synthesize a settings
-    # blob without an org.
+    Lazy, defaults-applying accessor for org-level Stable Result Required config.
+
+    Accepts either an Organization model (uses ``.settings``, walking the
+    parent-org chain via :func:`org_config.get_org_config` per Phase 8.5) or
+    a raw settings dict. Missing keys fall back to ``DEFAULTS`` so pre-Phase-20
+    orgs read clean values without a backfill.
+
+    Old (pre-Phase-20) ``sustained_majority_*`` keys present in the settings
+    JSON are silently ignored — no automatic value migration.
+    """
     is_org = hasattr(org_or_settings, "settings") and not isinstance(
         org_or_settings, dict
     )
     if is_org:
-        # Local import to avoid a circular dep with models at module load time
-        # (org_config imports models, sustained_majority is imported by routes
-        # that already have models loaded — but we keep this defensive).
         from org_config import get_org_config
 
         def _read(key: str) -> Any:
             return get_org_config(org_or_settings, key, DEFAULTS[key])
 
-        failure_mode = _read("sustained_majority_failure_mode")
-        if failure_mode not in ALLOWED_FAILURE_MODES:
-            failure_mode = "fail"
-        return SustainedMajorityConfig(
-            enabled_default=bool(_read("sustained_majority_enabled_default")),
-            per_proposal_override=bool(_read("sustained_majority_per_proposal_override")),
-            threshold=float(_read("sustained_majority_threshold")),
-            floor=float(_read("sustained_majority_floor")),
-            failure_mode=failure_mode,
+        swf = float(_read("stable_window_fraction"))
+        mef = float(_read("max_extension_fraction"))
+        return StableResultConfig(
+            enabled_default=bool(_read("stable_result_enabled_default")),
+            per_proposal_override=bool(_read("stable_result_per_proposal_override")),
+            # Bound stable_window_fraction to [0.05, 0.50] per D2.
+            stable_window_fraction=_clamp(swf, 0.05, 0.50),
+            # Bound max_extension_fraction to [0.0, 1.0] per D9.
+            max_extension_fraction=_clamp(mef, 0.0, 1.0),
         )
 
-    # Raw-dict path: dict, None, or unknown — same logic as before.
     raw = org_or_settings if isinstance(org_or_settings, dict) else {}
-
-    failure_mode = raw.get(
-        "sustained_majority_failure_mode",
-        DEFAULTS["sustained_majority_failure_mode"],
-    )
-    if failure_mode not in ALLOWED_FAILURE_MODES:
-        # Defensive: corrupt config falls back to fail-safe ("fail").
-        failure_mode = "fail"
-
-    return SustainedMajorityConfig(
+    swf = float(raw.get("stable_window_fraction", DEFAULTS["stable_window_fraction"]))
+    mef = float(raw.get("max_extension_fraction", DEFAULTS["max_extension_fraction"]))
+    return StableResultConfig(
         enabled_default=bool(raw.get(
-            "sustained_majority_enabled_default",
-            DEFAULTS["sustained_majority_enabled_default"],
+            "stable_result_enabled_default",
+            DEFAULTS["stable_result_enabled_default"],
         )),
         per_proposal_override=bool(raw.get(
-            "sustained_majority_per_proposal_override",
-            DEFAULTS["sustained_majority_per_proposal_override"],
+            "stable_result_per_proposal_override",
+            DEFAULTS["stable_result_per_proposal_override"],
         )),
-        threshold=float(raw.get(
-            "sustained_majority_threshold",
-            DEFAULTS["sustained_majority_threshold"],
-        )),
-        floor=float(raw.get(
-            "sustained_majority_floor",
-            DEFAULTS["sustained_majority_floor"],
-        )),
-        failure_mode=failure_mode,
+        stable_window_fraction=_clamp(swf, 0.05, 0.50),
+        max_extension_fraction=_clamp(mef, 0.0, 1.0),
     )
 
 
-def is_proposal_sustained_majority_active(
+def is_proposal_stable_result_active(
     proposal_override: Optional[bool],
     org_default_enabled: bool,
 ) -> bool:
@@ -161,11 +159,8 @@ def is_proposal_sustained_majority_active(
 # Snapshot abstraction
 # ---------------------------------------------------------------------------
 #
-# We deliberately don't import models — these dataclasses describe the shape
-# that callers (the worker, tests) feed us. A real VoteSnapshot row maps onto
-# BinarySnapshotPoint by reading yes/no/abstain/total_eligible directly; an
-# approval/RCV "snapshot" is reconstructed from the live tally each run since
-# VoteSnapshot only stores binary aggregates today.
+# Pure-module shapes. The worker lifts ``VoteSnapshot`` rows into these so the
+# evaluation logic stays decoupled from the ORM.
 
 
 @dataclass(frozen=True)
@@ -183,8 +178,7 @@ class BinarySnapshotPoint:
 
     @property
     def support_fraction(self) -> float:
-        """Fraction of votes_cast that are 'yes'. Matches the existing
-        threshold_met semantics (yes_pct, abstain excluded by intent)."""
+        """Fraction of votes_cast that are 'yes'."""
         cast = self.yes + self.no + self.abstain
         return self.yes / cast if cast else 0.0
 
@@ -197,9 +191,9 @@ class BinarySnapshotPoint:
 
 @dataclass(frozen=True)
 class MultiOptionSnapshotPoint:
-    """One sample of an approval / ranked_choice winner at a point in time.
+    """One sample of an approval / ranked_choice winner set at a point in time.
 
-    `winners` is the list of option_ids the tally would currently elect (sorted
+    ``winners`` is the list of option_ids the tally would currently elect (sorted
     deterministically by the caller — typically by option_id). For approval and
     IRV this is normally length 1; ties produce length > 1.
     """
@@ -213,78 +207,72 @@ class MultiOptionSnapshotPoint:
 # Pure evaluation primitives
 # ---------------------------------------------------------------------------
 
-def support_ever_established(
-    snapshots: Iterable[BinarySnapshotPoint],
-    config: SustainedMajorityConfig,
-) -> bool:
-    """
-    True iff any snapshot in the window has reached `support_fraction >=
-    config.threshold`.
-
-    The floor is a drop-detector for support that has been established at
-    least once. Until the proposal's support has crossed the threshold for
-    the first time, the floor cannot meaningfully be "breached" — no
-    consensus has yet been formed to lose. This helper lets callers gate
-    floor checks on whether such a consensus has ever existed in the window.
-
-    Pure function — operates on the snapshot list alone, no DB / I/O.
-    """
-    for snap in snapshots:
-        if snap.votes_cast == 0:
-            continue
-        if snap.support_fraction >= config.threshold:
-            return True
-    return False
-
-
-def is_above_floor(
+def binary_snapshot_is_stable(
     snapshot: BinarySnapshotPoint,
-    config: SustainedMajorityConfig,
-    support_was_established: bool,
+    pass_threshold: float,
 ) -> bool:
-    """
-    True iff the snapshot's support level is at or above the configured floor,
-    given whether support has ever been established in the window.
+    """True iff this snapshot has support >= pass_threshold.
 
-    The floor only activates AFTER support has crossed `threshold` at least
-    once during the window. Until that crossing, no breach is possible — the
-    floor is a drop-detector, not an early-window participation gate. So when
-    `support_was_established` is False this returns True unconditionally.
-
-    Edge case: zero ballots cast counts as ABOVE the floor — same rationale.
-    Quorum is enforced separately at proposal-close time.
+    Zero-votes-cast snapshots return True (no destabilizing signal yet).
+    Per spec D3 (binary stability test, strict per-snapshot).
     """
-    if not support_was_established:
-        return True
     if snapshot.votes_cast == 0:
         return True
-    return snapshot.support_fraction >= config.floor
+    return snapshot.support_fraction >= pass_threshold
 
 
-def winner_stable(
+def winner_set_overlaps(
     snapshot: MultiOptionSnapshotPoint,
     previous_snapshot: MultiOptionSnapshotPoint,
 ) -> bool:
-    """
-    True iff the computed winner set is the same in both snapshots.
+    """True iff the two snapshots' winner sets are compatible — i.e. one is a
+    subset of the other. This captures the spec D4 worked examples cleanly:
 
-    Order-insensitive; we compare as a frozenset so a 1-element [A] vs [A]
-    matches even if the underlying tally re-ordered ties differently.
+      - ``{A}`` -> ``{A}`` -> True (no change)
+      - ``{A}`` -> ``{A, B}`` -> True (A still in; ambiguity emerged)
+      - ``{A, B}`` -> ``{A}`` -> True (resolution; A wins)
+      - ``{A, B}`` -> ``{B}`` -> True (resolution; B wins)
+      - ``{A}`` -> ``{B}`` -> False (winner swap; unstable)
+      - ``{A, B}`` -> ``{B, C}`` -> False (A displaced; C new; unstable)
+      - ``{A, B}`` -> ``{C}`` -> False (both A and B displaced; unstable)
+      - ``{A, B, C}`` -> ``{C, D}`` -> False (A and B displaced; unstable)
+
+    **Spec note (judgment call):** Spec D4 line 1 codifies the rule as
+    ``frozenset(previous.winners) & frozenset(current.winners) != frozenset()``
+    (non-empty intersection). The 8 worked examples below D4 — particularly
+    ``{A,B} -> {B,C}`` and ``{A,B,C} -> {C,D}`` — would be STABLE under that
+    rule (each pair has at least one common element) but the spec text labels
+    them UNSTABLE.
+
+    The two interpretations diverge on cases like ``{A,B} -> {B,C}``. The
+    consistent reading of all 8 examples is **subset-or-superset**: the new
+    winner set must either contain or be contained by the old. That captures
+    the spec's intuition (winner additions, winner resolutions, no change ->
+    stable; any displacement of a previous winner -> unstable) and matches
+    every worked example. We implement subset-or-superset and document the
+    judgment call here.
+
+    The function name is preserved (``winner_set_overlaps``) per spec §B2 even
+    though the semantics are slightly stricter than naive intersection.
     """
-    return frozenset(snapshot.winners) == frozenset(previous_snapshot.winners)
+    prev = frozenset(previous_snapshot.winners)
+    curr = frozenset(snapshot.winners)
+    return prev.issubset(curr) or curr.issubset(prev)
 
 
 def in_stable_result_window(
     now: datetime,
     voting_start: datetime,
     voting_end: datetime,
-    fraction: float = STABLE_RESULT_FRACTION,
+    fraction: float,
 ) -> bool:
-    """
-    True iff `now` falls inside the final `fraction` of the voting window.
+    """True iff ``now`` falls inside the final ``fraction`` of the voting window.
 
-    Boundary: at exactly `start + (1-fraction)*duration` the window opens;
+    Boundary: at exactly ``start + (1-fraction)*duration`` the window opens;
     earlier instants return False, equal-or-later return True.
+
+    ``fraction`` is required (no default per spec §B2; callers pass the org's
+    ``stable_window_fraction``).
     """
     if voting_end <= voting_start:
         return False
@@ -296,176 +284,172 @@ def in_stable_result_window(
 
 
 # ---------------------------------------------------------------------------
-# Trigger evaluation
+# Destabilization decisions
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
-class FailureDecision:
-    """What the worker should do in response to the latest snapshot.
+class DestabilizationDecision:
+    """Outcome of an in-window stability evaluation.
 
-    `should_fire` is True iff the configured failure mode should be applied.
-    `mode` is the failure mode that fired (matches config.failure_mode for
-    convenience). `reason` is an audit-friendly summary string.
+    ``destabilized = True`` means the worker should fire an extension (or, if
+    the extension budget is exhausted, log the destabilization and let the
+    proposal continue to its current voting_end).
+
+    ``reason`` is an audit-friendly description of what destabilized.
+
+    ``breach_sample`` is an opaque payload describing the breach. For binary
+    it's a snapshot dict; for multi-option it's a previous/current winners
+    pair. Used for audit-log detail payloads.
     """
-    should_fire: bool
-    mode: Optional[str] = None
+    destabilized: bool
     reason: str = ""
-    # For binary: the breach sample. For multi-option: the snapshot whose
-    # winner changed. Used for audit-log detail payloads.
     breach_sample: Any = None
 
 
-def evaluate_binary(
-    snapshots: list,
-    config: SustainedMajorityConfig,
-) -> FailureDecision:
-    """Evaluate the latest binary snapshot against the floor. Pure.
-
-    Computes `support_was_established` from the snapshot history so the floor
-    only fires after support has crossed `threshold` at least once. Otherwise
-    a single early no-vote would breach immediately, before the proposal has
-    had any chance to gather support — see `support_ever_established` for the
-    rationale.
-    """
-    if not snapshots:
-        return FailureDecision(should_fire=False)
-    latest = snapshots[-1]
-    established = support_ever_established(snapshots, config)
-    if is_above_floor(latest, config, established):
-        return FailureDecision(should_fire=False)
-    return FailureDecision(
-        should_fire=True,
-        mode=config.failure_mode,
-        reason=(
-            f"Support {latest.support_fraction:.3f} below floor {config.floor:.3f} "
-            f"at {latest.simulated_time.isoformat()}"
-        ),
-        breach_sample={
-            "simulated_time": latest.simulated_time.isoformat(),
-            "support_fraction": round(latest.support_fraction, 4),
-            "floor": config.floor,
-            "yes": latest.yes,
-            "no": latest.no,
-            "abstain": latest.abstain,
-            "total_eligible": latest.total_eligible,
-        },
-    )
-
-
-def evaluate_multi_option(
-    latest: MultiOptionSnapshotPoint,
-    previous: Optional[MultiOptionSnapshotPoint],
-    config: SustainedMajorityConfig,
-    voting_start: datetime,
-    voting_end: datetime,
-    now: datetime,
-    fraction: float = STABLE_RESULT_FRACTION,
-) -> FailureDecision:
-    """
-    Evaluate a multi-option snapshot. Outside the stable-result window we never
-    fire; inside, any winner change versus the previous snapshot triggers the
-    configured failure mode.
-    """
-    if not in_stable_result_window(now, voting_start, voting_end, fraction):
-        return FailureDecision(should_fire=False)
-    if previous is None:
-        return FailureDecision(should_fire=False)
-    if winner_stable(latest, previous):
-        return FailureDecision(should_fire=False)
-    return FailureDecision(
-        should_fire=True,
-        mode=config.failure_mode,
-        reason=(
-            f"Winner changed from {sorted(previous.winners)} to "
-            f"{sorted(latest.winners)} at {latest.simulated_time.isoformat()} "
-            f"(within final {fraction:.0%} of window)"
-        ),
-        breach_sample={
-            "simulated_time": latest.simulated_time.isoformat(),
-            "previous_winners": sorted(previous.winners),
-            "current_winners": sorted(latest.winners),
-            "fraction_window": fraction,
-        },
-    )
-
-
-def should_trigger_failure(
+def evaluate_original_window_stability(
     voting_method: str,
     snapshots: list,
-    config: SustainedMajorityConfig,
+    pass_threshold: float,
     voting_start: datetime,
     voting_end: datetime,
     now: datetime,
-    extension_count: int = 0,
-) -> FailureDecision:
-    """
-    Top-level decision: combine the binary/multi-option logic with the
-    failure-mode rules (extend bumps the deadline once; escalate moves to
-    unresolved; fail closes the proposal).
+    stable_window_fraction: float,
+) -> DestabilizationDecision:
+    """Stability check during the original voting period (pre-extension).
 
-    `extension_count` is how many times this proposal has already been
-    extended — for `extend` mode, we fire the extension only when count == 0
-    and otherwise return `fail`.
+    Per spec §B2 + D5 + D10:
+
+      - Filter snapshots to those inside the stable window (final
+        ``stable_window_fraction`` of the voting period).
+      - If no snapshots in the stable window: not yet in window; return
+        ``destabilized=False``.
+      - Binary: if any in-window snapshot's
+        ``binary_snapshot_is_stable(snap, pass_threshold)`` is False, return
+        ``destabilized=True`` with that snapshot as ``breach_sample``.
+      - Multi-option: walk the in-window snapshots in order. For each pair,
+        compare to its predecessor (which may be the last out-of-window
+        snapshot, per D10's first-snapshot baseline rule). If any pair fails
+        ``winner_set_overlaps``, return ``destabilized=True``.
     """
     if not snapshots:
-        return FailureDecision(should_fire=False)
+        return DestabilizationDecision(destabilized=False)
 
-    latest = snapshots[-1]
+    # Compute the stable-window threshold: stable_window_starts_at.
+    if voting_end <= voting_start:
+        return DestabilizationDecision(destabilized=False)
+    duration = voting_end - voting_start
+    if duration.total_seconds() <= 0:
+        return DestabilizationDecision(destabilized=False)
+    stable_window_starts_at = voting_start + duration * (1.0 - stable_window_fraction)
+
+    # Are we even in the stable window yet?
+    if now < stable_window_starts_at:
+        return DestabilizationDecision(destabilized=False)
+
+    in_window = [s for s in snapshots if s.simulated_time >= stable_window_starts_at]
+    if not in_window:
+        # In-window time has been reached but no snapshot has been captured
+        # in it yet. Nothing to evaluate.
+        return DestabilizationDecision(destabilized=False)
 
     if voting_method == "binary":
-        # evaluate_binary computes support_was_established from the full list.
-        decision = evaluate_binary(snapshots, config)
-    else:
-        previous = snapshots[-2] if len(snapshots) >= 2 else None
-        decision = evaluate_multi_option(
-            latest, previous, config, voting_start, voting_end, now,
-        )
+        for snap in in_window:
+            if not binary_snapshot_is_stable(snap, pass_threshold):
+                return DestabilizationDecision(
+                    destabilized=True,
+                    reason=(
+                        f"Binary support {snap.support_fraction:.3f} below "
+                        f"pass_threshold {pass_threshold:.3f} at "
+                        f"{snap.simulated_time.isoformat()} "
+                        f"(within final {stable_window_fraction:.0%} of voting period)"
+                    ),
+                    breach_sample={
+                        "simulated_time": snap.simulated_time.isoformat(),
+                        "support_fraction": round(snap.support_fraction, 4),
+                        "pass_threshold": pass_threshold,
+                        "yes": snap.yes,
+                        "no": snap.no,
+                        "abstain": snap.abstain,
+                        "total_eligible": snap.total_eligible,
+                        "stable_window_fraction": stable_window_fraction,
+                    },
+                )
+        return DestabilizationDecision(destabilized=False)
 
-    if not decision.should_fire:
-        return decision
+    # Multi-option: walk adjacent pairs. Per D10, the first in-window snapshot
+    # has no previous-in-window — compare it to the last out-of-window snapshot
+    # if one exists.
+    out_of_window = [s for s in snapshots if s.simulated_time < stable_window_starts_at]
+    last_out = out_of_window[-1] if out_of_window else None
 
-    # Apply the failure_mode escalation logic — `extend` only extends once,
-    # then promotes to `fail` on the second breach.
-    if decision.mode == "extend" and extension_count >= 1:
-        return FailureDecision(
-            should_fire=True,
-            mode="fail",
-            reason=decision.reason + " (second breach after one extension)",
-            breach_sample=decision.breach_sample,
-        )
+    pairs: list[tuple[Any, Any]] = []  # (previous, current)
+    if last_out is not None:
+        pairs.append((last_out, in_window[0]))
+    for i in range(1, len(in_window)):
+        pairs.append((in_window[i - 1], in_window[i]))
 
-    return decision
+    for prev, curr in pairs:
+        if not winner_set_overlaps(curr, prev):
+            return DestabilizationDecision(
+                destabilized=True,
+                reason=(
+                    f"Multi-option winner set changed from "
+                    f"{sorted(prev.winners)} to {sorted(curr.winners)} at "
+                    f"{curr.simulated_time.isoformat()} "
+                    f"(within final {stable_window_fraction:.0%} of voting period)"
+                ),
+                breach_sample={
+                    "simulated_time": curr.simulated_time.isoformat(),
+                    "previous_winners": sorted(prev.winners),
+                    "current_winners": sorted(curr.winners),
+                    "stable_window_fraction": stable_window_fraction,
+                },
+            )
+
+    return DestabilizationDecision(destabilized=False)
 
 
-# ---------------------------------------------------------------------------
-# Floor-approach detection (for in-app banner)
-# ---------------------------------------------------------------------------
-
-def is_approaching_floor(
-    snapshot: BinarySnapshotPoint,
-    config: SustainedMajorityConfig,
-    delta: float = FLOOR_APPROACH_DELTA,
+def evaluate_extension_stability(
+    voting_method: str,
+    snapshots: list,
+    pass_threshold: float,
+    now: datetime,
+    stable_window_duration: timedelta,
 ) -> bool:
+    """Sliding-window stability check during an extension.
+
+    Per spec §B2 + D8: returns True iff the proposal has demonstrated
+    stability for the most recent ``stable_window_duration``. When True, the
+    caller (worker) closes the proposal at this snapshot.
+
+    Logic:
+
+      - Filter snapshots to those with ``simulated_time >=
+        (now - stable_window_duration)``.
+      - If fewer than 2 snapshots in the lookback: return False
+        (insufficient evidence; per D10 we need at least 2 to verify any
+        stability claim).
+      - For binary: every snapshot in the lookback must satisfy
+        ``binary_snapshot_is_stable``. Any failure -> return False.
+      - For multi-option: every adjacent pair in the lookback must have
+        overlapping winners. Any disjoint pair -> return False.
+      - Otherwise: return True (stability demonstrated).
     """
-    True iff support is currently within `delta` percentage points above the
-    floor (or at/below the floor). Drives the in-app warning banner.
-    """
-    if snapshot.votes_cast == 0:
+    if not snapshots:
         return False
-    return snapshot.support_fraction <= config.floor + delta
+    cutoff = now - stable_window_duration
+    lookback = [s for s in snapshots if s.simulated_time >= cutoff]
+    if len(lookback) < 2:
+        return False
 
+    if voting_method == "binary":
+        for snap in lookback:
+            if not binary_snapshot_is_stable(snap, pass_threshold):
+                return False
+        return True
 
-# ---------------------------------------------------------------------------
-# Helpers for callers
-# ---------------------------------------------------------------------------
-
-def extension_window_for(
-    voting_start: datetime,
-    voting_end: datetime,
-) -> timedelta:
-    """
-    Default extension length = the original voting window's duration. This is
-    aggressive but matches the spec intent: an extension gives voters as much
-    time as they originally had to recover support.
-    """
-    return voting_end - voting_start
+    # Multi-option: every adjacent pair in lookback must overlap.
+    for i in range(1, len(lookback)):
+        if not winner_set_overlaps(lookback[i], lookback[i - 1]):
+            return False
+    return True

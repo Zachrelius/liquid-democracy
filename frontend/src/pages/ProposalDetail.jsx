@@ -22,7 +22,7 @@ import RCVResultsPanel from '../components/RCVResultsPanel';
 import RCVSankeyChart from '../components/RCVSankeyChart';
 // Phase 17 F2 — auto-resolved tie banner shared across approval + RCV panels.
 import TieResolutionBanner from '../components/TieResolutionBanner';
-import SustainedMajorityPanel from '../components/SustainedMajorityPanel';
+import StableResultPanel from '../components/StableResultPanel';
 import LinkedPolisCard from '../components/LinkedPolisCard';
 import CommentThread from '../components/CommentThread';
 // Phase 19 F3 — inline rationale composer for the user's own vote.
@@ -1007,14 +1007,12 @@ export default function ProposalDetail() {
             </p>
           </div>
 
-          {/* Phase 8 — Sustained-majority status panel (banner + bar + chart).
-              Renders only when sustained-majority is active for the proposal. */}
+          {/* Phase 20 F2 — Stable Result Required status panel.
+              Renders only when stable-result is active for the proposal.
+              The backend backwards-compat alias keeps the JSON key as
+              `sustained_majority` on the results payload for one pass. */}
           {(isVoting || isClosed) && tally?.sustained_majority?.active && (
-            <SustainedMajorityPanel
-              tally={tally}
-              proposal={proposal}
-              myVote={myVote}
-            />
+            <StableResultPanel tally={tally} />
           )}
 
           {/* Body */}
@@ -1269,13 +1267,17 @@ export default function ProposalDetail() {
             </div>
           )}
 
-          {/* Phase 8 — Unresolved (escalated) banner */}
+          {/* Phase 8 — Unresolved (escalated) banner. Phase 20 removed
+              the floor / escalate mechanic, but historic proposals may
+              still carry status=unresolved from before the redesign;
+              the banner remains so admins can resolve them. */}
           {proposal.status === 'unresolved' && (
             <div className="rounded-xl p-4 text-center bg-yellow-50 border border-yellow-300 text-yellow-900">
               <p className="font-semibold">Awaiting Admin Review</p>
               <p className="text-xs mt-1">
-                Sustained-majority floor was breached. An organization admin
-                will resolve this proposal: extend the window, fail it, mark it
+                This proposal was escalated by the legacy sustained-majority
+                feature (now Stable Result Required). An organization admin
+                will resolve it: extend the window, fail it, mark it
                 passed, or return it to deliberation.
               </p>
             </div>

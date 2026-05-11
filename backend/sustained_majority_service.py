@@ -1,11 +1,22 @@
 """
-Sustained-majority service — DB-touching glue between routes / worker and the
-pure `sustained_majority` module.
+Stable Result Required service — DB-touching glue between routes / worker and
+the pure ``sustained_majority`` module.
 
-The pure module (`sustained_majority.py`) takes data and returns decisions.
-The service module reads snapshots, queries audit-log extension counts,
-builds status payloads for the API, and applies failure-mode actions in a
-single atomic transaction. Routes and the background job both live here.
+The pure module (``sustained_majority.py``) takes data and returns decisions.
+This service module reads snapshots, queries audit-log extension data, builds
+status payloads for the API, and applies extensions in a single atomic
+transaction. Routes and the background worker both live here.
+
+Phase 20 redesign (from `sustained_majority_service`):
+
+  - ``apply_failure_mode`` renamed to ``apply_extension`` (only the extension
+    path remains; ``fail`` and ``escalate`` modes are gone).
+  - ``build_status`` rewritten to emit the ``StableResultStatus`` shape
+    (extension budget tracking; in_stable_window / in_extension flags).
+  - ``SUSTAINED_MAJORITY_KEYS`` -> ``STABLE_RESULT_KEYS``.
+  - ``diff_sustained_majority_settings`` -> ``diff_stable_result_settings``.
+  - ``validate_per_proposal_override`` updated to read
+    ``stable_result_per_proposal_override``.
 """
 
 from __future__ import annotations
@@ -20,20 +31,12 @@ import schemas
 from audit_utils import log_audit_event
 from sustained_majority import (
     BinarySnapshotPoint,
-    FailureDecision,
-    FLOOR_APPROACH_DELTA,
+    DestabilizationDecision,
     MultiOptionSnapshotPoint,
-    STABLE_RESULT_FRACTION,
-    SustainedMajorityConfig,
-    evaluate_binary,
-    evaluate_multi_option,
-    extension_window_for,
-    get_sustained_majority_config,
+    StableResultConfig,
+    get_stable_result_config,
     in_stable_result_window,
-    is_approaching_floor,
-    is_proposal_sustained_majority_active,
-    should_trigger_failure,
-    support_ever_established,
+    is_proposal_stable_result_active,
 )
 
 
@@ -57,23 +60,22 @@ def validate_per_proposal_override(
     org: Optional[models.Organization],
 ) -> None:
     """
-    Reject a non-null per-proposal `sustained_majority_enabled` value when the
-    org has `sustained_majority_per_proposal_override: false`. Raises HTTP 403.
+    Reject a non-null per-proposal ``stable_result_required`` value when the
+    org has ``stable_result_per_proposal_override: false``. Raises HTTP 403.
 
     Routes call this before persisting the override on a proposal.
     """
     if proposal_override is None or org is None:
         return
-    config = get_sustained_majority_config(org)
+    config = get_stable_result_config(org)
     if not config.per_proposal_override:
-        # 403 (matches the existing voting-method gate pattern in
-        # `_validate_proposal_creation`).
         from fastapi import HTTPException
         raise HTTPException(
             status_code=403,
             detail=(
-                "This organization does not allow per-proposal sustained-"
-                "majority overrides. Ask an admin to enable it in org settings."
+                "This organization does not allow per-proposal "
+                "Stable-Result-Required overrides. Ask an admin to enable "
+                "it in org settings."
             ),
         )
 
@@ -82,24 +84,26 @@ def is_active_for_proposal(
     proposal: models.Proposal,
     org: Optional[models.Organization],
 ) -> bool:
-    """Resolve whether sustained-majority is in effect for this proposal."""
+    """Resolve whether Stable Result Required is in effect for this proposal."""
     if org is None:
         return False
-    config = get_sustained_majority_config(org)
-    return is_proposal_sustained_majority_active(
-        proposal.sustained_majority_enabled, config.enabled_default,
+    config = get_stable_result_config(org)
+    return is_proposal_stable_result_active(
+        proposal.stable_result_required, config.enabled_default,
     )
 
 
 # ---------------------------------------------------------------------------
-# Extension count via audit log
+# Extension bookkeeping via audit log
 # ---------------------------------------------------------------------------
 
 def count_extensions(db: Session, proposal_id: str) -> int:
-    """How many times has this proposal's voting window been extended
-    by the worker? Admin-driven extensions via resolve_escalation are
-    excluded — they have actor_id set, and the worker's "extension
-    already used" guard rail should only count system-fired extensions.
+    """How many times has this proposal's voting window been extended by the
+    worker (Stable Result Required)?
+
+    Admin-driven extensions via resolve_escalation are excluded — they have
+    actor_id set, and the worker's "is in extension?" question only counts
+    system-fired extensions.
     """
     return (
         db.query(models.AuditLog)
@@ -112,6 +116,81 @@ def count_extensions(db: Session, proposal_id: str) -> int:
     )
 
 
+def _sum_extension_seconds(db: Session, proposal_id: str) -> int:
+    """Sum the ``extension_seconds`` field from all worker-fired
+    ``proposal.window_extended`` audit events on this proposal.
+
+    Returns 0 when no extensions have fired (or when the audit details JSON
+    is missing the field, which would be a bug — defensive fallback).
+
+    This is the ground-truth for ``extension_budget_used``. Per spec line 308
+    the alternative would be storing ``original_voting_end`` on the proposal
+    column. We chose the audit-log path: avoids another migration, keeps the
+    proposal model unchanged, and the audit events already record
+    ``extension_seconds`` per the legacy ``apply_failure_mode`` extension
+    branch.
+    """
+    rows = (
+        db.query(models.AuditLog.details)
+        .filter(
+            models.AuditLog.action == "proposal.window_extended",
+            models.AuditLog.target_id == proposal_id,
+            models.AuditLog.actor_id.is_(None),
+        )
+        .all()
+    )
+    total = 0
+    for (details,) in rows:
+        if not details:
+            continue
+        seconds = details.get("extension_seconds") if isinstance(details, dict) else None
+        if isinstance(seconds, (int, float)):
+            total += int(seconds)
+    return total
+
+
+def _last_destabilization_at(
+    db: Session,
+    proposal_id: str,
+) -> Optional[datetime]:
+    """Most recent timestamp at which this proposal destabilized (granted an
+    extension OR logged a force-close-on-exhausted-budget)."""
+    row = (
+        db.query(models.AuditLog.timestamp)
+        .filter(
+            models.AuditLog.target_id == proposal_id,
+            models.AuditLog.action.in_((
+                "proposal.window_extended",
+                "proposal.destabilization_at_max_extensions",
+            )),
+            models.AuditLog.actor_id.is_(None),
+        )
+        .order_by(models.AuditLog.timestamp.desc())
+        .first()
+    )
+    return row[0] if row else None
+
+
+def reconstruct_original_voting_duration(
+    db: Session,
+    proposal: models.Proposal,
+) -> Optional[timedelta]:
+    """Compute the ORIGINAL voting period duration (pre-extensions).
+
+    ``proposal.voting_end`` reflects the CURRENT deadline, after any extensions
+    have been applied. To get the original duration we subtract the cumulative
+    extension time from the current voting_end - voting_start span.
+    """
+    if not proposal.voting_start or not proposal.voting_end:
+        return None
+    current_span = proposal.voting_end - proposal.voting_start
+    extended = timedelta(seconds=_sum_extension_seconds(db, proposal.id))
+    original = current_span - extended
+    if original.total_seconds() <= 0:
+        return None
+    return original
+
+
 # ---------------------------------------------------------------------------
 # Status block (read path)
 # ---------------------------------------------------------------------------
@@ -120,112 +199,72 @@ def build_status(
     db: Session,
     proposal: models.Proposal,
     org: Optional[models.Organization],
-) -> schemas.SustainedMajorityStatus:
-    """Build the SustainedMajorityStatus payload for /results."""
+) -> schemas.StableResultStatus:
+    """Build the StableResultStatus payload for /results."""
     if org is None:
-        return schemas.SustainedMajorityStatus(active=False)
+        return schemas.StableResultStatus(active=False)
 
-    config = get_sustained_majority_config(org)
-    active = is_proposal_sustained_majority_active(
-        proposal.sustained_majority_enabled, config.enabled_default,
+    config = get_stable_result_config(org)
+    active = is_proposal_stable_result_active(
+        proposal.stable_result_required, config.enabled_default,
     )
     if not active:
-        return schemas.SustainedMajorityStatus(
+        return schemas.StableResultStatus(
             active=False,
-            threshold=config.threshold,
-            floor=config.floor,
-            failure_mode=config.failure_mode,
+            stable_window_fraction=config.stable_window_fraction,
+            max_extension_fraction=config.max_extension_fraction,
             voting_end=proposal.voting_end,
         )
 
     extension_count = count_extensions(db, proposal.id)
+    in_extension = extension_count > 0
 
-    # Phase 12.8 audit Tier 1, Item 5 — for binary, load all snapshots in
-    # the window so we can ask `support_ever_established` whether the
-    # floor should activate at all. Pre-12.8 the read path used only the
-    # latest snapshot and a bare `support < floor` check, so the UI banner
-    # reported "floor breached" the moment a non-zero vote dropped below
-    # the floor — even before any threshold-meeting consensus had ever
-    # existed in the window. The Phase 9.8 C1 worker fix already gates
-    # breach on `support_ever_established`; this aligns the read path.
-    all_snaps = (
-        db.query(models.VoteSnapshot)
-        .filter(models.VoteSnapshot.proposal_id == proposal.id)
-        .order_by(models.VoteSnapshot.simulated_time.asc())
-        .all()
+    original_duration = reconstruct_original_voting_duration(db, proposal)
+    if original_duration is not None:
+        extension_budget_total = int(
+            original_duration.total_seconds() * config.max_extension_fraction
+        )
+    else:
+        extension_budget_total = 0
+    extension_budget_used = _sum_extension_seconds(db, proposal.id)
+    extension_budget_remaining = max(
+        0, extension_budget_total - extension_budget_used
     )
-    latest_snap = all_snaps[-1] if all_snaps else None
 
-    if proposal.voting_method == "binary":
-        if not all_snaps:
-            return schemas.SustainedMajorityStatus(
-                active=True,
-                threshold=config.threshold,
-                floor=config.floor,
-                failure_mode=config.failure_mode,
-                extension_count=extension_count,
-                voting_end=proposal.voting_end,
-            )
-        history = [
-            BinarySnapshotPoint(
-                simulated_time=s.simulated_time,
-                yes=s.yes_count,
-                no=s.no_count,
-                abstain=s.abstain_count,
-                total_eligible=s.total_eligible,
-            )
-            for s in all_snaps
-        ]
-        sample = history[-1]
-        support = sample.support_fraction
-        established = support_ever_established(history, config)
-        breached = (
-            established
-            and sample.votes_cast > 0
-            and support < config.floor
-        )
-        approaching = is_approaching_floor(sample, config)
-        return schemas.SustainedMajorityStatus(
-            active=True,
-            threshold=config.threshold,
-            floor=config.floor,
-            failure_mode=config.failure_mode,
-            current_support=round(support, 4),
-            distance_to_floor=round(support - config.floor, 4),
-            floor_breached=breached,
-            approaching_floor=approaching,
-            extension_count=extension_count,
-            voting_end=proposal.voting_end,
-        )
-
-    # Multi-option (approval / ranked_choice)
-    now = _now_naive()
     in_window = False
-    if proposal.voting_start and proposal.voting_end:
+    stable_window_starts_at: Optional[datetime] = None
+    if proposal.voting_start and proposal.voting_end and original_duration is not None:
+        # The stable window is anchored to the ORIGINAL voting period (the
+        # "final 25% of the original 7-day vote"), not the current extended
+        # span. While in an extension, the in_window flag should reflect "are
+        # we past the stable_window_starts_at point of the original window?"
+        original_voting_end = proposal.voting_start + original_duration
         in_window = in_stable_result_window(
-            now, proposal.voting_start, proposal.voting_end,
+            _now_naive(),
+            proposal.voting_start,
+            original_voting_end,
+            config.stable_window_fraction,
+        )
+        stable_window_starts_at = (
+            proposal.voting_start
+            + original_duration * (1.0 - config.stable_window_fraction)
         )
 
-    current_winners: list[str] = []
-    if latest_snap and latest_snap.multi_option_winners:
-        current_winners = list(
-            latest_snap.multi_option_winners.get("winners", []) or []
-        )
+    last_destab = _last_destabilization_at(db, proposal.id)
 
-    # `stable_result_locked` = we are in the final-X% window and at least one
-    # snapshot was taken inside it (so future winner-changes are watched).
-    stable_locked = bool(in_window and latest_snap is not None)
-
-    return schemas.SustainedMajorityStatus(
+    return schemas.StableResultStatus(
         active=True,
-        threshold=config.threshold,
-        floor=config.floor,
-        failure_mode=config.failure_mode,
-        in_stable_result_window=in_window,
-        stable_result_locked=stable_locked,
-        current_winners=current_winners,
-        extension_count=extension_count,
+        stable_window_fraction=config.stable_window_fraction,
+        max_extension_fraction=config.max_extension_fraction,
+        extension_budget_total_seconds=extension_budget_total,
+        extension_budget_used_seconds=extension_budget_used,
+        extension_budget_remaining_seconds=extension_budget_remaining,
+        in_stable_window=in_window,
+        in_extension=in_extension,
+        stable_window_starts_at=stable_window_starts_at,
         voting_end=proposal.voting_end,
+        last_destabilization_at=last_destab,
+        extension_count=extension_count,
     )
 
 
@@ -241,7 +280,7 @@ def capture_snapshot(
 ) -> models.VoteSnapshot:
     """Compute the live tally and persist it as a VoteSnapshot row.
 
-    For approval / ranked_choice proposals, also fills `multi_option_winners`
+    For approval / ranked_choice proposals, also fills ``multi_option_winners``
     so the worker can detect winner changes across snapshots.
 
     Caller owns the transaction — this only adds + flushes; it does not commit.
@@ -303,121 +342,114 @@ def capture_snapshot(
 
 
 # ---------------------------------------------------------------------------
-# Failure-mode application
+# Extension application (worker write path)
 # ---------------------------------------------------------------------------
 
-def apply_failure_mode(
+def apply_extension(
     db: Session,
     proposal: models.Proposal,
     *,
-    decision: FailureDecision,
+    stable_window_duration: timedelta,
+    decision: Optional[DestabilizationDecision] = None,
     actor_id: Optional[str] = None,
-    extension_length: Optional[timedelta] = None,
-) -> str:
-    """
-    Mutate `proposal.status` (or voting_end) per the decision and write the
-    matching audit event. Returns the resulting status.
+) -> datetime:
+    """Extend voting_end by ``stable_window_duration``; log audit; return the
+    new voting_end.
 
-    Caller owns the surrounding transaction; this only stages writes.
+    Caller owns the surrounding transaction; this only stages writes. The
+    audit action ``proposal.window_extended`` is preserved from the legacy
+    code so existing audit-log readers (and ``count_extensions`` /
+    ``_sum_extension_seconds``) continue to work.
     """
-    mode = decision.mode or "fail"
-    details_base = {
+    old_end = proposal.voting_end
+    new_end = (proposal.voting_end or _now_naive()) + stable_window_duration
+    proposal.voting_end = _naive_utc(new_end)
+
+    details = {
         "proposal_id": proposal.id,
         "voting_method": proposal.voting_method,
-        "reason": decision.reason,
-        "breach_sample": decision.breach_sample,
+        "old_voting_end": old_end.isoformat() if old_end else None,
+        "new_voting_end": proposal.voting_end.isoformat(),
+        "extension_seconds": int(stable_window_duration.total_seconds()),
+        "trigger": "stable_result_required",
     }
+    if decision is not None:
+        details["reason"] = decision.reason
+        details["breach_sample"] = decision.breach_sample
 
-    if mode == "fail":
-        proposal.status = "failed"
-        log_audit_event(
-            db,
-            action="proposal.failed_sustained_majority",
-            target_type="proposal",
-            target_id=proposal.id,
-            actor_id=actor_id,
-            details=details_base,
-        )
-        return "failed"
-
-    if mode == "extend":
-        # Push voting_end forward by the original window length (or a caller-
-        # provided custom length).
-        if proposal.voting_start and proposal.voting_end:
-            ext = extension_length or extension_window_for(
-                proposal.voting_start, proposal.voting_end,
-            )
-        else:
-            ext = extension_length or timedelta(days=7)
-        old_end = proposal.voting_end
-        new_end = (proposal.voting_end or _now_naive()) + ext
-        proposal.voting_end = _naive_utc(new_end)
-        log_audit_event(
-            db,
-            action="proposal.window_extended",
-            target_type="proposal",
-            target_id=proposal.id,
-            actor_id=actor_id,
-            details={
-                **details_base,
-                "old_voting_end": old_end.isoformat() if old_end else None,
-                "new_voting_end": proposal.voting_end.isoformat(),
-                "extension_seconds": int(ext.total_seconds()),
-            },
-        )
-        return proposal.status  # unchanged (still "voting")
-
-    if mode == "escalate":
-        proposal.status = "unresolved"
-        log_audit_event(
-            db,
-            action="proposal.escalated",
-            target_type="proposal",
-            target_id=proposal.id,
-            actor_id=actor_id,
-            details=details_base,
-        )
-        return "unresolved"
-
-    # Defensive fallback — corrupt mode treated as fail.
-    proposal.status = "failed"
     log_audit_event(
         db,
-        action="proposal.failed_sustained_majority",
+        action="proposal.window_extended",
         target_type="proposal",
         target_id=proposal.id,
         actor_id=actor_id,
-        details={**details_base, "fallback": "unrecognised mode"},
+        details=details,
     )
-    return "failed"
+    return proposal.voting_end
+
+
+def log_destabilization_at_max_extensions(
+    db: Session,
+    proposal: models.Proposal,
+    *,
+    decision: Optional[DestabilizationDecision] = None,
+    extension_budget_used_seconds: int,
+    extension_budget_total_seconds: int,
+    actor_id: Optional[str] = None,
+) -> None:
+    """Record an ``proposal.destabilization_at_max_extensions`` audit event
+    when destabilization fires but the extension budget is exhausted.
+
+    No status mutation — proposal continues to its current voting_end and
+    closes there normally per standard close logic. Per spec D11.
+    """
+    details = {
+        "proposal_id": proposal.id,
+        "voting_method": proposal.voting_method,
+        "voting_end": proposal.voting_end.isoformat() if proposal.voting_end else None,
+        "extension_budget_used_seconds": extension_budget_used_seconds,
+        "extension_budget_total_seconds": extension_budget_total_seconds,
+        "extension_budget_remaining_seconds": max(
+            0, extension_budget_total_seconds - extension_budget_used_seconds
+        ),
+    }
+    if decision is not None:
+        details["reason"] = decision.reason
+        details["breach_sample"] = decision.breach_sample
+
+    log_audit_event(
+        db,
+        action="proposal.destabilization_at_max_extensions",
+        target_type="proposal",
+        target_id=proposal.id,
+        actor_id=actor_id,
+        details=details,
+    )
 
 
 # ---------------------------------------------------------------------------
 # Org-settings audit
 # ---------------------------------------------------------------------------
 
-SUSTAINED_MAJORITY_KEYS = (
-    "sustained_majority_enabled_default",
-    "sustained_majority_per_proposal_override",
-    "sustained_majority_threshold",
-    "sustained_majority_floor",
-    "sustained_majority_failure_mode",
+STABLE_RESULT_KEYS = (
+    "stable_result_enabled_default",
+    "stable_result_per_proposal_override",
+    "stable_window_fraction",
+    "max_extension_fraction",
 )
 
 
-def diff_sustained_majority_settings(
+def diff_stable_result_settings(
     old_settings: Optional[dict],
     new_settings: dict,
 ) -> dict:
-    """Return only the SM keys that changed (post-merge), with old + new values.
-
-    Used by the org-update route to emit a focused
-    `org.sustained_majority_config_changed` audit event when (and only when)
-    one of the five SM keys actually moved.
+    """Return only the Stable-Result keys that changed (post-merge), with
+    old + new values. Used by the org-update route to emit a focused
+    ``org.stable_result_config_changed`` audit event.
     """
     old = old_settings or {}
     changed: dict = {}
-    for key in SUSTAINED_MAJORITY_KEYS:
+    for key in STABLE_RESULT_KEYS:
         if key not in new_settings:
             continue
         if old.get(key) != new_settings.get(key):

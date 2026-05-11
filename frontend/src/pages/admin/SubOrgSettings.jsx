@@ -8,15 +8,18 @@ import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
 
-const SM_DEFAULTS = {
-  sustained_majority_enabled_default: false,
-  sustained_majority_per_proposal_override: true,
-  sustained_majority_threshold: 0.5,
-  sustained_majority_floor: 0.45,
-  sustained_majority_failure_mode: 'fail',
+// Phase 20 — Stable Result Required (renamed from sustained-majority).
+// Defaults mirror backend StableResultConfig. Floor / failure_mode /
+// threshold are gone in this pass; existing prod orgs that have those
+// keys set will have them silently ignored by the backend.
+const SR_DEFAULTS = {
+  stable_result_enabled_default: false,
+  stable_result_per_proposal_override: true,
+  stable_window_fraction: 0.25,
+  max_extension_fraction: 0.25,
 };
 
-const SM_KEYS = Object.keys(SM_DEFAULTS);
+const SR_KEYS = Object.keys(SR_DEFAULTS);
 
 const VOTING_METHODS = ['binary', 'approval', 'ranked_choice'];
 
@@ -29,7 +32,7 @@ const VOTING_METHODS = ['binary', 'approval', 'ranked_choice'];
  *   3. Cross-scope delegations — `settings.reject_non_member_delegations`
  *   4. Voting methods override — `settings.allowed_voting_methods` (with
  *      "inherit" mode = key absent so `get_org_config` walks the parent chain)
- *   5. Sustained-majority override — five keys, each independently
+ *   5. Stable Result Required override — four keys, each independently
  *      overridable. "Inherit" sends null so parent value applies.
  *   6. Danger zone — delete, blocked when topics/proposals exist.
  */
@@ -57,9 +60,10 @@ export default function SubOrgSettings() {
   const [requirePolisOverride, setRequirePolisOverride] = useState(false);
   const [requirePolisValue, setRequirePolisValue] = useState(false);
 
-  // Sustained-majority overrides — per-key boolean "override"
-  const [smOverrides, setSmOverrides] = useState({}); // {key: bool}
-  const [smValues, setSmValues] = useState({}); // {key: value}
+  // Stable Result Required overrides — per-key boolean "override".
+  // Variable name kept as srOverrides/srValues for the renamed feature.
+  const [srOverrides, setSrOverrides] = useState({}); // {key: bool}
+  const [srValues, setSrValues] = useState({}); // {key: value}
 
   // Topic/proposal counts for delete gating
   const [topicCount, setTopicCount] = useState(0);
@@ -86,19 +90,19 @@ export default function SubOrgSettings() {
       setVmList(['binary']);
     }
 
-    // Sustained-majority — per-key
+    // Stable Result Required — per-key (Phase 20).
     const overs = {}, vals = {};
-    SM_KEYS.forEach(k => {
+    SR_KEYS.forEach(k => {
       if (Object.prototype.hasOwnProperty.call(s, k)) {
         overs[k] = true;
         vals[k] = s[k];
       } else {
         overs[k] = false;
-        vals[k] = SM_DEFAULTS[k];
+        vals[k] = SR_DEFAULTS[k];
       }
     });
-    setSmOverrides(overs);
-    setSmValues(vals);
+    setSrOverrides(overs);
+    setSrValues(vals);
 
     // Deliberation (Phase 9) — sub-org override on require_polis_for_new_proposals.
     if (Object.prototype.hasOwnProperty.call(s, 'require_polis_for_new_proposals')) {
@@ -152,9 +156,9 @@ export default function SubOrgSettings() {
 
   const inheritedVotingMethods = parentSettings?.allowed_voting_methods || ['binary'];
 
-  function inheritedSmValue(key) {
+  function inheritedSrValue(key) {
     if (Object.prototype.hasOwnProperty.call(parentSettings, key)) return parentSettings[key];
-    return SM_DEFAULTS[key];
+    return SR_DEFAULTS[key];
   }
 
   function toggleVotingMethod(method, on) {
@@ -181,10 +185,10 @@ export default function SubOrgSettings() {
     } else {
       payload.allowed_voting_methods = null;
     }
-    // Sustained-majority
-    SM_KEYS.forEach(k => {
-      if (smOverrides[k]) {
-        payload[k] = smValues[k];
+    // Stable Result Required (Phase 20).
+    SR_KEYS.forEach(k => {
+      if (srOverrides[k]) {
+        payload[k] = srValues[k];
       } else {
         payload[k] = null;
       }
@@ -365,11 +369,14 @@ export default function SubOrgSettings() {
         </div>
       </section>
 
-      {/* Sustained-majority overrides */}
+      {/* Phase 20 — Stable Result Required overrides (renamed from
+          "Sustained-Majority Override"; floor / failure_mode / threshold
+          are gone; replaced by stable_window_fraction +
+          max_extension_fraction). */}
       <section className="space-y-3">
         <div className="flex items-baseline justify-between">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Sustained-Majority Override</h2>
-          <a href="/help/sustained-majority" target="_blank" rel="noreferrer" className="text-xs text-[var(--brand-accent)] hover:underline">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Stable Result Required Override</h2>
+          <a href="/help/stable-result" target="_blank" rel="noreferrer" className="text-xs text-[var(--brand-accent)] hover:underline">
             Learn more →
           </a>
         </div>
@@ -379,55 +386,49 @@ export default function SubOrgSettings() {
             "Override" to set a value just for this sub-org.
           </p>
 
-          <SmRow
-            label="Default on for new proposals"
-            keyName="sustained_majority_enabled_default"
+          <SrRow
+            label="Stable Result Required (default for new proposals)"
+            keyName="stable_result_enabled_default"
             kind="bool"
-            override={smOverrides.sustained_majority_enabled_default}
-            value={smValues.sustained_majority_enabled_default}
-            inherited={inheritedSmValue('sustained_majority_enabled_default')}
-            setOverride={v => setSmOverrides(p => ({ ...p, sustained_majority_enabled_default: v }))}
-            setValue={v => setSmValues(p => ({ ...p, sustained_majority_enabled_default: v }))}
+            override={srOverrides.stable_result_enabled_default}
+            value={srValues.stable_result_enabled_default}
+            inherited={inheritedSrValue('stable_result_enabled_default')}
+            setOverride={v => setSrOverrides(p => ({ ...p, stable_result_enabled_default: v }))}
+            setValue={v => setSrValues(p => ({ ...p, stable_result_enabled_default: v }))}
           />
-          <SmRow
+          <SrRow
             label="Allow per-proposal override"
-            keyName="sustained_majority_per_proposal_override"
+            keyName="stable_result_per_proposal_override"
             kind="bool"
-            override={smOverrides.sustained_majority_per_proposal_override}
-            value={smValues.sustained_majority_per_proposal_override}
-            inherited={inheritedSmValue('sustained_majority_per_proposal_override')}
-            setOverride={v => setSmOverrides(p => ({ ...p, sustained_majority_per_proposal_override: v }))}
-            setValue={v => setSmValues(p => ({ ...p, sustained_majority_per_proposal_override: v }))}
+            override={srOverrides.stable_result_per_proposal_override}
+            value={srValues.stable_result_per_proposal_override}
+            inherited={inheritedSrValue('stable_result_per_proposal_override')}
+            setOverride={v => setSrOverrides(p => ({ ...p, stable_result_per_proposal_override: v }))}
+            setValue={v => setSrValues(p => ({ ...p, stable_result_per_proposal_override: v }))}
           />
-          <SmRow
-            label="Required support level"
-            keyName="sustained_majority_threshold"
+          <SrRow
+            label="Stable window (% of voting period)"
+            keyName="stable_window_fraction"
             kind="percent"
-            override={smOverrides.sustained_majority_threshold}
-            value={smValues.sustained_majority_threshold}
-            inherited={inheritedSmValue('sustained_majority_threshold')}
-            setOverride={v => setSmOverrides(p => ({ ...p, sustained_majority_threshold: v }))}
-            setValue={v => setSmValues(p => ({ ...p, sustained_majority_threshold: v }))}
+            min={5}
+            max={50}
+            override={srOverrides.stable_window_fraction}
+            value={srValues.stable_window_fraction}
+            inherited={inheritedSrValue('stable_window_fraction')}
+            setOverride={v => setSrOverrides(p => ({ ...p, stable_window_fraction: v }))}
+            setValue={v => setSrValues(p => ({ ...p, stable_window_fraction: v }))}
           />
-          <SmRow
-            label="Drop-below floor"
-            keyName="sustained_majority_floor"
+          <SrRow
+            label="Maximum total extension (% of voting period)"
+            keyName="max_extension_fraction"
             kind="percent"
-            override={smOverrides.sustained_majority_floor}
-            value={smValues.sustained_majority_floor}
-            inherited={inheritedSmValue('sustained_majority_floor')}
-            setOverride={v => setSmOverrides(p => ({ ...p, sustained_majority_floor: v }))}
-            setValue={v => setSmValues(p => ({ ...p, sustained_majority_floor: v }))}
-          />
-          <SmRow
-            label="Failure mode"
-            keyName="sustained_majority_failure_mode"
-            kind="failure_mode"
-            override={smOverrides.sustained_majority_failure_mode}
-            value={smValues.sustained_majority_failure_mode}
-            inherited={inheritedSmValue('sustained_majority_failure_mode')}
-            setOverride={v => setSmOverrides(p => ({ ...p, sustained_majority_failure_mode: v }))}
-            setValue={v => setSmValues(p => ({ ...p, sustained_majority_failure_mode: v }))}
+            min={0}
+            max={100}
+            override={srOverrides.max_extension_fraction}
+            value={srValues.max_extension_fraction}
+            inherited={inheritedSrValue('max_extension_fraction')}
+            setOverride={v => setSrOverrides(p => ({ ...p, max_extension_fraction: v }))}
+            setValue={v => setSrValues(p => ({ ...p, max_extension_fraction: v }))}
           />
         </div>
       </section>
@@ -513,7 +514,12 @@ export default function SubOrgSettings() {
   );
 }
 
-function SmRow({ label, keyName, kind, override, value, inherited, setOverride, setValue }) {
+// Phase 20 — Renamed from SmRow. Failure-mode kind removed (no more
+// failure_mode key); percent kind accepts optional min/max props for the
+// stable_window_fraction (5-50) vs max_extension_fraction (0-100) ranges.
+function SrRow({ label, keyName, kind, override, value, inherited, setOverride, setValue, min, max }) {
+  const pctMin = typeof min === 'number' ? min : 0;
+  const pctMax = typeof max === 'number' ? max : 100;
   return (
     <div className="border-b border-gray-100 last:border-0 pb-4 last:pb-0">
       <div className="flex items-baseline gap-3 mb-1">
@@ -551,33 +557,12 @@ function SmRow({ label, keyName, kind, override, value, inherited, setOverride, 
               <p className="text-xs text-gray-500 mb-1">{Math.round((value ?? 0) * 100)}%</p>
               <input
                 type="range"
-                min={0}
-                max={100}
+                min={pctMin}
+                max={pctMax}
                 value={Math.round((value ?? 0) * 100)}
                 onChange={e => setValue(parseInt(e.target.value, 10) / 100)}
                 className="w-full max-w-xs accent-[var(--brand-accent)]"
               />
-            </div>
-          )}
-          {kind === 'failure_mode' && (
-            <div className="space-y-1">
-              {[
-                { value: 'fail', label: 'Fail immediately' },
-                { value: 'extend', label: 'Extend window once' },
-                { value: 'escalate', label: 'Escalate to admin review' },
-              ].map(opt => (
-                <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name={keyName}
-                    value={opt.value}
-                    checked={value === opt.value}
-                    onChange={() => setValue(opt.value)}
-                    className="accent-[var(--brand-accent)]"
-                  />
-                  <span className="text-xs text-gray-700">{opt.label}</span>
-                </label>
-              ))}
             </div>
           )}
         </div>

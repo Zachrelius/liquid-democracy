@@ -186,7 +186,7 @@ def _build_proposal_out(
         updated_at=proposal.updated_at,
         topics=proposal.proposal_topics,
         options=proposal.options,
-        sustained_majority_enabled=proposal.sustained_majority_enabled,
+        stable_result_required=proposal.stable_result_required,
         sub_org_id=getattr(proposal, "sub_org_id", None),
         linked_polis_ids=proposal.linked_polis_ids,
         linked_polises=_build_linked_polises(db, proposal) if db is not None else None,
@@ -573,10 +573,10 @@ def create_proposal(
         requested_vote if requested_vote is not None else default_vote_days
     )
 
-    # Phase 8 — global (non-org) proposals: per-proposal override is always
-    # ignored at create time because there is no org config to honor it
-    # against. Store as null.
-    sustained_majority_enabled = None
+    # Phase 8 / Phase 20 — global (non-org) proposals: per-proposal
+    # "Stable Result Required" override is always ignored at create time
+    # because there is no org config to honor it against. Store as null.
+    stable_result_required = None
 
     for t in body.topics:
         if not db.get(models.Topic, t.topic_id):
@@ -606,7 +606,7 @@ def create_proposal(
         quorum_threshold=body.quorum_threshold,
         deliberation_days=effective_delib_days,
         voting_days=effective_vote_days,
-        sustained_majority_enabled=sustained_majority_enabled,
+        stable_result_required=stable_result_required,
     )
     db.add(proposal)
     db.flush()
@@ -730,33 +730,33 @@ def update_proposal(
             )
         _validate_and_update_options(db, proposal, body.options)
 
-    # Phase 8 — sustained-majority per-proposal override.
-    # Validate against the org's `sustained_majority_per_proposal_override`
+    # Phase 8 / Phase 20 — Stable Result Required per-proposal override.
+    # Validate against the org's ``stable_result_per_proposal_override``
     # setting; only persist when the value actually changes so we don't emit
     # spurious audit events on no-op patches.
-    if "sustained_majority_enabled" in body.model_fields_set:
+    if "stable_result_required" in body.model_fields_set:
         org = (
             db.get(models.Organization, proposal.org_id)
             if proposal.org_id else None
         )
         from sustained_majority_service import validate_per_proposal_override
-        validate_per_proposal_override(body.sustained_majority_enabled, org)
-        old_value = proposal.sustained_majority_enabled
-        if old_value != body.sustained_majority_enabled:
-            proposal.sustained_majority_enabled = body.sustained_majority_enabled
+        validate_per_proposal_override(body.stable_result_required, org)
+        old_value = proposal.stable_result_required
+        if old_value != body.stable_result_required:
+            proposal.stable_result_required = body.stable_result_required
             log_audit_event(
                 db,
                 action=(
-                    "proposal.sustained_majority_enabled"
-                    if body.sustained_majority_enabled is True
-                    else "proposal.sustained_majority_disabled"
+                    "proposal.stable_result_required_enabled"
+                    if body.stable_result_required is True
+                    else "proposal.stable_result_required_disabled"
                 ),
                 target_type="proposal",
                 target_id=proposal.id,
                 actor_id=current_user.id,
                 details={
                     "old_value": old_value,
-                    "new_value": body.sustained_majority_enabled,
+                    "new_value": body.stable_result_required,
                 },
             )
 

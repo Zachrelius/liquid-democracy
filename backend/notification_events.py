@@ -100,6 +100,21 @@ EVENT_REGISTRY: list[EventDefinition] = [
         description="A proposal you voted on or authored has reached its outcome.",
         category="Proposals",
     ),
+    # Phase 20 — Stable Result Required: voting is extended when the result
+    # destabilizes near the closing portion of the voting period. Audience:
+    # proposal author + recent voters (last 7 days). Default channel set:
+    # in-app + email (matches the floor_approached pattern that this event
+    # supersedes).
+    EventDefinition(
+        key="proposal.extended_by_stability",
+        label="Voting extended (Stable Result Required)",
+        description=(
+            "A proposal you voted on or authored had its voting window "
+            "extended because the result destabilized in the closing portion "
+            "of the voting period."
+        ),
+        category="Proposals",
+    ),
     # ---- Membership -----------------------------------------------------
     EventDefinition(
         key="member.join_request",

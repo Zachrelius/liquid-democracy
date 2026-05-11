@@ -115,15 +115,16 @@ DEFAULT_ORG_SETTINGS = {
     "public_delegate_policy": "admin_approval",
     "require_email_verification": True,
     "allowed_voting_methods": ["binary", "approval"],
-    # Phase 8 — sustained-majority voting windows. All defaults off / fail-safe
-    # so existing orgs see no behavior change until an admin flips the switch.
-    # `get_sustained_majority_config()` lazy-applies these values when an org
-    # was created before Phase 8 and lacks the keys.
-    "sustained_majority_enabled_default": False,
-    "sustained_majority_per_proposal_override": True,
-    "sustained_majority_threshold": 0.50,
-    "sustained_majority_floor": 0.45,
-    "sustained_majority_failure_mode": "fail",
+    # Phase 8 / Phase 20 — "Stable Result Required" voting-window config.
+    # All defaults off / fail-safe so existing orgs see no behavior change
+    # until an admin flips the switch. ``get_stable_result_config()``
+    # lazy-applies these values when an org was created before Phase 20 and
+    # lacks the keys. Per spec D13 the threshold / floor / failure_mode keys
+    # are gone; old values in the settings JSON are silently ignored.
+    "stable_result_enabled_default": False,
+    "stable_result_per_proposal_override": True,
+    "stable_window_fraction": 0.25,
+    "max_extension_fraction": 0.25,
     # Phase 9 Decision 7 — opt-in "every new proposal must link a Polis"
     # governance norm. Default off; sub-orgs inherit via get_org_config.
     # When True, the proposal-creation route requires at least one valid
@@ -443,8 +444,8 @@ def update_organization(
 ):
     """Update org settings (requires admin).
 
-    When the patch touches any of the five sustained-majority keys, we emit a
-    focused `org.sustained_majority_config_changed` audit event listing only
+    When the patch touches any of the Stable Result Required keys, we emit a
+    focused ``org.stable_result_config_changed`` audit event listing only
     the keys that actually changed, so the audit log stays signal-rich.
     """
     org = db.query(models.Organization).filter(
@@ -460,7 +461,7 @@ def update_organization(
     if body.join_policy is not None:
         org.join_policy = body.join_policy
     if body.settings is not None:
-        from sustained_majority_service import diff_sustained_majority_settings
+        from sustained_majority_service import diff_stable_result_settings
         # Phase 12.5 — validate default-threshold keys (F4 backend support).
         # Range 0.0-1.0 inclusive; no hard floor per spec Q2 decision. The
         # check happens BEFORE the merge so an invalid value fails the
@@ -544,7 +545,7 @@ def update_organization(
                 )
 
         # Diff BEFORE merging so we capture the actual transition.
-        sm_diff = diff_sustained_majority_settings(org.settings, body.settings)
+        sm_diff = diff_stable_result_settings(org.settings, body.settings)
         # Phase 12.5 — capture default-threshold transitions for the audit
         # log. Only emit when the value actually changes (no spurious
         # events on no-op patches).
@@ -560,7 +561,7 @@ def update_organization(
         if sm_diff:
             log_audit_event(
                 db,
-                action="org.sustained_majority_config_changed",
+                action="org.stable_result_config_changed",
                 target_type="organization",
                 target_id=org.id,
                 actor_id=current_user.id,
@@ -2084,10 +2085,10 @@ def create_org_proposal(
                     ),
                 )
 
-    # Phase 8 — sustained-majority per-proposal override. Reject non-null
-    # value when the org disallows per-proposal overrides.
+    # Phase 8 / Phase 20 — Stable Result Required per-proposal override.
+    # Reject non-null value when the org disallows per-proposal overrides.
     from sustained_majority_service import validate_per_proposal_override
-    validate_per_proposal_override(body.sustained_majority_enabled, org)
+    validate_per_proposal_override(body.stable_result_required, org)
 
     # Phase 9 Decision 7 — `require_polis_for_new_proposals` enforcement.
     # Walks parent chain via get_org_config so a sub-org can override
@@ -2180,25 +2181,25 @@ def create_org_proposal(
         quorum_threshold=effective_quorum,
         deliberation_days=effective_delib_days,
         voting_days=effective_vote_days,
-        sustained_majority_enabled=body.sustained_majority_enabled,
+        stable_result_required=body.stable_result_required,
         linked_polis_ids=linked_ids if linked_ids else None,
     )
     db.add(proposal)
     db.flush()
 
-    if body.sustained_majority_enabled is True:
+    if body.stable_result_required is True:
         log_audit_event(
             db,
-            action="proposal.sustained_majority_enabled",
+            action="proposal.stable_result_required_enabled",
             target_type="proposal",
             target_id=proposal.id,
             actor_id=current_user.id,
             details={"old_value": None, "new_value": True},
         )
-    elif body.sustained_majority_enabled is False:
+    elif body.stable_result_required is False:
         log_audit_event(
             db,
-            action="proposal.sustained_majority_disabled",
+            action="proposal.stable_result_required_disabled",
             target_type="proposal",
             target_id=proposal.id,
             actor_id=current_user.id,
@@ -2444,10 +2445,16 @@ def resolve_escalation(
             proposal.voting_end = body.new_voting_end.replace(tzinfo=None) \
                 if body.new_voting_end.tzinfo else body.new_voting_end
         elif proposal.voting_start and proposal.voting_end:
-            from sustained_majority import extension_window_for
+            # Phase 20: ``extension_window_for`` was removed (the worker now
+            # extends by the org's ``stable_window_fraction * original_voting
+            # _duration``, computed inside the service layer). For admin-
+            # driven escalation resolution we preserve the prior implicit
+            # default — extend by the current voting-window span — so the
+            # admin UI behaves the same when no explicit new_voting_end is
+            # supplied.
             proposal.voting_end = (
                 proposal.voting_end
-                + extension_window_for(proposal.voting_start, proposal.voting_end)
+                + (proposal.voting_end - proposal.voting_start)
             )
         audit_extra["new_voting_end"] = (
             proposal.voting_end.isoformat() if proposal.voting_end else None

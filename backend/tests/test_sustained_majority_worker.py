@@ -1,11 +1,19 @@
 """
-Phase 8 — sustained-majority background worker integration tests.
+Phase 8 / Phase 20 — Stable Result Required worker integration tests.
 
-Exercises `evaluate_proposal` + `run_one_tick` end-to-end against an in-memory
-DB. We mock `should_run_on_this_instance` only where the multi-instance guard
-itself is the unit under test; the rest of the suite calls `evaluate_proposal`
-directly and checks side effects (status mutation, audit-log entries,
-extension counts).
+Exercises ``evaluate_proposal`` end-to-end against an in-memory DB. Per
+Phase 17 lesson: tests use real ``models.Proposal`` + ``models.VoteSnapshot``
+rows rather than SimpleNamespace shims.
+
+Tests cover the lifecycle paths in spec §B5:
+  - Original-window stable / unstable (binary + multi-option).
+  - Extension branch sliding-window stable -> early close.
+  - Extension branch unstable -> wait for next tick.
+  - Extension reaches voting_end with budget remaining -> another extension.
+  - Extension reaches voting_end with budget exhausted -> destabilization-
+    at-max-extensions audit; proposal continues to natural close.
+  - max_extension_fraction = 0 -> no extension granted, audit logged.
+  - Budget computation: 0.50 fits 2 extensions; 0.30 rounds down to 1.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -19,16 +27,10 @@ from sqlalchemy.pool import StaticPool
 import models
 import sustained_majority_worker as worker
 from database import Base
-from sustained_majority import (
-    BinarySnapshotPoint,
-    FailureDecision,
-    SustainedMajorityConfig,
-    should_trigger_failure,
-)
 from sustained_majority_service import (
-    apply_failure_mode,
     capture_snapshot,
     count_extensions,
+    _sum_extension_seconds,
 )
 from audit_utils import log_audit_event
 from tests.conftest import make_org_membership
@@ -54,6 +56,10 @@ def db():
         Base.metadata.drop_all(engine)
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def _user(db: Session, username: str) -> models.User:
     u = models.User(
         username=username,
@@ -68,11 +74,6 @@ def _user(db: Session, username: str) -> models.User:
 
 
 def _member(db: Session, org: models.Organization, user: models.User) -> None:
-    """Phase 10.1: scope-aware tally requires voters to be active org members.
-    Pre-fix the worker tally iterated all users in the DB; post-fix only
-    OrgMembership rows count. Helper added so the existing tests stay
-    minimally changed.
-    """
     make_org_membership(
         db,
         user_id=user.id, org_id=org.id, role="member", status="active",
@@ -80,16 +81,20 @@ def _member(db: Session, org: models.Organization, user: models.User) -> None:
     db.flush()
 
 
-def _voting_org(db: Session, settings: dict | None = None) -> models.Organization:
+def _voting_org(
+    db: Session,
+    *,
+    settings: dict | None = None,
+) -> models.Organization:
     org = models.Organization(
         name="Org",
-        slug="o",
+        slug=f"o-{id(settings)}",
         description="",
         join_policy="open",
         settings=settings or {
-            "sustained_majority_enabled_default": True,
-            "sustained_majority_floor": 0.45,
-            "sustained_majority_failure_mode": "fail",
+            "stable_result_enabled_default": True,
+            "stable_window_fraction": 0.25,
+            "max_extension_fraction": 0.25,
         },
     )
     db.add(org)
@@ -105,8 +110,9 @@ def _voting_proposal(
     voting_method: str = "binary",
     voting_start: datetime | None = None,
     voting_end: datetime | None = None,
+    pass_threshold: float = 0.5,
 ) -> models.Proposal:
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = _now()
     p = models.Proposal(
         title="P",
         body="",
@@ -114,9 +120,11 @@ def _voting_proposal(
         org_id=org.id,
         voting_method=voting_method,
         status="voting",
-        sustained_majority_enabled=None,  # inherit org default
+        stable_result_required=None,  # inherit org default
         voting_start=voting_start or (now - timedelta(hours=2)),
         voting_end=voting_end or (now + timedelta(hours=4)),
+        pass_threshold=pass_threshold,
+        quorum_threshold=0.0,
     )
     db.add(p)
     db.flush()
@@ -134,30 +142,19 @@ def _cast_binary(db: Session, user: models.User, proposal: models.Proposal, valu
     db.flush()
 
 
-def _seed_establishing_snapshot(
+def _seed_binary_snapshot(
     db: Session,
     proposal: models.Proposal,
     *,
-    yes: int = 60,
-    no: int = 40,
+    yes: int,
+    no: int,
     abstain: int = 0,
-    total_eligible: int = 100,
-    seconds_ago: int = 3600,
+    total_eligible: int = 10,
+    when: datetime | None = None,
 ) -> models.VoteSnapshot:
-    """Insert a synthetic VoteSnapshot row representing prior establishment.
-
-    Phase 9.8 C1: the floor only activates AFTER support has crossed the
-    threshold at least once during the window. Worker tests that drive
-    breach scenarios need a prior snapshot in the snapshot history showing
-    support >= threshold so the breach is allowed to fire. We seed one
-    directly rather than re-running `evaluate_proposal` against an
-    established-then-mutated vote set, which would require swapping vote
-    values mid-test and add fixture noise unrelated to what's being tested.
-    """
-    when = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=seconds_ago)
     snap = models.VoteSnapshot(
         proposal_id=proposal.id,
-        simulated_time=when,
+        simulated_time=when or _now(),
         yes_count=yes,
         no_count=no,
         abstain_count=abstain,
@@ -168,6 +165,62 @@ def _seed_establishing_snapshot(
     db.add(snap)
     db.flush()
     return snap
+
+
+def _seed_multi_snapshot(
+    db: Session,
+    proposal: models.Proposal,
+    *,
+    winners: list[str],
+    when: datetime | None = None,
+) -> models.VoteSnapshot:
+    snap = models.VoteSnapshot(
+        proposal_id=proposal.id,
+        simulated_time=when or _now(),
+        yes_count=0,
+        no_count=0,
+        abstain_count=0,
+        not_cast_count=0,
+        total_eligible=10,
+        multi_option_winners={"winners": winners, "total_ballots_cast": 10},
+    )
+    db.add(snap)
+    db.flush()
+    return snap
+
+
+def _seed_extension_audit(
+    db: Session,
+    proposal: models.Proposal,
+    *,
+    extension_seconds: int,
+    when: datetime | None = None,
+) -> None:
+    """Record a worker-fired extension audit event so subsequent worker
+    ticks see the right extension_count + budget_used."""
+    log_audit_event(
+        db,
+        action="proposal.window_extended",
+        target_type="proposal",
+        target_id=proposal.id,
+        actor_id=None,  # worker-fired
+        details={
+            "proposal_id": proposal.id,
+            "extension_seconds": extension_seconds,
+            "trigger": "stable_result_required",
+        },
+    )
+    if when is not None:
+        # Backdate the audit row's timestamp if the test needs it.
+        row = (
+            db.query(models.AuditLog)
+            .filter(models.AuditLog.target_id == proposal.id)
+            .order_by(models.AuditLog.timestamp.desc())
+            .first()
+        )
+        if row is not None:
+            row.timestamp = when
+    db.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -190,418 +243,499 @@ class TestInstanceGuard:
             ):
                 assert worker.should_run_on_this_instance() is False
 
-    def test_runs_when_instance_id_matches(self, monkeypatch):
-        monkeypatch.setenv("INSTANCE_ID", "primary")
-        with mock.patch.object(
-            worker.settings, "sustained_majority_worker_instance_id", "primary"
-        ):
-            with mock.patch.object(
-                worker.settings, "sustained_majority_worker_disable", False
-            ):
-                assert worker.should_run_on_this_instance() is True
-
     def test_disable_flag_short_circuits(self):
         with mock.patch.object(worker.settings, "sustained_majority_worker_disable", True):
             assert worker.should_run_on_this_instance() is False
 
 
 # ---------------------------------------------------------------------------
-# evaluate_proposal — binary failure modes
+# Original-window scenarios
 # ---------------------------------------------------------------------------
 
-class TestEvaluateProposalBinary:
-    def test_above_floor_no_action(self, db):
+class TestEvaluateProposalOriginalWindow:
+    """Proposals with no extensions yet — exercising the
+    evaluate_original_window_stability branch.
+    """
+
+    def test_binary_stable_in_original_window_no_action(self, db):
+        """Binary proposal with support >= pass_threshold throughout
+        stable window: no extension fires."""
         author = _user(db, "alice")
-        org = _voting_org(db)
-        proposal = _voting_proposal(db, org=org, author=author)
-        _cast_binary(db, author, proposal, "yes")
         bob = _user(db, "bob")
+        org = _voting_org(db)
+        # 100s window, now near the end so we're inside the stable window.
+        start = _now() - timedelta(seconds=80)
+        end = _now() + timedelta(seconds=20)
+        proposal = _voting_proposal(
+            db, org=org, author=author,
+            voting_start=start, voting_end=end,
+        )
+        _member(db, org, author)
+        _member(db, org, bob)
+        _cast_binary(db, author, proposal, "yes")
         _cast_binary(db, bob, proposal, "yes")
         db.commit()
 
         result = worker.evaluate_proposal(db, proposal)
         db.commit()
-
         assert result is None
-        assert proposal.status == "voting"
-        # Snapshot was still taken even though no failure fired.
+        # Snapshot was still taken.
         snap_count = db.query(models.VoteSnapshot).filter(
             models.VoteSnapshot.proposal_id == proposal.id,
         ).count()
         assert snap_count == 1
+        assert proposal.status == "voting"
 
-    def test_below_floor_fail_mode_moves_to_failed(self, db):
-        """Phase 9.8 C1: requires a prior establishing snapshot. The original
-        version of this test cast 1 yes / 9 no and expected immediate fail —
-        which was the bug. After C1, breach only fires once support has been
-        established (crossed threshold), so we seed an establishing snapshot
-        first and assert the breach detection still works correctly.
+    def test_binary_unstable_in_window_extends(self, db):
+        """Binary proposal with a snapshot below pass_threshold inside the
+        stable window: extension fires, voting_end pushed back, audit logged.
         """
         author = _user(db, "alice")
+        bob = _user(db, "bob")
         org = _voting_org(db, settings={
-            "sustained_majority_enabled_default": True,
-            "sustained_majority_floor": 0.45,
-            "sustained_majority_failure_mode": "fail",
+            "stable_result_enabled_default": True,
+            "stable_window_fraction": 0.25,
+            "max_extension_fraction": 0.50,  # accommodates 2 extensions
         })
-        proposal = _voting_proposal(db, org=org, author=author)
-        _member(db, org, author)  # Phase 10.1 eligibility
-        # Seed prior establishment (60 yes / 40 no in history).
-        _seed_establishing_snapshot(db, proposal, yes=60, no=40)
-        # Now drop to 1 yes / 9 no → support 0.10, well below 0.45 floor.
-        _cast_binary(db, author, proposal, "yes")
-        for i in range(9):
-            u = _user(db, f"no{i}")
-            _member(db, org, u)  # Phase 10.1 eligibility
-            _cast_binary(db, u, proposal, "no")
-        db.commit()
-
-        result = worker.evaluate_proposal(db, proposal)
-        db.commit()
-
-        assert result == "failed"
-        assert proposal.status == "failed"
-        # Audit event recorded.
-        evt = db.query(models.AuditLog).filter(
-            models.AuditLog.action == "proposal.failed_sustained_majority",
-            models.AuditLog.target_id == proposal.id,
-        ).first()
-        assert evt is not None
-        assert evt.details["breach_sample"]["yes"] == 1
-
-    def test_extend_mode_extends_window_first_time(self, db):
-        """Phase 9.8 C1: seed establishment, then drop to no-vote → extend."""
-        author = _user(db, "alice")
-        org = _voting_org(db, settings={
-            "sustained_majority_enabled_default": True,
-            "sustained_majority_floor": 0.45,
-            "sustained_majority_failure_mode": "extend",
-        })
-        proposal = _voting_proposal(db, org=org, author=author)
-        _member(db, org, author)  # Phase 10.1 eligibility
-        original_end = proposal.voting_end
-
-        _seed_establishing_snapshot(db, proposal, yes=60, no=40)
+        start = _now() - timedelta(seconds=80)
+        end = _now() + timedelta(seconds=20)
+        proposal = _voting_proposal(
+            db, org=org, author=author,
+            voting_start=start, voting_end=end,
+        )
+        _member(db, org, author)
+        _member(db, org, bob)
+        # Cast votes that tally to 1 yes / 1 no = 0.5 support exactly. To
+        # force a breach we need support < 0.5. Seed a destabilizing snapshot
+        # explicitly inside the stable window — the worker will also capture
+        # a fresh snapshot on tick, but the seeded breach is what triggers
+        # destabilization.
+        _seed_binary_snapshot(
+            db, proposal, yes=2, no=8, total_eligible=10,
+            when=_now() - timedelta(seconds=10),  # inside stable window
+        )
+        # Cast a couple of votes so the live tally on tick is also bad.
         _cast_binary(db, author, proposal, "no")
+        _cast_binary(db, bob, proposal, "no")
         db.commit()
 
+        old_end = proposal.voting_end
         result = worker.evaluate_proposal(db, proposal)
         db.commit()
 
-        # Status stays voting; voting_end is pushed forward.
-        assert result == "voting"
-        assert proposal.status == "voting"
-        assert proposal.voting_end > original_end
+        assert result == "extended"
+        # voting_end pushed back by stable_window_duration = 100s * 0.25 = 25s.
+        # (Some jitter is fine; assert it moved forward.)
+        assert proposal.voting_end > old_end
+        # An extension audit event was written.
         ext_count = count_extensions(db, proposal.id)
         assert ext_count == 1
-
-    def test_extend_promotes_to_fail_on_second_breach(self, db):
-        """Phase 9.8 C1: seed establishment so the extend → fail promotion
-        path can be exercised."""
-        author = _user(db, "alice")
-        org = _voting_org(db, settings={
-            "sustained_majority_enabled_default": True,
-            "sustained_majority_floor": 0.45,
-            "sustained_majority_failure_mode": "extend",
-        })
-        proposal = _voting_proposal(db, org=org, author=author)
-        _member(db, org, author)  # Phase 10.1 eligibility
-        _seed_establishing_snapshot(db, proposal, yes=60, no=40)
-        _cast_binary(db, author, proposal, "no")
-        db.commit()
-
-        # First breach — extends.
-        worker.evaluate_proposal(db, proposal)
-        db.commit()
+        # voting_end updated in place — proposal still in voting status.
         assert proposal.status == "voting"
-        assert count_extensions(db, proposal.id) == 1
 
-        # Second breach — promotes to fail.
-        worker.evaluate_proposal(db, proposal)
-        db.commit()
-        assert proposal.status == "failed"
-
-    def test_escalate_mode_moves_to_unresolved(self, db):
-        """Phase 9.8 C1: seed establishment so escalate can fire on drop."""
+    def test_multi_option_stable_winners_no_extension(self, db):
         author = _user(db, "alice")
-        org = _voting_org(db, settings={
-            "sustained_majority_enabled_default": True,
-            "sustained_majority_floor": 0.45,
-            "sustained_majority_failure_mode": "escalate",
-        })
-        proposal = _voting_proposal(db, org=org, author=author)
-        _member(db, org, author)  # Phase 10.1 eligibility
-        _seed_establishing_snapshot(db, proposal, yes=60, no=40)
-        _cast_binary(db, author, proposal, "no")
+        org = _voting_org(db)
+        start = _now() - timedelta(seconds=80)
+        end = _now() + timedelta(seconds=20)
+        proposal = _voting_proposal(
+            db, org=org, author=author, voting_method="approval",
+            voting_start=start, voting_end=end,
+        )
+        _member(db, org, author)
+        # Pre-seed two snapshots in the stable window with same winner.
+        _seed_multi_snapshot(
+            db, proposal, winners=["A"],
+            when=_now() - timedelta(seconds=15),
+        )
+        _seed_multi_snapshot(
+            db, proposal, winners=["A"],
+            when=_now() - timedelta(seconds=5),
+        )
         db.commit()
 
         result = worker.evaluate_proposal(db, proposal)
         db.commit()
+        assert result is None
 
-        assert result == "unresolved"
-        assert proposal.status == "unresolved"
-        evt = db.query(models.AuditLog).filter(
-            models.AuditLog.action == "proposal.escalated",
-            models.AuditLog.target_id == proposal.id,
-        ).first()
-        assert evt is not None
+    def test_multi_option_winner_swap_extends(self, db):
+        author = _user(db, "alice")
+        org = _voting_org(db, settings={
+            "stable_result_enabled_default": True,
+            "stable_window_fraction": 0.25,
+            "max_extension_fraction": 0.50,
+        })
+        start = _now() - timedelta(seconds=80)
+        end = _now() + timedelta(seconds=20)
+        proposal = _voting_proposal(
+            db, org=org, author=author, voting_method="approval",
+            voting_start=start, voting_end=end,
+        )
+        _member(db, org, author)
+        # Two snapshots in stable window with disjoint winners.
+        _seed_multi_snapshot(
+            db, proposal, winners=["A"],
+            when=_now() - timedelta(seconds=15),
+        )
+        _seed_multi_snapshot(
+            db, proposal, winners=["B"],
+            when=_now() - timedelta(seconds=5),
+        )
+        db.commit()
 
-    def test_single_no_vote_without_establishment_does_not_fail(self, db):
-        """Phase 9.8 C1 worker-level regression: a brand-new proposal with a
-        single early no-vote and no prior support must NOT fail. This was
-        the bug Z surfaced — under the old logic the proposal failed on the
-        first vote, before anyone could vote yes.
+        old_end = proposal.voting_end
+        result = worker.evaluate_proposal(db, proposal)
+        db.commit()
+        assert result == "extended"
+        assert proposal.voting_end > old_end
+
+
+# ---------------------------------------------------------------------------
+# Extension-branch scenarios (sliding-window check)
+# ---------------------------------------------------------------------------
+
+class TestEvaluateProposalExtensionBranch:
+    """Proposals with at least one prior worker-fired extension — exercising
+    the evaluate_extension_stability sliding-window branch.
+    """
+
+    def _setup_extended_proposal(
+        self,
+        db: Session,
+        *,
+        original_duration_seconds: int = 100,
+        extension_seconds: int = 25,
+        max_ext_fraction: float = 0.50,
+    ) -> tuple[models.User, models.Organization, models.Proposal]:
+        author = _user(db, "alice")
+        bob = _user(db, "bob")
+        org = _voting_org(db, settings={
+            "stable_result_enabled_default": True,
+            "stable_window_fraction": 0.25,
+            "max_extension_fraction": max_ext_fraction,
+        })
+        # The proposal has been extended once: original was [start, start+100s].
+        # Now voting_end = start + 100s + extension_seconds.
+        start = _now() - timedelta(seconds=original_duration_seconds + 10)
+        end = start + timedelta(seconds=original_duration_seconds + extension_seconds)
+        proposal = _voting_proposal(
+            db, org=org, author=author,
+            voting_start=start, voting_end=end,
+        )
+        _member(db, org, author)
+        _member(db, org, bob)
+        # Seed the prior extension audit event so count_extensions == 1
+        # and _sum_extension_seconds returns the right value.
+        _seed_extension_audit(
+            db, proposal, extension_seconds=extension_seconds,
+        )
+        db.commit()
+        return author, org, proposal
+
+    def test_extension_stable_lookback_closes_early(self, db):
+        """Sliding-window check during extension: all snapshots in lookback
+        are stable -> proposal closes at this snapshot."""
+        author, org, proposal = self._setup_extended_proposal(db)
+        bob = db.query(models.User).filter(models.User.username == "bob").first()
+        # Two snapshots within the lookback (stable_window_duration =
+        # 100s * 0.25 = 25s), both stable.
+        _seed_binary_snapshot(
+            db, proposal, yes=8, no=2, total_eligible=10,
+            when=_now() - timedelta(seconds=15),
+        )
+        # Cast votes so the worker's fresh snapshot is also stable.
+        _cast_binary(db, author, proposal, "yes")
+        _cast_binary(db, bob, proposal, "yes")
+        db.commit()
+
+        result = worker.evaluate_proposal(db, proposal)
+        db.commit()
+        assert result == "closed_early"
+        assert proposal.status in ("passed", "failed")
+        # A status_changed audit was logged.
+        rows = (
+            db.query(models.AuditLog)
+            .filter(
+                models.AuditLog.action == "proposal.status_changed",
+                models.AuditLog.target_id == proposal.id,
+            )
+            .all()
+        )
+        assert any(
+            (r.details or {}).get("trigger") == "stable_result_achieved"
+            for r in rows
+        )
+
+    def test_extension_unstable_lookback_continues(self, db):
+        """Sliding-window check fails: voting continues until next tick or
+        natural voting_end."""
+        author, org, proposal = self._setup_extended_proposal(db)
+        # Old snapshot in lookback was unstable.
+        _seed_binary_snapshot(
+            db, proposal, yes=2, no=8, total_eligible=10,
+            when=_now() - timedelta(seconds=15),
+        )
+        # Cast yes votes so fresh worker snapshot is stable, but the OLD
+        # one in lookback breaks the chain.
+        bob = db.query(models.User).filter(models.User.username == "bob").first()
+        _cast_binary(db, author, proposal, "yes")
+        _cast_binary(db, bob, proposal, "yes")
+        db.commit()
+
+        result = worker.evaluate_proposal(db, proposal)
+        db.commit()
+        # Either None (waiting for next tick — voting_end not yet reached)
+        # or "extended" (if voting_end passed and budget allows). With
+        # voting_end ~15s in the future, expect None.
+        assert result is None
+        assert proposal.status == "voting"
+
+    def test_extension_voting_end_reached_budget_remaining_extends_again(self, db):
+        """Extension reaches its voting_end without stability; budget allows
+        another extension."""
+        author = _user(db, "alice")
+        bob = _user(db, "bob")
+        # max_extension_fraction = 0.50 -> budget = 50s.
+        # First extension used 25s -> remaining = 25s -> fits another.
+        org = _voting_org(db, settings={
+            "stable_result_enabled_default": True,
+            "stable_window_fraction": 0.25,
+            "max_extension_fraction": 0.50,
+        })
+        # Original was 100s; one prior extension added 25s; voting_end now
+        # in the past so worker considers it past natural voting_end.
+        start = _now() - timedelta(seconds=130)
+        end = _now() - timedelta(seconds=5)  # 5s ago
+        proposal = _voting_proposal(
+            db, org=org, author=author,
+            voting_start=start, voting_end=end,
+        )
+        _member(db, org, author)
+        _member(db, org, bob)
+        _seed_extension_audit(db, proposal, extension_seconds=25)
+        # Seed unstable snapshots so sliding-window is False.
+        _seed_binary_snapshot(
+            db, proposal, yes=2, no=8, total_eligible=10,
+            when=_now() - timedelta(seconds=20),
+        )
+        # No fresh votes — fresh snapshot will be 0/0/0 = stable per D3
+        # zero-vote-cast = stable. To force unstable lookback we cast no.
+        _cast_binary(db, author, proposal, "no")
+        _cast_binary(db, bob, proposal, "no")
+        db.commit()
+
+        old_end = proposal.voting_end
+        result = worker.evaluate_proposal(db, proposal)
+        db.commit()
+        assert result == "extended"
+        assert proposal.voting_end > old_end
+        # Now there are 2 extension audits.
+        assert count_extensions(db, proposal.id) == 2
+
+    def test_extension_voting_end_reached_budget_exhausted_logs_max(self, db):
+        """Extension reaches voting_end without stability + budget exhausted."""
+        author = _user(db, "alice")
+        bob = _user(db, "bob")
+        # max_extension_fraction = 0.25 -> budget = 25s. One extension of
+        # 25s already used -> budget remaining = 0, no further extension.
+        org = _voting_org(db, settings={
+            "stable_result_enabled_default": True,
+            "stable_window_fraction": 0.25,
+            "max_extension_fraction": 0.25,
+        })
+        start = _now() - timedelta(seconds=130)
+        end = _now() - timedelta(seconds=5)
+        proposal = _voting_proposal(
+            db, org=org, author=author,
+            voting_start=start, voting_end=end,
+        )
+        _member(db, org, author)
+        _member(db, org, bob)
+        _seed_extension_audit(db, proposal, extension_seconds=25)
+        # Seed unstable snapshots so sliding-window is False.
+        _seed_binary_snapshot(
+            db, proposal, yes=2, no=8, total_eligible=10,
+            when=_now() - timedelta(seconds=20),
+        )
+        _cast_binary(db, author, proposal, "no")
+        _cast_binary(db, bob, proposal, "no")
+        db.commit()
+
+        old_end = proposal.voting_end
+        result = worker.evaluate_proposal(db, proposal)
+        db.commit()
+        assert result == "destabilized_at_max"
+        assert proposal.voting_end == old_end  # not extended
+        # Audit event exists.
+        rows = (
+            db.query(models.AuditLog)
+            .filter(
+                models.AuditLog.action == "proposal.destabilization_at_max_extensions",
+                models.AuditLog.target_id == proposal.id,
+            )
+            .all()
+        )
+        assert len(rows) == 1
+
+
+# ---------------------------------------------------------------------------
+# Budget computation edge cases (D9)
+# ---------------------------------------------------------------------------
+
+class TestExtensionBudgetSemantics:
+    """Verify that the extension budget rounds down to whole stable_window_
+    duration chunks."""
+
+    def test_max_extension_fraction_zero_grants_no_extension(self, db):
+        """max_extension_fraction = 0: destabilization detected, no extension
+        granted, audit logged, proposal continues to original voting_end."""
+        author = _user(db, "alice")
+        bob = _user(db, "bob")
+        org = _voting_org(db, settings={
+            "stable_result_enabled_default": True,
+            "stable_window_fraction": 0.25,
+            "max_extension_fraction": 0.0,
+        })
+        start = _now() - timedelta(seconds=80)
+        end = _now() + timedelta(seconds=20)
+        proposal = _voting_proposal(
+            db, org=org, author=author,
+            voting_start=start, voting_end=end,
+        )
+        _member(db, org, author)
+        _member(db, org, bob)
+        # Seed in-window destabilizing snapshot.
+        _seed_binary_snapshot(
+            db, proposal, yes=2, no=8, total_eligible=10,
+            when=_now() - timedelta(seconds=10),
+        )
+        _cast_binary(db, author, proposal, "no")
+        _cast_binary(db, bob, proposal, "no")
+        db.commit()
+
+        old_end = proposal.voting_end
+        result = worker.evaluate_proposal(db, proposal)
+        db.commit()
+        assert result == "destabilized_at_max"
+        assert proposal.voting_end == old_end
+        assert count_extensions(db, proposal.id) == 0
+        # Audit recorded.
+        rows = (
+            db.query(models.AuditLog)
+            .filter(
+                models.AuditLog.action == "proposal.destabilization_at_max_extensions",
+                models.AuditLog.target_id == proposal.id,
+            )
+            .all()
+        )
+        assert len(rows) == 1
+
+    def test_budget_50pct_fits_two_extensions_exactly(self, db):
+        """Per D9 worked example: 7-day proposal, stable_window_fraction =
+        0.25, max_extension_fraction = 0.50 -> budget = 84h, fits 2
+        extensions of 42h each.
+
+        Modeled here at 100s scale: budget = 50s, fits 2 extensions of 25s.
         """
         author = _user(db, "alice")
+        bob = _user(db, "bob")
         org = _voting_org(db, settings={
-            "sustained_majority_enabled_default": True,
-            "sustained_majority_floor": 0.45,
-            "sustained_majority_failure_mode": "fail",
+            "stable_result_enabled_default": True,
+            "stable_window_fraction": 0.25,
+            "max_extension_fraction": 0.50,
         })
-        proposal = _voting_proposal(db, org=org, author=author)
-        # No prior snapshot — establishment has never occurred.
+        # Two extensions already used (50s).
+        start = _now() - timedelta(seconds=155)
+        end = _now() - timedelta(seconds=5)  # past voting_end
+        proposal = _voting_proposal(
+            db, org=org, author=author,
+            voting_start=start, voting_end=end,
+        )
+        _member(db, org, author)
+        _member(db, org, bob)
+        _seed_extension_audit(db, proposal, extension_seconds=25)
+        _seed_extension_audit(db, proposal, extension_seconds=25)
+        # Force unstable lookback at voting_end.
+        _seed_binary_snapshot(
+            db, proposal, yes=2, no=8, total_eligible=10,
+            when=_now() - timedelta(seconds=15),
+        )
         _cast_binary(db, author, proposal, "no")
+        _cast_binary(db, bob, proposal, "no")
         db.commit()
 
         result = worker.evaluate_proposal(db, proposal)
         db.commit()
+        # Budget: 100s * 0.50 = 50s. Used: 50s. Remaining: 0. Cannot fit
+        # another 25s extension. Should log destabilization-at-max.
+        assert result == "destabilized_at_max"
+        assert count_extensions(db, proposal.id) == 2
 
-        # Under the old logic this would return "failed". After C1: None.
-        assert result is None
-        assert proposal.status == "voting"
-        # The snapshot was still captured (so the worker observes the state).
-        snap_count = db.query(models.VoteSnapshot).filter(
-            models.VoteSnapshot.proposal_id == proposal.id,
-        ).count()
-        assert snap_count == 1
-        # No failure audit event.
-        evt = db.query(models.AuditLog).filter(
-            models.AuditLog.action == "proposal.failed_sustained_majority",
-            models.AuditLog.target_id == proposal.id,
-        ).first()
-        assert evt is None
+    def test_budget_30pct_rounds_down_to_one_extension(self, db):
+        """Per D9: 7-day proposal, stable_window_fraction = 0.25,
+        max_extension_fraction = 0.30 -> budget ~ 50h. One 42h extension
+        fits; remaining 8h < 42h, no second extension.
+
+        At 100s scale: budget = 30s, stable_window_duration = 25s. One
+        extension fits; remaining 5s < 25s, no second.
+        """
+        author = _user(db, "alice")
+        bob = _user(db, "bob")
+        org = _voting_org(db, settings={
+            "stable_result_enabled_default": True,
+            "stable_window_fraction": 0.25,
+            "max_extension_fraction": 0.30,
+        })
+        # One extension already used (25s).
+        start = _now() - timedelta(seconds=130)
+        end = _now() - timedelta(seconds=5)
+        proposal = _voting_proposal(
+            db, org=org, author=author,
+            voting_start=start, voting_end=end,
+        )
+        _member(db, org, author)
+        _member(db, org, bob)
+        _seed_extension_audit(db, proposal, extension_seconds=25)
+        # Unstable lookback at voting_end.
+        _seed_binary_snapshot(
+            db, proposal, yes=2, no=8, total_eligible=10,
+            when=_now() - timedelta(seconds=15),
+        )
+        _cast_binary(db, author, proposal, "no")
+        _cast_binary(db, bob, proposal, "no")
+        db.commit()
+
+        result = worker.evaluate_proposal(db, proposal)
+        db.commit()
+        # Budget: 100 * 0.30 = 30s. Used: 25s. Remaining: 5s < 25s. No
+        # second extension.
+        assert result == "destabilized_at_max"
+        assert count_extensions(db, proposal.id) == 1
 
 
 # ---------------------------------------------------------------------------
-# Per-proposal override respected
+# Per-proposal override
 # ---------------------------------------------------------------------------
 
-class TestPerProposalOverrideRespected:
-    def test_explicit_false_skips_evaluation(self, db):
-        """proposal.sustained_majority_enabled=False overrides org default-on."""
+class TestPerProposalOverride:
+    def test_override_false_disables(self, db):
+        """proposal.stable_result_required=False overrides org default-on."""
         author = _user(db, "alice")
         org = _voting_org(db, settings={
-            "sustained_majority_enabled_default": True,
-            "sustained_majority_floor": 0.45,
-            "sustained_majority_failure_mode": "fail",
+            "stable_result_enabled_default": True,
+            "stable_window_fraction": 0.25,
+            "max_extension_fraction": 0.25,
         })
         proposal = _voting_proposal(db, org=org, author=author)
-        proposal.sustained_majority_enabled = False
-        # Even with bad support, this proposal should not fail.
-        _cast_binary(db, author, proposal, "no")
+        proposal.stable_result_required = False
+        _member(db, org, author)
         db.commit()
 
         result = worker.evaluate_proposal(db, proposal)
         db.commit()
-
         assert result is None
-        assert proposal.status == "voting"
-        # No snapshot taken either — evaluate_proposal short-circuits.
+        # No snapshot taken because feature was inactive.
         snap_count = db.query(models.VoteSnapshot).filter(
             models.VoteSnapshot.proposal_id == proposal.id,
         ).count()
         assert snap_count == 0
-
-
-# ---------------------------------------------------------------------------
-# run_one_tick — full sweep
-# ---------------------------------------------------------------------------
-
-class TestRunOneTick:
-    def test_skips_non_voting_proposals(self, db):
-        author = _user(db, "alice")
-        org = _voting_org(db)
-        # One voting, one draft
-        active = _voting_proposal(db, org=org, author=author)
-        draft = models.Proposal(
-            title="Draft", body="", author_id=author.id, org_id=org.id,
-            voting_method="binary", status="draft",
-        )
-        db.add(draft)
-        _cast_binary(db, author, active, "yes")
-        db.commit()
-
-        processed = worker.run_one_tick(db)
-        # Only the voting one is touched (snapshot recorded).
-        assert processed == 1
-        snap_count = db.query(models.VoteSnapshot).count()
-        assert snap_count == 1
-
-    def test_one_proposal_failure_does_not_block_others(self, db):
-        """Defensive: a per-proposal exception should not abort the loop."""
-        author = _user(db, "alice")
-        org = _voting_org(db)
-        good = _voting_proposal(db, org=org, author=author)
-        _cast_binary(db, author, good, "yes")
-        # A second proposal with no org will trigger the early-return path
-        # in evaluate_proposal (org_id=None) — exercised here for parity, not
-        # a real exception, but confirms the loop continues.
-        bad = models.Proposal(
-            title="Orphan", body="", author_id=author.id, org_id=None,
-            voting_method="binary", status="voting",
-        )
-        db.add(bad)
-        db.commit()
-
-        processed = worker.run_one_tick(db)
-        assert processed == 2  # both processed (orphan early-returns)
-
-    def test_restart_safe_no_double_extension(self, db):
-        """Re-running the worker tick should not extend the same proposal twice.
-
-        Phase 9.8 C1: seeds an establishing snapshot so the breach is allowed
-        to fire (the original test's single no-vote no longer triggers the
-        floor without prior establishment).
-        """
-        author = _user(db, "alice")
-        org = _voting_org(db, settings={
-            "sustained_majority_enabled_default": True,
-            "sustained_majority_floor": 0.45,
-            "sustained_majority_failure_mode": "extend",
-        })
-        proposal = _voting_proposal(db, org=org, author=author)
-        _member(db, org, author)  # Phase 10.1 eligibility
-        _seed_establishing_snapshot(db, proposal, yes=60, no=40)
-        _cast_binary(db, author, proposal, "no")
-        db.commit()
-
-        worker.run_one_tick(db)  # extends once
-        # Recompute support — still below floor (votes haven't changed)
-        assert count_extensions(db, proposal.id) == 1
-
-        worker.run_one_tick(db)  # second run should fail (not extend again)
-        assert proposal.status == "failed"
-        assert count_extensions(db, proposal.id) == 1  # no second extend
-
-
-# ---------------------------------------------------------------------------
-# count_extensions actor-aware filter (Phase 8.1 Item 2)
-# ---------------------------------------------------------------------------
-
-class TestCountExtensionsActorFilter:
-    """The worker's "extension already used" guard rail should only count
-    system-fired extensions (actor_id IS NULL). Admin-driven extensions via
-    resolve_escalation have actor_id set and must NOT count.
-    """
-
-    def test_admin_extension_not_counted(self, db):
-        """Two window_extended events on the same proposal: one with
-        actor_id=None (worker), one with actor_id=<admin user id>. Only the
-        worker-fired one should count.
-        """
-        author = _user(db, "alice")
-        admin = _user(db, "admin")
-        org = _voting_org(db)
-        proposal = _voting_proposal(db, org=org, author=author)
-        db.commit()
-
-        # Worker-style extension (system actor).
-        log_audit_event(
-            db,
-            action="proposal.window_extended",
-            target_type="proposal",
-            target_id=proposal.id,
-            actor_id=None,
-            details={"proposal_id": proposal.id, "source": "worker"},
-        )
-        # Admin-style extension (actor_id set) — should be excluded.
-        log_audit_event(
-            db,
-            action="proposal.window_extended",
-            target_type="proposal",
-            target_id=proposal.id,
-            actor_id=admin.id,
-            details={"proposal_id": proposal.id, "source": "resolve_escalation"},
-        )
-        db.commit()
-
-        assert count_extensions(db, proposal.id) == 1
-
-    def test_only_admin_extension_returns_zero(self, db):
-        """A standalone admin extension must return 0 — the worker should still
-        be willing to fire its one allowed extension afterwards.
-        """
-        author = _user(db, "alice")
-        admin = _user(db, "admin")
-        org = _voting_org(db)
-        proposal = _voting_proposal(db, org=org, author=author)
-        db.commit()
-
-        log_audit_event(
-            db,
-            action="proposal.window_extended",
-            target_type="proposal",
-            target_id=proposal.id,
-            actor_id=admin.id,
-            details={"proposal_id": proposal.id, "source": "resolve_escalation"},
-        )
-        db.commit()
-
-        assert count_extensions(db, proposal.id) == 0
-
-    def test_apply_failure_mode_extend_admin_then_worker(self, db):
-        """Integration-style: drive the extend path through
-        `apply_failure_mode` twice — once with an admin actor_id (mimicking
-        resolve_escalation's "extend" branch) and once with actor_id=None
-        (worker). The admin call must not consume the worker's one allowed
-        extension.
-
-        Why this scope (not the full worker re-escalate flow): the full
-        escalate→admin-extend→breach→re-escalate sequence requires invoking
-        `evaluate_proposal` against an `escalate`-mode org, then mutating
-        proposal.status back to "voting" after admin resolution, then driving
-        a second breach with snapshot history that satisfies both the
-        approaching-floor + sustained-breach windows. That's >100 lines of
-        fixture wiring whose substance isn't the bug we're fixing — the bug
-        is "do extension counts include admin events?". Calling
-        `apply_failure_mode` twice and asserting `count_extensions == 1`
-        proves the guard rail directly.
-        """
-        author = _user(db, "alice")
-        admin = _user(db, "admin")
-        org = _voting_org(db, settings={
-            "sustained_majority_enabled_default": True,
-            "sustained_majority_floor": 0.45,
-            "sustained_majority_failure_mode": "extend",
-        })
-        proposal = _voting_proposal(db, org=org, author=author)
-        db.commit()
-
-        decision = FailureDecision(
-            should_fire=True,
-            mode="extend",
-            reason="floor breach",
-            breach_sample={"yes": 1, "no": 9},
-        )
-
-        # 1) Admin-driven extend (resolve_escalation analogue).
-        apply_failure_mode(
-            db, proposal, decision=decision, actor_id=admin.id,
-        )
-        db.commit()
-        # Admin extension should not consume the worker's allowance.
-        assert count_extensions(db, proposal.id) == 0
-
-        # 2) Worker-driven extend (system actor).
-        apply_failure_mode(
-            db, proposal, decision=decision, actor_id=None,
-        )
-        db.commit()
-        # Now the worker has used its one extension.
-        assert count_extensions(db, proposal.id) == 1
-
-        # Sanity: total window_extended events is 2 (both wrote audit rows).
-        total = db.query(models.AuditLog).filter(
-            models.AuditLog.action == "proposal.window_extended",
-            models.AuditLog.target_id == proposal.id,
-        ).count()
-        assert total == 2

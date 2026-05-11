@@ -471,7 +471,9 @@ def _get_or_create_org(
                 "allow_public_delegates": True,
                 "public_delegate_policy": "admin_approval",
                 "require_email_verification": True,
-                "sustained_majority_floor": 0.45,
+                # Phase 20: legacy ``sustained_majority_floor`` removed.
+                # Stable Result Required defaults are picked up from
+                # DEFAULTS in sustained_majority.py if absent.
                 "allowed_voting_methods": ["binary", "approval", "ranked_choice"],
             },
         )

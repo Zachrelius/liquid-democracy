@@ -180,15 +180,17 @@ function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly, linkOr
       <div className="flex items-start justify-between gap-3 mb-3">
         <span className="text-[var(--brand-primary)] font-semibold text-lg leading-snug">
           {proposal.title}
-          {/* Phase 8 — sustained-majority indicator. Shown when the proposal
-              has it explicitly enabled OR when results call back active=true. */}
-          {(proposal.sustained_majority_enabled === true ||
+          {/* Phase 20 — Stable Result Required indicator. Shown when the
+              proposal has it explicitly enabled OR when results call back
+              active=true. The backend preserves the JSON key `sustained_majority`
+              on the results payload for one pass for backwards compat. */}
+          {(proposal.stable_result_required === true ||
             tally?.sustained_majority?.active) && (
             <span
-              title="Sustained-majority voting: support must hold throughout the window"
+              title="Stable Result Required: the result must be stable across the closing portion of the voting window"
               className="ml-2 inline-flex items-center text-xs bg-blue-50 text-[var(--brand-accent)] border border-blue-200 px-1.5 py-0.5 rounded"
             >
-              ⏳ Sustained
+              ⏳ Stable Result
             </span>
           )}
         </span>
