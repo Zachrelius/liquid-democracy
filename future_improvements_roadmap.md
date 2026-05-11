@@ -51,6 +51,12 @@ Phase 20 was a scope-narrowing redesign rather than a fix-the-existing-mechanism
 
 ---
 
+### 4.5 Support Trajectory Chart — ✅ Complete (Phase 22, shipped 2026-05-11)
+
+Builds directly on Phase 20's snapshot data model. The `sustained_majority_worker` was capturing 5-minute snapshots of voting state for SRR-enabled proposals; Phase 22 (a) makes snapshot capture universal (every voting proposal, not just SRR-enabled), (b) extends the existing `multi_option_winners` JSON payload with `option_totals` (per-option vote counts for approval; first-choice counts for RCV/STV) in a single tally pass, (c) adds a new `GET /api/proposals/{id}/trajectory` endpoint with server-side downsampling to ≤500 points and SRR annotation overlay (stable window opens, extensions, destabilization events, close trigger), and (d) ships a recharts-based `SupportTrajectoryChart.jsx` on the proposal results page (collapsed-by-default) with binary + multi-option variants, a winner-over-time bar, accessibility data-table toggle, and aria-live summary. Phase 20 stability behavior preserved by structural separation: the worker's outer loop iterates all voting proposals → captures snapshot → conditionally evaluates stability only for SRR proposals; `evaluate_original_window_stability` invoked with byte-identical kwargs vs. pre-Phase-22 (verified by `TestPhase20EvaluateStabilityCalledIdentically` spy test + 76-test existing Phase 20 suite re-run, zero regressions). No new schema; no migration. Org-scoped access control (D4). Storage growth at plausible scale ~3 GB/year (audit Item 62). Three new Tier-3 audit items: 62 (snapshot retention at scale), 63 (org-config toggle for proposal_chart_enabled deferred), 64 (chart keyboard nav inherited from recharts defaults). See spec `phase22_support_trajectory_chart_spec.md` and PROGRESS.md Phase 22 entry.
+
+---
+
 ### 5. Demo Data Cleanup + Easy Manual Reset
 
 **Why now:** The demo deployment at `liquiddemocracy.us` is the platform's sales surface. Right now the demo data is functional (post-Phase-7C.1 it shows the privacy boundary correctly, voter names are realistic, etc.) but it's not curated for telling a compelling story about what liquid democracy *does*. A real pilot recruitment conversation is going to lead to "let me show you" — and the demo should be tight enough that it sells without needing Z to narrate around its rough edges.

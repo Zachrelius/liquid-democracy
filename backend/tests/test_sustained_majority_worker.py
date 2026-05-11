@@ -734,8 +734,12 @@ class TestPerProposalOverride:
         result = worker.evaluate_proposal(db, proposal)
         db.commit()
         assert result is None
-        # No snapshot taken because feature was inactive.
+        # Phase 22 D1: snapshot capture is now universal — the
+        # per-proposal-override-False path still short-circuits stability
+        # evaluation (result is None, no extension fires) but a snapshot row
+        # IS written for the trajectory chart. Phase 20's stability-disable
+        # invariant is preserved; only the snapshot-coupling changed.
         snap_count = db.query(models.VoteSnapshot).filter(
             models.VoteSnapshot.proposal_id == proposal.id,
         ).count()
-        assert snap_count == 0
+        assert snap_count == 1

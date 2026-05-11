@@ -1,8 +1,9 @@
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -1710,4 +1711,371 @@ def get_vote_graph(
         edges=edges,
         options=options_out,
         clusters=clusters,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 22 — Support trajectory chart endpoint
+# ---------------------------------------------------------------------------
+#
+# Surfaces the VoteSnapshot rows captured by the sustained_majority_worker
+# (Phase 22 D1: now universal — every voting proposal gets snapshots, not
+# just SRR-active ones) in a chart-ready shape. The frontend chart component
+# fetches this on-expand and renders a support-over-time line / per-option
+# trajectory + SRR annotation overlay.
+#
+# Response shape: per D3 of phase22_support_trajectory_chart_spec.md.
+# Org-scoped (D4): only members of the proposal's org can fetch.
+# Downsampling (D7): >500 snapshots are bucketed by time and reduced to
+# the latest snapshot per bucket; client receives ≤500 points.
+
+TRAJECTORY_MAX_POINTS = 500
+
+
+class TrajectorySnapshotOut(BaseModel):
+    """One snapshot point in the trajectory response.
+
+    Binary fields (``support_fraction``) and multi-option fields
+    (``winners`` + ``option_totals``) are mutually exclusive per snapshot.
+    The frontend chart picks the right rendering path based on
+    ``voting_method`` at the top level.
+
+    ``option_totals`` can legitimately be ``None`` for old-shape snapshots
+    captured before Phase 22's payload extension landed. The chart degrades
+    gracefully (winner bar still renders from ``winners``).
+    """
+    captured_at: datetime
+    votes_cast: int
+    # Binary-only:
+    support_fraction: Optional[float] = None
+    # Multi-option only:
+    winners: Optional[list[str]] = None
+    option_totals: Optional[dict[str, float]] = None
+
+
+class TrajectoryExtensionOut(BaseModel):
+    fired_at: datetime
+    reason: Optional[str] = None
+    new_voting_end: Optional[datetime] = None
+
+
+class TrajectoryDestabilizationOut(BaseModel):
+    fired_at: datetime
+    reason: Optional[str] = None
+
+
+class TrajectorySRRAnnotations(BaseModel):
+    stable_window_starts_at: Optional[datetime] = None
+    stable_window_fraction: float
+    extensions: list[TrajectoryExtensionOut] = []
+    destabilization_events: list[TrajectoryDestabilizationOut] = []
+    close_trigger: Optional[str] = None
+
+
+class TrajectoryResponse(BaseModel):
+    proposal_id: str
+    voting_method: str
+    voting_start: Optional[datetime] = None
+    voting_end: Optional[datetime] = None
+    snapshots: list[TrajectorySnapshotOut]
+    srr_annotations: Optional[TrajectorySRRAnnotations] = None
+
+
+def _binary_support_fraction(snap: models.VoteSnapshot) -> float:
+    """Phase 22 binary support_fraction: yes / (yes + no + abstain).
+
+    Matches the Phase 20 binary stability semantics in
+    ``sustained_majority.evaluate_original_window_stability``: support is
+    measured against the cast pool, NOT against total_eligible. (A snapshot
+    with 3 yes / 2 no and 5 not-cast = 60% support, not 30%.) Returns 0.0
+    when no votes have been cast.
+    """
+    cast = (snap.yes_count or 0) + (snap.no_count or 0) + (snap.abstain_count or 0)
+    if cast == 0:
+        return 0.0
+    return float(snap.yes_count or 0) / float(cast)
+
+
+def _binary_votes_cast(snap: models.VoteSnapshot) -> int:
+    return (
+        (snap.yes_count or 0)
+        + (snap.no_count or 0)
+        + (snap.abstain_count or 0)
+    )
+
+
+def _downsample_snapshots(
+    rows: list[models.VoteSnapshot],
+    proposal: models.Proposal,
+    max_points: int = TRAJECTORY_MAX_POINTS,
+) -> list[models.VoteSnapshot]:
+    """Uniform time-bucket downsampling per D7.
+
+    Bucket size = (voting_end - voting_start).total_seconds() / max_points.
+    For each bucket, keep the LATEST snapshot whose simulated_time falls in
+    that bucket. Snapshots are already chronologically ordered on input.
+
+    Falls back to a row-count-bucketing path when voting_start / voting_end
+    are missing (e.g. a draft proposal that somehow accumulated snapshots);
+    this keeps the endpoint defensively non-crashing on edge data.
+    """
+    if len(rows) <= max_points:
+        return rows
+
+    vs = proposal.voting_start
+    ve = proposal.voting_end
+    if vs is not None and ve is not None and ve > vs:
+        total_seconds = (ve - vs).total_seconds()
+        bucket_size = total_seconds / max_points
+        if bucket_size > 0:
+            # Group by bucket index; keep only the row with the latest
+            # simulated_time in each bucket.
+            buckets: dict[int, models.VoteSnapshot] = {}
+            for r in rows:
+                if r.simulated_time is None:
+                    continue
+                offset = (r.simulated_time - vs).total_seconds()
+                idx = int(offset // bucket_size)
+                if idx < 0:
+                    idx = 0
+                if idx >= max_points:
+                    idx = max_points - 1
+                existing = buckets.get(idx)
+                if existing is None or (
+                    existing.simulated_time is not None
+                    and r.simulated_time >= existing.simulated_time
+                ):
+                    buckets[idx] = r
+            return [
+                buckets[k] for k in sorted(buckets.keys())
+            ]
+
+    # Fallback: row-count buckets (proposal lacks voting window timestamps).
+    step = max(1, len(rows) // max_points)
+    out: list[models.VoteSnapshot] = []
+    for i in range(0, len(rows), step):
+        chunk = rows[i:i + step]
+        if chunk:
+            # Latest in the chunk.
+            out.append(chunk[-1])
+        if len(out) >= max_points:
+            break
+    return out
+
+
+def _build_snapshot_out(
+    snap: models.VoteSnapshot,
+    *,
+    voting_method: str,
+) -> TrajectorySnapshotOut:
+    """Translate one VoteSnapshot row into the API response shape."""
+    if voting_method == "binary":
+        return TrajectorySnapshotOut(
+            captured_at=snap.simulated_time,
+            votes_cast=_binary_votes_cast(snap),
+            support_fraction=_binary_support_fraction(snap),
+        )
+    # Multi-option (approval / ranked_choice).
+    payload: dict[str, Any] = snap.multi_option_winners or {}
+    winners = list(payload.get("winners") or [])
+    total_cast = int(payload.get("total_ballots_cast") or 0)
+    # option_totals may be absent on pre-Phase-22 snapshots (D12 / D2):
+    # surface as None so the chart can degrade gracefully.
+    raw_totals = payload.get("option_totals")
+    option_totals: Optional[dict[str, float]]
+    if raw_totals is None:
+        option_totals = None
+    else:
+        option_totals = {
+            str(k): float(v) for k, v in raw_totals.items()
+        }
+    return TrajectorySnapshotOut(
+        captured_at=snap.simulated_time,
+        votes_cast=total_cast,
+        winners=winners,
+        option_totals=option_totals,
+    )
+
+
+def _build_srr_annotations(
+    db: Session,
+    proposal: models.Proposal,
+) -> Optional[TrajectorySRRAnnotations]:
+    """Build srr_annotations from audit log + org config. Returns None when
+    SRR is not active for this proposal (caller omits the field entirely).
+    """
+    if proposal.org_id is None:
+        return None
+    org = db.get(models.Organization, proposal.org_id)
+    if org is None:
+        return None
+    from sustained_majority import (
+        get_stable_result_config as _cfg,
+        is_proposal_stable_result_active as _active,
+    )
+    config = _cfg(org)
+    if not _active(proposal.stable_result_required, config.enabled_default):
+        return None
+
+    # Stable-window-starts-at, derived from the ORIGINAL voting duration
+    # (so the chart annotation matches Phase 20's stability math even
+    # for proposals that have already been extended).
+    from sustained_majority_service import (
+        reconstruct_original_voting_duration as _orig_dur,
+    )
+    stable_window_starts_at: Optional[datetime] = None
+    if proposal.voting_start is not None:
+        orig_dur = _orig_dur(db, proposal)
+        if orig_dur is not None and orig_dur.total_seconds() > 0:
+            stable_window_starts_at = (
+                proposal.voting_start
+                + orig_dur * (1.0 - config.stable_window_fraction)
+            )
+
+    # Walk audit log for extensions (worker-fired only — actor_id IS NULL).
+    extension_rows = (
+        db.query(models.AuditLog)
+        .filter(
+            models.AuditLog.action == "proposal.window_extended",
+            models.AuditLog.target_id == proposal.id,
+            models.AuditLog.actor_id.is_(None),
+        )
+        .order_by(models.AuditLog.timestamp.asc())
+        .all()
+    )
+    extensions: list[TrajectoryExtensionOut] = []
+    for row in extension_rows:
+        details = row.details or {}
+        new_end_raw = details.get("new_voting_end") if isinstance(details, dict) else None
+        new_end: Optional[datetime] = None
+        if isinstance(new_end_raw, str):
+            try:
+                new_end = datetime.fromisoformat(new_end_raw)
+            except ValueError:
+                new_end = None
+        extensions.append(TrajectoryExtensionOut(
+            fired_at=row.timestamp,
+            reason=details.get("reason") if isinstance(details, dict) else None,
+            new_voting_end=new_end,
+        ))
+
+    # Walk audit log for destabilization-at-max events.
+    destab_rows = (
+        db.query(models.AuditLog)
+        .filter(
+            models.AuditLog.action == "proposal.destabilization_at_max_extensions",
+            models.AuditLog.target_id == proposal.id,
+        )
+        .order_by(models.AuditLog.timestamp.asc())
+        .all()
+    )
+    destabilization_events: list[TrajectoryDestabilizationOut] = []
+    for row in destab_rows:
+        details = row.details or {}
+        destabilization_events.append(TrajectoryDestabilizationOut(
+            fired_at=row.timestamp,
+            reason=details.get("reason") if isinstance(details, dict) else None,
+        ))
+
+    # close_trigger from the most-recent proposal.status_changed audit row.
+    close_row = (
+        db.query(models.AuditLog)
+        .filter(
+            models.AuditLog.action == "proposal.status_changed",
+            models.AuditLog.target_id == proposal.id,
+        )
+        .order_by(models.AuditLog.timestamp.desc())
+        .first()
+    )
+    close_trigger: Optional[str] = None
+    if close_row is not None and isinstance(close_row.details, dict):
+        trig = close_row.details.get("trigger")
+        if isinstance(trig, str) and trig:
+            close_trigger = trig
+
+    return TrajectorySRRAnnotations(
+        stable_window_starts_at=stable_window_starts_at,
+        stable_window_fraction=config.stable_window_fraction,
+        extensions=extensions,
+        destabilization_events=destabilization_events,
+        close_trigger=close_trigger,
+    )
+
+
+@router.get("/{proposal_id}/trajectory", response_model=TrajectoryResponse)
+def get_trajectory(
+    proposal_id: str,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 22 D3 — support-trajectory data for the chart panel.
+
+    Returns chronologically-ordered VoteSnapshot rows shaped for the chart,
+    with SRR annotation overlay metadata when the proposal has Stable Result
+    Required active. Org-scoped (D4) — only members of the proposal's org
+    can fetch.
+
+    Performance: downsampled to ≤500 points (D7) for long voting windows.
+    Caching: Cache-Control max-age varies by status — closed proposals are
+    immutable so cache aggressively; voting proposals get a short max-age
+    (the trajectory monotonically extends as the worker writes more rows).
+    """
+    proposal = _proposal_or_404(proposal_id, db)
+
+    # D4 — org-scoped access. Platform admins bypass; org members of the
+    # proposal's org pass; everyone else gets 403.
+    if not current_user.is_admin:
+        if proposal.org_id is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Trajectory requires an org-scoped proposal.",
+            )
+        membership = (
+            db.query(models.OrgMembership)
+            .filter(
+                models.OrgMembership.org_id == proposal.org_id,
+                models.OrgMembership.user_id == current_user.id,
+                models.OrgMembership.status == "active",
+            )
+            .first()
+        )
+        if membership is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Not a member of this proposal's organization.",
+            )
+
+    # Snapshot rows, chronological.
+    rows = (
+        db.query(models.VoteSnapshot)
+        .filter(models.VoteSnapshot.proposal_id == proposal.id)
+        .order_by(models.VoteSnapshot.simulated_time.asc())
+        .all()
+    )
+
+    # Downsample if needed.
+    rows = _downsample_snapshots(rows, proposal)
+
+    snapshots_out = [
+        _build_snapshot_out(r, voting_method=proposal.voting_method)
+        for r in rows
+    ]
+
+    srr_annotations = _build_srr_annotations(db, proposal)
+
+    # Cache headers: closed proposals are immutable; voting proposals get
+    # a short max-age since new snapshots accumulate every ~5min.
+    if proposal.status in ("passed", "failed", "withdrawn", "unresolved"):
+        response.headers["Cache-Control"] = "max-age=86400"
+    else:
+        response.headers["Cache-Control"] = "max-age=30"
+
+    return TrajectoryResponse(
+        proposal_id=proposal.id,
+        voting_method=proposal.voting_method,
+        voting_start=proposal.voting_start,
+        voting_end=proposal.voting_end,
+        snapshots=snapshots_out,
+        srr_annotations=srr_annotations,
     )

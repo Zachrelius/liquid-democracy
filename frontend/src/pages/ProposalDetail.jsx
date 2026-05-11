@@ -20,6 +20,7 @@ import ErrorMessage from '../components/ErrorMessage';
 import RankedBallot from '../components/RankedBallot';
 import RCVResultsPanel from '../components/RCVResultsPanel';
 import RCVSankeyChart from '../components/RCVSankeyChart';
+import SupportTrajectoryChart from '../components/SupportTrajectoryChart';
 // Phase 17 F2 — auto-resolved tie banner shared across approval + RCV panels.
 import TieResolutionBanner from '../components/TieResolutionBanner';
 import StableResultPanel from '../components/StableResultPanel';
@@ -668,6 +669,53 @@ function VoteGraphLegend({ proposal, voteGraph }) {
   );
 }
 
+/**
+ * Phase 22 F3 — collapsed-by-default trajectory chart toggle section.
+ *
+ * Sits below the results-panel (binary/approval/RCV) on the proposal
+ * detail page. Click expands a <SupportTrajectoryChart>; collapsing
+ * unmounts the chart (per D9 + spec line 388 — memory drops, re-expand
+ * re-fetches). State is per-session and per-render-site; not persisted.
+ *
+ * Org-config gate (D14): v1 ships unconditionally. The future gate is
+ * `currentOrg?.settings?.proposal_chart_enabled ?? true`, but no such
+ * settings key or backend column exists yet; wiring it up is deferred
+ * to a follow-up pass. Render unconditionally for now.
+ *
+ * optionLabels: passed through to the chart for multi-option legends
+ * and tooltips. Parent sources it from tally.option_labels.
+ */
+function TrajectoryToggleSection({ proposalId, proposal, optionLabels }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="mt-4 pt-3 border-t border-gray-100">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--brand-accent)] hover:underline"
+        aria-expanded={expanded}
+        aria-controls={`trajectory-chart-${proposalId}`}
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          <path d="M2 11 L5 7 L8 9 L12 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M2 12 L12 12" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        </svg>
+        {expanded ? 'Hide support trajectory' : 'Show support trajectory'}
+      </button>
+      {expanded && (
+        <div id={`trajectory-chart-${proposalId}`} className="mt-3">
+          <SupportTrajectoryChart
+            proposalId={proposalId}
+            expanded={true}
+            optionLabels={optionLabels}
+            proposal={proposal}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ProposalDetail() {
   const { id } = useParams();
   const { user } = useAuth();
@@ -1093,6 +1141,13 @@ export default function ProposalDetail() {
               ) : (
                 <ResultsPanel tally={tally} proposal={proposal} />
               )}
+              {/* Phase 22 F3 — collapsed-by-default trajectory chart
+                  below the tally. Org-config gate (D14) deferred. */}
+              <TrajectoryToggleSection
+                proposalId={proposal.id}
+                proposal={proposal}
+                optionLabels={tally.option_labels || {}}
+              />
             </div>
           )}
 
@@ -1254,6 +1309,13 @@ export default function ProposalDetail() {
               ) : (
                 <ResultsPanel tally={tally} proposal={proposal} />
               )}
+              {/* Phase 22 F3 — collapsed-by-default trajectory chart
+                  below the tally. Org-config gate (D14) deferred. */}
+              <TrajectoryToggleSection
+                proposalId={proposal.id}
+                proposal={proposal}
+                optionLabels={tally.option_labels || {}}
+              />
             </div>
           )}
 

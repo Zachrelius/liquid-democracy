@@ -161,6 +161,20 @@ export default function StableResultHelp() {
         </dl>
       </section>
 
+      {/* Phase 22 — Support trajectory chart */}
+      <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Support trajectory chart (Phase 22)</h2>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          Below the results panel on every proposal, a <strong>Show support trajectory</strong> button expands a chart of how support evolved over time. Snapshots are captured every 5 minutes during voting.
+        </p>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          For binary proposals, the chart shows support percentage over time with a dashed reference line at the pass threshold. For approval / ranked-choice / STV proposals, each option gets its own line (top 5 by final tally; toggle to show all), plus a horizontal winner-over-time bar below the lines showing which option(s) were ahead at each moment.
+        </p>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          On <strong>Stable Result Required</strong> proposals, the chart adds annotation overlays that make the mechanic observable: a dashed marker where the stable window opens, solid markers at each extension and destabilization, and a colored dot at close showing the trigger (stable result achieved / voting end / force-close on budget exhaustion). The winner-over-time bar&apos;s color transitions line up with the destabilization markers — letting you see exactly when and why an extension fired.
+        </p>
+      </section>
+
       {/* Audit / what gets logged */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
         <h2 className="text-lg font-semibold text-[var(--brand-primary)]">What gets logged</h2>
