@@ -283,7 +283,7 @@ function WinnerOverTimeBar({ snapshots, optionsById, optionLabels, height, leftM
 
 // SRR overlay reference lines + close marker. Shared across binary
 // and multi-option charts.
-function srrReferenceElements(srr, yTop) {
+function srrReferenceElements(srr) {
   if (!srr) return [];
   const elements = [];
   if (srr.stable_window_starts_at) {
@@ -422,7 +422,7 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
   const isMultiOption = data?.voting_method === 'approval' || data?.voting_method === 'ranked_choice';
   const isBinary = data?.voting_method === 'binary';
 
-  const snapshots = data?.snapshots || [];
+  const snapshots = useMemo(() => data?.snapshots || [], [data]);
   const span = useMemo(() => {
     if (snapshots.length < 2) return 0;
     const a = new Date(snapshots[0].captured_at).getTime();
@@ -547,7 +547,7 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
 
   // Build SRR reference elements (vertical lines). The close marker
   // we render inline via ReferenceDot below since we need y coords.
-  const srrLines = srr ? srrReferenceElements(srr, null) : [];
+  const srrLines = srr ? srrReferenceElements(srr) : [];
 
   // ---- Binary chart render ----
   const renderBinaryChart = (height) => (
