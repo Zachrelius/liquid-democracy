@@ -156,7 +156,7 @@ def _last_destabilization_at(
     """Most recent timestamp at which this proposal destabilized (granted an
     extension OR logged a force-close-on-exhausted-budget)."""
     row = (
-        db.query(models.AuditLog.created_at)
+        db.query(models.AuditLog.timestamp)
         .filter(
             models.AuditLog.target_id == proposal_id,
             models.AuditLog.action.in_((
@@ -165,7 +165,7 @@ def _last_destabilization_at(
             )),
             models.AuditLog.actor_id.is_(None),
         )
-        .order_by(models.AuditLog.created_at.desc())
+        .order_by(models.AuditLog.timestamp.desc())
         .first()
     )
     return row[0] if row else None

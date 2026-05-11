@@ -1,6 +1,6 @@
 """
-Phase 8 — API tests for sustained-majority configuration, per-proposal
-override, escalation resolution, and audit logging.
+Phase 8 / Phase 20 — API tests for Stable Result Required configuration,
+per-proposal override, and the /results status payload.
 
 Mirrors the org/proposal lifecycle test fixtures so we exercise the actual
 FastAPI route handlers (not just the helpers).
@@ -98,41 +98,41 @@ def _auth(user: models.User) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Org-settings PATCH — sustained-majority keys + audit event
+# Org-settings PATCH — Stable Result Required keys + audit event
 # ---------------------------------------------------------------------------
 
 class TestOrgSettingsConfig:
-    def test_patch_sustained_majority_keys_persists(self, db, client):
+    def test_patch_stable_result_keys_persists(self, db, client):
         admin = _user(db, "admin")
         org = _org(db)
         _membership(db, org, admin, role="admin")
         db.commit()
 
         new_settings = {
-            "sustained_majority_enabled_default": True,
-            "sustained_majority_threshold": 0.6,
-            "sustained_majority_floor": 0.40,
-            "sustained_majority_failure_mode": "escalate",
-            "sustained_majority_per_proposal_override": False,
+            "stable_result_enabled_default": True,
+            "stable_window_fraction": 0.10,
+            "max_extension_fraction": 0.50,
+            "stable_result_per_proposal_override": False,
         }
         resp = client.patch(
             f"/api/orgs/{org.slug}",
             json={"settings": new_settings},
             headers=_auth(admin),
         )
-        assert resp.status_code == 200
+        assert resp.status_code == 200, resp.text
         body = resp.json()
         for k, v in new_settings.items():
             assert body["settings"][k] == v
 
-        # Audit event fires once with all five changes captured.
+        # Audit event fires once with all four changes captured.
         events = db.query(models.AuditLog).filter(
-            models.AuditLog.action == "org.sustained_majority_config_changed",
+            models.AuditLog.action == "org.stable_result_config_changed",
         ).all()
         assert len(events) == 1
         changes = events[0].details["changes"]
         assert set(changes.keys()) == set(new_settings.keys())
-        assert changes["sustained_majority_failure_mode"]["new"] == "escalate"
+        assert changes["stable_window_fraction"]["new"] == 0.10
+        assert changes["max_extension_fraction"]["new"] == 0.50
 
     def test_no_audit_event_when_only_unrelated_settings_changed(self, db, client):
         admin = _user(db, "admin")
@@ -147,7 +147,7 @@ class TestOrgSettingsConfig:
         )
         assert resp.status_code == 200
         events = db.query(models.AuditLog).filter(
-            models.AuditLog.action == "org.sustained_majority_config_changed",
+            models.AuditLog.action == "org.stable_result_config_changed",
         ).count()
         assert events == 0
 
@@ -156,25 +156,25 @@ class TestOrgSettingsConfig:
         admin = _user(db, "admin")
         org = _org(db, settings={
             "default_voting_days": 7,
-            "sustained_majority_threshold": 0.55,
+            "stable_window_fraction": 0.30,
         })
         _membership(db, org, admin, role="admin")
         db.commit()
 
         resp = client.patch(
             f"/api/orgs/{org.slug}",
-            json={"settings": {"sustained_majority_threshold": 0.55}},
+            json={"settings": {"stable_window_fraction": 0.30}},
             headers=_auth(admin),
         )
         assert resp.status_code == 200
         count = db.query(models.AuditLog).filter(
-            models.AuditLog.action == "org.sustained_majority_config_changed",
+            models.AuditLog.action == "org.stable_result_config_changed",
         ).count()
         assert count == 0
 
     def test_settings_merge_persists_via_new_dict_pattern(self, db, client):
-        """Phase 4 Cleanup Fix 1 pattern test — sustained-majority keys merge
-        cleanly with existing settings rather than replacing them."""
+        """Verify the org-update merge pattern: the new key lands alongside
+        existing keys without clobbering them."""
         admin = _user(db, "admin")
         org = _org(db, settings={
             "default_voting_days": 7,
@@ -185,7 +185,7 @@ class TestOrgSettingsConfig:
 
         client.patch(
             f"/api/orgs/{org.slug}",
-            json={"settings": {"sustained_majority_floor": 0.40}},
+            json={"settings": {"max_extension_fraction": 0.50}},
             headers=_auth(admin),
         )
 
@@ -193,10 +193,28 @@ class TestOrgSettingsConfig:
         fresh = db.query(models.Organization).filter(
             models.Organization.slug == "test-org",
         ).first()
-        # Original keys preserved + new key added — proves we used new-dict.
         assert fresh.settings["default_voting_days"] == 7
         assert fresh.settings["allow_public_delegates"] is True
-        assert fresh.settings["sustained_majority_floor"] == 0.40
+        assert fresh.settings["max_extension_fraction"] == 0.50
+
+    def test_old_sustained_majority_keys_in_settings_silently_ignored(self, db, client):
+        """D13: legacy keys present in the settings JSON are silently ignored
+        by get_stable_result_config — no error, no value migration."""
+        admin = _user(db, "admin")
+        org = _org(db, settings={
+            "sustained_majority_floor": 0.40,
+            "sustained_majority_failure_mode": "extend",
+            "sustained_majority_threshold": 0.6,
+        })
+        _membership(db, org, admin, role="admin")
+        db.commit()
+
+        # Org config helper should not raise on these keys.
+        from sustained_majority import get_stable_result_config
+        config = get_stable_result_config(org)
+        # Defaults applied (legacy keys ignored).
+        assert config.stable_window_fraction == 0.25
+        assert config.max_extension_fraction == 0.25
 
 
 # ---------------------------------------------------------------------------
@@ -207,8 +225,8 @@ class TestPerProposalOverride:
     def test_accepts_override_when_org_allows(self, db, client):
         admin = _user(db, "admin")
         org = _org(db, settings={
-            "sustained_majority_per_proposal_override": True,
-            "sustained_majority_enabled_default": False,
+            "stable_result_per_proposal_override": True,
+            "stable_result_enabled_default": False,
         })
         _membership(db, org, admin, role="admin")
         topic = _topic(db, org)
@@ -221,24 +239,24 @@ class TestPerProposalOverride:
                 "body": "test",
                 "topics": [topic.id],
                 "voting_method": "binary",
-                "sustained_majority_enabled": True,
+                "stable_result_required": True,
             },
             headers=_auth(admin),
         )
         assert resp.status_code == 201, resp.text
-        assert resp.json()["sustained_majority_enabled"] is True
+        assert resp.json()["stable_result_required"] is True
 
-        # Audit: proposal.sustained_majority_enabled written.
+        # Audit: proposal.stable_result_required_enabled written.
         evt_count = db.query(models.AuditLog).filter(
-            models.AuditLog.action == "proposal.sustained_majority_enabled",
+            models.AuditLog.action == "proposal.stable_result_required_enabled",
         ).count()
         assert evt_count == 1
 
     def test_rejects_override_when_org_disallows(self, db, client):
         admin = _user(db, "admin")
         org = _org(db, settings={
-            "sustained_majority_per_proposal_override": False,
-            "sustained_majority_enabled_default": False,
+            "stable_result_per_proposal_override": False,
+            "stable_result_enabled_default": False,
         })
         _membership(db, org, admin, role="admin")
         topic = _topic(db, org)
@@ -250,18 +268,18 @@ class TestPerProposalOverride:
                 "title": "Disallowed override",
                 "topics": [topic.id],
                 "voting_method": "binary",
-                "sustained_majority_enabled": True,
+                "stable_result_required": True,
             },
             headers=_auth(admin),
         )
         assert resp.status_code == 403
-        assert "per-proposal" in resp.json()["detail"]
+        assert "per-proposal" in resp.json()["detail"].lower()
 
     def test_null_override_inherits_org_default_on_create(self, db, client):
         admin = _user(db, "admin")
         org = _org(db, settings={
-            "sustained_majority_enabled_default": True,
-            "sustained_majority_per_proposal_override": True,
+            "stable_result_enabled_default": True,
+            "stable_result_per_proposal_override": True,
         })
         _membership(db, org, admin, role="admin")
         topic = _topic(db, org)
@@ -279,158 +297,22 @@ class TestPerProposalOverride:
         assert resp.status_code == 201
         # null on the column means "inherit". The actual active state is
         # resolved at evaluation time.
-        assert resp.json()["sustained_majority_enabled"] is None
+        assert resp.json()["stable_result_required"] is None
 
 
 # ---------------------------------------------------------------------------
-# Escalation resolution endpoint
+# /results includes the StableResultStatus block
 # ---------------------------------------------------------------------------
 
-class TestEscalationResolution:
-    def _make_unresolved_proposal(self, db: Session) -> tuple:
-        admin = _user(db, "admin")
-        author = _user(db, "author")
-        org = _org(db, settings={"sustained_majority_failure_mode": "escalate"})
-        _membership(db, org, admin, role="admin")
-        _membership(db, org, author, role="member")
-        topic = _topic(db, org)
-        db.flush()
-
-        proposal = models.Proposal(
-            title="Stuck proposal",
-            body="",
-            author_id=author.id,
-            org_id=org.id,
-            voting_method="binary",
-            status="unresolved",
-            sustained_majority_enabled=True,
-        )
-        db.add(proposal)
-        db.flush()
-        db.commit()
-        return admin, author, org, proposal
-
-    def test_resolve_extend_returns_to_voting(self, db, client):
-        admin, _, org, proposal = self._make_unresolved_proposal(db)
-        resp = client.post(
-            f"/api/orgs/{org.slug}/proposals/{proposal.id}/resolve_escalation",
-            json={"action": "extend", "reason": "Need more time"},
-            headers=_auth(admin),
-        )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["status"] == "voting"
-
-        # Two audit events: window_extended + escalation_resolved
-        actions = {
-            r.action
-            for r in db.query(models.AuditLog).filter(
-                models.AuditLog.target_id == proposal.id,
-            ).all()
-        }
-        assert "proposal.window_extended" in actions
-        assert "proposal.escalation_resolved" in actions
-
-    def test_resolve_fail(self, db, client):
-        admin, _, org, proposal = self._make_unresolved_proposal(db)
-        resp = client.post(
-            f"/api/orgs/{org.slug}/proposals/{proposal.id}/resolve_escalation",
-            json={"action": "fail"},
-            headers=_auth(admin),
-        )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "failed"
-
-    def test_resolve_pass_override_audit_includes_reason(self, db, client):
-        admin, _, org, proposal = self._make_unresolved_proposal(db)
-        resp = client.post(
-            f"/api/orgs/{org.slug}/proposals/{proposal.id}/resolve_escalation",
-            json={"action": "pass", "reason": "Emergency override per board memo"},
-            headers=_auth(admin),
-        )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "passed"
-
-        evt = db.query(models.AuditLog).filter(
-            models.AuditLog.action == "proposal.escalation_resolved",
-            models.AuditLog.target_id == proposal.id,
-        ).first()
-        assert evt is not None
-        assert evt.details["action"] == "pass"
-        assert "Emergency override" in evt.details["reason"]
-
-    def test_resolve_back_to_deliberation(self, db, client):
-        admin, _, org, proposal = self._make_unresolved_proposal(db)
-        resp = client.post(
-            f"/api/orgs/{org.slug}/proposals/{proposal.id}/resolve_escalation",
-            json={"action": "back_to_deliberation"},
-            headers=_auth(admin),
-        )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "deliberation"
-
-    def test_rejects_when_not_unresolved(self, db, client):
-        admin = _user(db, "admin")
-        org = _org(db)
-        _membership(db, org, admin, role="admin")
-        topic = _topic(db, org)
-        proposal = models.Proposal(
-            title="Active",
-            body="",
-            author_id=admin.id,
-            org_id=org.id,
-            voting_method="binary",
-            status="voting",
-        )
-        db.add(proposal)
-        db.flush()
-        db.commit()
-
-        resp = client.post(
-            f"/api/orgs/{org.slug}/proposals/{proposal.id}/resolve_escalation",
-            json={"action": "fail"},
-            headers=_auth(admin),
-        )
-        assert resp.status_code == 400
-        assert "unresolved" in resp.json()["detail"]
-
-    def test_member_cannot_resolve(self, db, client):
-        admin = _user(db, "admin")
-        member = _user(db, "member")
-        org = _org(db)
-        _membership(db, org, admin, role="admin")
-        _membership(db, org, member, role="member")
-        proposal = models.Proposal(
-            title="Stuck",
-            body="",
-            author_id=admin.id,
-            org_id=org.id,
-            voting_method="binary",
-            status="unresolved",
-        )
-        db.add(proposal)
-        db.flush()
-        db.commit()
-
-        resp = client.post(
-            f"/api/orgs/{org.slug}/proposals/{proposal.id}/resolve_escalation",
-            json={"action": "fail"},
-            headers=_auth(member),
-        )
-        assert resp.status_code == 403
-
-
-# ---------------------------------------------------------------------------
-# /results includes sustained_majority status
-# ---------------------------------------------------------------------------
-
-class TestResultsSustainedMajorityBlock:
+class TestResultsStableResultBlock:
     def test_inactive_when_neither_org_default_nor_override(self, db, client):
         admin = _user(db, "admin")
-        org = _org(db)  # default settings: SM disabled
+        org = _org(db)  # default settings: feature disabled
         _membership(db, org, admin, role="admin")
         proposal = models.Proposal(
             title="Plain", body="", author_id=admin.id, org_id=org.id,
             voting_method="binary", status="voting",
+            pass_threshold=0.5, quorum_threshold=0.4,
         )
         db.add(proposal)
         db.flush()
@@ -440,18 +322,26 @@ class TestResultsSustainedMajorityBlock:
         assert resp.status_code == 200
         sm = resp.json()["sustained_majority"]
         assert sm["active"] is False
+        # Even when inactive the org's config snapshot is exposed at defaults.
+        assert sm["stable_window_fraction"] == 0.25
+        assert sm["max_extension_fraction"] == 0.25
 
-    def test_active_with_floor_and_threshold_in_payload(self, db, client):
+    def test_active_emits_new_shape(self, db, client):
+        from datetime import datetime, timezone, timedelta
         admin = _user(db, "admin")
         org = _org(db, settings={
-            "sustained_majority_enabled_default": True,
-            "sustained_majority_threshold": 0.6,
-            "sustained_majority_floor": 0.40,
+            "stable_result_enabled_default": True,
+            "stable_window_fraction": 0.20,
+            "max_extension_fraction": 0.50,
         })
         _membership(db, org, admin, role="admin")
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         proposal = models.Proposal(
             title="Active", body="", author_id=admin.id, org_id=org.id,
             voting_method="binary", status="voting",
+            pass_threshold=0.5, quorum_threshold=0.4,
+            voting_start=now - timedelta(hours=2),
+            voting_end=now + timedelta(hours=4),
         )
         db.add(proposal)
         db.flush()
@@ -461,5 +351,22 @@ class TestResultsSustainedMajorityBlock:
         assert resp.status_code == 200
         sm = resp.json()["sustained_majority"]
         assert sm["active"] is True
-        assert sm["threshold"] == 0.6
-        assert sm["floor"] == 0.40
+        assert sm["stable_window_fraction"] == 0.20
+        assert sm["max_extension_fraction"] == 0.50
+        # Budget = original_duration_seconds * 0.50; for a fresh proposal
+        # with no extensions, used = 0, remaining = total.
+        assert sm["extension_budget_used_seconds"] == 0
+        assert sm["extension_budget_total_seconds"] > 0
+        assert sm["extension_budget_remaining_seconds"] == \
+            sm["extension_budget_total_seconds"]
+        assert sm["in_extension"] is False
+        assert sm["extension_count"] == 0
+        # No legacy fields surfaced.
+        assert "floor_breached" not in sm
+        assert "approaching_floor" not in sm
+        assert "distance_to_floor" not in sm
+        assert "failure_mode" not in sm
+        # New fields surfaced.
+        assert "stable_window_starts_at" in sm
+        assert "in_stable_window" in sm
+        assert "in_extension" in sm
