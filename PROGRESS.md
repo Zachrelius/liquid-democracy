@@ -2823,3 +2823,170 @@ Z asked for evaluation of the new format. Working through Phase 19 in the merged
 ### Pass-summary
 
 **Phase 19 shipped to production after a revert + hotfix cycle.** The full public delegate identity surface is live: per-org profiles with three-state per-topic visibility, per-vote rationale, drafting + private_delegators + public visibility ladder, approval workflow, browse + public-page + management-page + approver-dashboard surfaces, all integrated with Phase 18's org-scoped delegation foundation. Backend test count 1108 → 1174 (+66 net); frontend bundle 362.24 → 374.39 kB gzipped (+12.15 kB). The original deploy crashed prod for ~20 min on a missing PG `CREATE TYPE` that local gates (including the actual-upgrade gate Phase 18.5 promoted specifically to catch this class of bug) didn't catch — surfaced as audit Item 54 (Tier 1). Eight new audit items logged total (Items 48-55), one resolved inline (Item 48). All D1-D15 conceptual decisions held with two reconciliation notes (D15 via DelegationIntent proxy per Item 53; D12 via inline gap-fill per Item 48). The merged spec+dispatch format worked cleanly throughout the pass — recommend keeping it; the verification matrix table should add a "prod-snapshot Docker round-trip" row per the Item 54 lesson.
+
+---
+
+## Phase 20 — Stable Result Required (Sustained-Majority Redesign) (shipped 2026-05-11, master `cb21739`)
+
+Scope-narrowing redesign of the Phase 8 sustained-majority feature. Removes the binary floor mechanism entirely (closing the early-window kill-the-proposal exploit it created) and unifies binary + multi-option result-stability under a single mechanic with sliding-window check during extensions. **Significant code removal:** floor mechanic, `evaluate_binary`, `evaluate_multi_option`, `should_trigger_failure`, `support_ever_established`, `is_above_floor`, `is_approaching_floor`, `FLOOR_APPROACH_DELTA`, `STABLE_RESULT_FRACTION`, `extension_window_for`, `ALLOWED_FAILURE_MODES`, `failure_mode` + `floor` + `threshold` config fields, `_maybe_emit_floor_approached`. Production code net negative ~340 lines.
+
+**Cluster B — Backend (commits `5827efe`, `02190ff`, `888e7a5`, `fe7a239`, `1af211d`):**
+
+- **B1: Schema migration** `9a8920b1f3c7_phase_20_stable_result_required_rename.py` (down_revision `47eb5d38eb58`, Phase 19's head). Renames `Proposal.sustained_majority_enabled` → `Proposal.stable_result_required` via `op.alter_column(... new_column_name=...)`. Dialect-aware: SQLite uses `batch_alter_table`, PG uses native `RENAME COLUMN`. **Idempotent guard added in hotfix `1af211d`** — pre-inspects `proposals` columns; if `stable_result_required` already exists, returns without attempting the rename (no-op for the `create_all`-bootstrapped case); if `sustained_majority_enabled` exists, runs the rename; if neither exists, raises a clear error. Mirror check in `downgrade()`.
+
+- **B2: Pure-module rewrite** `backend/sustained_majority.py` (600 → 292 lines):
+  - **Removed entirely:** `is_above_floor`, `is_approaching_floor`, `support_ever_established`, `evaluate_binary`, `evaluate_multi_option`, `should_trigger_failure`, `FLOOR_APPROACH_DELTA`, `STABLE_RESULT_FRACTION` constant, `extension_window_for`, `floor` + `failure_mode` config fields, `ALLOWED_FAILURE_MODES`, `FailureDecision`.
+  - **Added:** `StableResultConfig` dataclass (new shape with `stable_window_fraction` + `max_extension_fraction`), `binary_snapshot_is_stable(snapshot, pass_threshold) -> bool` (zero-votes returns True per D3), `winner_set_overlaps(prev, curr) -> bool` (D4 subset-or-superset semantics — see spec/reality reconciliation note below), `DestabilizationDecision` dataclass, `evaluate_original_window_stability(...)` (the original-window check), `evaluate_extension_stability(...)` (the **D8 sliding-window check** — at every tick during an extension, look back at the most recent `stable_window_duration`; if all snapshots in lookback are stable, return True so the worker closes the proposal immediately).
+  - **Renamed:** `get_stable_result_config`, `is_proposal_stable_result_active`. `in_stable_result_window` keeps its name; `fraction` parameter is now required.
+
+- **B3: Worker + service rewrite** (`backend/sustained_majority_worker.py` + `backend/sustained_majority_service.py`):
+  - Worker branches on `extension_count`: original-window branch calls `evaluate_original_window_stability`; extension branch calls `evaluate_extension_stability` (sliding window). On stability achieved during extension: closes the proposal RIGHT NOW (voting_end = now; standard close logic fires; emits `proposal.closed` with `trigger: stable_result_achieved`).
+  - **D9 budget computation:** `extension_budget_total = original_voting_duration × max_extension_fraction`; `extension_budget_used = sum of all prior extension durations from audit log walk`. If `extension_budget_remaining >= stable_window_duration`, apply extension; otherwise log `proposal.destabilization_at_max_extensions` and force-close.
+  - `apply_failure_mode` → `apply_extension` (only the extension path remains; `fail` and `escalate` modes deleted).
+  - `build_status` rewritten to emit `StableResultStatus` shape per spec.
+  - `SUSTAINED_MAJORITY_KEYS` → `STABLE_RESULT_KEYS`; `diff_sustained_majority_settings` → `diff_stable_result_settings`.
+  - `notification_events.py`: added `proposal.extended_by_stability` event (Delegation category, in-app + email, audience = proposal author + recent voters).
+
+- **B4: Code-references audit** — `routes/proposals.py`, `routes/organizations.py`, `schemas.py`, `seed_data.py` all updated. Per spec line 376, **filename renames deferred** (`sustained_majority.py` etc. keep their legacy filenames; internal exports rename). Logged as audit Item 58.
+
+- **B5: Tests rewritten** (`test_sustained_majority.py` + `_worker.py` + `_api.py` — 76 tests pass). All 8 D4 worked examples covered. Sliding-window lifecycle tests, budget computation rounding tests, all included.
+
+- **Meta-test added (gate-fix commit `1af211d`):** `test_floor_approached_helper_removed_in_phase_20` in `test_notification_emissions.py` — uses `hasattr()` to assert the deleted functions stay deleted. Pattern matches Phase 17's `TestSchemaCleanup`. Protects against accidental re-introduction via revert or merge.
+
+**Backend test count:** 1174 (Phase 19) → 1160 (Phase 20) = **-14 net** (scope-narrowing: more legacy floor tests deleted than new sliding-window tests added). 3 skipped (pre-existing Item 53 column gap from Phase 19; not Phase 20-introduced).
+
+**Cluster F — Frontend (commits `9999dfc`, `f40e72f`, `8580592`, `3aaeb50`):**
+
+- **F1: OrgSettings simplification** — replaced the sustained-majority section with the new Stable Result Required controls (toggle + per-proposal-override + `stable_window_fraction` slider 5%-50% + `max_extension_fraction` slider 0-100%). Derived display below the max_extension slider: "With current settings, your proposal can extend up to N times before force-close" (computed as `floor(max_extension_fraction / stable_window_fraction)`). Old controls (floor, failure_mode dropdown, threshold) removed.
+- **F2: ProposalResults panel** — created `StableResultPanel.jsx` (deleted `SustainedMajorityPanel.jsx`). Renders the new `StableResultStatus` shape: badge when active, stable-window timestamp + duration display, in-stable-window banner with countdown, in-extension banner with sliding-window explanation, extension budget bar (used/total visual), past-destabilization log from `last_destabilization_at`.
+- **F3: Help page** — renamed `SustainedMajorityHelp.jsx` → `StableResultHelp.jsx` + content rewritten per spec. New route `/help/stable-result`; old route `/help/sustained-majority` aliased to the same component for backwards compat.
+- **Per-proposal toggle in proposal form** — renamed bound field from `sustained_majority_enabled` to `stable_result_required`.
+- **Notification routing** — `formatNotification.js` + `NotificationsPage.jsx` updated for the new event. Help-page event count 13 → 14.
+- **Bundle delta:** 374.39 → 370.46 kB gzipped (**-3.93 kB net negative** — recharts ReferenceArea/ReferenceLine usage from the deleted SustainedMajorityPanel was tree-shaken).
+
+**Cluster D + G — Documentation (commit `f55e144`):**
+
+- **SECURITY_REVIEW.md** — Phase 20 update note covering the unified mechanic, the removed binary floor exploit, the sliding-window check during extensions, the budget framing (default 0.25 = exactly 1 extension; functionally equivalent to old `max_extensions=1`), the column rename, and the silent-ignore policy for old config keys.
+- **`docs/tech_debt_audit_2026-05.md`:**
+  - **Phase 12.8 Item 5 (sustained-majority `floor_breached` read-path inconsistency) marked RESOLVED via deletion** — the floor mechanism is gone, so the inconsistency is gone.
+  - **Phase 20 closeout edit-history entry** with three new audit items:
+    - **Item 56 (Tier 3):** Snapshot retention policy. Per spec D17, snapshots stay in `VoteSnapshot` table after proposal close. ~50-100 MB/year per 100 proposals/year. Flagged for future audit if scale grows.
+    - **Item 57 (Tier 3):** One-pass backwards-compat aliases on `StableResultStatus` JSON key + `SustainedMajorityStatus` Python alias + `proposal.sustained_majority` results-payload key. Rename in a future cleanup pass.
+    - **Item 58 (Tier 3):** `sustained_majority_*.py` filename rename deferred (internal exports renamed; files kept legacy names per spec).
+- **`future_improvements_roadmap.md`** — item 4 ("Sustained-Majority Fix") converted to ✅ Complete entry covering the redesign-not-fix outcome.
+
+### Phase 20 pre-merge gate results
+
+- **Backend tests: 1174 → 1160 (-14 net) + 3 skipped** (pre-existing Item 53 gap from Phase 19, not Phase 20-introduced). All sustained-majority test families pass cleanly.
+- **PG smoke `--mode upgrade --prior-revision 47eb5d38eb58`: PASS** (post-hotfix; original failed because `create_all` bootstrap pre-creates today's schema with the new column name, so the rename source column wasn't present).
+- **PG smoke `--mode actual-upgrade --prior-revision 47eb5d38eb58`: PASS** (post-hotfix). Same Item 54 hole as Phase 19, but now the migration's idempotent guard handles the bootstrap-via-create_all case cleanly.
+- **Prod-snapshot Docker round-trip: PASS** — pulled prod data via railway CLI, restored to local PG18 via Docker, applied migration cleanly: pre-state `sustained_majority_enabled` column present, post-state `stable_result_required` column present, alembic at `9a8920b1f3c7`. **This was the load-bearing migration verification per spec** (per Item 54 lesson from Phase 19).
+- **W-START-CHECK + bash start.sh: PASS.** Local `bash start.sh` ran alembic upgrade cleanly through Phase 20, then started uvicorn 1-worker; "Digest scheduler launched." line present; "Application startup complete." Worker module-load-path change held (the B3 rewrite didn't break startup).
+- **W-OBSERVABILITY-CHECK: PASS.** `railway logs --service backend` streamed live prod requests pre-push.
+- **Frontend build: clean.** Bundle 370.46 kB gzipped (-3.93 kB from Phase 19's 374.39).
+- **File-count: 34 files (+3085/-2781)**, production code net negative as expected for a scope-narrowing pass.
+
+### Mid-pass incident: 26 migration cycle tests failed
+
+After backend agent's initial commits, the full pytest suite reported **26 failures**: 25 prior-phase migration cycle tests (Phase 12, 12.5, 12 Stage 2, 13.3, 14, 15) + 1 notification test (`test_floor_approached_short_circuited_post_phase_13_3`).
+
+**Root cause analysis:**
+- Original migration: `op.alter_column('proposals', 'sustained_majority_enabled', new_column_name='stable_result_required', ...)`.
+- SQLite migration cycle tests bootstrap via `Base.metadata.create_all` (today's full schema → `stable_result_required` already in place; `sustained_majority_enabled` NOT in place).
+- pg_smoke `--mode upgrade` AND `--mode actual-upgrade` both bootstrap the same way (`_create_all` → stamp prior → upgrade head).
+- Migration's `alter_column` then tried to rename FROM a column that doesn't exist → `KeyError` on SQLite batch_alter_table; `UndefinedColumn` on PG.
+- The notification test `test_floor_approached_short_circuited_post_phase_13_3` imported `_maybe_emit_floor_approached` + `SustainedMajorityConfig` — both deleted by Phase 20.
+
+**Same structural shape as Phase 19's incident (audit Item 54): the actual-upgrade gate's `_create_all` bootstrap pre-creates the schema-state the migration is trying to operate on. Phase 19 hit the inverse symptom (ADD COLUMN silently no-op'd because the column already existed); Phase 20 hit the loud symptom (RENAME COLUMN raised because the source column didn't exist).**
+
+**Fixes applied in single commit `1af211d`:**
+1. **Migration idempotent guard:** added pre-inspection of `proposals` columns. If `stable_result_required` already exists → return without attempting rename (no-op covers the create_all-bootstrapped case). If `sustained_majority_enabled` exists → run the rename (real prod path). If neither → raise. Mirror in downgrade.
+2. **Notification test rewritten as meta-test:** `test_floor_approached_helper_removed_in_phase_20` uses `hasattr()` to assert deleted functions stay deleted (pattern from Phase 17 `TestSchemaCleanup`). Protects against accidental re-introduction via revert or merge.
+
+Verified: 53/53 pass across all previously-failing test files; full pytest 1160/1160 + 3 skipped; PG smoke both modes PASS.
+
+**No prod incident this time.** The fix happened pre-merge. Compared to Phase 19 (which had to revert + hotfix + re-merge after ~20 min prod outage), Phase 20 caught the same class of bug in the gate run and patched it before push. The pre-merge gates worked, BECAUSE the migration's idempotent guard pattern was applied. **Item 54 is still Tier 1** — until the actual-upgrade gate's structural blind spot is fixed, every migration that touches existing tables needs either (a) the idempotent-guard pattern (this pass) OR (b) the prod-snapshot Docker round-trip verification (Phase 18's pattern, now in the spec's verification matrix per Phase 19's lesson).
+
+### Production deploy
+
+- Pushed master `cb21739` to origin → Railway auto-deploy.
+- `poll_deploy.py`: bundle flipped to `index-BJmDes5f.js`; backend non-502 throughout; smoke 5/5 PASS.
+- `https://www.liquiddemocracy.us/api/health` → 200 `{"status":"ok","version":"0.1.0"}`.
+- Prod migration applied cleanly: alembic head `9a8920b1f3c7`; `proposals.stable_result_required` column present (renamed from `sustained_majority_enabled`).
+
+### Phase 20 commit list (on master via merge `cb21739`)
+
+- `5827efe` Phase 20 B1: rename Proposal.sustained_majority_enabled → stable_result_required
+- `02190ff` Phase 20 B2: rewrite sustained_majority.py — unified mechanic + sliding-window helpers
+- `888e7a5` Phase 20 B3+B4: worker + service rewrite + proposal.extended_by_stability event + code-references audit
+- `fe7a239` Phase 20 B5: rewrite test_sustained_majority*.py around unified mechanic
+- `9999dfc` Phase 20 F1: OrgSettings + SubOrgSettings — stable-result controls
+- `f40e72f` Phase 20 F2: ProposalResults stable-result panel
+- `8580592` Phase 20 F3: Help page rename + rewrite
+- `3aaeb50` Phase 20: per-proposal toggle + notification + badge updates
+- `f55e144` Phase 20 docs: SECURITY_REVIEW + audit doc + roadmap
+- `1af211d` Phase 20 gate fixes: idempotent migration + meta-test for deleted helper
+- `cb21739` Merge phase-20/stable-result-required: Phase 20 (Stable Result Required)
+
+### Browser verification
+
+**Queue-added to chrome-deferred** (per spec verification matrix's "or chrome-deferred + queue-add"). The B1-B3 lifecycle scenarios require a fractional-duration proposal observed for ~30 min wall-clock (per spec line 48: "post-deploy spot-check on demo with a fractional-duration proposal that completes in ~30 min so lifecycle can be observed"). The backend's 76 sustained-majority tests + the migration's prod-snapshot verification cover the load-bearing assertions; the static UI verification (F1 + F2 + F3 page renders) was source-reviewed by the frontend agent during their pass. Live lifecycle verification — including the **D8 sliding-window early-close test** and the **D9 budget-exhausted force-close test** — is queued for a future Chrome session when a 30-min observation window is available.
+
+### Conceptual decisions (D1-D18) — all hold
+
+- **D1 unified mechanic:** Implemented via shared `evaluate_original_window_stability` + `evaluate_extension_stability` helpers. **Holds.**
+- **D2 stable_window_fraction ∈ [0.05, 0.50], default 0.25:** Implemented in `StableResultConfig`; UI slider enforces range. **Holds.**
+- **D3 binary strict per-snapshot:** `binary_snapshot_is_stable` returns True if `votes_cast == 0 OR support_fraction >= pass_threshold`. **Holds.**
+- **D4 multi-option intersection-based:** **Implemented as subset-or-superset semantics, NOT pure non-empty intersection.** See spec/reality reconciliation note below. All 8 worked examples covered in tests. **Holds with reconciliation note.**
+- **D5 stability check in stable window (original):** Implemented in `evaluate_original_window_stability`. **Holds.**
+- **D6 extension length = stable_window_duration:** Implemented in `apply_extension`. **Holds.**
+- **D7 seamless extension:** voting_end updated in place; no mid-stream closed event; new `proposal.extended_by_stability` notification fires. **Holds.**
+- **D8 sliding-window during extensions:** Implemented in `evaluate_extension_stability` — at every tick during extension, look back at the most recent `stable_window_duration`; if all snapshots stable, return True so the worker closes the proposal at this snapshot. **Holds.** (Live verification queued for Chrome session.)
+- **D9 max_extension_fraction budget framing:** Budget = `original_voting_duration × max_extension_fraction`; rounds down to whole `stable_window_duration` chunks (no partial extensions); when remaining < stable_window_duration → no extension granted → force-close at current voting_end with `proposal.destabilization_at_max_extensions` audit. **Holds.**
+- **D10 first in-window snapshot baseline:** For original window's first in-window snapshot, comparison uses the last out-of-window snapshot. For sliding-window check during extensions, `len(lookback) < 2 → return False`. **Holds.**
+- **D11 force-close on exhausted budget:** Implemented as described. **Holds.**
+- **D12 column rename via op.alter_column:** Implemented + idempotent guard added during gate run. **Holds.**
+- **D13 config schema simplification:** Old keys dropped from defaults; new keys added; helper silently ignores old keys in prod settings JSON. **Holds.**
+- **D14 floor-approached stays removed:** Not re-added. New `proposal.extended_by_stability` event added. **Holds.**
+- **D15 worker tick interval unchanged:** 300s default; `STABLE_RESULT_CHECK_INTERVAL_SECONDS` alias added in settings.py. **Holds.**
+- **D16 no platform-default flip:** Default stays off. **Holds.**
+- **D17 snapshot retention indefinite:** No cleanup added; logged as audit Item 56. **Holds.**
+- **D18 no demo bible coordination required:** Demo content agent can include Stable Result Required proposals at their discretion. **Holds.**
+
+### Spec/reality reconciliation (worth surfacing for spec-writer attention)
+
+**D4 worked-example contradiction.** The locked decision text says: *"Two adjacent snapshots are stable iff `frozenset(previous.winners) & frozenset(current.winners) != frozenset()`"* — a pure non-empty intersection rule. But the prose worked example `{A, B} → {B, C}` is labeled **UNSTABLE**: `{A, B} & {B, C} = {B}` is non-empty, so the formal rule would label this **STABLE**. The two interpretations diverge.
+
+**Backend agent's judgment call:** implemented **subset-or-superset** semantics (one set must contain or be contained by the other), which matches **all 8** worked examples:
+- `{A} → {A}` (A⊆A) STABLE ✓
+- `{A} → {A, B}` (A⊆{A,B}) STABLE ✓
+- `{A, B} → {A}` ({A}⊆{A,B}) STABLE ✓
+- `{A, B} → {B}` ({B}⊆{A,B}) STABLE ✓
+- `{A} → {B}` (neither) UNSTABLE ✓
+- `{A, B} → {B, C}` (neither {A,B}⊆{B,C} nor {B,C}⊆{A,B}) UNSTABLE ✓
+- `{A, B} → {C}` (neither) UNSTABLE ✓
+- `{A, B, C} → {C, D}` (neither) UNSTABLE ✓
+
+Documented in `winner_set_overlaps` docstring + tests cover all 8 cases. Logged for spec writer to reconcile in any future revision: the worked examples are the load-bearing intent; the prose definition should be updated to match (recommend: *"stable iff one winner set is a subset of (or equal to) the other"*).
+
+### Process notes
+
+1. **The migration idempotent-guard pattern is now the recommended approach for migrations that touch existing tables** — at least until audit Item 54 is fixed structurally. Phase 20's gate run caught the column-rename bug pre-merge BECAUSE the pattern was in place. Compare to Phase 19's outage (same class of bug, no idempotent guard, ~20 min prod downtime + revert + hotfix). **The two defenses are complementary**: idempotent guards in the migration code + prod-snapshot Docker round-trip in the verification matrix. Both Phase 19 (the hard way) and Phase 20 (the easier way) have now demonstrated this. CLAUDE.md or the spec template could add a "migration idempotency" note for future passes.
+
+2. **D4's worked-example-vs-formal-rule contradiction** is the third spec/reality reconciliation in recent passes (Phase 17 dead-artifact assumption, Phase 18+19 `delegation_intent_id` column assumption, Phase 20 D4 winner-stability rule). Pattern: planning agents write specs with code-state assumptions or formal rules that the worked examples partially contradict; backend agents catch and resolve with judgment. **Countermeasure for planning agents**: before locking a decision with both a formal rule AND worked examples, verify they agree by running the formal rule against every example. ~5 minutes for this kind of cross-check, prevents the spec writer needing to revisit.
+
+3. **Scope-narrowing passes are quietly the highest-value passes.** Phase 20 deleted ~340 lines of production code (floor mechanic + failure_mode + ALLOWED_FAILURE_MODES + extension_window_for + etc.). The platform is conceptually simpler post-Phase-20: ONE result-stability mechanic, ONE response to destabilization (extend or force-close), ONE configuration shape. The user-facing copy is also clearer ("Stable Result Required" reads better than "Sustained Majority"). Worth keeping an eye out for similar simplification opportunities elsewhere.
+
+4. **Merged spec+dispatch format continues to work well.** The verification matrix's inclusion of "Prod-snapshot Docker round-trip" (added to the template after Phase 19's incident) was directly load-bearing for Phase 20 — it told the lead at session start that the actual-upgrade gate has a known hole and to run the Docker round-trip. That guidance was correct: the round-trip was the verification that proved the migration works against real prod-shape data.
+
+### New tech debt logged
+
+1. **Item 56 (Tier 3):** Snapshot retention policy. Per spec D17.
+2. **Item 57 (Tier 3):** One-pass backwards-compat aliases (`StableResultStatus` JSON key + Python alias + `proposal.sustained_majority` results-payload key + `SUSTAINED_MAJORITY_CHECK_INTERVAL_SECONDS` env var). Rename in a future cleanup pass.
+3. **Item 58 (Tier 3):** `sustained_majority_*.py` filename rename deferred (internal exports renamed; files kept legacy names per spec line 376).
+4. **Browser verification of B1-B3 lifecycle + sliding-window early-close test** queued for future Chrome session.
+5. **Phase 12.8 Item 5 (sustained-majority `floor_breached` read-path inconsistency)** marked RESOLVED via deletion of the floor mechanism.
+
+### Pass-summary
+
+**Phase 20 shipped clean to production after one mid-pass gate failure caught and fixed pre-merge.** The original deploy was prevented by the gate run; the same Item 54 structural blind spot Phase 19 hit (with ~20 min prod outage) was caught this time before push because the spec's verification matrix already required the prod-snapshot Docker round-trip per Phase 19's lesson, AND because the lead added an idempotent guard to the migration after seeing the gate failure. Scope-narrowing: production code net negative ~340 lines; backend test count 1174 → 1160 (-14 net, expected); frontend bundle 374.39 → 370.46 kB gzipped (-3.93 kB). The platform's result-stability mechanic is now a single unified concept (`evaluate_original_window_stability` for original voting window; `evaluate_extension_stability` sliding-window check during extensions; `original_voting_duration × max_extension_fraction` budget cap; force-close on budget exhaustion). The Phase 8 binary-floor early-window kill-the-proposal exploit is closed. Three spec/reality reconciliations across Phases 17-20 suggest a process refinement opportunity for planning agents (cross-check formal rules against worked examples before locking decisions). The merged spec+dispatch format continued to work well, and the verification matrix's "Prod-snapshot Docker round-trip" row (added per Phase 19's lesson) was directly load-bearing this pass. Phase 4 of the migration-incident-response arc (Phase 13's incident → Phase 18's pattern → Phase 19's outage → Phase 20's pre-merge catch) demonstrates that the team has learned the lesson at the workflow level even though audit Item 54 (the structural fix) remains open.
