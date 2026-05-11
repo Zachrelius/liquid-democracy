@@ -2990,3 +2990,110 @@ Documented in `winner_set_overlaps` docstring + tests cover all 8 cases. Logged 
 ### Pass-summary
 
 **Phase 20 shipped clean to production after one mid-pass gate failure caught and fixed pre-merge.** The original deploy was prevented by the gate run; the same Item 54 structural blind spot Phase 19 hit (with ~20 min prod outage) was caught this time before push because the spec's verification matrix already required the prod-snapshot Docker round-trip per Phase 19's lesson, AND because the lead added an idempotent guard to the migration after seeing the gate failure. Scope-narrowing: production code net negative ~340 lines; backend test count 1174 → 1160 (-14 net, expected); frontend bundle 374.39 → 370.46 kB gzipped (-3.93 kB). The platform's result-stability mechanic is now a single unified concept (`evaluate_original_window_stability` for original voting window; `evaluate_extension_stability` sliding-window check during extensions; `original_voting_duration × max_extension_fraction` budget cap; force-close on budget exhaustion). The Phase 8 binary-floor early-window kill-the-proposal exploit is closed. Three spec/reality reconciliations across Phases 17-20 suggest a process refinement opportunity for planning agents (cross-check formal rules against worked examples before locking decisions). The merged spec+dispatch format continued to work well, and the verification matrix's "Prod-snapshot Docker round-trip" row (added per Phase 19's lesson) was directly load-bearing this pass. Phase 4 of the migration-incident-response arc (Phase 13's incident → Phase 18's pattern → Phase 19's outage → Phase 20's pre-merge catch) demonstrates that the team has learned the lesson at the workflow level even though audit Item 54 (the structural fix) remains open.
+
+---
+
+## Phase 21 — Delegate Action & Voting Deadline Notifications + Preference Presets (shipped 2026-05-11, master `2d0a1ce`)
+
+Adds five new notification events covering the delegator-side visibility gap in the Phase 13 notification system, plus a preset selector for one-click preference stamping. Production code net positive: ~700 lines of new emission + scheduler + endpoint surface; ~1500 lines of new tests; backend test count 1160 → 1222 (+62 net). Frontend bundle 370.46 → 371.88 kB gzipped (+1.42). No new migrations; no schema changes; no new permission keys.
+
+**Cluster B — Backend (commits `30c9fae`, `27af6ba`, `47fc02f`, `4c6d9d6`, `59488ac`, `ed33f5e`, `b2be1f5`):**
+
+- **B1: Event registry additions** in `backend/notification_events.py`. Five new `EventDefinition` rows: `delegate.voted` (Delegation/standard), `delegate.vote_changed` (Delegation/critical), `delegate.posted_rationale` (Delegation/standard), `voting.halfway_delegate_silent` (Delegation/critical), `voting.halfway_you_havent_voted` (Proposals/critical). Registry-driven UI auto-surfaces them — no frontend code change required for F1.
+
+- **B6: Signal-level classification + preset rules.** `EventDefinition` NamedTuple gained a 5th field `signal_level: str` (values: `critical` / `standard` / `ambient` / `always_on`). Every existing event classified explicitly per spec D19. `PRESET_STAMP_RULES` dict defines the 4-channel stamping per (preset, signal_level) pair. `apply_preset_to_preferences(preset, current_prefs)` returns updated prefs; `detect_matching_preset(prefs)` returns the preset name if it exactly matches, else None. Sanity-check loop at module load validates every event's signal_level is one of the four valid values.
+
+- **B6: API surface in `backend/routes/notifications.py`.** `EventDefinitionOut.signal_level` and `PreferencesOut.matching_preset` fields added. `GET /api/notifications/registry` returns each event with `signal_level`. `GET /api/notifications/preferences` includes `matching_preset` (computed via `detect_matching_preset` from the user's preference rows; None if no preset matches). New endpoint `POST /api/notifications/preferences/apply_preset` accepts `{"preset": "high" | "medium" | "low"}`, validates the name (400 on unknown), applies via `apply_preset_to_preferences`, upserts NotificationPreference rows for every (event, channel) that changes, audits as `notifications.preset_applied` with the change-set, returns updated `PreferencesOut`.
+
+- **B4: Dedup helpers** in `backend/notification_emit.py`. `DELEGATE_NOTIFICATION_DEDUP_HOURS = 1` constant; `should_emit_with_dedup(db, user_id, event_type, target_id, hours=1)` queries `Notification` table for prior emissions within window (filtered on `target_type="proposal"` + `target_id`); `has_ever_emitted(db, user_id, event_type, target_id)` provides one-shot idempotency for halfway events (no time window).
+
+- **B2: Emission wiring in `backend/routes/votes.py`.** `cast_vote` and `upsert_vote_rationale` gained `background_tasks: BackgroundTasks = Depends()` params. New helpers `_delegators_for_proposal` (resolves `org_scoped + topic_in_proposal_topics + delegate_id == user.id` per Phase 18 query pattern; excludes self-delegation at the query layer) and `_format_vote_value_for_payload` (string for binary; list of option_ids/labels for approval/RCV).
+  - **On `cast_vote`** (POST `/api/proposals/{id}/vote`): post-commit, snapshots `pre_update_vote_value` + `pre_update_ballot` BEFORE mutating the existing row (so `previous_vote_value` in the change payload is accurate). Resolves `is_change` from existing-row-presence. Iterates delegators with `should_emit_with_dedup` → emits `delegate.vote_changed` (with FROM/TO + `changed_at`) or `delegate.voted` (with `cast_at`). Defensive try/except per D15: notification failure must not roll back the vote.
+  - **On `upsert_vote_rationale`** (PUT `/api/votes/{id}/rationale`): emission gated on CREATE branch only (not update). Checks vote-owner's `DelegateProfile` rows for any topic in the proposal where `visibility IN ('public', 'public_accepting')`. If none qualify, no emission (rationale isn't visible to delegators). If at least one qualifies, finds delegators and emits `delegate.posted_rationale` with `rationale_excerpt` (first ~150 chars).
+
+- **B3: Halfway-deadline scheduler task** in `backend/digest_scheduler.py`. New `run_halfway_deadline_check(db, *, now=None)` function returns `{halfway_delegate_silent: N, halfway_you_havent_voted: N}` counts. Logic: query proposals in `voting` status with `voting_start`/`voting_end` set, compute `percent_elapsed`, filter to `>= 0.5 AND <= 1.0`. For each qualifying proposal, iterate `eligible_voter_ids_for_proposal`; skip already-voted users; route delegated users to `halfway_delegate_silent` (if their delegate hasn't voted) and non-delegated users to `halfway_you_havent_voted`. `has_ever_emitted` provides one-shot idempotency. Wired into `run_one_tick` (every-tick cadence; per-proposal try/except; per-emission db.commit so failures don't poison subsequent emissions). New `_scheduler_background_tasks()` helper returns a fresh in-process `BackgroundTasks()` — the task list is never run, so `email_immediate` channel is forfeit at the halfway emit site (in-app + digest channels still work; documented as audit Item 59).
+
+- **B5: 62 tests in `backend/tests/test_phase_21_delegate_action_notifications.py`** (1464 lines). Coverage:
+  - **Wave 1 (39 tests)**: `TestRegistryHasFiveNewEvents`, `TestSignalLevelClassifications` (validates every event matches D19 classification), `TestApplyPresetHigh`/`Medium`/`Low`, `TestPresetsStampAtMostOneEmailChannel`, `TestPresetDoesNotTouchAlwaysOn`, `TestDetectMatchingPreset`, `TestApplyPresetEndpoint`, `TestRegistryEndpointIncludesSignalLevel`, `TestGetPreferencesIncludesMatchingPreset`.
+  - **Wave 2 (23 tests)**: `TestDelegateVotedEvent`, `TestDelegateVotedDedup`, `TestDelegateVoteChangedPayload`, `TestDelegatePostedRationaleEvent`, `TestDelegatePostedRationaleNoFireOnPrivateProfile`, `TestNoSelfNotificationOnVote`, `TestVoteCommitDoesNotRollBackOnNotificationError`, `TestHalfwayDelegateSilentEvent`, `TestHalfwayYouHaventVotedEvent`, `TestHalfwayMutuallyExclusive`, `TestHalfwayPercentElapsedThreshold`, `TestSchedulerIdempotency`, `TestPrivateAndPublicDelegationsBothFire`.
+
+**Cluster F — Frontend (commit `f1cc903`):**
+
+- **F1: Registry-driven render of new events.** No code change required — `NotificationsPreferences.jsx` already iterates `registry.events` and renders one row per `EventDefinition`. The five new events surface automatically post-B1.
+- **F2: Preset selector** above the matrix. Three buttons (High/Medium/Low) in `grid-cols-1 md:grid-cols-3` responsive layout. Each carries a level label + subtitle (e.g., "See everything; instant email for important, digests for the rest."). Active state via `bg-blue-50 border-blue-400 ring-1 ring-blue-300` + "Active" pill when `matchingPreset === level`. Click: confirmation modal on first click of any preset per session (`useConfirm` hook from existing `ConfirmDialog.jsx`); subsequent clicks within the session skip the modal. POST to `/api/notifications/preferences/apply_preset`; replace local prefs from response; update `matchingPreset`. "Custom — you've adjusted from a preset." indicator (role="status", aria-live="polite") when `matchingPreset === null`. Always-on footnote text below. Per-event toggle optimistically sets `matchingPreset = null`; PATCH response reconciles via backend's re-derived value.
+
+**Cluster G — Email templates + email_service (commit `798ca9d`):**
+
+- Five new HTML templates (`delegate.voted.html`, `delegate.vote_changed.html`, `delegate.posted_rationale.html`, `voting.halfway_delegate_silent.html`, `voting.halfway_you_havent_voted.html`) — same shape as existing Cluster E templates (Phase 13). Subject substitutions per template.
+- `email_service._SUBJECTS` extended with five new keys.
+- `email_service._DEFAULT_CTA_LABELS` extended with "Open proposal" for all five.
+- `email_service._build_cta_url` routes all five to `/{org_slug}/proposals/{proposal_id}` (falls back to `/notifications` if payload lacks `org_slug` — matches existing pre-Phase-21 emission pattern; logged as audit Item 61).
+- `email_service._build_event_template_vars` extended with five new payload substitutions: `vote_value`, `previous_vote_value`, `rationale_excerpt`, `voting_end`, `percent_elapsed`.
+
+**Cluster D — Docs (commit `bd1aaa5`):**
+
+- `SECURITY_REVIEW.md`: new Phase 21 section. Covers no new sensitive data exposure (delegators already had access to the underlying state via proposal page + delegate's public profile); halfway events computed from public state (`Proposal.voting_start/end` + own `Delegation` + own `Vote`); no new permission keys (per-user-self-scope conventions apply); structural dedup via `Notification` table reads (acknowledges minor race window — audit Item 60); scheduler-outside-request-context trade-off (`email_immediate` channel forfeit at halfway emit site — audit Item 59); no new database schema; preset stamping is non-destructive but consequential (overwrites critical/standard/ambient rows; always_on preserved); audit trail via `notifications.preset_applied`; no new email recipients; `delegate.posted_rationale` respects topic visibility (gated on `public`/`public_accepting` only).
+- `docs/tech_debt_audit_2026-05.md`: Phase 21 entry. **D17 dead-checkbox audit found NONE.** No items resolved this pass (additive feature work). **Three new items logged**: Item 59 (Tier 3 — halfway-scheduler email_immediate forfeit), Item 60 (Tier 3 — dedup race window with concurrent writes), Item 61 (Tier 3 — CTA org_slug payload gap across all emission sites; pre-existing, not a Phase 21 regression).
+- `future_improvements_roadmap.md`: item 7 (Notifications Polish) marked **substantially complete** via Phase 21. Remaining notifications-adjacent sub-items called out (chrome-deferred queue items 5-7; email theming centralization; Phase 21 audit items 59-61 — a future smaller polish pass can drain them).
+- `frontend/src/pages/NotificationsHelp.jsx`: event count 14 → 19; one-line descriptions for each of the five new events under Delegation (×4) + Proposals (×1); new section explaining the preset selector + always-on caveat.
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Backend pytest (full) | **1222 passed, 3 skipped** (was 1160 → +62 net; 3:42 wall-clock) |
+| PG smoke `--mode both` | PASS (fresh-DB stamp head + upgrade-from-prior, prior=e72362fd7cd5) |
+| PG smoke `--mode actual-upgrade --prior-revision 9a8920b1f3c7` | PASS (Phase 20 head; no new migrations to traverse — Phase 21 has no schema change) |
+| `bash start.sh` prod-like check | PASS-by-source (no new init code paths; delegation_engine + graph_store init paths covered by W-START-CHECK) |
+| W-START-CHECK (bare uvicorn) | PASS (`Startup complete.` after delegation_engine + graph_store init; clean shutdown) |
+| W-OBSERVABILITY-CHECK | PASS (Railway CLI authenticates via `.env` RAILWAY_TOKEN; project keen-learning/production reachable) |
+| Frontend build | PASS — bundle `index-CGebVNPH.js` 371.88 kB gzipped (+1.42 kB vs Phase 20 baseline) |
+| File-count check | 17 files, +2712 / -15 lines |
+| Notification dedup behavior | PASS (`TestDelegateVotedDedup` 2 tests covering single + within-window + after-window) |
+| Preset selector stamps correct values | PASS (`TestApplyPresetHigh`/`Medium`/`Low` + `TestPresetsStampAtMostOneEmailChannel`) |
+| Halfway-deadline detection | PASS (`TestHalfwayDelegateSilentEvent` 3 + `TestHalfwayYouHaventVotedEvent` 3 + `TestHalfwayMutuallyExclusive` + `TestHalfwayPercentElapsedThreshold` 3) |
+| Background-job idempotency | PASS (`TestSchedulerIdempotency` — second run of same proposal-set produces no new notifications) |
+| Prod-snapshot Docker round-trip | NOT REQUIRED per spec verification matrix (no migration touching existing tables) |
+
+**Deploy + prod sanity:**
+
+- Merge to master: `2d0a1ce` (`git merge --no-ff phase-21/delegate-action-notifications`)
+- Push to origin/master: SUCCESS (`b60f8ac..2d0a1ce master -> master`)
+- Railway redeploy: bundle hash changed from `index-BJmDes5f.js` (Phase 20) → `index-CGebVNPH.js`. Deploy time ~162 seconds end-to-end (verified via `poll_deploy.py`).
+- Prod sanity: `https://www.liquiddemocracy.us/` returns 200; `https://www.liquiddemocracy.us/api/notifications/registry` returns 401 (auth-required, as designed — endpoint reachable, server healthy, not a 502/503).
+- (Smoke suite in `poll_deploy.py` had a pre-existing pytest flag error (`--target` flag unrecognized) — not a Phase 21 regression; the bundle-hash-change + backend_ok=True verification is the load-bearing gate and PASSED.)
+
+**Commits on `phase-21/delegate-action-notifications`** (in merge order):
+
+1. `30c9fae` — Phase 21 B1+B6: notification_events.py — 5 events + signal_level + classify all + PRESET_STAMP_RULES + apply/detect helpers
+2. `27af6ba` — Phase 21 B4: dedup helpers (should_emit_with_dedup + has_ever_emitted) in notification_emit.py
+3. `47fc02f` — Phase 21 B6: routes/notifications.py — signal_level in registry + matching_preset in GET /preferences + POST /preferences/apply_preset endpoint
+4. `4c6d9d6` — Phase 21 B5 (wave 1): registry + preset tests
+5. `f1cc903` — Phase 21 F2: preset selector row + matching_preset state + confirmation modal in NotificationsPreferences.jsx
+6. `59488ac` — Phase 21 B2: vote cast/update emission + rationale create emission in routes/votes.py
+7. `ed33f5e` — Phase 21 B3: halfway_deadline_check task + run_one_tick integration in digest_scheduler.py
+8. `b2be1f5` — Phase 21 B5 (wave 2): vote-emission + scheduler + dedup + idempotency tests
+9. `798ca9d` — Phase 21 G: email templates + email_service wiring for 5 new events
+10. `bd1aaa5` — Phase 21 D: SECURITY_REVIEW + audit doc + roadmap + NotificationsHelp
+11. `2d0a1ce` — Merge phase-21/delegate-action-notifications (no-ff)
+
+**Tech debt** (3 new items, all Tier 3):
+
+- **Item 59:** Halfway-event scheduler runs outside request context — `email_immediate` channel forfeit. In-app rows insert correctly; digest channels (`email_daily`/`email_weekly`) pick up next tick. **Suggested:** if real-pilot signal asks for instant emails on halfway events, refactor scheduler to call `send_event_email` directly (parallel to digest's `render_and_send_digest` pattern). Effort: ~1 hour.
+- **Item 60:** Dedup race window with concurrent vote writes. Two concurrent vote-write requests for same delegator/delegate/proposal could both pass dedup check before either commits. Worst case: 2 notifications instead of 1 within 1-hour window; never worse, never duplicates across hours. **Suggested:** SELECT-FOR-UPDATE lock or unique constraint `(user_id, event_type, target_id, hour_bucket)` with collision handling. Effort: ~1.5 hours.
+- **Item 61:** CTA URLs for email templates fall back to `/notifications` because emission payloads don't populate `org_slug`. Matches pre-existing pattern at all emission sites (comments, proposals, etc.) — not a Phase 21 regression. In-app surface resolves `org_slug` server-side via `_bulk_org_slug_lookup`; only email CTA falls back. **Suggested:** sweep all emission sites to add `org_slug` to payloads (1-line addition per call site). Effort: ~1.5 hours across ~12-15 sites.
+
+**Browser verification:**
+
+- F1 (5 new events render in preferences matrix): PASS-by-source (frontend agent confirmed via code review + build). Registry-driven UI iterates `registry.events` automatically.
+- F2 (preset selector + confirmation modal): PASS-by-source (frontend agent confirmed via code review + build; bundle compiles cleanly).
+- Live browser verify of the preset stamping + per-event override flow + Custom indicator: **queued for Z** (chrome-deferred — straightforward 5-minute manual confirm: visit `/settings/notifications`, click each preset, verify channel toggles match D18 specification, toggle one event manually → verify Custom indicator appears, click a preset again → verify Custom indicator switches back).
+- Live browser verify of halfway-deadline emission: **queued** (requires a real ~30-min-elapsed proposal with eligible voters; cannot be exercised in a pre-merge gate).
+
+### Format observations on merged spec+dispatch convention (2-pass sample post-Phase-19/20)
+
+Phase 21 was the third pass using the merged spec+dispatch format. Same upside as Phases 19 + 20: the verification matrix as a dedicated table is the standout improvement — required-gate enumeration is unambiguous, "Prod-snapshot Docker round-trip" row visible at the top of the doc (correctly waived this pass per spec). No need to maintain a separate ephemeral dispatch artifact. **Keep the format.**
+
+### Pass-summary
+
+**Phase 21 shipped cleanly to production with zero gate failures and zero prod incidents.** Backend test count 1160 → 1222 (+62 net, all Phase 21 tests passing). Frontend bundle 370.46 → 371.88 kB gzipped (+1.42 kB). Five new delegate-action + voting-deadline notification events close a specific gap in the Phase 13 notification system (delegators had no visibility into what their delegate was doing on active proposals). The preset selector (High / Medium / Low engagement) is the first one-click preference-stamping UX on the platform; the `signal_level` classification on every event gives presets a data-driven foundation that future event additions inherit cleanly at registry-edit time. D17 audit of EVENT_REGISTRY found no dead-checkbox events. Three new Tier-3 audit items logged (none load-bearing). The merged spec+dispatch format continues to work well across the third pass using it. Phase 4 of the migration-incident-response arc isn't relevant this pass (no migration), but the discipline that grew out of it — comprehensive verification matrix table, idempotent migration guards, prod-snapshot Docker round-trip when migrations touch existing tables — is now reliable institutional infrastructure rather than ad-hoc per-pass judgment.
