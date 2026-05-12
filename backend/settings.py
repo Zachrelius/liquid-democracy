@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     # Hard kill-switch for ops emergencies.
     sustained_majority_worker_disable: bool = False
 
+    # Phase 23 (D9) — demo daily-reset time-of-day, HH:MM 24h format in
+    # Pacific timezone. Default midnight Pacific. The scheduler computes
+    # the next due moment from this value + the
+    # ``demo_reset_last_completed_at`` PlatformSetting. Operationally
+    # tunable via the DEMO_RESET_TIME_PACIFIC env var without code change.
+    demo_reset_time_pacific: str = "00:00"
+
     # Phase 9 — pol.is integration. The hosted pol.is API uses JWT-based auth
     # rather than an API key (see `phase9_polis_api_findings.md`); this is the
     # Bearer JWT obtained from a pol.is admin session that polis_service.py
