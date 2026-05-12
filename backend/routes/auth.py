@@ -679,11 +679,104 @@ def demo_login(
     db: Session = Depends(get_db),
 ):
     """Passwordless login for whitelisted demo personas.
-    Available when either debug or is_public_demo is enabled.
+
+    Available when either ``debug`` or ``is_public_demo`` is enabled.
+
+    Phase 23 B7 — two paths based on ``body.org_slug``:
+
+    1. **Legacy (org_slug=None):** validates against the hardcoded
+       ``DEMO_USERNAMES`` constant + the single ``demo`` org slug.
+       Kept during the transition window so any existing Phase-23-
+       pre-deploy frontend or saved bookmark still works. Removed
+       in a later cleanup pass once the three demo orgs are seeded
+       and the frontend always sends ``org_slug``.
+
+    2. **Per-org (org_slug provided):** looks up the named demo org,
+       validates the persona against its ``Organization.personas``
+       JSONB allowlist (seeded from each org's bible), and verifies
+       the user has an active ``OrgMembership`` in that org. All
+       failure modes return 404 (matching the legacy posture: don't
+       reveal whether persona, org, or membership was the mismatch).
+
+    If ``personas`` is empty/NULL on a demo org (e.g., between deploy
+    and the first scheduled seed), the new path returns 404 cleanly —
+    that's the expected pre-seed behavior.
     """
     if not (settings.debug or settings.is_public_demo):
         raise HTTPException(status_code=404, detail="Not found")
 
+    # ---- Phase 23 B7 path: per-org allowlist via Organization.personas ----
+    if body.org_slug is not None:
+        org = db.query(models.Organization).filter(
+            models.Organization.slug == body.org_slug,
+        ).first()
+        # 404 if org doesn't exist OR isn't a demo org — same response
+        # so a probe can't distinguish "no such slug" from "real org,
+        # not a demo target".
+        if org is None or not org.is_demo:
+            raise HTTPException(status_code=404, detail="Not found")
+
+        # personas is JSONB list of {username, display_name, role,
+        # description}. Empty/NULL during the pre-seed window → 404,
+        # which is the cleanest failure mode (the frontend's
+        # is_demo_resetting overlay handles in-flight reset; outside
+        # that window an empty personas list means seed hasn't run).
+        allowlist_entries = org.personas or []
+        allowed_usernames = {
+            entry.get("username")
+            for entry in allowlist_entries
+            if isinstance(entry, dict) and entry.get("username")
+        }
+        if body.username not in allowed_usernames:
+            raise HTTPException(status_code=404, detail="Not found")
+
+        user = db.query(models.User).filter(
+            models.User.username == body.username,
+        ).first()
+        if user is None:
+            raise HTTPException(status_code=404, detail="Not found")
+
+        # Defense-in-depth: verify the persona has an active
+        # OrgMembership in this org. The seed mechanism creates both
+        # the User row and the OrgMembership row together, so this
+        # check should never fire under normal operation — but if a
+        # persona is somehow listed in personas without a matching
+        # membership (manual DB tinkering, partial seed failure), we
+        # refuse rather than issue tokens for an effectively-orphaned
+        # demo identity.
+        membership = db.query(models.OrgMembership).filter(
+            models.OrgMembership.user_id == user.id,
+            models.OrgMembership.org_id == org.id,
+            models.OrgMembership.status == "active",
+        ).first()
+        if membership is None:
+            raise HTTPException(status_code=404, detail="Not found")
+
+        log_audit_event(
+            db,
+            action="user.demo_login",
+            target_type="user",
+            target_id=user.id,
+            actor_id=user.id,
+            details={
+                "username": user.username,
+                "org_slug": org.slug,
+                "org_id": org.id,
+            },
+            ip_address=request.client.host if request.client else None,
+        )
+
+        access_token = auth_utils.create_access_token(user.id)
+        refresh_token = _create_refresh_token(db, user.id)
+
+        db.commit()
+
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+        }
+
+    # ---- Legacy path: hardcoded DEMO_USERNAMES + DEMO_ORG_SLUG ----
     # 404 (not 403) so the endpoint reveals nothing about the allowlist when
     # the flag is off — and an unknown username gets the same response as a
     # real-but-not-allowlisted one.
