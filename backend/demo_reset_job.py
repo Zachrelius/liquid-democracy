@@ -504,6 +504,21 @@ def run_demo_reset_if_due(
         )
         db.commit()
         success = True
+
+        # Phase 23.1 B3b: refresh the in-memory delegation graph store so
+        # cycle detection + neighborhood queries see the freshly-seeded
+        # delegations. rebuild_from_db rebuilds across ALL orgs; we call
+        # it once here after the cross-org wipe-then-seed commit (not
+        # per-org inside seed_pipeline.seed_org_from_bible). Failures
+        # are logged but non-fatal — the next process boot also calls
+        # rebuild_from_db during startup.
+        try:
+            from delegation_engine import graph_store
+            graph_store.rebuild_from_db(db)
+            log.info("Graph store refreshed after demo reset")
+        except Exception:
+            log.exception("Failed to refresh graph store after demo reset")
+
         return DemoResetResult(
             success=True,
             started_at=started_at,
