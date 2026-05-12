@@ -143,7 +143,7 @@ def upgrade() -> None:
                         "is_demo",
                         sa.Boolean(),
                         nullable=False,
-                        server_default=sa.text("0"),
+                        server_default=sa.false(),
                     ),
                 )
             if "is_demo_resetting" not in org_cols:
@@ -152,7 +152,7 @@ def upgrade() -> None:
                         "is_demo_resetting",
                         sa.Boolean(),
                         nullable=False,
-                        server_default=sa.text("0"),
+                        server_default=sa.false(),
                     ),
                 )
             if "governance_type" not in org_cols:
