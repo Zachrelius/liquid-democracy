@@ -783,6 +783,19 @@ def seed_org_from_bible(
         .count()
     )
 
+    # Phase 23.1 B3a: build the set of filler bible user_ids that have ANY
+    # active delegation in this org. The seed pipeline does NOT create
+    # ProposalTopic rows (proposals carry no explicit topic association),
+    # so we cannot intersect the filler's delegation topics with the
+    # proposal's topics. Per the dispatch's "conservative fallback"
+    # provision, any filler with a delegation is excluded from direct
+    # vote allocation - the tally resolver will follow the delegation to
+    # the delegate's vote at tally time. The named-character delegate's
+    # direct vote DOES get cast normally.
+    fillers_with_delegations: set[str] = {
+        f.user_id for f in fillers if f.delegates_to
+    }
+
     all_snapshots: list = []
     all_filler_votes: list = []
 
@@ -818,8 +831,15 @@ def seed_org_from_bible(
             and proposal.voting_end is not None
             and proposal.status in ("voting", "passed", "failed")
         ):
-            # Determine participation: ~50% of fillers vote on this proposal
-            participating = fillers[: max(1, len(fillers) // 2)]
+            # Determine participation: ~50% of fillers vote on this
+            # proposal. Phase 23.1 B3a: filter out fillers with any
+            # delegation so their delegate's vote is what shows in the
+            # tally (defect C1).
+            base_pool = fillers[: max(1, len(fillers) // 2)]
+            participating = [
+                f for f in base_pool
+                if f.user_id not in fillers_with_delegations
+            ]
             # Named-voter summary (yes/no/abstain counts already in new_votes)
             named_summary: dict = {"yes": 0, "no": 0, "abstain": 0}
             for v in new_votes:
