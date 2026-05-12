@@ -13,7 +13,7 @@ Companion modules:
 Dataclass shapes are imported from hoa_bible (illustrative).
 """
 
-from hoa_bible import (
+from .schema import (
     Member, TopicVisibility, PositionStatement, VoteRationale,
     DelegatePage, Comment, Proposal, NotificationEvent, NotificationFeed,
     OrgBible,

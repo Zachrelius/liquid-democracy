@@ -15,105 +15,18 @@ align field names and types to the actual OrgBible dataclass module
 during integration. The content values are the source of truth.
 """
 
-from dataclasses import dataclass, field
-from typing import Literal, Optional
-
-
-# =============================================================================
-# Dataclass shapes (illustrative; align to actual OrgBible module)
-# =============================================================================
-
-@dataclass
-class Member:
-    user_id: str                                    # stable identifier for seeding
-    display_name: str
-    quick_login: bool                               # is this one of the 6 quick-login characters
-    is_cross_org: bool = False                      # appears in another org's cast
-    role: str = ''                                  # e.g. "President", "Member-at-Large", "Member"
-    notification_preset: Literal['high', 'medium', 'low'] = 'medium'
-
-
-@dataclass
-class TopicVisibility:
-    topic: str
-    state: Literal['private', 'public', 'public_accepting']
-
-
-@dataclass
-class PositionStatement:
-    topic: str
-    text: str
-
-
-@dataclass
-class VoteRationale:
-    proposal_id: str
-    vote: str                                       # 'yes', 'no', 'abstain', or approval/RCV-specific
-    text: str
-
-
-@dataclass
-class DelegatePage:
-    member_user_id: str
-    page_visibility: Literal['private', 'private_delegators', 'public']
-    intro: str
-    topics: list[TopicVisibility] = field(default_factory=list)
-    position_statements: list[PositionStatement] = field(default_factory=list)
-    vote_rationales: list[VoteRationale] = field(default_factory=list)
-
-
-@dataclass
-class Comment:
-    proposal_id: str
-    author_user_id: str
-    relative_timestamp: str                         # e.g. "deliberation hour 30", "voting hour 42"
-    body: str
-
-
-@dataclass
-class Proposal:
-    proposal_id: str
-    title: str
-    proposer_user_id: str
-    voting_method: Literal['binary', 'approval', 'rcv', 'stv']
-    state_at_reset: str                             # e.g. "passed, 14 days ago (58-42)"
-    body: str                                       # proposer rationale / proposal description
-    candidate_statements: dict[str, str] = field(default_factory=dict)  # user_id -> statement for RCV/STV proposals
-    options: list[str] = field(default_factory=list)   # for approval, RCV, STV with named options
-
-
-@dataclass
-class NotificationEvent:
-    event_type: str                                 # 'halfway_deadline', 'new_follow', 'delegator_rationale', 'delegator_vote_change', etc.
-    related_proposal_id: Optional[str] = None
-    related_member_user_id: Optional[str] = None
-    note: str = ''
-
-
-@dataclass
-class NotificationFeed:
-    member_user_id: str
-    events: list[NotificationEvent] = field(default_factory=list)
-
-
-@dataclass
-class OrgBible:
-    slug: str
-    display_name: str
-    charter: str
-    tone_notes: str
-    recent_history: str
-    sub_orgs: list[str] = field(default_factory=list)
-    voting_methods_used: list[str] = field(default_factory=list)
-    approval_tie_resolution: str = ''
-    rcv_tie_resolution: str = ''
-    quorum_threshold_default: float = 0.35          # 35% for non-financial proposals
-    members: list[Member] = field(default_factory=list)
-    delegate_pages: list[DelegatePage] = field(default_factory=list)
-    proposals: list[Proposal] = field(default_factory=list)
-    drafts: list[Proposal] = field(default_factory=list)
-    comments: list[Comment] = field(default_factory=list)
-    notification_feeds: list[NotificationFeed] = field(default_factory=list)
+from .schema import (
+    Member,
+    TopicVisibility,
+    PositionStatement,
+    VoteRationale,
+    DelegatePage,
+    Comment,
+    Proposal,
+    NotificationEvent,
+    NotificationFeed,
+    OrgBible,
+)
 
 
 # =============================================================================

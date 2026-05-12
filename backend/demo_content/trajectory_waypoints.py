@@ -24,60 +24,7 @@ The technical agent should align this data to the `Trajectory` and
 `TrajectoryEvent` dataclass shapes for the OrgBible Python module.
 """
 
-from dataclasses import dataclass, field
-from typing import Literal
-
-
-# -----------------------------------------------------------------------------
-# Data structures (illustrative; technical agent will align to actual dataclass shapes)
-# -----------------------------------------------------------------------------
-
-@dataclass
-class Waypoint:
-    hour: float           # hours since voting open (or deliberation open for elections)
-    support_pct: float    # percent supporting, 0-100
-    # For approval/STV proposals where support_pct is per-option, see option_support below
-
-
-@dataclass
-class TrajectoryEvent:
-    """
-    Annotation event for the chart.
-
-    event_type values:
-    - 'stable_window_open'    — SRR: stable window begins
-    - 'stable_window_destabilize' — SRR: support fell below threshold; extension triggered
-    - 'extension_grant'       — SRR: extension N begins
-    - 'sliding_check_begin'   — SRR: sliding-window stability check starts during extension
-    - 'force_close'           — SRR: extension budget exhausted; force-close fires
-    - 'voting_open'           — voting period begins (always at hour 0)
-    - 'voting_close'          — voting period ends
-    - 'failed_quorum'         — voting closed without meeting quorum
-    """
-    hour: float
-    event_type: Literal[
-        'stable_window_open',
-        'stable_window_destabilize',
-        'extension_grant',
-        'sliding_check_begin',
-        'force_close',
-        'voting_open',
-        'voting_close',
-        'failed_quorum',
-    ]
-    label: str = ''       # short human-readable label for chart annotation
-    note: str = ''        # longer note (optional, may not display on chart)
-
-
-@dataclass
-class Trajectory:
-    proposal_id: str
-    voting_method: Literal['binary', 'approval', 'rcv', 'stv']
-    duration_hours: float                          # total voting period length
-    waypoints: list[Waypoint] = field(default_factory=list)
-    events: list[TrajectoryEvent] = field(default_factory=list)
-    final_result: str = ''                         # e.g. "58-42 passed", "failed quorum"
-    notes: str = ''                                # any clarifications for the technical agent
+from .schema import Waypoint, TrajectoryEvent, Trajectory
 
 
 # -----------------------------------------------------------------------------

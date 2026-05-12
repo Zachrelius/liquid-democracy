@@ -3,7 +3,7 @@ Westgate Tenants Coalition Bible — PART 2 of 3
 Remaining delegate pages (Maya, Dana, Will), proposals, drafts.
 """
 
-from hoa_bible import (
+from .schema import (
     TopicVisibility, PositionStatement, VoteRationale,
     DelegatePage, Proposal,
 )

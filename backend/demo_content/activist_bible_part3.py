@@ -3,13 +3,13 @@ Westgate Tenants Coalition Bible — PART 3 of 3
 Comments, notification feeds, OrgBible assembly, integration notes.
 """
 
-from hoa_bible import Comment, NotificationEvent, NotificationFeed, OrgBible
+from .schema import Comment, NotificationEvent, NotificationFeed, OrgBible
 
 # Import data from Parts 1 and 2 for assembly
-from activist_bible_part1 import (
+from .activist_bible_part1 import (
     CHARTER, TONE_NOTES, RECENT_HISTORY, MEMBERS, DELEGATE_PAGES_PART_1,
 )
-from activist_bible_part2 import DELEGATE_PAGES_PART_2, PROPOSALS, DRAFTS
+from .activist_bible_part2 import DELEGATE_PAGES_PART_2, PROPOSALS, DRAFTS
 
 
 # -----------------------------------------------------------------------------

@@ -10,7 +10,7 @@ Companion modules:
 - trajectory_waypoints.py (per-proposal support-trajectory data, shared)
 """
 
-from hoa_bible import (
+from .schema import (
     Member, TopicVisibility, PositionStatement, VoteRationale,
     DelegatePage, Comment, Proposal, NotificationEvent, NotificationFeed,
     OrgBible,
