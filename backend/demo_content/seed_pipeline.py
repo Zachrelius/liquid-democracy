@@ -45,6 +45,7 @@ from .filler_generator import (
     allocate_filler_votes,
     generate_filler_members,
 )
+from .persona_descriptions import QUICK_LOGIN_DESCRIPTIONS
 from .schema import (
     Comment as BibleComment,
     DelegatePage,
@@ -425,12 +426,18 @@ def seed_org_from_bible(
         counts["members_created"] += 1
 
     # ---- 3. Personas JSON (D22, Amendment D) -----------------------------
+    # Phase 23.1 (C4): description sourced from QUICK_LOGIN_DESCRIPTIONS
+    # (Stage 8 §6 verbatim) keyed on bible user_id; falls back to role for
+    # any quick-login member not in the dict (defensive — Stage 8 covers all
+    # 18 current quick-login characters).
     org.personas = [
         {
             "username": bible_uid_to_user[m.user_id].username,
             "display_name": m.display_name,
             "role": m.role or "Member",
-            "description": m.role or "Member",  # Stage 8 descriptions
+            "description": QUICK_LOGIN_DESCRIPTIONS.get(
+                m.user_id, m.role or "Member",
+            ),
         }
         for m in bible.members if m.quick_login
         and m.user_id in bible_uid_to_user
