@@ -99,6 +99,36 @@ CROSS_ORG_USER_MAP: dict[str, str] = {
 }
 
 
+# Phase 23.1 B2: explicit display-name mapping for non-quick-login
+# candidate user_ids whose title-case fallback ("Local Trustee Marcus
+# Reeves") would render confusingly in the ProposalOption.label / candidate
+# card surfaces. Keys are bible user_ids; values are the desired
+# User.display_name on first seed. Existing bible Member rows (Frank
+# Boczek, Marisol Vega, etc.) don't need entries here because they're
+# already in the MEMBERS list and seeded with their canonical display_name.
+CANDIDATE_DISPLAY_NAMES: dict[str, str] = {
+    # P-L-06 STV trustee candidates (4 of 5; Frank Boczek is a bible
+    # MEMBER and uses his existing display_name)
+    "local_trustee_marcus_reeves": "Marcus Reeves",
+    "local_trustee_diana_sosa": "Diana Sosa",
+    "local_trustee_will_park": "Will Park",
+    "local_trustee_maria_santos": "Maria Santos",
+}
+
+
+def _candidate_display_name(bible_user_id: str) -> str:
+    """Best display name for a non-bible-member candidate user_id.
+
+    Falls back to title-case-with-spaces if no explicit mapping. The
+    fallback works for one-word user_ids ("local_marisol" → "Local
+    Marisol") but is awkward for the longer "local_trustee_*" pattern,
+    which is why ``CANDIDATE_DISPLAY_NAMES`` exists.
+    """
+    if bible_user_id in CANDIDATE_DISPLAY_NAMES:
+        return CANDIDATE_DISPLAY_NAMES[bible_user_id]
+    return bible_user_id.replace("_", " ").title()
+
+
 def _underlying_username(bible_user_id: str) -> str:
     """Map per-org user_id → underlying User.username.
 
@@ -573,15 +603,32 @@ def seed_org_from_bible(
                 db.add(opt)
             db.flush()
 
-        # Candidate statements (RCV/STV): make sure each candidate has a user
+        # Candidate statements (RCV/STV): make sure each candidate has a
+        # user, then (Phase 23.1 B1) create one ProposalOption per
+        # candidate when ``bp.options`` is empty. Without these rows the
+        # voting UI has nothing to rank and falls back to Yes/No.
+        candidate_order: list[tuple[str, "models.User"]] = []
         for cand_uid, statement in (bp.candidate_statements or {}).items():
             if cand_uid not in bible_uid_to_user:
                 underlying = _underlying_username(cand_uid)
                 cand_user = _ensure_user(
-                    db, underlying, cand_uid.replace("_", " ").title(),
+                    db, underlying, _candidate_display_name(cand_uid),
                 )
                 _ensure_membership(db, cand_user.id, org.id, member_role_id)
                 bible_uid_to_user[cand_uid] = cand_user
+            candidate_order.append((cand_uid, bible_uid_to_user[cand_uid]))
+
+        if not bp.options and candidate_order:
+            for idx, (cand_uid, cand_user) in enumerate(candidate_order):
+                statement = (bp.candidate_statements or {}).get(cand_uid, "")
+                opt = models.ProposalOption(
+                    proposal_id=proposal.id,
+                    label=cand_user.display_name,
+                    description=statement or "",
+                    display_order=idx,
+                )
+                db.add(opt)
+            db.flush()
 
     # ---- 7. Named-character votes (from DelegatePage.vote_rationales) ----
     new_votes: list = []
