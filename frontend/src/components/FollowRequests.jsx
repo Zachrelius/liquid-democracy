@@ -111,7 +111,7 @@ function OutgoingCard({ req, intent, onCancelled, orgSlug }) {
         }
         {' · '}Sent {timeAgo(req.requested_at)}
         {intent && intent.status === 'pending' && intent.topic && (
-          <> · Delegation on <span className="font-medium">{intent.topic.name}</span> will auto-activate on approval</>
+          <> · Delegation on <span className="font-medium">{intent.topic.description?.trim() || intent.topic.name}</span> will auto-activate on approval</>
         )}
       </p>
       {req.status === 'pending' && intent && (

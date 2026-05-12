@@ -69,14 +69,15 @@ export default function SubOrgTopics() {
   }
 
   async function handlePromote(topic) {
+    const displayName = topic.description?.trim() || topic.name;
     const ok = await confirm({
       title: 'Promote to org-wide?',
-      message: `"${topic.name}" will become visible to all parent-org members and usable by any proposal in the org. This is IRREVERSIBLE.`,
+      message: `"${displayName}" will become visible to all parent-org members and usable by any proposal in the org. This is IRREVERSIBLE.`,
     });
     if (!ok) return;
     try {
       await api.post(`/api/orgs/${parentSlug}/topics/${topic.id}/promote-to-orgwide`, { confirm: true });
-      toast.success(`"${topic.name}" promoted to org-wide`);
+      toast.success(`"${displayName}" promoted to org-wide`);
       load();
     } catch (e) {
       toast.error(e.message || 'Failed to promote');
@@ -84,9 +85,10 @@ export default function SubOrgTopics() {
   }
 
   async function handleDeactivate(topic) {
+    const displayName = topic.description?.trim() || topic.name;
     const ok = await confirm({
       title: 'Deactivate Topic',
-      message: `Deactivate "${topic.name}"?`,
+      message: `Deactivate "${displayName}"?`,
       destructive: true,
     });
     if (!ok) return;

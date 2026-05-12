@@ -1,8 +1,9 @@
 export default function TopicBadge({ topic, relevance }) {
   const color = topic?.color || '#6366f1';
+  const displayName = topic?.description?.trim() || topic?.name;
   const label = relevance != null && relevance < 1.0
-    ? `${topic.name} (${Math.round(relevance * 100)}%)`
-    : topic?.name;
+    ? `${displayName} (${Math.round(relevance * 100)}%)`
+    : displayName;
 
   return (
     <span

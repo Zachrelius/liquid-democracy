@@ -50,7 +50,7 @@ function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown, confirm 
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
             rows={3}
           />
-          <p className="text-xs text-gray-400">Your votes on {topic.name} proposals will become publicly visible.</p>
+          <p className="text-xs text-gray-400">Your votes on {topic.description?.trim() || topic.name} proposals will become publicly visible.</p>
           <div className="flex gap-2">
             <button
               onClick={() => { onRegister(topic.id, bio); setRegistering(false); }}
@@ -107,7 +107,7 @@ function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown, confirm 
             onClick={async () => {
               const ok = await confirm({
                 title: 'Step Down as Delegate',
-                message: `This will remove you as a public delegate for ${topic.name}. People who delegated to you on this topic will need to choose a new delegate. Are you sure?`,
+                message: `This will remove you as a public delegate for ${topic.description?.trim() || topic.name}. People who delegated to you on this topic will need to choose a new delegate. Are you sure?`,
                 destructive: true,
               });
               if (ok) onStepDown(topic.id);
