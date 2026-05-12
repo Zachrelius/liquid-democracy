@@ -411,6 +411,39 @@ def patch_user_org_creation_limit(
     return user
 
 
+# ---------------------------------------------------------------------------
+# Phase 23 (D19) — demo reset manual trigger
+# ---------------------------------------------------------------------------
+
+
+@router.post("/demo/reset")
+def trigger_demo_reset(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_admin),
+) -> dict:
+    """Phase 23 (D19) — admin-triggered immediate demo reset.
+
+    Bypasses the schedule check (``force=True``) and runs the wipe+seed
+    pipeline now. Returns the ``DemoResetResult`` shape as JSON. Audit log
+    is emitted by ``run_demo_reset_if_due`` itself; no extra entry here.
+    """
+    from demo_reset_job import run_demo_reset_if_due
+
+    result = run_demo_reset_if_due(db, force=True, actor_id=current_user.id)
+    return {
+        "success": result.success,
+        "started_at": result.started_at.isoformat(),
+        "completed_at": result.completed_at.isoformat(),
+        "orgs_reset": result.orgs_reset,
+        "rows_wiped": result.rows_wiped,
+        "rows_seeded": result.rows_seeded,
+        "error": result.error,
+        "skipped": result.skipped,
+        "reason": result.reason,
+    }
+
+
 @router.get("/audit", response_model=list[schemas.AuditLogOut])
 def get_audit_log(
     action: Optional[str] = Query(None, description="Filter by action type, e.g. 'vote.cast'"),

@@ -46,6 +46,49 @@ class Organization(Base):
     parent_org_id: Mapped[Optional[str]] = mapped_column(
         String, ForeignKey("organizations.id"), nullable=True, index=True
     )
+    # Phase 23 (B1, D1, D20) — demo-org flag + per-org reset-in-progress lock.
+    # ``is_demo`` is the load-bearing safety filter for the daily-reset job:
+    # only orgs where ``is_demo=True`` are touched. Real orgs default False
+    # and remain untouched. ``is_demo_resetting`` is set to True for the
+    # duration of an in-flight reset transaction (D20); frontend reads it to
+    # render a "Demo refreshing..." overlay.
+    is_demo: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0",
+        index=True,
+    )
+    is_demo_resetting: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0",
+    )
+    # Phase 23 (D22, Amendment E) — directory-card metadata. ``governance_type``
+    # is the human-readable label ("Homeowners' Association", "Labor Union
+    # Local", "Civic Advocacy Group"), seeded from per-org config rather
+    # than the bible. ``display_order`` controls card sort on `/demo`;
+    # NULLS LAST puts real orgs after demo orgs.
+    governance_type: Mapped[Optional[str]] = mapped_column(
+        String(length=50), nullable=True,
+    )
+    display_order: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True,
+    )
+    # Phase 23 (D25, B6) — per-org demo persona allowlist. Each entry has
+    # shape ``{"username": str, "display_name": str, "role": str,
+    # "description": str}``. Seeded from each org's bible at reset time;
+    # drives the directory cards and the per-org demo-login validation.
+    # Real orgs leave NULL.
+    personas: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # Phase 23 (Amendment F) — Phase 24 branding prep. All NULL in Phase 23;
+    # populated in Phase 24 once the asset pipeline lands. Hex colors are
+    # 7-char strings like "#3A7CA5"; ``logo_url`` is a path under the static
+    # asset mount.
+    brand_color: Mapped[Optional[str]] = mapped_column(
+        String(length=7), nullable=True,
+    )
+    brand_secondary_color: Mapped[Optional[str]] = mapped_column(
+        String(length=7), nullable=True,
+    )
+    logo_url: Mapped[Optional[str]] = mapped_column(
+        String(length=500), nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
 
@@ -279,6 +322,16 @@ class User(Base):
     # (frontend renders the initials-on-colored-background fallback). Set by
     # POST /api/users/me/avatar; cleared by DELETE.
     avatar_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Phase 23 (Amendment F) — Phase 24 demo branding prep. Per-person
+    # headshot asset path like ``/demo_assets/janet_reilly.jpg``. NULL =
+    # no demo headshot (frontend falls back to avatar_url, then to
+    # initials). Single image per person — placed on User rather than
+    # DelegateProfile because the Stage 8 example is profile-agnostic
+    # (one image per person regardless of which topic they're a delegate
+    # on). Mirrors the avatar_url pattern above.
+    headshot_url: Mapped[Optional[str]] = mapped_column(
+        String(length=500), nullable=True,
+    )
     # Phase 13 / 13.3 — notification-related per-user preferences.
     # ``timezone`` is an IANA name (e.g. "America/Los_Angeles"); NULL =
     # unknown, treated as UTC by the digest job.

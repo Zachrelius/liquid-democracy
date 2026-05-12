@@ -136,6 +136,37 @@ Z is the project owner. Non-developer by background but works fluently with the 
 
 With permissions off, the lead's responsibility for safe operation goes up, not down. The bar shifts from "would Z approve this if asked?" to "would Z be glad I did this without asking?" When the answer might be no, surface the action in the closeout BEFORE running it (or pause and ask via the Code interface for genuinely irreversible operations) — the rules of thumb are: anything touching prod data destructively, anything that rewrites shared git history, anything that costs money beyond normal Railway/Resend usage, anything that changes deploy infrastructure (Railway env vars, DNS, secrets).
 
+## MCP filesystem timeout recovery
+
+The Claude Desktop client has a known bug where it unilaterally cancels MCP tool calls at the 4-minute mark regardless of server state. Empirically observed in this project (2026-05-10): writes around 3-4KB and up can trigger it; the threshold is lower than the GitHub-issue docs suggest and isn't a clean cutoff. Once a timeout fires, the per-conversation MCP connection can wedge for subsequent calls. Sometimes the write succeeded on disk and only the ack was lost; sometimes the write never landed at all. Don't assume either.
+
+Applies to any agent in this project that uses the filesystem MCP (planning agent, content agent, future agents). Not relevant to Claude Code itself, which uses bash, not MCP. Reads of similar size are reliable; the bug is concentrated on writes.
+
+If a `filesystem:*` write returns "No result received from the Claude Desktop app after waiting 4 minutes" or similar:
+
+1. **Do not retry the same call immediately.** Retrying queues another 4-minute wait and often wedges further.
+2. **Verify on-disk state.** Wait ~30 seconds, then issue a small read like `filesystem:get_file_info` on the target. Two outcomes:
+   - Metadata returns and matches what you intended to write → the write succeeded, only the ack was lost. Proceed.
+   - Metadata returns showing the file is missing, empty, or smaller than expected → the write did not land. Switch to the fallback (step 4) rather than retrying.
+3. **If the verification read also times out**, the connection is wedged. Stop and surface to Z:
+   > "The filesystem MCP connection is wedged. To recover: Task Manager (Ctrl+Shift+Esc) → Processes → find 'Claude' → End task. Then reopen Claude Desktop from the Start menu. Closing the window alone is not enough."
+   The wedge is per-conversation, not per-app: other Claude Desktop conversations may keep working fine, but the wedged one needs a full app restart to recover.
+4. **Fallback for unreliable writes — route through Google Drive.** For any new-file authoring above ~2KB, or after a wedge has fired, write to Google Drive instead of the local filesystem MCP. The Drive MCP uses a different transport (Google's API) and is not subject to the desktop client's 4-minute cap. Author the file in Drive, then surface it in chat as a downloadable link so Z can pull it into the repo at the appropriate path. This adds one human step at hand-off time but takes the write reliability out of the critical path.
+5. **For targeted edits to existing files**, local MCP `edit_file` with small deltas usually works fine — the bug is concentrated on `write_file` and on large new-file creation, especially in freshly-created directories. Keep using local MCP for spec updates, CLAUDE.md edits, and similar surgical changes.
+6. **After any recovery, verify on-disk state before continuing.** Don't assume the pre-timeout state matches what you expect.
+
+## Demo daily reset (Phase 23+)
+
+Three demo orgs (`demo-cedar-hollow`, `demo-local-4021`, `demo-westgate-coalition`) get wiped and re-seeded daily from checked-in Python bibles at `backend/demo_content/`.
+
+- **When it runs.** Once daily at the time set by env var `DEMO_RESET_TIME_PACIFIC` (default `"00:00"` midnight Pacific). The reset job is a periodic task inside `digest_scheduler.run_one_tick` — same scheduler that runs Phase 13's digest, Phase 21's halfway-deadline check, and Phase 22's snapshot worker. It short-circuits cheaply when not due.
+- **What `is_demo=True` means.** It's the load-bearing safety boundary: the wipe step ONLY touches rows scoped to orgs with this flag. Real orgs are immune regardless of name collision. Never set `is_demo=True` on a real org.
+- **Manual trigger.** `POST /api/admin/demo/reset` (platform admin role required) runs an immediate reset. Useful after a bible update or for ad-hoc recovery if a scheduled reset fails.
+- **Bible updates.** The bible content is Python code at `backend/demo_content/{hoa_bible.py, union_bible.py, activist_bible_part{1,2,3}.py, trajectory_waypoints.py, schema.py}`. Updating a bible requires a code change + redeploy; the next scheduled (or manual) reset picks up the new content. See `docs/demo_content_integration.md` for the bible → DB pipeline.
+- **Reset preserves real user accounts.** The `users` table is never touched. Real users who joined a demo org have their `OrgMembership` row wiped (they can rejoin freely after reset). The frontend banner discloses this on every demo-org page.
+- **Don't add reset-coordination logic for multi-instance scaling.** Current design assumes single-instance scheduler. Multi-instance race-condition handling is future work if needed; the `is_demo_resetting` lock + the audit log are sufficient at current scale.
+- **Cross-org users.** Marcus Pham, Dana Whitfield, and Janet Reilly each have ONE underlying `User` row with TWO `OrgMembership` rows. The seed pipeline resolves bible-internal IDs (`hoa_marcus`, `coalition_marcus`, etc.) to single User accounts at seed time. Stage 8 §5 documents the mapping; if you add a fourth cross-org character, extend the resolver in `seed_pipeline.py`.
+
 ## Frontend conventions
 
 ### Tailwind arbitrary-value syntax

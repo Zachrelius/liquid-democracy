@@ -25,3 +25,8 @@ Pillow==10.4.0
 pytest==8.3.4
 pytest-asyncio==0.24.0
 httpx==0.28.1
+# tzdata: zoneinfo fallback for platforms without system tzdata (Windows
+# dev hosts especially). Phase 23 B6 uses ZoneInfo("America/Los_Angeles")
+# for the daily-reset clock; Linux/Railway has system tzdata so this is
+# a no-op there, but Windows requires the package or zoneinfo lookups 404.
+tzdata==2024.2

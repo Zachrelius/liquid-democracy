@@ -6,8 +6,10 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -815,6 +817,234 @@ def get_public_org(
         ),
         intro_text=(org.settings or {}).get("intro_text") or None,
         join_policy=org.join_policy,
+    )
+
+
+# ============================================================================
+# Phase 23 B6 — Demo directory endpoint (NO AUTH)
+# ============================================================================
+#
+# Surfaces the per-org directory consumed by the updated /demo page (F2).
+# Public-readable, no auth, matches the Phase 14 public-landing pattern.
+# Returns all is_demo=True orgs sorted by display_order, each with the
+# bible-seeded persona allowlist + counts + the platform-wide reset
+# clock. The endpoint is the single source the frontend reads — it
+# doubles as both the directory-card data and the persona-pick gateway
+# into the per-org demo-login (B7).
+#
+# Caching: Cache-Control: max-age=60. The data changes slowly (member
+# counts and proposal counts shift gradually; the reset event itself
+# only fires once per day). 60s strikes the balance between freshness
+# and absorbing burst traffic against the splash page.
+
+class DemoPersonaOut(BaseModel):
+    """One quick-login persona on a demo org card.
+
+    Fields mirror the shape persisted in ``Organization.personas`` JSONB
+    (seeded by the bible per D25/Amendment D). ``description`` is the
+    Stage-8 one-sentence blurb; if a persona is bible-seeded without one
+    the seed mechanism falls back to ``description = role`` so the card
+    always has non-empty text.
+    """
+    username: str
+    display_name: str
+    role: str
+    description: str
+
+
+class DemoOrgCardOut(BaseModel):
+    """One demo-org card on the /demo directory page.
+
+    ``charter_summary`` is a ~150-char ellipsized slice of the org's
+    description (D22). Counts are computed at request time (active
+    memberships, proposals in voting status, proposals in deliberation).
+    ``personas`` is the bible-seeded allowlist; empty list when the seed
+    hasn't run yet. ``is_demo_resetting`` lets the frontend dim a card
+    during an in-flight reset (D20).
+    """
+    slug: str
+    name: str
+    governance_type: Optional[str] = None
+    charter_summary: str
+    member_count: int
+    active_proposal_count: int
+    deliberation_proposal_count: int
+    personas: list[DemoPersonaOut]
+    display_order: Optional[int] = None
+    is_demo_resetting: bool
+
+
+class DemoDirectoryOut(BaseModel):
+    """Top-level response for the /api/orgs/demo directory endpoint.
+
+    ``reset_time_pacific`` echoes the configured HH:MM (Pacific) reset
+    moment so the frontend can render "resets daily at HH:MM Pacific"
+    copy without duplicating env knowledge. ``next_reset_at`` is the
+    UTC instant of the next reset, computed from current Pacific time
+    + ``reset_time_pacific`` with DST handled correctly via zoneinfo.
+    """
+    orgs: list[DemoOrgCardOut]
+    reset_time_pacific: str
+    next_reset_at: datetime
+
+
+def _charter_summary(description: Optional[str], max_chars: int = 150) -> str:
+    """Build the directory-card charter summary from ``description``.
+
+    Returns the first ``max_chars`` characters of ``description``,
+    ellipsized with ``...`` when truncated. Whitespace is trimmed.
+    Empty/None description → empty string (the frontend handles the
+    empty-state copy — this helper returns predictable shape only).
+    """
+    if not description:
+        return ""
+    text = description.strip()
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "..."
+
+
+def _compute_next_reset_at(reset_time_pacific: str) -> datetime:
+    """Compute the next reset moment in UTC, DST-aware.
+
+    ``reset_time_pacific`` is HH:MM 24-hour. We interpret it in
+    America/Los_Angeles (which switches between PST/PDT automatically
+    via zoneinfo), pick today's reset moment if it's still in the
+    future, otherwise tomorrow's. The result is converted to UTC so
+    clients can render relative countdowns without a timezone lib.
+
+    Malformed values fall back to midnight Pacific so a typo in the
+    env var never breaks the directory endpoint.
+    """
+    try:
+        hh_str, mm_str = reset_time_pacific.split(":", 1)
+        hh = int(hh_str)
+        mm = int(mm_str)
+        if not (0 <= hh < 24 and 0 <= mm < 60):
+            raise ValueError("out-of-range")
+    except (ValueError, AttributeError):
+        hh, mm = 0, 0
+
+    pacific = ZoneInfo("America/Los_Angeles")
+    now_pacific = datetime.now(pacific)
+    candidate = now_pacific.replace(
+        hour=hh, minute=mm, second=0, microsecond=0,
+    )
+    if candidate <= now_pacific:
+        candidate = candidate + timedelta(days=1)
+    # Convert to UTC for the response. The naive timezone-aware->UTC
+    # conversion via astimezone correctly accounts for DST transitions
+    # because the source ``candidate`` is tz-aware in Pacific.
+    return candidate.astimezone(timezone.utc)
+
+
+@public_org_router.get("/demo", response_model=DemoDirectoryOut)
+def get_demo_directory(
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """Phase 23 B6 — directory of demo orgs for the /demo page.
+
+    Public-readable, no auth. Returns every ``is_demo=True`` org
+    sorted by ``display_order ASC NULLS LAST, name ASC`` (D23), with
+    per-org counts + the bible-seeded persona allowlist (D22, D25,
+    Amendment D). The response also carries the platform-wide reset
+    clock (``reset_time_pacific``, ``next_reset_at``) so the frontend
+    can render the daily-reset disclosure copy + countdown without
+    duplicating env config.
+
+    Pre-seed edge case: if no demo orgs exist yet (e.g., between
+    deploy and the first scheduled reset), returns ``orgs: []`` plus
+    the reset clock. The frontend handles the empty case ("Demo is
+    refreshing, please check back in a moment").
+
+    Caching: ``Cache-Control: max-age=60``. Data changes slowly
+    (counts shift gradually; reset fires once per day); a brief
+    cache absorbs burst traffic on the splash page without making
+    the data stale enough to mislead.
+    """
+    orgs = (
+        db.query(models.Organization)
+        .filter(models.Organization.is_demo.is_(True))
+        .order_by(
+            # NULLS LAST on display_order so any future demo org seeded
+            # without an explicit order falls to the bottom rather than
+            # leading by accident. SQLAlchemy's ``func.coalesce`` is the
+            # cross-dialect-safe NULLS-LAST pattern (SQLite doesn't
+            # support PG's ``NULLS LAST`` modifier directly).
+            func.coalesce(models.Organization.display_order, 999999).asc(),
+            models.Organization.name.asc(),
+        )
+        .all()
+    )
+
+    cards: list[DemoOrgCardOut] = []
+    for org in orgs:
+        member_count = (
+            db.query(models.OrgMembership)
+            .filter(
+                models.OrgMembership.org_id == org.id,
+                models.OrgMembership.status == "active",
+            )
+            .count()
+        )
+        active_proposal_count = (
+            db.query(models.Proposal)
+            .filter(
+                models.Proposal.org_id == org.id,
+                models.Proposal.status == "voting",
+            )
+            .count()
+        )
+        deliberation_proposal_count = (
+            db.query(models.Proposal)
+            .filter(
+                models.Proposal.org_id == org.id,
+                models.Proposal.status == "deliberation",
+            )
+            .count()
+        )
+
+        # personas JSONB may be NULL (pre-seed) or a list of dicts
+        # matching the DemoPersonaOut shape. Defensive: skip entries
+        # missing the required username key rather than 500ing the
+        # whole directory if a malformed entry slips through.
+        raw_personas = org.personas or []
+        personas: list[DemoPersonaOut] = []
+        for p in raw_personas:
+            if not isinstance(p, dict) or not p.get("username"):
+                continue
+            personas.append(DemoPersonaOut(
+                username=p.get("username"),
+                display_name=p.get("display_name") or p.get("username"),
+                role=p.get("role") or "",
+                description=p.get("description") or p.get("role") or "",
+            ))
+
+        cards.append(DemoOrgCardOut(
+            slug=org.slug,
+            name=org.name,
+            governance_type=org.governance_type,
+            charter_summary=_charter_summary(org.description),
+            member_count=member_count,
+            active_proposal_count=active_proposal_count,
+            deliberation_proposal_count=deliberation_proposal_count,
+            personas=personas,
+            display_order=org.display_order,
+            is_demo_resetting=bool(org.is_demo_resetting),
+        ))
+
+    reset_time = app_settings.demo_reset_time_pacific
+    next_reset_at = _compute_next_reset_at(reset_time)
+
+    # 60s cache per spec. Light enough to absorb splash-page burst
+    # traffic without staleness becoming user-visible.
+    response.headers["Cache-Control"] = "max-age=60"
+
+    return DemoDirectoryOut(
+        orgs=cards,
+        reset_time_pacific=reset_time,
+        next_reset_at=next_reset_at,
     )
 
 

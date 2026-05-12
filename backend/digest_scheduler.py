@@ -858,6 +858,19 @@ def run_one_tick(
                     )
                     db.rollback()
 
+    # Phase 23 (B2) — demo reset check. Cheap when not due (one PlatformSetting
+    # read + a timezone compare). Wrapped so a reset failure doesn't break
+    # the rest of the tick (digests, cleanup).
+    try:
+        from demo_reset_job import run_demo_reset_if_due
+        run_demo_reset_if_due(db, force=False)
+    except Exception:  # noqa: BLE001
+        log.exception("digest tick: demo reset check failed")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
     # Tail step: 90-day cleanup.
     try:
         counts["cleaned"] = cleanup_expired_notifications(db)

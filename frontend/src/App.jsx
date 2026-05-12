@@ -5,6 +5,9 @@ import { PublicConfigProvider } from './PublicConfigContext';
 import { ToastProvider } from './components/Toast';
 import { ConfirmProvider } from './components/ConfirmDialog';
 import BrandingThemeApplier from './components/BrandingThemeApplier';
+// Phase 23 F1 — disclosure banner + reset-in-progress overlay shown on
+// demo orgs only. Self-gates on org.is_demo; renders nothing for real orgs.
+import DemoOrgBanner from './components/DemoOrgBanner';
 import ProtectedRoute from './ProtectedRoute';
 import AdminRoute from './AdminRoute';
 import AdminOnlyRoute from './AdminOnlyRoute';
@@ -123,7 +126,7 @@ function OrgScopedBrandingTheme() {
  * switch / route leave).
  */
 function OrgScopedLayout({ children }) {
-  const { accessDenied, loading } = useOrg();
+  const { accessDenied, loading, currentOrg } = useOrg();
   if (loading) {
     return (
       <Layout>
@@ -159,6 +162,12 @@ function OrgScopedLayout({ children }) {
   return (
     <Layout>
       <OrgScopedBrandingTheme />
+      {/* Phase 23 F1 — disclosure banner for demo orgs. Self-gates on
+          currentOrg.is_demo; shows reset-in-progress overlay when the
+          backend sets is_demo_resetting=true. Banner placement is here
+          (the org-scoped shell) so it appears on all member-facing org
+          pages (proposals, delegations, delegate-pages, admin, etc.). */}
+      <DemoOrgBanner org={currentOrg} />
       {children}
     </Layout>
   );

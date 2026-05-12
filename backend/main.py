@@ -189,12 +189,16 @@ app.include_router(delegates.router)
 # endpoints (deprecation handled in Cluster G of a later pass).
 app.include_router(delegates.org_delegates_router)
 app.include_router(follows.router)
-app.include_router(organizations.router)
 # Phase 14 B2 — public org landing page endpoint (no-auth GET /api/orgs/{slug}/public).
+# Phase 23 B6 — public demo directory endpoint (no-auth GET /api/orgs/demo).
 # Separate APIRouter so the unauthenticated path is visible at the route-table
 # level and doesn't accidentally inherit auth-required dependencies if
 # organizations.router grows a router-level auth dependency in the future.
+# MUST be registered BEFORE organizations.router so the literal /demo path
+# wins over the auth-required /{org_slug} catch-all (FastAPI matches routes
+# in registration order across mounted routers).
 app.include_router(organizations.public_org_router)
+app.include_router(organizations.router)
 app.include_router(sub_organizations.router)
 app.include_router(polises.router)
 app.include_router(invitations.router)
