@@ -861,7 +861,7 @@ NOTIFICATION_FEEDS = [
 # -----------------------------------------------------------------------------
 
 HOA_BIBLE = OrgBible(
-    slug='cedar-hollow',
+    slug='demo-cedar-hollow',
     display_name='Cedar Hollow HOA',
     charter=CHARTER,
     tone_notes=TONE_NOTES,

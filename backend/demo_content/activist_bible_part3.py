@@ -299,7 +299,7 @@ NOTIFICATION_FEEDS = [
 DELEGATE_PAGES = DELEGATE_PAGES_PART_1 + DELEGATE_PAGES_PART_2
 
 COALITION_BIBLE = OrgBible(
-    slug='westgate-tenants',
+    slug='demo-westgate-coalition',
     display_name='Westgate Tenants Coalition',
     charter=CHARTER,
     tone_notes=TONE_NOTES,

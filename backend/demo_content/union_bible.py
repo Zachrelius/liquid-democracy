@@ -1016,7 +1016,7 @@ NOTIFICATION_FEEDS = [
 # -----------------------------------------------------------------------------
 
 LOCAL_4021_BIBLE = OrgBible(
-    slug='local-4021',
+    slug='demo-local-4021',
     display_name='AFSCME Local 4021',
     charter=CHARTER,
     tone_notes=TONE_NOTES,
