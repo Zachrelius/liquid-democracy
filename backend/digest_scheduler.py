@@ -263,7 +263,12 @@ def _summarize_event(event_type: str, payload: dict) -> str:
     if event_type == "proposal.entered_voting.delegated_to_you":
         return f"Voting opened on '{payload.get('proposal_title') or ''}' — you vote on others' behalf."
     if event_type == "proposal.closed":
-        return f"'{payload.get('proposal_title') or ''}' closed: {payload.get('outcome') or 'resolved'}."
+        # Phase 24 — prefer per-method outcome_detail (e.g. "passed (5-3)",
+        # "passed — Tuesday won") when set. Falls back to the generic
+        # outcome value for older notifications + SRR-stable closes that
+        # don't carry the detail field.
+        outcome_str = payload.get("outcome_detail") or payload.get("outcome") or "resolved"
+        return f"'{payload.get('proposal_title') or ''}' closed: {outcome_str}."
     if event_type == "member.join_request":
         return f"{actor} requested to join {payload.get('org_name') or 'the org'}."
     if event_type == "invitation.accepted":

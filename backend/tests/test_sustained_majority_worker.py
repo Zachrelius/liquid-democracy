@@ -564,9 +564,16 @@ class TestEvaluateProposalExtensionBranch:
         old_end = proposal.voting_end
         result = worker.evaluate_proposal(db, proposal)
         db.commit()
-        assert result == "destabilized_at_max"
-        assert proposal.voting_end == old_end  # not extended
-        # Audit event exists.
+        # Phase 24: SRR's destabilization-at-max path still runs and logs
+        # the audit row, but the proposal no longer sits in voting forever
+        # — the Phase 24 fallback closes it naturally because voting_end
+        # is past.
+        assert result == "closed_on_time_after_srr_exhausted"
+        assert proposal.status in ("passed", "failed")
+        # voting_end NOT updated (natural close preserves the original
+        # deadline per update_voting_end=False).
+        assert proposal.voting_end == old_end
+        # destabilization-at-max audit still recorded.
         rows = (
             db.query(models.AuditLog)
             .filter(
@@ -667,9 +674,11 @@ class TestExtensionBudgetSemantics:
         result = worker.evaluate_proposal(db, proposal)
         db.commit()
         # Budget: 100s * 0.50 = 50s. Used: 50s. Remaining: 0. Cannot fit
-        # another 25s extension. Should log destabilization-at-max.
-        assert result == "destabilized_at_max"
+        # another 25s extension. SRR logs destabilization-at-max; Phase 24
+        # fallback closes the proposal naturally since voting_end is past.
+        assert result == "closed_on_time_after_srr_exhausted"
         assert count_extensions(db, proposal.id) == 2
+        assert proposal.status in ("passed", "failed")
 
     def test_budget_30pct_rounds_down_to_one_extension(self, db):
         """Per D9: 7-day proposal, stable_window_fraction = 0.25,
@@ -708,9 +717,11 @@ class TestExtensionBudgetSemantics:
         result = worker.evaluate_proposal(db, proposal)
         db.commit()
         # Budget: 100 * 0.30 = 30s. Used: 25s. Remaining: 5s < 25s. No
-        # second extension.
-        assert result == "destabilized_at_max"
+        # second extension. SRR logs destabilization-at-max; Phase 24
+        # fallback closes naturally since voting_end is past.
+        assert result == "closed_on_time_after_srr_exhausted"
         assert count_extensions(db, proposal.id) == 1
+        assert proposal.status in ("passed", "failed")
 
 
 # ---------------------------------------------------------------------------

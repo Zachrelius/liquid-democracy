@@ -102,6 +102,14 @@ import models
 # floor_approached recipient window (now removed).
 EXTENDED_BY_STABILITY_RECENT_VOTER_DAYS: int = 7
 
+# Phase 24 — close-trigger constants used by ``_close_proposal_now`` and
+# ``_emit_proposal_closed_*`` helpers. These show up in the audit-event
+# ``trigger`` field and the ``proposal.closed`` notification payload so the
+# UI / digest / email template can render the close reason.
+TRIGGER_STABLE_RESULT_ACHIEVED: str = "stable_result_achieved"  # Phase 20
+TRIGGER_VOTING_END_REACHED: str = "voting_end_reached"  # Phase 24
+TRIGGER_VOTING_END_BACKFILL: str = "voting_end_backfill"  # Phase 24 backfill
+
 log = logging.getLogger("sustained_majority_worker")
 
 
@@ -282,7 +290,7 @@ def _emit_proposal_closed_for_stability(
                     "old_status": old_status,
                     "new_status": new_status,
                     "outcome": new_status,
-                    "trigger": "stable_result_achieved",
+                    "trigger": TRIGGER_STABLE_RESULT_ACHIEVED,
                 },
             )
     except Exception as e:  # noqa: BLE001
@@ -292,16 +300,134 @@ def _emit_proposal_closed_for_stability(
         )
 
 
+def _build_outcome_detail(
+    db: Session, proposal: models.Proposal, new_status: str,
+) -> str:
+    """Build a per-method one-line outcome string used in the
+    ``proposal.closed`` (trigger=voting_end_reached) notification payload.
+
+    Examples:
+      - Binary passed:  "passed (5-3)"
+      - Binary failed:  "failed (3-5)"
+      - Failed quorum:  "failed (quorum not met)"
+      - Approval/RCV passed: "passed — Tuesday won"
+      - Approval/RCV failed: "failed (no winner)"
+    """
+    from delegation_engine import (
+        engine as delegation_engine,
+        ApprovalTally,
+        RCVTally,
+    )
+    try:
+        tally = delegation_engine.compute_tally(proposal, db)
+    except Exception as e:  # noqa: BLE001
+        log.warning("outcome_detail tally failed for %s: %s", proposal.id, e)
+        return new_status
+
+    quorum_met = True
+    try:
+        quorum_met = bool(tally.quorum_met(proposal.quorum_threshold))
+    except Exception:  # noqa: BLE001
+        pass
+
+    if new_status == "failed" and not quorum_met:
+        return "failed (quorum not met)"
+
+    if proposal.voting_method == "approval" and isinstance(tally, ApprovalTally):
+        if new_status == "passed" and tally.winners:
+            labels = [opt.label for opt in proposal.options if opt.id in tally.winners]
+            label_str = ", ".join(labels) if labels else ""
+            return f"passed — {label_str} won" if label_str else "passed"
+        return "failed (no winner)" if new_status == "failed" else new_status
+
+    if proposal.voting_method == "ranked_choice" and isinstance(tally, RCVTally):
+        if new_status == "passed" and tally.winners:
+            labels = [opt.label for opt in proposal.options if opt.id in tally.winners]
+            label_str = ", ".join(labels) if labels else ""
+            return f"passed — {label_str} won" if label_str else "passed"
+        return "failed (no winner)" if new_status == "failed" else new_status
+
+    yes = int(getattr(tally, "yes_count", 0) or 0)
+    no = int(getattr(tally, "no_count", 0) or 0)
+    if new_status == "passed":
+        return f"passed ({yes}-{no})"
+    return f"failed ({yes}-{no})"
+
+
+def _emit_proposal_closed_natural(
+    db: Session,
+    proposal: models.Proposal,
+    *,
+    old_status: str,
+    new_status: str,
+) -> None:
+    """Phase 24 — emit ``proposal.closed`` with ``trigger:
+    voting_end_reached`` when the worker closes a proposal because its
+    declared ``voting_end`` has passed. Mirrors
+    ``_emit_proposal_closed_for_stability`` but with a different trigger
+    string + an ``outcome_detail`` field carrying per-method outcome copy.
+    """
+    if not NOTIFICATION_EMIT_AVAILABLE:
+        return
+    try:
+        outcome_detail = _build_outcome_detail(db, proposal, new_status)
+        recipients: set[str] = set()
+        if proposal.author_id:
+            recipients.add(proposal.author_id)
+        vote_rows = (
+            db.query(models.Vote.user_id)
+            .filter(models.Vote.proposal_id == proposal.id)
+            .all()
+        )
+        for r in vote_rows:
+            recipients.add(r.user_id)
+        bt = BackgroundTasks()
+        for uid in recipients:
+            emit_notification(
+                db,
+                bt,
+                event_type="proposal.closed",
+                user_id=uid,
+                org_id=proposal.org_id,
+                actor_id=None,
+                target_type="proposal",
+                target_id=proposal.id,
+                payload={
+                    "proposal_id": proposal.id,
+                    "proposal_title": proposal.title,
+                    "org_id": proposal.org_id,
+                    "old_status": old_status,
+                    "new_status": new_status,
+                    "outcome": new_status,
+                    "outcome_detail": outcome_detail,
+                    "trigger": TRIGGER_VOTING_END_REACHED,
+                },
+            )
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "proposal.closed (voting_end_reached) emit failed for %s: %s: %s",
+            proposal.id, type(e).__name__, e,
+        )
+
+
 def _close_proposal_now(
     db: Session,
     proposal: models.Proposal,
+    *,
+    trigger: str = TRIGGER_STABLE_RESULT_ACHIEVED,
+    update_voting_end: bool = True,
 ) -> str:
-    """Close the proposal in-place when the sliding-window stability check
-    succeeds during an extension. Per spec §B3 "Extension branch":
+    """Close the proposal in-place.
 
-      - Set ``voting_end = now``.
-      - Compute the tally and apply the standard pass/fail logic.
-      - Log a ``proposal.status_changed`` audit event.
+    Two call sites:
+
+      - SRR sliding-window-stable close (Phase 20): ``trigger=
+        "stable_result_achieved"``, ``update_voting_end=True`` — the close is
+        "early" so we mark the actual close time on the row.
+      - Natural close past voting_end (Phase 24): ``trigger=
+        "voting_end_reached"``, ``update_voting_end=False`` — the row's
+        ``voting_end`` already represents the intended deadline; overwriting
+        it would lose the audit trail of when voting was *meant* to close.
 
     Returns the resulting status. Mirrors the close branch in
     ``routes.organizations.advance_proposal`` and ``routes.proposals``.
@@ -314,7 +440,8 @@ def _close_proposal_now(
     )
     from audit_utils import log_audit_event
 
-    proposal.voting_end = _now_naive()
+    if update_voting_end:
+        proposal.voting_end = _now_naive()
 
     old_status = proposal.status
     tally = delegation_engine.compute_tally(proposal, db)
@@ -374,7 +501,7 @@ def _close_proposal_now(
             "proposal_id": proposal.id,
             "old_status": old_status,
             "new_status": new_status,
-            "trigger": "stable_result_achieved",
+            "trigger": trigger,
         },
     )
     return new_status
@@ -418,7 +545,32 @@ def evaluate_proposal(
     active = is_proposal_stable_result_active(
         proposal.stable_result_required, config.enabled_default,
     )
+    now = _now_naive()
+
+    # Phase 24 — non-SRR natural-close branch.
+    # When SRR is inactive and the proposal's declared voting_end has
+    # passed, tally + close via the standard pass/fail logic. Same close
+    # helper the SRR path uses; the only difference is trigger string +
+    # we don't overwrite voting_end (the original deadline stays on the
+    # row as the audit trail of when voting was *meant* to close).
     if not active:
+        if (
+            proposal.voting_end is not None
+            and now >= proposal.voting_end
+            and proposal.status == "voting"
+        ):
+            old_status = proposal.status
+            new_status = _close_proposal_now(
+                db, proposal,
+                trigger=TRIGGER_VOTING_END_REACHED,
+                update_voting_end=False,
+            )
+            _emit_proposal_closed_natural(
+                db, proposal,
+                old_status=old_status,
+                new_status=new_status,
+            )
+            return "closed_on_time"
         return None
 
     # 2. Read all snapshots (newest last).
@@ -440,8 +592,8 @@ def evaluate_proposal(
 
     extension_count = count_extensions(db, proposal.id)
     pass_threshold = float(proposal.pass_threshold or 0.5)
-    now = _now_naive()
 
+    srr_action: Optional[str] = None
     if extension_count == 0:
         # Original-window branch.
         original_voting_end = proposal.voting_start + original_duration
@@ -454,57 +606,89 @@ def evaluate_proposal(
             now=now,
             stable_window_fraction=config.stable_window_fraction,
         )
-        if not decision.destabilized:
-            return None
-        return _react_to_destabilization(
-            db, proposal,
-            decision=decision,
+        if decision.destabilized:
+            srr_action = _react_to_destabilization(
+                db, proposal,
+                decision=decision,
+                stable_window_duration=stable_window_duration,
+                extension_budget_total_seconds=extension_budget_total_seconds,
+                extension_budget_used_seconds=extension_budget_used_seconds,
+            )
+    else:
+        # Extension branch.
+        is_stable = evaluate_extension_stability(
+            voting_method=proposal.voting_method,
+            snapshots=snapshots,
+            pass_threshold=pass_threshold,
+            now=now,
             stable_window_duration=stable_window_duration,
-            extension_budget_total_seconds=extension_budget_total_seconds,
-            extension_budget_used_seconds=extension_budget_used_seconds,
         )
+        if is_stable:
+            old_status = proposal.status
+            new_status = _close_proposal_now(
+                db, proposal,
+                trigger=TRIGGER_STABLE_RESULT_ACHIEVED,
+                update_voting_end=True,
+            )
+            _emit_proposal_closed_for_stability(
+                db, proposal, old_status=old_status, new_status=new_status,
+            )
+            return "closed_early"
 
-    # Extension branch.
-    is_stable = evaluate_extension_stability(
-        voting_method=proposal.voting_method,
-        snapshots=snapshots,
-        pass_threshold=pass_threshold,
-        now=now,
-        stable_window_duration=stable_window_duration,
-    )
-    if is_stable:
+        # Not yet stable. If the extension's natural voting_end has been
+        # reached, try another extension if budget allows. Either way fall
+        # through to the Phase 24 natural-close fallback below — if SRR
+        # extended successfully, the fallback's voting_end check sees the
+        # new (future) voting_end and is a no-op.
+        if proposal.voting_end is not None and now >= proposal.voting_end:
+            decision = DestabilizationDecision(
+                destabilized=True,
+                reason=(
+                    f"Extension window reached voting_end without "
+                    f"sliding-window stability"
+                ),
+                breach_sample={
+                    "extension_count_pre": extension_count,
+                    "voting_end": proposal.voting_end.isoformat(),
+                },
+            )
+            srr_action = _react_to_destabilization(
+                db, proposal,
+                decision=decision,
+                stable_window_duration=stable_window_duration,
+                extension_budget_total_seconds=extension_budget_total_seconds,
+                extension_budget_used_seconds=extension_budget_used_seconds,
+            )
+
+    # Phase 24 — SRR-exhausted natural-close fallback.
+    # If SRR ran and fired an extension, the proposal's voting_end is now
+    # in the future and we're done — skip the fallback entirely.
+    # Otherwise (srr_action is None or "destabilized_at_max"), check
+    # whether the proposal is still sitting in voting past voting_end. If
+    # so, close naturally. The ``db.refresh`` is load-bearing — any SRR
+    # branch that mutated the row may have updates pending; refresh
+    # snaps the cached state to current.
+    if srr_action == "extended":
+        return srr_action
+    db.refresh(proposal)
+    if (
+        proposal.status == "voting"
+        and proposal.voting_end is not None
+        and now >= proposal.voting_end
+    ):
         old_status = proposal.status
-        new_status = _close_proposal_now(db, proposal)
-        _emit_proposal_closed_for_stability(
-            db, proposal, old_status=old_status, new_status=new_status,
+        new_status = _close_proposal_now(
+            db, proposal,
+            trigger="voting_end_reached",
+            update_voting_end=False,
         )
-        return "closed_early"
-
-    # Not yet stable. Check whether the extension's natural voting_end has
-    # been reached.
-    if proposal.voting_end is None or now < proposal.voting_end:
-        return None  # wait for next tick
-
-    # voting_end reached without stability — try another extension if the
-    # budget allows.
-    decision = DestabilizationDecision(
-        destabilized=True,
-        reason=(
-            f"Extension window reached voting_end without "
-            f"sliding-window stability"
-        ),
-        breach_sample={
-            "extension_count_pre": extension_count,
-            "voting_end": proposal.voting_end.isoformat(),
-        },
-    )
-    return _react_to_destabilization(
-        db, proposal,
-        decision=decision,
-        stable_window_duration=stable_window_duration,
-        extension_budget_total_seconds=extension_budget_total_seconds,
-        extension_budget_used_seconds=extension_budget_used_seconds,
-    )
+        _emit_proposal_closed_natural(
+            db, proposal,
+            old_status=old_status,
+            new_status=new_status,
+        )
+        return "closed_on_time_after_srr_exhausted"
+    return srr_action
 
 
 def _react_to_destabilization(
