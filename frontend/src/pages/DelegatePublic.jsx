@@ -301,6 +301,10 @@ export default function DelegatePublic() {
               const label = t.visibility === 'public_accepting'
                 ? 'Accepting delegation'
                 : 'Transparent only';
+              // Phase 26 D1 — display-name resolution: description with
+              // fallback to name. Demos prefix names for scoping; the
+              // description is the user-visible label.
+              const topicLabel = t.description?.trim() || t.name;
               return (
                 <div
                   key={t.topic_id}
@@ -308,7 +312,7 @@ export default function DelegatePublic() {
                 >
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <h3 className="text-base font-semibold text-[var(--brand-primary)]">
-                      {t.name}
+                      {topicLabel}
                     </h3>
                     <span
                       className={`text-xs px-2 py-0.5 rounded ${labelClasses}`}
@@ -319,11 +323,11 @@ export default function DelegatePublic() {
                   {t.visibility === 'public_accepting' && !isSelf && (
                     <button
                       onClick={() => setDelegateModalTopic({
-                        id: t.topic_id, name: t.name,
+                        id: t.topic_id, name: topicLabel,
                       })}
                       className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
                     >
-                      Delegate to {userObj.display_name || userObj.username} on {t.name}
+                      Delegate to {userObj.display_name || userObj.username} on {topicLabel}
                     </button>
                   )}
                 </div>

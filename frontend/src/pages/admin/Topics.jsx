@@ -322,7 +322,10 @@ export default function Topics() {
                     )}
                     {canDeleteTopic && (
                       <button
-                        onClick={() => handleDeactivate(t.id, t.name)}
+                        // Phase 26 D1 — pass display name (description ||
+                        // name) to the confirm dialog so the user sees
+                        // the label they recognize.
+                        onClick={() => handleDeactivate(t.id, t.description?.trim() || t.name)}
                         className="text-xs text-red-500 hover:underline"
                       >
                         Deactivate

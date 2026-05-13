@@ -396,7 +396,8 @@ export default function Proposals() {
           >
             <option value="">All Topics</option>
             {topics.map(t => (
-              <option key={t.id} value={t.id}>{t.name}</option>
+              // Phase 26 D1 — option label reads description || name.
+              <option key={t.id} value={t.id}>{t.description?.trim() || t.name}</option>
             ))}
           </select>
         )}

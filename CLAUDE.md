@@ -173,6 +173,10 @@ Three demo orgs (`demo-cedar-hollow`, `demo-local-4021`, `demo-westgate-coalitio
 
 ## Frontend conventions
 
+### Topic display name
+
+When rendering a Topic in user-facing surfaces, read `topic.description` with fallback to `topic.name`: `{topic.description?.trim() || topic.name}`. The `name` field is reserved for internal scoping (demo orgs prefix the name so the daily reset can target rows safely); descriptions are display-safe. The same applies to backend serializers that send a `topic_name` field to the frontend — prefer `(topic.description or "").strip() or topic.name`. Phase 23.1 introduced the description column; Phase 25 C3 and Phase 26 D1 swept existing display surfaces. New pages should follow the convention from the start.
+
 ### Tailwind arbitrary-value syntax
 
 When using Tailwind arbitrary values with multiple CSS values (commonly grid templates), separate values with **underscores**, not commas:
