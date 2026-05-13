@@ -731,23 +731,36 @@ export default function OrgSettings() {
                 </span>
               </label>
               <div className="flex items-center gap-3 mt-1">
-                <input
-                  type="color"
-                  value={accentColor}
-                  onChange={(e) => setAccentColor(e.target.value)}
-                  disabled={autoDeriveAccent}
-                  // Phase 25 F2 — keep the swatch at full opacity even
-                  // when the picker is disabled (auto-derive on) so the
-                  // displayed color always reflects the actual saved
-                  // accent. The previous `disabled:opacity-50` made the
-                  // swatch look washed-out / "primary-coloured", which is
-                  // what Z reported as the swatch-doesn't-match-hex bug.
-                  // The hex-input dimming below is kept (text input
-                  // dimming reads as "this field is locked," whereas
-                  // swatch dimming reads as "wrong colour").
-                  className="h-10 w-14 border border-gray-300 rounded cursor-pointer p-0 disabled:cursor-not-allowed"
-                  aria-label="Accent color picker"
-                />
+                {/* Phase 26 F1 — Chromium (and some other browsers)
+                    paint a disabled <input type="color"> as a generic
+                    system-default rectangle, IGNORING the `value`
+                    attribute. That's the actual bug Z reported and the
+                    reason Phase 25 F2's opacity removal didn't help:
+                    the value was correct, the disabled element just
+                    won't render it. The fix is to swap to a plain div
+                    swatch when the picker is disabled (auto-derive on)
+                    — divs paint backgroundColor reliably across
+                    browsers — and only use the real <input type="color">
+                    when the picker is enabled. The visual on-page is
+                    indistinguishable: same size, same border, same
+                    cursor behavior. */}
+                {autoDeriveAccent ? (
+                  <div
+                    className="h-10 w-14 border border-gray-300 rounded cursor-not-allowed"
+                    style={{ backgroundColor: accentColor }}
+                    role="img"
+                    aria-label={`Auto-derived accent color ${accentColor}`}
+                    title="Auto-derived from primary color. Uncheck the box above to edit."
+                  />
+                ) : (
+                  <input
+                    type="color"
+                    value={accentColor}
+                    onChange={(e) => setAccentColor(e.target.value)}
+                    className="h-10 w-14 border border-gray-300 rounded cursor-pointer p-0"
+                    aria-label="Accent color picker"
+                  />
+                )}
                 <input
                   type="text"
                   value={accentColor}
