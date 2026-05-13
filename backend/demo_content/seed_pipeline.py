@@ -45,6 +45,7 @@ from .filler_generator import (
     allocate_filler_votes,
     generate_filler_members,
 )
+from .persona_descriptions import QUICK_LOGIN_DESCRIPTIONS
 from .schema import (
     Comment as BibleComment,
     DelegatePage,
@@ -96,6 +97,36 @@ CROSS_ORG_USER_MAP: dict[str, str] = {
     "hoa_janet": "janet_reilly",
     "local_janet": "janet_reilly",
 }
+
+
+# Phase 23.1 B2: explicit display-name mapping for non-quick-login
+# candidate user_ids whose title-case fallback ("Local Trustee Marcus
+# Reeves") would render confusingly in the ProposalOption.label / candidate
+# card surfaces. Keys are bible user_ids; values are the desired
+# User.display_name on first seed. Existing bible Member rows (Frank
+# Boczek, Marisol Vega, etc.) don't need entries here because they're
+# already in the MEMBERS list and seeded with their canonical display_name.
+CANDIDATE_DISPLAY_NAMES: dict[str, str] = {
+    # P-L-06 STV trustee candidates (4 of 5; Frank Boczek is a bible
+    # MEMBER and uses his existing display_name)
+    "local_trustee_marcus_reeves": "Marcus Reeves",
+    "local_trustee_diana_sosa": "Diana Sosa",
+    "local_trustee_will_park": "Will Park",
+    "local_trustee_maria_santos": "Maria Santos",
+}
+
+
+def _candidate_display_name(bible_user_id: str) -> str:
+    """Best display name for a non-bible-member candidate user_id.
+
+    Falls back to title-case-with-spaces if no explicit mapping. The
+    fallback works for one-word user_ids ("local_marisol" → "Local
+    Marisol") but is awkward for the longer "local_trustee_*" pattern,
+    which is why ``CANDIDATE_DISPLAY_NAMES`` exists.
+    """
+    if bible_user_id in CANDIDATE_DISPLAY_NAMES:
+        return CANDIDATE_DISPLAY_NAMES[bible_user_id]
+    return bible_user_id.replace("_", " ").title()
 
 
 def _underlying_username(bible_user_id: str) -> str:
@@ -425,12 +456,18 @@ def seed_org_from_bible(
         counts["members_created"] += 1
 
     # ---- 3. Personas JSON (D22, Amendment D) -----------------------------
+    # Phase 23.1 (C4): description sourced from QUICK_LOGIN_DESCRIPTIONS
+    # (Stage 8 §6 verbatim) keyed on bible user_id; falls back to role for
+    # any quick-login member not in the dict (defensive — Stage 8 covers all
+    # 18 current quick-login characters).
     org.personas = [
         {
             "username": bible_uid_to_user[m.user_id].username,
             "display_name": m.display_name,
             "role": m.role or "Member",
-            "description": m.role or "Member",  # Stage 8 descriptions
+            "description": QUICK_LOGIN_DESCRIPTIONS.get(
+                m.user_id, m.role or "Member",
+            ),
         }
         for m in bible.members if m.quick_login
         and m.user_id in bible_uid_to_user
@@ -566,15 +603,72 @@ def seed_org_from_bible(
                 db.add(opt)
             db.flush()
 
-        # Candidate statements (RCV/STV): make sure each candidate has a user
+        # Candidate statements (RCV/STV): make sure each candidate has a
+        # user, then (Phase 23.1 B1) create one ProposalOption per
+        # candidate when ``bp.options`` is empty. Without these rows the
+        # voting UI has nothing to rank and falls back to Yes/No.
+        candidate_order: list[tuple[str, "models.User"]] = []
         for cand_uid, statement in (bp.candidate_statements or {}).items():
             if cand_uid not in bible_uid_to_user:
                 underlying = _underlying_username(cand_uid)
                 cand_user = _ensure_user(
-                    db, underlying, cand_uid.replace("_", " ").title(),
+                    db, underlying, _candidate_display_name(cand_uid),
                 )
                 _ensure_membership(db, cand_user.id, org.id, member_role_id)
                 bible_uid_to_user[cand_uid] = cand_user
+            candidate_order.append((cand_uid, bible_uid_to_user[cand_uid]))
+
+        if not bp.options and candidate_order:
+            for idx, (cand_uid, cand_user) in enumerate(candidate_order):
+                statement = (bp.candidate_statements or {}).get(cand_uid, "")
+                opt = models.ProposalOption(
+                    proposal_id=proposal.id,
+                    label=cand_user.display_name,
+                    description=statement or "",
+                    display_order=idx,
+                )
+                db.add(opt)
+            db.flush()
+
+    # ---- 6b. ProposalTopic associations (Phase 23.1 B3a/C1 follow-up) ----
+    # Without ProposalTopic rows, find_delegate_pure walks an empty topic
+    # list and the per-topic delegations the seed creates never resolve.
+    # The bibles don't specify proposal→topic mappings explicitly; we
+    # infer them by: for each delegate-page vote_rationale, union the
+    # voter's `public_accepting` topics into the rationale's proposal.
+    # This makes the proposal "in scope" for any delegation targeted at
+    # the voter on that topic, which is exactly the propagation path the
+    # demo wants to demonstrate. Proposals that get no rationale across
+    # any delegate page end up with an empty topic set — fine for the
+    # tally (their delegated voters cascade through the unscoped
+    # fallback).
+    proposal_topic_pairs: set[tuple[str, str]] = set()
+    for dp in bible.delegate_pages:
+        accepting_topic_ids: list[str] = []
+        for tv in (dp.topics or []):
+            if tv.state == "public_accepting":
+                t = topics_by_name.get(tv.topic)
+                if t is not None:
+                    accepting_topic_ids.append(t.id)
+        if not accepting_topic_ids:
+            continue
+        for vr in (dp.vote_rationales or []):
+            prop = proposals_by_bible_id.get(vr.proposal_id)
+            if prop is None:
+                continue
+            for tid in accepting_topic_ids:
+                proposal_topic_pairs.add((prop.id, tid))
+    for prop_id, topic_id in proposal_topic_pairs:
+        existing = db.query(models.ProposalTopic).filter(
+            models.ProposalTopic.proposal_id == prop_id,
+            models.ProposalTopic.topic_id == topic_id,
+        ).first()
+        if existing is None:
+            db.add(models.ProposalTopic(
+                proposal_id=prop_id, topic_id=topic_id, relevance=1.0,
+            ))
+    if proposal_topic_pairs:
+        db.flush()
 
     # ---- 7. Named-character votes (from DelegatePage.vote_rationales) ----
     new_votes: list = []
@@ -729,6 +823,19 @@ def seed_org_from_bible(
         .count()
     )
 
+    # Phase 23.1 B3a: build the set of filler bible user_ids that have ANY
+    # active delegation in this org. The seed pipeline does NOT create
+    # ProposalTopic rows (proposals carry no explicit topic association),
+    # so we cannot intersect the filler's delegation topics with the
+    # proposal's topics. Per the dispatch's "conservative fallback"
+    # provision, any filler with a delegation is excluded from direct
+    # vote allocation - the tally resolver will follow the delegation to
+    # the delegate's vote at tally time. The named-character delegate's
+    # direct vote DOES get cast normally.
+    fillers_with_delegations: set[str] = {
+        f.user_id for f in fillers if f.delegates_to
+    }
+
     all_snapshots: list = []
     all_filler_votes: list = []
 
@@ -764,8 +871,15 @@ def seed_org_from_bible(
             and proposal.voting_end is not None
             and proposal.status in ("voting", "passed", "failed")
         ):
-            # Determine participation: ~50% of fillers vote on this proposal
-            participating = fillers[: max(1, len(fillers) // 2)]
+            # Determine participation: ~50% of fillers vote on this
+            # proposal. Phase 23.1 B3a: filter out fillers with any
+            # delegation so their delegate's vote is what shows in the
+            # tally (defect C1).
+            base_pool = fillers[: max(1, len(fillers) // 2)]
+            participating = [
+                f for f in base_pool
+                if f.user_id not in fillers_with_delegations
+            ]
             # Named-voter summary (yes/no/abstain counts already in new_votes)
             named_summary: dict = {"yes": 0, "no": 0, "abstain": 0}
             for v in new_votes:

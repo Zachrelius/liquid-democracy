@@ -424,7 +424,16 @@ PROPOSALS = [
             "1-6 fit within the operating budget plus modest carryover. Items "
             "7-8 would require additional revenue."
         ),
-        options=['Item 1', 'Item 2', 'Item 3', 'Item 4', 'Item 5', 'Item 6', 'Item 7', 'Item 8'],
+        options=[
+            'Pool pump replacement ($14K) — life-safety',
+            'Entrance signage repair ($3K) — visibility/safety',
+            'Parking lot resurfacing ($28K) — accumulated damage',
+            'Cedar Court fence replacement ($8K) — structural, 3yr overdue',
+            'Playground equipment refresh ($6K) — safety',
+            'Trail maintenance, north path ($3K) — drainage',
+            'Tennis court resurfacing ($12K) — cosmetic',
+            'Clubhouse landscaping upgrade ($4K) — aesthetic',
+        ],
     ),
 
     Proposal(
@@ -452,7 +461,13 @@ PROPOSALS = [
             "If multiple options pass, we go with whichever combination got the "
             "broadest approval base."
         ),
-        options=['A: Current hours', 'B: 8 PM weekdays', 'C: 8:30 PM weekdays', 'D: 8:30 PM weekends only', 'E: 6 AM weekdays'],
+        options=[
+            'A: Keep current hours (7am-7pm)',
+            'B: Extend weekdays to 8pm',
+            'C: Extend weekdays to 8:30pm',
+            'D: Weekends only to 8:30pm',
+            'E: Add 6am weekday morning hour',
+        ],
     ),
 
     Proposal(
@@ -616,7 +631,12 @@ PROPOSALS = [
             "accept; the board will select the highest-approved option that "
             "meets contract requirements."
         ),
-        options=['Vendor A', 'Vendor B', 'Vendor C', 'Vendor D'],
+        options=[
+            'Vendor A - $9K/yr, new entrant, no local refs',
+            'Vendor B - $14K/yr, current vendor, 3yr track record',
+            'Vendor C - $11K/yr, established Millbrook, no Cedar Hollow history',
+            'Vendor D - $7K/yr, owner-operator, mixed references',
+        ],
     ),
 
     Proposal(

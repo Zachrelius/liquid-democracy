@@ -649,7 +649,46 @@ PROPOSALS = [
             "Candidates: see candidate statements. Voting closes 78 hours "
             "after reset."
         ),
-        # STV candidate statements omitted (non-quick-login candidates not produced in main content).
+        # Phase 23.1 B2: five candidate statements seeded so the seed
+        # pipeline produces five ProposalOption rows + five candidate User
+        # rows. Frank Boczek (DPW Water/Sewer steward) is already a
+        # non-quick-login bible member; the four other candidates are
+        # new non-quick-login Local members.
+        candidate_statements={
+            'local_trustee_marcus_reeves': (
+                "DPW Streets, twenty-two years. Running for Trustee because "
+                "the Local's finances need someone with day-to-day "
+                "operational visibility, and Streets is where the budget "
+                "pressures show up first. Will vote on financial questions "
+                "with the same discipline the trade demands."
+            ),
+            'local_trustee_diana_sosa': (
+                "Parks Department, sixteen years, recreation groundskeeper. "
+                "Running to make sure the Parks department has financial-"
+                "oversight representation - Trustees haven't had a Parks "
+                "voice in five years. Will read the books and ask the "
+                "questions."
+            ),
+            'local_trustee_will_park': (
+                "Library, eight years. Branch assistant at South Branch. The "
+                "Local's newest department needs Trustee-level oversight "
+                "too, and the structural questions about Library funding "
+                "adequacy aren't going to answer themselves. Voted yes on "
+                "the Library Branch Hours Defense."
+            ),
+            'local_frank': (
+                "DPW Water/Sewer, fourteen years. Trustee work is "
+                "unglamorous - review the books, sign the audit, ask the "
+                "awkward questions when something doesn't add up. That's "
+                "the job. Running to do the job."
+            ),
+            'local_trustee_maria_santos': (
+                "Parks Department, eleven years. Active in the Local for "
+                "nine - stewards' council, grievance support, health & "
+                "safety working group. Trustees are the financial discipline "
+                "backstop; that's the work I'd bring to it."
+            ),
+        },
     ),
 
     Proposal(

@@ -63,7 +63,8 @@ function HardRevertDialog({
 }) {
   const [typed, setTyped] = useState('');
   const requireType = affectedDelegators.length > 5;
-  const typedOk = !requireType || typed.trim() === topic.name;
+  const displayName = topic.description?.trim() || topic.name;
+  const typedOk = !requireType || typed.trim() === displayName;
   const showSoft = fromVisibility === 'public_accepting';
 
   const namedToShow = affectedDelegators.slice(0, 10);
@@ -74,7 +75,7 @@ function HardRevertDialog({
       <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
       <div className="relative bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 p-6 space-y-4">
         <h3 className="text-lg font-semibold text-gray-800">
-          Make &quot;{topic.name}&quot; private?
+          Make &quot;{displayName}&quot; private?
         </h3>
 
         {affectedDelegators.length > 0 ? (
@@ -133,7 +134,7 @@ function HardRevertDialog({
         {requireType && (
           <div className="space-y-1">
             <label className="block text-xs text-gray-500">
-              Type <strong>{topic.name}</strong> to confirm:
+              Type <strong>{displayName}</strong> to confirm:
             </label>
             <input
               type="text"
