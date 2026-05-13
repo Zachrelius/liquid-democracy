@@ -537,7 +537,32 @@ def evaluate_proposal(
     active = is_proposal_stable_result_active(
         proposal.stable_result_required, config.enabled_default,
     )
+    now = _now_naive()
+
+    # Phase 24 — non-SRR natural-close branch.
+    # When SRR is inactive and the proposal's declared voting_end has
+    # passed, tally + close via the standard pass/fail logic. Same close
+    # helper the SRR path uses; the only difference is trigger string +
+    # we don't overwrite voting_end (the original deadline stays on the
+    # row as the audit trail of when voting was *meant* to close).
     if not active:
+        if (
+            proposal.voting_end is not None
+            and now >= proposal.voting_end
+            and proposal.status == "voting"
+        ):
+            old_status = proposal.status
+            new_status = _close_proposal_now(
+                db, proposal,
+                trigger="voting_end_reached",
+                update_voting_end=False,
+            )
+            _emit_proposal_closed_natural(
+                db, proposal,
+                old_status=old_status,
+                new_status=new_status,
+            )
+            return "closed_on_time"
         return None
 
     # 2. Read all snapshots (newest last).
@@ -559,8 +584,8 @@ def evaluate_proposal(
 
     extension_count = count_extensions(db, proposal.id)
     pass_threshold = float(proposal.pass_threshold or 0.5)
-    now = _now_naive()
 
+    srr_action: Optional[str] = None
     if extension_count == 0:
         # Original-window branch.
         original_voting_end = proposal.voting_start + original_duration
@@ -573,57 +598,86 @@ def evaluate_proposal(
             now=now,
             stable_window_fraction=config.stable_window_fraction,
         )
-        if not decision.destabilized:
-            return None
-        return _react_to_destabilization(
-            db, proposal,
-            decision=decision,
+        if decision.destabilized:
+            srr_action = _react_to_destabilization(
+                db, proposal,
+                decision=decision,
+                stable_window_duration=stable_window_duration,
+                extension_budget_total_seconds=extension_budget_total_seconds,
+                extension_budget_used_seconds=extension_budget_used_seconds,
+            )
+    else:
+        # Extension branch.
+        is_stable = evaluate_extension_stability(
+            voting_method=proposal.voting_method,
+            snapshots=snapshots,
+            pass_threshold=pass_threshold,
+            now=now,
             stable_window_duration=stable_window_duration,
-            extension_budget_total_seconds=extension_budget_total_seconds,
-            extension_budget_used_seconds=extension_budget_used_seconds,
         )
+        if is_stable:
+            old_status = proposal.status
+            new_status = _close_proposal_now(
+                db, proposal,
+                trigger="stable_result_achieved",
+                update_voting_end=True,
+            )
+            _emit_proposal_closed_for_stability(
+                db, proposal, old_status=old_status, new_status=new_status,
+            )
+            return "closed_early"
 
-    # Extension branch.
-    is_stable = evaluate_extension_stability(
-        voting_method=proposal.voting_method,
-        snapshots=snapshots,
-        pass_threshold=pass_threshold,
-        now=now,
-        stable_window_duration=stable_window_duration,
-    )
-    if is_stable:
+        # Not yet stable. If the extension's natural voting_end has been
+        # reached, try another extension if budget allows. Either way fall
+        # through to the Phase 24 natural-close fallback below — if SRR
+        # extended successfully, the fallback's voting_end check sees the
+        # new (future) voting_end and is a no-op.
+        if proposal.voting_end is not None and now >= proposal.voting_end:
+            decision = DestabilizationDecision(
+                destabilized=True,
+                reason=(
+                    f"Extension window reached voting_end without "
+                    f"sliding-window stability"
+                ),
+                breach_sample={
+                    "extension_count_pre": extension_count,
+                    "voting_end": proposal.voting_end.isoformat(),
+                },
+            )
+            srr_action = _react_to_destabilization(
+                db, proposal,
+                decision=decision,
+                stable_window_duration=stable_window_duration,
+                extension_budget_total_seconds=extension_budget_total_seconds,
+                extension_budget_used_seconds=extension_budget_used_seconds,
+            )
+
+    # Phase 24 — SRR-exhausted natural-close fallback.
+    # If SRR ran but did not close ("extended" pushes voting_end into the
+    # future; "destabilized_at_max" logs but leaves the proposal in
+    # voting), check whether the proposal is still in voting status with a
+    # past voting_end. If so, close naturally. The ``db.refresh`` is
+    # load-bearing — ``apply_extension`` mutates ``voting_end`` and our
+    # cached row may be stale.
+    db.refresh(proposal)
+    if (
+        proposal.status == "voting"
+        and proposal.voting_end is not None
+        and now >= proposal.voting_end
+    ):
         old_status = proposal.status
-        new_status = _close_proposal_now(db, proposal)
-        _emit_proposal_closed_for_stability(
-            db, proposal, old_status=old_status, new_status=new_status,
+        new_status = _close_proposal_now(
+            db, proposal,
+            trigger="voting_end_reached",
+            update_voting_end=False,
         )
-        return "closed_early"
-
-    # Not yet stable. Check whether the extension's natural voting_end has
-    # been reached.
-    if proposal.voting_end is None or now < proposal.voting_end:
-        return None  # wait for next tick
-
-    # voting_end reached without stability — try another extension if the
-    # budget allows.
-    decision = DestabilizationDecision(
-        destabilized=True,
-        reason=(
-            f"Extension window reached voting_end without "
-            f"sliding-window stability"
-        ),
-        breach_sample={
-            "extension_count_pre": extension_count,
-            "voting_end": proposal.voting_end.isoformat(),
-        },
-    )
-    return _react_to_destabilization(
-        db, proposal,
-        decision=decision,
-        stable_window_duration=stable_window_duration,
-        extension_budget_total_seconds=extension_budget_total_seconds,
-        extension_budget_used_seconds=extension_budget_used_seconds,
-    )
+        _emit_proposal_closed_natural(
+            db, proposal,
+            old_status=old_status,
+            new_status=new_status,
+        )
+        return "closed_on_time_after_srr_exhausted"
+    return srr_action
 
 
 def _react_to_destabilization(
