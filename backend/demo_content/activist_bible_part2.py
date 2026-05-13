@@ -34,6 +34,12 @@ DELEGATE_PAGES_PART_2 = [
         topics=[
             TopicVisibility('Tenant Protections', 'public_accepting'),
             TopicVisibility('Public Housing', 'public_accepting'),
+            # Phase 23.2 C1 — 'Elections' added so the Coordinating
+            # Committee election proposal (P-C-03) has a valid topic
+            # vocabulary entry. Maya is an incumbent up for re-election,
+            # so this fits her surface naturally. Private visibility per
+            # dispatch guidance for election topics.
+            TopicVisibility('Elections', 'private'),
         ],
         position_statements=[
             PositionStatement(
@@ -261,6 +267,7 @@ PROPOSALS = [
             "I disagree about where the leverage actually is, but I want to "
             "be clear that I'm disagreeing about tactics, not about goals."
         ),
+        topics=['Land Use Policy', 'Anti-Displacement', 'Tenant Protections'],
     ),
 
     Proposal(
@@ -299,6 +306,7 @@ PROPOSALS = [
             "households needing actually-affordable housing. The 25% mandate "
             "begins to serve that second list. The 15% mandate doesn't."
         ),
+        topics=['Land Use Policy', 'Tenant Protections', 'City Council Engagement'],
     ),
 
     Proposal(
@@ -322,6 +330,9 @@ PROPOSALS = [
             "gravity. STV cascade will show transfer patterns reflecting the "
             "YIMBY/anti-development split."
         ),
+        topics=['Elections'],
+        # Phase 23.2 B3: STV electing 3 CC seats from 6 candidates.
+        num_winners=3,
     ),
 
     Proposal(
@@ -357,6 +368,7 @@ PROPOSALS = [
             "specify protocols before the campaign launches. Open to "
             "amendments on that point."
         ),
+        topics=['Direct Action', 'Anti-Displacement', 'Member Defense'],
     ),
 
     Proposal(
@@ -379,6 +391,7 @@ PROPOSALS = [
             "coverage that makes the bill harder to pass. We need a "
             "position on each before finance committee meets."
         ),
+        topics=['City Council Engagement', 'Member Defense', 'Tenant Protections'],
     ),
 
     Proposal(
@@ -417,6 +430,7 @@ PROPOSALS = [
             "sporadically and unevenly. Formalizing the budget made it "
             "reliable. The same principle applies here."
         ),
+        topics=['Member Defense', 'Anti-Displacement'],
     ),
 
     Proposal(
@@ -444,6 +458,7 @@ PROPOSALS = [
             "statements are low-cost and the relational infrastructure they "
             "build pays back when our own campaigns need outside support."
         ),
+        topics=['Direct Action', 'Anti-Displacement'],
     ),
 
     Proposal(
@@ -467,6 +482,7 @@ PROPOSALS = [
             "member input on the right cadence."
         ),
         options=['Weekly', 'Bi-weekly', 'Monthly', 'Quarterly'],
+        topics=['Tenant Protections'],
     ),
 
     Proposal(
@@ -493,6 +509,7 @@ PROPOSALS = [
             "(geographic and demographic), not about hitting a numeric "
             "target."
         ),
+        topics=['Anti-Displacement', 'Tenant Protections'],
     ),
 
     Proposal(
@@ -516,6 +533,7 @@ PROPOSALS = [
             "Charlotte; experienced organizer, has trained six other "
             "coalitions. $1.5K covers his travel and honorarium."
         ),
+        topics=['Direct Action', 'Member Defense'],
     ),
 
     Proposal(
@@ -547,6 +565,7 @@ PROPOSALS = [
             "is just the closing piece — making sure we don't have to "
             "rediscover these protocols every time we run a campaign."
         ),
+        topics=['Member Defense', 'Direct Action'],
     ),
 ]
 
@@ -577,5 +596,6 @@ DRAFTS = [
             "find members who have experience with similar tool surveys at "
             "other coalitions."
         ),
+        topics=['Tenant Tech Issues'],
     ),
 ]
