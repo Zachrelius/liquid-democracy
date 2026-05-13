@@ -111,6 +111,16 @@ class UserOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class DelegationStrategyUpdate(BaseModel):
+    """Phase 27 B4 — body for PATCH /api/users/me/delegation-strategy.
+
+    Validation of allowed values lives in the route handler so the
+    error message can enumerate them; the schema-level validator would
+    only emit a 422 with a less useful detail string.
+    """
+    strategy: str
+
+
 class RegisterResponse(BaseModel):
     """Registration response — includes is_first_user flag for first-run setup."""
     id: str

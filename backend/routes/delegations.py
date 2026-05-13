@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -787,6 +788,32 @@ def request_delegation(
             },
             ip_address=request.client.host if request.client else None,
         )
+
+        # Phase 27 F2 — auto-create a TopicPrecedence row at the bottom of
+        # the user's priority order for newly-delegated topics, so the
+        # topic appears in the drag-reorder list on the Delegations page.
+        # Skipped for global delegations (topic_id=None) — those don't
+        # participate in precedence. Skipped when a row already exists
+        # (re-delegations keep the user's prior priority).
+        if body.topic_id is not None:
+            existing_prec = db.query(models.TopicPrecedence).filter(
+                models.TopicPrecedence.user_id == current_user.id,
+                models.TopicPrecedence.topic_id == body.topic_id,
+            ).first()
+            if existing_prec is None:
+                max_prio = db.query(
+                    func.max(models.TopicPrecedence.priority)
+                ).filter(
+                    models.TopicPrecedence.user_id == current_user.id,
+                ).scalar()
+                next_prio = (max_prio + 1) if max_prio is not None else 0
+                db.add(models.TopicPrecedence(
+                    user_id=current_user.id,
+                    topic_id=body.topic_id,
+                    priority=next_prio,
+                ))
+                db.flush()
+
         db.commit()
         db.refresh(existing)
         return schemas.DelegationRequestResult(

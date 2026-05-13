@@ -166,6 +166,15 @@ class ProposalContext:
     direct_ballots: dict[str, Ballot] = field(default_factory=dict)
     # voting method for the proposal
     voting_method: str = "binary"
+    # Phase 27 — per-proposal topic relevance scores. Populated from
+    # ProposalTopic.relevance (Float, default 1.0). Consumed by
+    # find_vote_via_relevance_weighting_pure when the user's strategy
+    # is "relevance_weighted" and voting_method is "binary".
+    proposal_topic_relevances: dict[str, float] = field(default_factory=dict)
+    # Phase 27 — per-user delegation strategy. Default "strict_precedence"
+    # if a user isn't in the map (defensive — service layer populates for
+    # every eligible voter). Values: "strict_precedence" | "relevance_weighted".
+    user_strategies: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -208,6 +217,182 @@ def _get_direct_ballot(user_id: str, ctx: ProposalContext) -> Optional[Ballot]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Phase 27 — relevance-weighted delegation resolver
+# ---------------------------------------------------------------------------
+
+def find_vote_via_relevance_weighting_pure(
+    user_id: str,
+    proposal_topics: list[str],
+    proposal_topic_relevances: dict[str, float],
+    user_precedences: dict[str, int],
+    user_delegations: dict[Optional[str], "DelegationData"],
+    ctx: ProposalContext,
+    _visited: Optional[set[str]] = None,
+) -> Optional[BallotResult]:
+    """Phase 27 — relevance-weighted delegation resolution (binary only).
+
+    Algorithm:
+      1. For each proposal topic the user has a delegation on, resolve the
+         delegate's direct ballot (or, per chain_behavior, their delegate's
+         ballot one hop further).
+      2. Group the resolved vote_values by direction (yes/no/abstain).
+      3. Sum the per-topic relevance scores per direction.
+      4. The direction with the highest summed relevance wins.
+      5. Tiebreaker: among tied directions, pick the one whose source
+         topic has highest user precedence (lowest priority int). Falls
+         through to strict-precedence semantics when scores collide.
+      6. If no topic-specific delegation produced a vote, defer to the
+         caller's global-fallback path (return None — the dispatcher
+         falls through to find_delegate_pure with the same context).
+
+    Returns BallotResult with delegate_chain set to the representative
+    delegate from the winning direction (the one with the highest
+    individual relevance). Returns None when no resolved vote applies.
+
+    Constraints:
+      * Pure function: no DB access; recursion uses _visited.
+      * Binary only. The dispatcher in resolve_vote_pure gates by
+        voting_method; this function assumes binary.
+      * Multi-option ballots from delegates are not merged across
+        topics — a delegate whose direct ballot has vote_value=None
+        (approval/RCV ballot) is skipped in the per-direction bucket.
+    """
+    if _visited is None:
+        _visited = set()
+
+    # votes_by_direction: {vote_value: [(delegate_id, relevance, source_topic), ...]}
+    votes_by_direction: dict[str, list[tuple[str, float, str]]] = {}
+
+    for topic_id in proposal_topics:
+        delegation = user_delegations.get(topic_id)
+        if delegation is None:
+            # No topic-specific delegation for this topic; relevance-
+            # weighted resolution doesn't reach into the global delegation
+            # per-topic — the global delegation only applies as a single
+            # fallback (handled by the caller's None return path).
+            continue
+        relevance = proposal_topic_relevances.get(topic_id, 1.0)
+        delegate_id = delegation.delegate_id
+
+        # Resolve the delegate's ballot (direct, or one chain hop per
+        # chain_behavior — same shape as resolve_vote_pure's existing
+        # delegate-lookup branch).
+        delegate_result = _resolve_delegate_ballot(
+            delegate_id=delegate_id,
+            chain_behavior=delegation.chain_behavior,
+            ctx=ctx,
+            _visited=_visited,
+        )
+        if delegate_result is None:
+            continue
+        vote_value = delegate_result.ballot.vote_value
+        if vote_value is None:
+            # Delegate cast a multi-option ballot; skip in the binary
+            # relevance-weighted path. (Documented limitation per spec.)
+            continue
+        votes_by_direction.setdefault(vote_value, []).append(
+            (delegate_id, float(relevance), topic_id)
+        )
+
+    if not votes_by_direction:
+        # No topic-specific delegation produced a vote; let the caller
+        # fall through to the global-fallback path (find_delegate_pure).
+        return None
+
+    # Sum relevance per direction.
+    summed = {
+        direction: sum(r for _, r, _ in entries)
+        for direction, entries in votes_by_direction.items()
+    }
+    max_score = max(summed.values())
+    winners = [d for d, s in summed.items() if s == max_score]
+
+    if len(winners) > 1:
+        # Strict-precedence tiebreaker among tied directions.
+        best_direction: Optional[str] = None
+        best_priority = 99999
+        for direction in winners:
+            for _, _, topic_id in votes_by_direction[direction]:
+                priority = user_precedences.get(topic_id, 99999)
+                if priority < best_priority:
+                    best_priority = priority
+                    best_direction = direction
+        winning_direction = best_direction or winners[0]
+    else:
+        winning_direction = winners[0]
+
+    # Representative delegate = entry with the highest individual relevance
+    # within the winning direction. Used to populate delegate_chain so the
+    # UI can attribute the vote to a primary delegate (with the rest of
+    # the contributing delegates surfaced by F3 explainability).
+    representative = max(
+        votes_by_direction[winning_direction], key=lambda x: x[1]
+    )
+    delegate_id, _, _ = representative
+
+    return BallotResult(
+        ballot=Ballot(vote_value=winning_direction),
+        is_direct=False,
+        delegate_chain=[delegate_id],
+        cast_by_id=delegate_id,
+    )
+
+
+def _resolve_delegate_ballot(
+    delegate_id: str,
+    chain_behavior: str,
+    ctx: ProposalContext,
+    _visited: set[str],
+) -> Optional[BallotResult]:
+    """Resolve one delegate's effective ballot. Used by both the
+    relevance-weighted resolver (B1) and the existing strict-precedence
+    branch in resolve_vote_pure.
+
+    Behavior mirrors resolve_vote_pure's steps 3-4: if the delegate has
+    a direct ballot, return it; else apply chain_behavior. Pure function;
+    recursion uses _visited.
+    """
+    if delegate_id in _visited:
+        return None
+    _visited = set(_visited) | {delegate_id}
+
+    delegate_ballot = _get_direct_ballot(delegate_id, ctx)
+    if delegate_ballot is not None:
+        return BallotResult(
+            ballot=delegate_ballot,
+            is_direct=False,
+            delegate_chain=[delegate_id],
+            cast_by_id=delegate_id,
+        )
+
+    # Delegate did not vote directly — apply chain_behavior.
+    if chain_behavior == "accept_sub":
+        sub_delegations = ctx.all_delegations.get(delegate_id, {})
+        sub_precedences = ctx.all_precedences.get(delegate_id, {})
+        sub_delegation = find_delegate_pure(
+            delegate_id,
+            ctx.proposal_topics,
+            sub_precedences,
+            sub_delegations,
+        )
+        if sub_delegation is None or sub_delegation.delegate_id in _visited:
+            return None
+        sub_delegate_id = sub_delegation.delegate_id
+        sub_ballot = _get_direct_ballot(sub_delegate_id, ctx)
+        if sub_ballot is not None:
+            return BallotResult(
+                ballot=sub_ballot,
+                is_direct=False,
+                delegate_chain=[delegate_id, sub_delegate_id],
+                cast_by_id=sub_delegate_id,
+            )
+        return None
+
+    # revert_direct or abstain — no vote resolved.
+    return None
+
+
 def resolve_vote_pure(
     user_id: str,
     ctx: ProposalContext,
@@ -243,9 +428,33 @@ def resolve_vote_pure(
             cast_by_id=user_id,
         )
 
-    # 2. Find delegate
     user_delegations = ctx.all_delegations.get(user_id, {})
     user_precedences = ctx.all_precedences.get(user_id, {})
+
+    # Phase 27 — strategy dispatcher. Binary-only relevance-weighted path
+    # activates when the user has opted in. Approval/RCV stay on strict-
+    # precedence regardless of strategy choice (documented limitation;
+    # ballot-merging semantics are out of scope for this pass).
+    user_strategy = ctx.user_strategies.get(user_id, "strict_precedence")
+    if user_strategy == "relevance_weighted" and ctx.voting_method == "binary":
+        rw_result = find_vote_via_relevance_weighting_pure(
+            user_id=user_id,
+            proposal_topics=ctx.proposal_topics,
+            proposal_topic_relevances=ctx.proposal_topic_relevances,
+            user_precedences=user_precedences,
+            user_delegations=user_delegations,
+            ctx=ctx,
+            _visited=_visited,
+        )
+        if rw_result is not None:
+            return rw_result
+        # Fall through to the strict-precedence + global-fallback path
+        # below. The relevance-weighted resolver returns None when no
+        # topic-specific delegation produced a vote — handing off to
+        # the legacy global-delegation fallback (D3 in spec) keeps the
+        # existing behavior for that edge case unchanged.
+
+    # 2. Find delegate (strict-precedence + global fallback)
     delegation = find_delegate_pure(
         user_id,
         ctx.proposal_topics,
@@ -945,6 +1154,12 @@ class DelegationService:
         """
         proposal_topics = [pt.topic_id for pt in proposal.proposal_topics]
         voting_method = getattr(proposal, "voting_method", "binary") or "binary"
+        # Phase 27 — per-topic relevance from ProposalTopic.relevance.
+        # Default 1.0 if a row is missing the field (older fixtures).
+        proposal_topic_relevances: dict[str, float] = {
+            pt.topic_id: float(getattr(pt, "relevance", 1.0) or 1.0)
+            for pt in proposal.proposal_topics
+        }
 
         # All delegations indexed by delegator → topic_id.
         #
@@ -1002,6 +1217,28 @@ class DelegationService:
                 if row.vote_value is not None:
                     direct_votes[row.user_id] = row.vote_value
 
+        # Phase 27 — per-user delegation_strategy lookup. Pulled once per
+        # tally; the strategy doesn't change mid-tally (a user toggling
+        # mid-resolution picks up the new strategy on the next tally).
+        # When eligible_ids isn't supplied, defensively load every user
+        # who appears as a delegator in this org (covers the existing
+        # un-narrowed call sites in tests without exploding the query).
+        strategy_user_ids: set[str] = set()
+        if eligible_ids is not None:
+            strategy_user_ids.update(eligible_ids)
+        else:
+            strategy_user_ids.update(all_delegations.keys())
+            strategy_user_ids.update(direct_votes.keys())
+            strategy_user_ids.update(direct_ballots.keys())
+        user_strategies: dict[str, str] = {}
+        if strategy_user_ids:
+            for uid, strat in (
+                db.query(models.User.id, models.User.delegation_strategy)
+                .filter(models.User.id.in_(strategy_user_ids))
+                .all()
+            ):
+                user_strategies[uid] = strat or "strict_precedence"
+
         return ProposalContext(
             proposal_topics=proposal_topics,
             all_delegations=all_delegations,
@@ -1009,6 +1246,8 @@ class DelegationService:
             direct_votes=direct_votes,
             direct_ballots=direct_ballots,
             voting_method=voting_method,
+            proposal_topic_relevances=proposal_topic_relevances,
+            user_strategies=user_strategies,
         )
 
     # ------------------------------------------------------------------

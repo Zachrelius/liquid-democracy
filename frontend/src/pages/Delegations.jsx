@@ -117,7 +117,13 @@ function DelegationCard({ delegation, topic, onChainChange, onChangeDelegate, on
 
 // ── Main Page ──────────────────────────────────────────────────────────────
 export default function Delegations() {
-  const { user } = useAuth();
+  const { user, refreshUser } = useAuth();
+  // Phase 27 F1 — local strategy state mirrors User.delegation_strategy.
+  // PATCH /api/users/me/delegation-strategy on radio change; refresh
+  // the user object via AuthContext.refreshUser so downstream pages see
+  // the new value immediately.
+  const strategy = user?.delegation_strategy || 'relevance_weighted';
+  const [savingStrategy, setSavingStrategy] = useState(false);
   // Phase 18 F1 — page is now per-org. currentOrg is URL-derived
   // (OrgScopedLayout wraps this route, so loading/accessDenied is handled
   // upstream). The parent slug drives the org-scoped API URL.
@@ -233,6 +239,21 @@ export default function Delegations() {
     load();
   }
 
+  async function handleStrategyChange(e) {
+    const newStrategy = e.target.value;
+    if (newStrategy === strategy) return;
+    setSavingStrategy(true);
+    try {
+      await api.patch('/api/users/me/delegation-strategy', { strategy: newStrategy });
+      if (typeof refreshUser === 'function') await refreshUser();
+      toast.success('Delegation strategy updated');
+    } catch (err) {
+      toast.error(err.message || 'Failed to update strategy');
+    } finally {
+      setSavingStrategy(false);
+    }
+  }
+
   async function handleDragEnd(result) {
     if (!result.destination) return;
     const items = Array.from(precedences);
@@ -296,6 +317,53 @@ export default function Delegations() {
           <VerifyEmailInlineNote action="delegate" />
         </div>
       )}
+
+      {/* ── Phase 27 F1 — Delegation Strategy ── */}
+      <section>
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+          Delegation Strategy {savingStrategy && <span className="text-xs text-gray-400 font-normal ml-2">Saving…</span>}
+        </h2>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="radio"
+              name="delegation_strategy"
+              value="relevance_weighted"
+              checked={strategy === 'relevance_weighted'}
+              onChange={handleStrategyChange}
+              disabled={savingStrategy}
+              className="mt-1 accent-[var(--brand-accent)]"
+            />
+            <div>
+              <div className="font-medium text-[var(--brand-primary)]">By topic relevance</div>
+              <div className="text-xs text-gray-500">
+                For each proposal, sum the relevance scores of your delegates who agree.
+                The vote direction with the highest summed relevance wins. Ties fall back
+                to the priority order below. Binary proposals only — approval / ranked-choice
+                proposals continue to use strict priority.
+              </div>
+            </div>
+          </label>
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="radio"
+              name="delegation_strategy"
+              value="strict_precedence"
+              checked={strategy === 'strict_precedence'}
+              onChange={handleStrategyChange}
+              disabled={savingStrategy}
+              className="mt-1 accent-[var(--brand-accent)]"
+            />
+            <div>
+              <div className="font-medium text-[var(--brand-primary)]">By strict priority</div>
+              <div className="text-xs text-gray-500">
+                For each proposal, find the topic with the highest priority in your list
+                that you have a delegate for. That delegate's vote applies.
+              </div>
+            </div>
+          </label>
+        </div>
+      </section>
 
       {/* ── Section 1: Global default ── */}
       <section>
