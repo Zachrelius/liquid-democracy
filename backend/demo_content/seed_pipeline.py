@@ -360,13 +360,23 @@ def _member_role_for_org(db: Session, org_id: str) -> Optional[str]:
 def _ensure_membership(
     db: Session, user_id: str, org_id: str, role_id: str,
 ) -> "models.OrgMembership":
-    """Find-or-create OrgMembership row."""
+    """Find-or-create OrgMembership row.
+
+    Phase 23.2 B2.2: if an existing membership has a different role_id
+    than the bible currently specifies (e.g. seed re-runs without a
+    full wipe), update it. This keeps role assignment authoritative
+    relative to the bible, which is what the seed pipeline is meant to
+    enforce.
+    """
     import models
     m = db.query(models.OrgMembership).filter(
         models.OrgMembership.user_id == user_id,
         models.OrgMembership.org_id == org_id,
     ).first()
     if m:
+        if m.role_id != role_id:
+            m.role_id = role_id
+            db.flush()
         return m
     m = models.OrgMembership(
         user_id=user_id, org_id=org_id, role_id=role_id, status="active",
@@ -451,7 +461,29 @@ def seed_org_from_bible(
         underlying = _underlying_username(m.user_id)
         user = _ensure_user(db, underlying, m.display_name)
         bible_uid_to_user[m.user_id] = user
-        _ensure_membership(db, user.id, org.id, member_role_id)
+
+        # Phase 23.2 B2.2 — look up the per-org Role that matches this
+        # member's bible-declared platform_role. Cross-org users (Marcus,
+        # Dana, Janet) get separate OrgMembership rows per org with
+        # potentially different role_ids — naturally handled by this loop
+        # since each bible seeds its own org.
+        target_role_key = (m.platform_role or "member").strip().lower()
+        target_role = db.query(models.Role).filter(
+            models.Role.org_id == org.id,
+            models.Role.system_key == target_role_key,
+        ).first()
+        if target_role is None:
+            log.warning(
+                "seed_pipeline: platform_role %r not found in org %s; "
+                "falling back to 'member'",
+                target_role_key, bible.slug,
+            )
+            target_role = db.query(models.Role).filter(
+                models.Role.org_id == org.id,
+                models.Role.system_key == "member",
+            ).first()
+
+        _ensure_membership(db, user.id, org.id, target_role.id)
         counts["users_created"] += 1
         counts["members_created"] += 1
 
