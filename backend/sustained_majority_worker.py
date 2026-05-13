@@ -661,12 +661,15 @@ def evaluate_proposal(
             )
 
     # Phase 24 — SRR-exhausted natural-close fallback.
-    # If SRR ran but did not close ("extended" pushes voting_end into the
-    # future; "destabilized_at_max" logs but leaves the proposal in
-    # voting), check whether the proposal is still in voting status with a
-    # past voting_end. If so, close naturally. The ``db.refresh`` is
-    # load-bearing — ``apply_extension`` mutates ``voting_end`` and our
-    # cached row may be stale.
+    # If SRR ran and fired an extension, the proposal's voting_end is now
+    # in the future and we're done — skip the fallback entirely.
+    # Otherwise (srr_action is None or "destabilized_at_max"), check
+    # whether the proposal is still sitting in voting past voting_end. If
+    # so, close naturally. The ``db.refresh`` is load-bearing — any SRR
+    # branch that mutated the row may have updates pending; refresh
+    # snaps the cached state to current.
+    if srr_action == "extended":
+        return srr_action
     db.refresh(proposal)
     if (
         proposal.status == "voting"
