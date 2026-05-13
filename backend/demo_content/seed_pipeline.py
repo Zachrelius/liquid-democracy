@@ -630,6 +630,46 @@ def seed_org_from_bible(
                 db.add(opt)
             db.flush()
 
+    # ---- 6b. ProposalTopic associations (Phase 23.1 B3a/C1 follow-up) ----
+    # Without ProposalTopic rows, find_delegate_pure walks an empty topic
+    # list and the per-topic delegations the seed creates never resolve.
+    # The bibles don't specify proposal→topic mappings explicitly; we
+    # infer them by: for each delegate-page vote_rationale, union the
+    # voter's `public_accepting` topics into the rationale's proposal.
+    # This makes the proposal "in scope" for any delegation targeted at
+    # the voter on that topic, which is exactly the propagation path the
+    # demo wants to demonstrate. Proposals that get no rationale across
+    # any delegate page end up with an empty topic set — fine for the
+    # tally (their delegated voters cascade through the unscoped
+    # fallback).
+    proposal_topic_pairs: set[tuple[str, str]] = set()
+    for dp in bible.delegate_pages:
+        accepting_topic_ids: list[str] = []
+        for tv in (dp.topics or []):
+            if tv.state == "public_accepting":
+                t = topics_by_name.get(tv.topic)
+                if t is not None:
+                    accepting_topic_ids.append(t.id)
+        if not accepting_topic_ids:
+            continue
+        for vr in (dp.vote_rationales or []):
+            prop = proposals_by_bible_id.get(vr.proposal_id)
+            if prop is None:
+                continue
+            for tid in accepting_topic_ids:
+                proposal_topic_pairs.add((prop.id, tid))
+    for prop_id, topic_id in proposal_topic_pairs:
+        existing = db.query(models.ProposalTopic).filter(
+            models.ProposalTopic.proposal_id == prop_id,
+            models.ProposalTopic.topic_id == topic_id,
+        ).first()
+        if existing is None:
+            db.add(models.ProposalTopic(
+                proposal_id=prop_id, topic_id=topic_id, relevance=1.0,
+            ))
+    if proposal_topic_pairs:
+        db.flush()
+
     # ---- 7. Named-character votes (from DelegatePage.vote_rationales) ----
     new_votes: list = []
     for dp in bible.delegate_pages:
