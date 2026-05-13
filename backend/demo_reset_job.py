@@ -244,9 +244,28 @@ def _wipe_demo_orgs(db: Session, demo_orgs: list[models.Organization]) -> int:
         )
         rows_wiped += n_comments or 0
 
-    # Proposal options + proposal_topics (cascade via Proposal); explicit
-    # delete only if dialect cascade not reliable. Skip — cascade="all, delete-orphan"
-    # on Proposal.options handles it on flush.
+    # Phase 23.2 B7: explicit delete of ProposalOption + ProposalTopic
+    # BEFORE Proposal. The ORM-level `cascade="all, delete-orphan"` on
+    # Proposal.options / Proposal.proposal_topics only fires when the
+    # session has the relationship loaded and we call `db.delete(proposal)`
+    # per row. The bulk `db.query(Proposal).filter(...).delete()` below
+    # bypasses the ORM and runs straight SQL — Postgres then raises a
+    # ForeignKeyViolation because proposal_options.proposal_id FKs to
+    # proposals.id without ON DELETE CASCADE. Same shape applies to
+    # ProposalTopic. Wipe these first to keep the bulk delete safe on PG.
+    if proposal_ids:
+        n_opts = (
+            db.query(models.ProposalOption)
+            .filter(models.ProposalOption.proposal_id.in_(proposal_ids))
+            .delete(synchronize_session=False)
+        )
+        rows_wiped += n_opts or 0
+        n_ptopics = (
+            db.query(models.ProposalTopic)
+            .filter(models.ProposalTopic.proposal_id.in_(proposal_ids))
+            .delete(synchronize_session=False)
+        )
+        rows_wiped += n_ptopics or 0
 
     # Proposals
     if proposal_ids:
