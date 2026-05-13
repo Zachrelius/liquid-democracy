@@ -2545,8 +2545,16 @@ def advance_org_proposal(
         proposal.deliberation_start = now
     elif next_status == "voting":
         proposal.voting_start = now
-        if body.voting_end:
-            proposal.voting_end = body.voting_end
+        # Phase 25 B1.1 — derive voting_end from proposal.voting_days (or
+        # org default) when the body doesn't supply one. body.voting_end is
+        # honored if present but logs a deprecation warning.
+        from routes.proposals import _compute_voting_end_at_advance
+        proposal.voting_end = _compute_voting_end_at_advance(
+            voting_start=now,
+            body_voting_end=body.voting_end,
+            proposal=proposal,
+            org=org,
+        )
     elif next_status == "passed":
         from delegation_engine import engine as delegation_engine, ApprovalTally, RCVTally
         from routes.proposals import _maybe_resolve_tie
