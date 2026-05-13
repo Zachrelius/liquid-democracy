@@ -54,36 +54,50 @@ _BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 
 def _resolve_uploads_base() -> Path:
-    """Phase 25 B3 — env-driven uploads base directory.
+    """Phase 25 B3 (revised after first-deploy 502) — env-driven uploads
+    base directory with a writability fallback.
 
     Resolution order:
       1. ``UPLOAD_DIR`` (Phase 25 canonical name) — overrides everything.
-         Tests set this to a pytest ``tmp_path`` so each test run uses an
-         isolated tmpdir.
-      2. ``UPLOADS_BASE_DIR`` (Phase 12.7 legacy name) — kept for
-         backward compat with any existing fixture / env that still uses
-         the old name. New code should use ``UPLOAD_DIR``.
-      3. Default ``/data/uploads`` — the Railway Volume mount path
-         (declared in Railway dashboard, attached to the backend service
-         in prod). This is the production target; the volume persists
-         uploads across redeploys.
+         Tests set this to a pytest ``tmp_path`` so each test run uses
+         an isolated tmpdir.
+      2. ``UPLOADS_BASE_DIR`` (Phase 12.7 legacy name) — backward-compat
+         alias.
+      3. ``/data/uploads`` if the Railway Volume mount is writable from
+         the app process. The Phase 25 initial deploy hard-defaulted to
+         this path without a fallback and crashed startup with
+         PermissionError because the volume mount was owned by root and
+         appuser couldn't mkdir inside it. The writability probe below
+         restores the Phase 12.7 fallback so an unwritable mount
+         degrades to ephemeral storage with a startup warning rather
+         than a 502.
+      4. Fallback to in-image ``backend/uploads`` (ephemeral on Railway).
+         The main.py startup hook logs a warning when the resolved
+         path isn't under ``/data/`` so the operator sees the state.
 
-    Phase 12.7's 3-tier writability auto-detect was replaced because it
-    silently fell back to the ephemeral container path in prod when the
-    volume parent's permissions or mount timing made the auto-detect
-    return False. Phase 25 favors explicit env-driven config + a startup
-    warning over runtime detection, so prod misconfiguration is loud
-    rather than silent (the main.py startup hook still surfaces the
-    warning when the resolved path isn't under ``/data/``).
-
-    Module-import-time resolution. Tests that need a different path can
-    set ``UPLOAD_DIR`` before importing the module, or monkeypatch
-    ``AVATARS_BASE_DIR`` / ``LOGOS_BASE_DIR`` to a tmp_path directly.
+    Volume mount ownership is the real ops fix (Dockerfile runs as
+    appuser; Railway mounts /data/uploads as root). Tracked as deferred
+    work; until then this fallback keeps deploys safe.
     """
     explicit = os.environ.get("UPLOAD_DIR") or os.environ.get("UPLOADS_BASE_DIR")
     if explicit:
         return Path(explicit)
-    return Path("/data/uploads")
+    railway_volume = Path("/data/uploads")
+    try:
+        # Probe parent writability first — mkdir(.., parents=True,
+        # exist_ok=True) creates /data/uploads if absent then the
+        # avatars/logos subdirs inside it. Need write access to /data.
+        if railway_volume.parent.exists() and os.access(
+            railway_volume.parent, os.W_OK,
+        ):
+            return railway_volume
+        # /data/uploads itself may exist (mounted) even when /data
+        # isn't writable. Test it directly.
+        if railway_volume.exists() and os.access(railway_volume, os.W_OK):
+            return railway_volume
+    except OSError:
+        pass
+    return _BACKEND_DIR / "uploads"
 
 
 UPLOADS_BASE_DIR: Path = _resolve_uploads_base()

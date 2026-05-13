@@ -415,10 +415,17 @@ class TestUploadDirEnvVarRespected:
             importlib.reload(avatars_module)
 
 
-class TestUploadDirDefaultsToDataUploads:
-    """When no env var is set, UPLOADS_BASE_DIR defaults to /data/uploads."""
+class TestUploadDirDefaultsWithFallback:
+    """When no env var is set, UPLOADS_BASE_DIR resolves to /data/uploads
+    iff that path is writable, otherwise to the backend/uploads in-image
+    fallback (Phase 25.1).
 
-    def test_default_path(self, monkeypatch):
+    Both outcomes are valid; the test rules out the failure mode that
+    motivated the fallback (crashing on import with an unwritable
+    /data/uploads, which causes a 502 at app startup).
+    """
+
+    def test_default_resolves_to_a_path_that_does_not_crash(self, monkeypatch):
         monkeypatch.delenv("UPLOAD_DIR", raising=False)
         monkeypatch.delenv("UPLOADS_BASE_DIR", raising=False)
         import importlib
@@ -426,7 +433,11 @@ class TestUploadDirDefaultsToDataUploads:
         import routes.avatars as avatars_module
         importlib.reload(avatars_module)
         try:
-            assert avatars_module.UPLOADS_BASE_DIR == Path("/data/uploads")
+            resolved = avatars_module.UPLOADS_BASE_DIR
+            # Either the Railway volume (prod with writable mount) or
+            # the in-image fallback (CI / local / unwritable mount).
+            # Importantly the function returned without raising.
+            assert resolved == Path("/data/uploads") or resolved.name == "uploads"
         finally:
             # Reload one more time so subsequent tests see a clean state
             # (they may have UPLOADS_BASE_DIR set via earlier monkeypatching).
