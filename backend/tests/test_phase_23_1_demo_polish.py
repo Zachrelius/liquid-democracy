@@ -290,7 +290,11 @@ class TestSTVCandidatesSeededForPL06:
             models.Proposal.org_id == local.id,
             models.Proposal.title == "Trustee Election 2026",
         ).one()
-        assert prop.voting_method == "stv"
+        # Phase 23.2 B3: bible 'stv' is translated to 'ranked_choice' at seed
+        # time so cast_vote accepts the ranked ballot path. num_winners=3 is
+        # what makes it STV (multi-winner) vs IRV (single-winner) downstream.
+        assert prop.voting_method == "ranked_choice"
+        assert prop.num_winners == 3
         opts = sorted(prop.options, key=lambda o: o.display_order)
         assert len(opts) == 5, (
             f"expected 5 STV candidates seeded for P-L-06, got {len(opts)}: "

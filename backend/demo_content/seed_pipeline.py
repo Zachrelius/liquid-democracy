@@ -360,13 +360,23 @@ def _member_role_for_org(db: Session, org_id: str) -> Optional[str]:
 def _ensure_membership(
     db: Session, user_id: str, org_id: str, role_id: str,
 ) -> "models.OrgMembership":
-    """Find-or-create OrgMembership row."""
+    """Find-or-create OrgMembership row.
+
+    Phase 23.2 B2.2: if an existing membership has a different role_id
+    than the bible currently specifies (e.g. seed re-runs without a
+    full wipe), update it. This keeps role assignment authoritative
+    relative to the bible, which is what the seed pipeline is meant to
+    enforce.
+    """
     import models
     m = db.query(models.OrgMembership).filter(
         models.OrgMembership.user_id == user_id,
         models.OrgMembership.org_id == org_id,
     ).first()
     if m:
+        if m.role_id != role_id:
+            m.role_id = role_id
+            db.flush()
         return m
     m = models.OrgMembership(
         user_id=user_id, org_id=org_id, role_id=role_id, status="active",
@@ -451,7 +461,29 @@ def seed_org_from_bible(
         underlying = _underlying_username(m.user_id)
         user = _ensure_user(db, underlying, m.display_name)
         bible_uid_to_user[m.user_id] = user
-        _ensure_membership(db, user.id, org.id, member_role_id)
+
+        # Phase 23.2 B2.2 — look up the per-org Role that matches this
+        # member's bible-declared platform_role. Cross-org users (Marcus,
+        # Dana, Janet) get separate OrgMembership rows per org with
+        # potentially different role_ids — naturally handled by this loop
+        # since each bible seeds its own org.
+        target_role_key = (m.platform_role or "member").strip().lower()
+        target_role = db.query(models.Role).filter(
+            models.Role.org_id == org.id,
+            models.Role.system_key == target_role_key,
+        ).first()
+        if target_role is None:
+            log.warning(
+                "seed_pipeline: platform_role %r not found in org %s; "
+                "falling back to 'member'",
+                target_role_key, bible.slug,
+            )
+            target_role = db.query(models.Role).filter(
+                models.Role.org_id == org.id,
+                models.Role.system_key == "member",
+            ).first()
+
+        _ensure_membership(db, user.id, org.id, target_role.id)
         counts["users_created"] += 1
         counts["members_created"] += 1
 
@@ -573,14 +605,27 @@ def seed_org_from_bible(
             _resolve_proposal_status_and_times(bp.state_at_reset, bp.voting_method, now)
         )
 
+        # Phase 23.2 B3 — translate the bible's voting_method string to a
+        # value the cast_vote endpoint accepts. The bible vocabulary
+        # ('binary' | 'approval' | 'rcv' | 'stv') is content-author-
+        # friendly. The DB / vote handler vocabulary is
+        # ('binary' | 'approval' | 'ranked_choice'). RCV and STV both ride
+        # ranked_choice; STV is distinguished by Proposal.num_winners > 1
+        # at tally time.
+        bible_method = bp.voting_method
+        if bible_method in ('rcv', 'stv'):
+            db_voting_method = 'ranked_choice'
+        else:
+            db_voting_method = bible_method  # 'binary' or 'approval' pass through
+
         proposal = models.Proposal(
             title=bp.title,
             body=bp.body,
             author_id=author.id,
             org_id=org.id,
             status=status,
-            voting_method=bp.voting_method,
-            num_winners=1,
+            voting_method=db_voting_method,
+            num_winners=bp.num_winners,
             deliberation_start=delib_start,
             voting_start=vote_start,
             voting_end=vote_end,
@@ -630,44 +675,41 @@ def seed_org_from_bible(
                 db.add(opt)
             db.flush()
 
-    # ---- 6b. ProposalTopic associations (Phase 23.1 B3a/C1 follow-up) ----
-    # Without ProposalTopic rows, find_delegate_pure walks an empty topic
-    # list and the per-topic delegations the seed creates never resolve.
-    # The bibles don't specify proposal→topic mappings explicitly; we
-    # infer them by: for each delegate-page vote_rationale, union the
-    # voter's `public_accepting` topics into the rationale's proposal.
-    # This makes the proposal "in scope" for any delegation targeted at
-    # the voter on that topic, which is exactly the propagation path the
-    # demo wants to demonstrate. Proposals that get no rationale across
-    # any delegate page end up with an empty topic set — fine for the
-    # tally (their delegated voters cascade through the unscoped
-    # fallback).
-    proposal_topic_pairs: set[tuple[str, str]] = set()
-    for dp in bible.delegate_pages:
-        accepting_topic_ids: list[str] = []
-        for tv in (dp.topics or []):
-            if tv.state == "public_accepting":
-                t = topics_by_name.get(tv.topic)
-                if t is not None:
-                    accepting_topic_ids.append(t.id)
-        if not accepting_topic_ids:
-            continue
-        for vr in (dp.vote_rationales or []):
-            prop = proposals_by_bible_id.get(vr.proposal_id)
-            if prop is None:
+        # ---- B2.1 — ProposalTopic associations from bp.topics ----
+        # Phase 23.2 replaces the previous Phase 23.1 B3a-extra
+        # backwards-inference heuristic (which built proposal→topic links
+        # from delegate-page vote_rationales) with explicit bp.topics
+        # metadata authored in the bibles. First topic in the list is the
+        # primary topic; secondary topics fall off in `relevance`.
+        # Unknown topic names log a loud error and are skipped — the seed
+        # still completes for the rest of the org. Production-shape note:
+        # ProposalTopic has composite PK (proposal_id, topic_id) +
+        # relevance: Float default 1.0 (see models.py:545). The relevance
+        # ordering signal is what the delegation engine inspects when
+        # resolving multi-topic delegators.
+        for idx, topic_name in enumerate(bp.topics or []):
+            topic = topics_by_name.get(topic_name)
+            if topic is None:
+                log.error(
+                    "seed_pipeline: proposal %s references unknown topic %r "
+                    "(org %s); skipping association",
+                    bp.proposal_id, topic_name, bible.slug,
+                )
                 continue
-            for tid in accepting_topic_ids:
-                proposal_topic_pairs.add((prop.id, tid))
-    for prop_id, topic_id in proposal_topic_pairs:
-        existing = db.query(models.ProposalTopic).filter(
-            models.ProposalTopic.proposal_id == prop_id,
-            models.ProposalTopic.topic_id == topic_id,
-        ).first()
-        if existing is None:
+            existing_pt = db.query(models.ProposalTopic).filter(
+                models.ProposalTopic.proposal_id == proposal.id,
+                models.ProposalTopic.topic_id == topic.id,
+            ).first()
+            if existing_pt is not None:
+                continue
+            # First topic = primary (relevance 1.0). Secondaries fall off
+            # by 0.2 per position, floored at 0.1.
+            relevance = 1.0 if idx == 0 else max(0.1, 1.0 - 0.2 * idx)
             db.add(models.ProposalTopic(
-                proposal_id=prop_id, topic_id=topic_id, relevance=1.0,
+                proposal_id=proposal.id,
+                topic_id=topic.id,
+                relevance=relevance,
             ))
-    if proposal_topic_pairs:
         db.flush()
 
     # ---- 7. Named-character votes (from DelegatePage.vote_rationales) ----
@@ -989,6 +1031,33 @@ def seed_org_from_bible(
         db.bulk_save_objects(notifications_to_add)
         counts["notifications_created"] = len(notifications_to_add)
         db.flush()
+
+    # ---- B2.3 — Coalition: grant proposal.create to the member role ----
+    # The Westgate Tenants Coalition is the grassroots / member-led
+    # demo org; its narrative requires open proposal authorship. This
+    # is a demo-org-specific policy (not a universal default), so it
+    # lives in the seed pipeline rather than role_seed.py. Idempotent:
+    # the existence check prevents duplicate rows on repeated resets.
+    if bible.slug == "demo-westgate-coalition":
+        member_role = db.query(models.Role).filter(
+            models.Role.org_id == org.id,
+            models.Role.system_key == "member",
+        ).first()
+        if member_role is not None:
+            existing_grant = db.query(models.RolePermission).filter(
+                models.RolePermission.role_id == member_role.id,
+                models.RolePermission.permission_key == "proposal.create",
+            ).first()
+            if existing_grant is None:
+                db.add(models.RolePermission(
+                    role_id=member_role.id,
+                    permission_key="proposal.create",
+                    enabled=True,
+                ))
+                db.flush()
+            elif not existing_grant.enabled:
+                existing_grant.enabled = True
+                db.flush()
 
     return counts
 

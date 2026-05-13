@@ -38,8 +38,15 @@ class Member:
     display_name: str
     quick_login: bool                               # is this one of the 6 quick-login characters
     is_cross_org: bool = False                      # appears in another org's cast
-    role: str = ''                                  # e.g. "President", "Member-at-Large", "Member"
+    role: str = ''                                  # display label, e.g. "President", "Member-at-Large"
     notification_preset: Literal['high', 'medium', 'low'] = 'medium'
+    # Phase 23.2 B1.2: which preset Role this member gets in their org.
+    # Must match one of role_seed.PRESET_ROLES system_keys
+    # ('steward', 'admin', 'moderator', 'member'). Defaults to 'member'
+    # for backward compat with bibles that don't specify. Distinct from
+    # `role` (narrative/display string) — `platform_role` drives the
+    # actual permissions assignment in the seed pipeline.
+    platform_role: Literal['steward', 'admin', 'moderator', 'member'] = 'member'
 
 
 @dataclass
@@ -89,6 +96,18 @@ class Proposal:
     body: str                                       # proposer rationale / proposal description
     candidate_statements: dict[str, str] = field(default_factory=dict)  # user_id -> statement for RCV/STV proposals
     options: list[str] = field(default_factory=list)   # for approval, RCV, STV with named options
+    # Phase 23.2 B1.1: topics this proposal belongs to.
+    # First entry is the PRIMARY topic — delegation engine resolves against
+    # this one when a user has multiple topic delegations that overlap with
+    # the proposal (ordering signal: ProposalTopic.relevance descending,
+    # primary=1.0 and secondaries fall off).
+    # Topic strings must match names declared in some delegate page's
+    # TopicVisibility in the same org; the seed pipeline logs and skips
+    # unknown topic names.
+    topics: list[str] = field(default_factory=list)
+    # Phase 23.2 B3 helper: STV proposals need to advertise winner count
+    # to the tally engine. RCV/binary/approval all default to 1.
+    num_winners: int = 1
 
 
 @dataclass

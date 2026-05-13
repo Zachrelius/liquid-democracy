@@ -69,22 +69,22 @@ RECENT_HISTORY = """\
 MEMBERS = [
     Member(user_id='hoa_janet', display_name='Janet Reilly',
            quick_login=True, is_cross_org=True, role='President',
-           notification_preset='high'),
+           notification_preset='high', platform_role='admin'),
     Member(user_id='hoa_brenda', display_name='Brenda Okafor',
            quick_login=True, role='Secretary',
-           notification_preset='high'),
+           notification_preset='high', platform_role='moderator'),
     Member(user_id='hoa_marcus', display_name='Marcus Pham',
            quick_login=True, is_cross_org=True, role='Member-at-Large',
-           notification_preset='medium'),
+           notification_preset='medium', platform_role='member'),
     Member(user_id='hoa_don', display_name='Don Iverson',
            quick_login=True, role='Member (former VP)',
-           notification_preset='low'),
+           notification_preset='low', platform_role='member'),
     Member(user_id='hoa_linda', display_name='Linda Schaefer',
            quick_login=True, role='Treasurer',
-           notification_preset='medium'),
+           notification_preset='medium', platform_role='moderator'),
     Member(user_id='hoa_tomas', display_name='Tomás Ortega',
            quick_login=True, role='Member',
-           notification_preset='low'),
+           notification_preset='low', platform_role='member'),
     # Non-quick-login named members:
     Member(user_id='hoa_patty', display_name='Patricia "Patty" Voss',
            quick_login=False, role='Member (President candidate)'),
@@ -166,6 +166,10 @@ DELEGATE_PAGES = [
         ),
         topics=[
             TopicVisibility('Bylaws & Procedure', 'public_accepting'),
+            # Phase 23.2 C1 — 'Elections' added so election proposals
+            # (P-H-07) have a valid topic vocabulary entry. Private
+            # visibility per dispatch guidance for election topics.
+            TopicVisibility('Elections', 'private'),
         ],
         position_statements=[
             PositionStatement(
@@ -371,6 +375,7 @@ PROPOSALS = [
             "To be clear: this is a modest change, not a fix for the reserve. "
             "We'll need other measures as well. I want member input on which."
         ),
+        topics=['Budget', 'Pool & Recreation'],
     ),
 
     Proposal(
@@ -398,6 +403,7 @@ PROPOSALS = [
             "in 14 months. The membership may reasonably disagree about that "
             "tradeoff."
         ),
+        topics=['Budget', 'Pool & Recreation'],
     ),
 
     Proposal(
@@ -434,6 +440,7 @@ PROPOSALS = [
             'Tennis court resurfacing ($12K) — cosmetic',
             'Clubhouse landscaping upgrade ($4K) — aesthetic',
         ],
+        topics=['Budget', 'Long-Term Planning', 'Cedar Court Issues'],
     ),
 
     Proposal(
@@ -468,6 +475,7 @@ PROPOSALS = [
             'D: Weekends only to 8:30pm',
             'E: Add 6am weekday morning hour',
         ],
+        topics=['Pool & Recreation'],
     ),
 
     Proposal(
@@ -491,6 +499,7 @@ PROPOSALS = [
             "them — but I'd ask people to consider whether they actually read "
             "the monthly issues all the way through."
         ),
+        topics=['Bylaws & Procedure'],
     ),
 
     Proposal(
@@ -518,6 +527,7 @@ PROPOSALS = [
             "amendment. It's information that lets the membership decide "
             "whether to raise an amendment proposal at all."
         ),
+        topics=['Cedar Court Issues', 'Bylaws & Procedure', 'Budget'],
     ),
 
     Proposal(
@@ -606,6 +616,7 @@ PROPOSALS = [
                 "needs to be on the ballot, not just on the floor."
             ),
         },
+        topics=['Elections', 'Bylaws & Procedure'],
     ),
 
     Proposal(
@@ -637,6 +648,7 @@ PROPOSALS = [
             'Vendor C - $11K/yr, established Millbrook, no Cedar Hollow history',
             'Vendor D - $7K/yr, owner-operator, mixed references',
         ],
+        topics=['Budget'],
     ),
 
     Proposal(
@@ -666,6 +678,7 @@ PROPOSALS = [
             "at all, and getting it on the books now means we don't have to "
             "litigate it again next summer.)"
         ),
+        topics=['Bylaws & Procedure', 'Pool & Recreation'],
     ),
 ]
 
@@ -693,6 +706,7 @@ DRAFTS = [
             "Non-substantive cleanup. Will post after the President election "
             "concludes — don't want it competing with that for member attention."
         ),
+        topics=['Bylaws & Procedure'],
     ),
 ]
 
