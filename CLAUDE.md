@@ -167,6 +167,10 @@ Three demo orgs (`demo-cedar-hollow`, `demo-local-4021`, `demo-westgate-coalitio
 - **Don't add reset-coordination logic for multi-instance scaling.** Current design assumes single-instance scheduler. Multi-instance race-condition handling is future work if needed; the `is_demo_resetting` lock + the audit log are sufficient at current scale.
 - **Cross-org users.** Marcus Pham, Dana Whitfield, and Janet Reilly each have ONE underlying `User` row with TWO `OrgMembership` rows. The seed pipeline resolves bible-internal IDs (`hoa_marcus`, `coalition_marcus`, etc.) to single User accounts at seed time. Stage 8 §5 documents the mapping; if you add a fourth cross-org character, extend the resolver in `seed_pipeline.py`.
 
+## Demo reset trigger (Phase 23.2+)
+
+`POST /api/demo/trigger-reset` is a token-gated alternative to the admin-auth `/api/admin/demo/reset` endpoint. Code-team sessions hold the token (env var `DEMO_RESET_TRIGGER_TOKEN`, set in both Railway prod env and local `.env`) so resets can be triggered during demo-content iteration without admin credentials. Invoke via `python scripts/trigger_demo_reset.py` — the script reads the token from `.env`, POSTs the header, and prints the `DemoResetResult` JSON (orgs reset, rows wiped/seeded, skip reason). Same code path as the scheduled reset and the admin trigger; the `is_demo=True` safety boundary is not bypassed.
+
 ## Frontend conventions
 
 ### Tailwind arbitrary-value syntax
