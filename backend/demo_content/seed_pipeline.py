@@ -643,44 +643,41 @@ def seed_org_from_bible(
                 db.add(opt)
             db.flush()
 
-    # ---- 6b. ProposalTopic associations (Phase 23.1 B3a/C1 follow-up) ----
-    # Without ProposalTopic rows, find_delegate_pure walks an empty topic
-    # list and the per-topic delegations the seed creates never resolve.
-    # The bibles don't specify proposal→topic mappings explicitly; we
-    # infer them by: for each delegate-page vote_rationale, union the
-    # voter's `public_accepting` topics into the rationale's proposal.
-    # This makes the proposal "in scope" for any delegation targeted at
-    # the voter on that topic, which is exactly the propagation path the
-    # demo wants to demonstrate. Proposals that get no rationale across
-    # any delegate page end up with an empty topic set — fine for the
-    # tally (their delegated voters cascade through the unscoped
-    # fallback).
-    proposal_topic_pairs: set[tuple[str, str]] = set()
-    for dp in bible.delegate_pages:
-        accepting_topic_ids: list[str] = []
-        for tv in (dp.topics or []):
-            if tv.state == "public_accepting":
-                t = topics_by_name.get(tv.topic)
-                if t is not None:
-                    accepting_topic_ids.append(t.id)
-        if not accepting_topic_ids:
-            continue
-        for vr in (dp.vote_rationales or []):
-            prop = proposals_by_bible_id.get(vr.proposal_id)
-            if prop is None:
+        # ---- B2.1 — ProposalTopic associations from bp.topics ----
+        # Phase 23.2 replaces the previous Phase 23.1 B3a-extra
+        # backwards-inference heuristic (which built proposal→topic links
+        # from delegate-page vote_rationales) with explicit bp.topics
+        # metadata authored in the bibles. First topic in the list is the
+        # primary topic; secondary topics fall off in `relevance`.
+        # Unknown topic names log a loud error and are skipped — the seed
+        # still completes for the rest of the org. Production-shape note:
+        # ProposalTopic has composite PK (proposal_id, topic_id) +
+        # relevance: Float default 1.0 (see models.py:545). The relevance
+        # ordering signal is what the delegation engine inspects when
+        # resolving multi-topic delegators.
+        for idx, topic_name in enumerate(bp.topics or []):
+            topic = topics_by_name.get(topic_name)
+            if topic is None:
+                log.error(
+                    "seed_pipeline: proposal %s references unknown topic %r "
+                    "(org %s); skipping association",
+                    bp.proposal_id, topic_name, bible.slug,
+                )
                 continue
-            for tid in accepting_topic_ids:
-                proposal_topic_pairs.add((prop.id, tid))
-    for prop_id, topic_id in proposal_topic_pairs:
-        existing = db.query(models.ProposalTopic).filter(
-            models.ProposalTopic.proposal_id == prop_id,
-            models.ProposalTopic.topic_id == topic_id,
-        ).first()
-        if existing is None:
+            existing_pt = db.query(models.ProposalTopic).filter(
+                models.ProposalTopic.proposal_id == proposal.id,
+                models.ProposalTopic.topic_id == topic.id,
+            ).first()
+            if existing_pt is not None:
+                continue
+            # First topic = primary (relevance 1.0). Secondaries fall off
+            # by 0.2 per position, floored at 0.1.
+            relevance = 1.0 if idx == 0 else max(0.1, 1.0 - 0.2 * idx)
             db.add(models.ProposalTopic(
-                proposal_id=prop_id, topic_id=topic_id, relevance=1.0,
+                proposal_id=proposal.id,
+                topic_id=topic.id,
+                relevance=relevance,
             ))
-    if proposal_topic_pairs:
         db.flush()
 
     # ---- 7. Named-character votes (from DelegatePage.vote_rationales) ----
