@@ -1032,6 +1032,33 @@ def seed_org_from_bible(
         counts["notifications_created"] = len(notifications_to_add)
         db.flush()
 
+    # ---- B2.3 — Coalition: grant proposal.create to the member role ----
+    # The Westgate Tenants Coalition is the grassroots / member-led
+    # demo org; its narrative requires open proposal authorship. This
+    # is a demo-org-specific policy (not a universal default), so it
+    # lives in the seed pipeline rather than role_seed.py. Idempotent:
+    # the existence check prevents duplicate rows on repeated resets.
+    if bible.slug == "demo-westgate-coalition":
+        member_role = db.query(models.Role).filter(
+            models.Role.org_id == org.id,
+            models.Role.system_key == "member",
+        ).first()
+        if member_role is not None:
+            existing_grant = db.query(models.RolePermission).filter(
+                models.RolePermission.role_id == member_role.id,
+                models.RolePermission.permission_key == "proposal.create",
+            ).first()
+            if existing_grant is None:
+                db.add(models.RolePermission(
+                    role_id=member_role.id,
+                    permission_key="proposal.create",
+                    enabled=True,
+                ))
+                db.flush()
+            elif not existing_grant.enabled:
+                existing_grant.enabled = True
+                db.flush()
+
     return counts
 
 
