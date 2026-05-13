@@ -183,6 +183,45 @@ def my_access_log(
     )
 
 
+# ---------------------------------------------------------------------------
+# Phase 27 — delegation strategy preference
+# ---------------------------------------------------------------------------
+
+_VALID_DELEGATION_STRATEGIES = ("strict_precedence", "relevance_weighted")
+
+
+@router.patch("/me/delegation-strategy", response_model=schemas.UserOut)
+def update_delegation_strategy(
+    body: schemas.DelegationStrategyUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 27 B4 — update the caller's delegation_strategy preference.
+
+    Accepted values: ``"strict_precedence"`` | ``"relevance_weighted"``.
+    Other values are rejected with 400. No audit log entry (this is a
+    user preference, same shape as notification settings).
+
+    Strategy choice is consumed by the delegation engine at tally time
+    (DelegationService._build_context bulk-reads strategies for every
+    eligible voter). A user toggling mid-tally picks up the new value
+    on the next tally; the in-progress tally is unaffected.
+    """
+    new_strategy = body.strategy
+    if new_strategy not in _VALID_DELEGATION_STRATEGIES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid delegation_strategy {new_strategy!r}. "
+                f"Allowed values: {', '.join(_VALID_DELEGATION_STRATEGIES)}."
+            ),
+        )
+    current_user.delegation_strategy = new_strategy
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+
 @router.get("/search", response_model=list[schemas.UserSearchResultWithContext])
 def search_users(
     q: str = Query("", description="Search by display name or username"),
