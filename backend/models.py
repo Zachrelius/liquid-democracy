@@ -299,8 +299,14 @@ class User(Base):
         nullable=False,
         default="human",
     )
+    # Phase 27 — relevance-weighted is the new default. Existing
+    # 'strict_precedence' rows were flipped by migration
+    # d4e3a91c5f0b. Valid values: "strict_precedence" |
+    # "relevance_weighted". The dispatcher in delegation_engine.py
+    # gates the relevance-weighted path on voting_method=="binary";
+    # other voting methods fall back to strict-precedence regardless.
     delegation_strategy: Mapped[str] = mapped_column(
-        String, nullable=False, default="strict_precedence"
+        String, nullable=False, default="relevance_weighted"
     )
     email: Mapped[Optional[str]] = mapped_column(String, unique=True, nullable=True, index=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
