@@ -3326,3 +3326,65 @@ Ships the technical foundation for the curated-demo experience. Three demo orgs 
 ### Pass-summary
 
 **Phase 23 shipped cleanly to production with one pre-merge bug catch + brief post-deploy 502 window.** Backend test count 1248 → 1294 (+46 net). Frontend bundle 382.01 → 383.77 kB gzipped (+1.76 kB). 14 production code commits + 1 hotfix + 1 merge commit (16 total). Demo bibles moved to `backend/demo_content/` with extracted schema; alembic migration `c7e8a3d419f5` adds 8 columns + index; reset job hooks into the existing notification scheduler; `GET /api/orgs/demo` public directory endpoint live and serving the 3 demo orgs with full content. The prod-snapshot Docker round-trip caught a boolean-default datatype mismatch that the standard pytest + PG smoke gates missed (the same Item 54 structural blind spot that has now bitten three times: Phase 13, Phase 19, Phase 23 — Phase 23 caught pre-merge via the manual round-trip). The merged spec+dispatch format continues to work well; the slug-name drift pre-flight check (Z's three URL-prefix decree) was reconciled at branch creation and avoided a costly mid-stream rename. The first scheduled demo reset will validate the full lifecycle end-to-end at next midnight Pacific.
+
+---
+
+## Phase 23.1 — Demo Polish (shipped 2026-05-12, master `8a46242`)
+
+Polish pass fixing 5 defects surfaced by browser verification of Phase 23. All fixes in the seed pipeline + bibles + small frontend topic-display rename. No migration; no scheduler changes; no new infrastructure.
+
+**Defects fixed:**
+
+| # | Defect | Severity | Fix |
+|---|---|---|---|
+| **C1** | Delegated votes don't appear in proposal tallies | High | B3a: filler-with-delegation skips direct vote on covered proposals. B3b: `graph_store.rebuild_from_db()` after demo reset commit. |
+| **C2** | STV/RCV proposals show Yes/No, no votes recorded | High | B1: `ProposalOption` rows created from `candidate_statements` dict when `bp.options` is empty. B2: P-L-06 union bible seeded with 5 STV trustee candidates. |
+| **C3** | Topic names display as `demo-westgate-coalition:Anti-Displacement` | Medium | B4: seed pipeline stores un-prefixed name in `Topic.description`; frontend reads `topic.description?.trim() || topic.name` in 6 display surfaces (TopicBadge, FollowRequests, admin Topics + SubOrgTopics confirm copy, DelegateProfile confirm flow, Settings copy). Option B per dispatch — no migration. |
+| **C4** | Persona descriptions repeat the role field twice | Medium | B5: new `backend/demo_content/persona_descriptions.py` with all 18 Stage 8 §6 descriptions verbatim; seed pipeline wires `QUICK_LOGIN_DESCRIPTIONS.get(m.user_id, m.role)` into the personas JSONB. |
+| **C5** | Multi-option labels are placeholders | Low | B6: hoa_bible.py P-H-03/04/08 labels rewritten with self-explanatory content (Pool pump replacement, etc.). Vote rationales use index encoding so no rationale edits needed. |
+
+**Additional fix surfaced during testing**: B3a-extra (commit `4ac6f37`) — seed pipeline now creates `ProposalTopic` association rows from delegate-page vote_rationales so proposals correctly associate with topics (needed for B3a's "does this filler's delegation cover this proposal's topics" lookup to work).
+
+**Cluster B commits (in merge order):**
+
+1. `c6f32a0` — B5: persona_descriptions module + seed_pipeline wiring
+2. `a0feab4` — C3 frontend: topic display reads description field (fallback to name)
+3. `ed1c254` — B6: bible content — human-readable multi-option labels for P-H-03/04/08
+4. `54883f2` — B2: seed P-L-06 candidate_statements (5 STV trustee candidates)
+5. `067d36e` — B1: ProposalOption rows from candidate_statements for RCV/STV proposals
+6. `0fedf1d` — B3a: filler with delegation skips direct vote on covered proposals
+7. `f000926` — B3b: refresh graph store after demo reset commit
+8. `4ac6f37` — B3a-extra: seed ProposalTopic associations from delegate-page rationales
+9. `95a63ce` — B7: 12 tests for defect coverage
+10. `8a46242` — Merge phase-23-1/demo-polish (no-ff)
+
+**Tests (B7):** 12 new tests in `backend/tests/test_phase_23_1_demo_polish.py` — TestPersonaDescriptionsFromStage8, TestPersonaDescriptionFallbackToRole, TestElectionProposalOptionsFromCandidateStatements, TestElectionProposalOptionsPreservesOrder, TestSTVCandidatesSeededForPL06, TestTopicDisplayName, TestDelegationsExist, **TestDelegatedVoteAppearsInTally** (load-bearing C1), TestFillerWithDelegationSkipsDirectVote, TestFillerWithoutDelegationCastsDirectVote, TestGraphStoreRefreshedPostSeed, TestMultiOptionProposalLabelsHuman. All 12 pass in ~70 sec. Full backend pytest passes (exit 0) — no regressions in Phase 23's 32 tests or any other suite.
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Backend pytest (full) | PASS (exit 0; all dots, no F/E) |
+| Frontend build | PASS — bundle `index-CM2LG2Wi.js` 383.87 kB gzipped (+0.10 vs Phase 23 baseline 383.77) |
+| W-START-CHECK | PASS-by-source (no new init code paths; same delegation_engine + graph_store + scheduler boot) |
+| `bash start.sh` prod-like | PASS-by-source (graph_store.rebuild_from_db is the same call that already runs at boot; this pass just adds it to the reset job too) |
+| PG smoke | NOT REQUIRED (no migration in Phase 23.1) |
+| File-count | 12 files, +826 / -22 lines |
+
+**Deploy + prod sanity:**
+
+- Merge to master: `8a46242` (`git merge --no-ff phase-23-1/demo-polish`)
+- Push to origin/master: SUCCESS (`db14a15..8a46242 master -> master`)
+- Railway redeploy: bundle hash changed `index-CEsM41OB.js` (Phase 23) → `index-CM2LG2Wi.js`. Backend OK throughout deploy window.
+- Prod sanity: `https://www.liquiddemocracy.us/` → 200; `https://www.liquiddemocracy.us/api/orgs/demo` → 200 with full directory.
+
+**Manual reset trigger (B8)**: Phase 23.1 code is live, but demo content was last seeded by the prior code. The Phase 23.1 fixes (real persona descriptions, RCV/STV option rows, un-prefixed topic display via description field, candidate-aware ProposalOption rows, delegation-aware filler vote allocation, refreshed graph store) will only land in the database on the next demo reset. **Options:**
+- Wait for next midnight Pacific scheduled reset (automatic; Phase 23.1 code applies on its own).
+- Trigger manually via `POST /api/admin/demo/reset` with platform admin credentials (Z action — the lead doesn't have admin credentials in the CLI session).
+
+**Mid-pass incident:**
+- Backend agent appeared wedged at ~50 min on B7 tests with the test file mtime stale for 11+ min. Lead killed + salvaged the 22KB test file (all 12 test classes present + the ProposalTopic association extra fix commit), ran the file directly, all 12 tests passed in 70 seconds. Same pattern as Phase 23's B5 incident — agents iterating on slow-reset pytest loops without committing incrementally are at risk of looking wedged. The dispatch's commit-per-chunk instruction worked for the implementation commits (B1-B6 committed incrementally) but B7's slow tests outran the agent's commit cadence.
+
+### Pass-summary
+
+**Phase 23.1 shipped cleanly with one rescued-from-wedge incident, no prod regressions.** 9 backend commits + 1 frontend commit + merge. All 12 defect-coverage tests pass; full backend pytest passes with no regressions. Demo content gets the Phase 23.1 fixes on the next reset (scheduled or manual). The graph store refresh (B3b) is the most consequential fix — it ensures delegated votes propagate correctly in tallies post-seed, which was the platform's headline feature breaking on the live demo.
