@@ -113,10 +113,15 @@ export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemov
     edges.forEach(e => {
       const topicList = e.topics.length ? e.topics : [{ name: 'Global', color: '#95a5a6' }];
       topicList.forEach((t, i) => {
+        // Phase 26 D1 — topic label uses description with fallback to
+        // name. Demos prefix the name for scoping; the description is
+        // the user-visible label. Synthesized "Global" placeholder has
+        // no description so the fallback returns "Global" unchanged.
+        const topicLabel = t.description?.trim() || t.name;
         flatEdges.push({
           source: e.source,
           target: e.target,
-          topic_name: t.name,
+          topic_name: topicLabel,
           topic_color: t.color,
           direction: e.direction,
           offset: i * 3, // offset for multiple edges between same pair

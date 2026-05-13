@@ -1796,6 +1796,13 @@ def list_delegate_applications(
     for app in apps:
         user = db.get(models.User, app.user_id)
         topic = db.get(models.Topic, app.topic_id)
+        # Phase 26 D1 — return the display label (description with
+        # fallback to name) so the admin Delegate Applications page
+        # renders clean labels for demo orgs that prefix topic.name.
+        if topic is not None:
+            topic_label = (topic.description or "").strip() or topic.name
+        else:
+            topic_label = ""
         result.append(schemas.DelegateApplicationOut(
             id=app.id,
             user_id=app.user_id,
@@ -1803,7 +1810,7 @@ def list_delegate_applications(
             display_name=user.display_name if user else "",
             avatar_url=user.avatar_url if user else None,
             topic_id=app.topic_id,
-            topic_name=topic.name if topic else "",
+            topic_name=topic_label,
             bio=app.bio,
             status=app.status,
             feedback=app.feedback,

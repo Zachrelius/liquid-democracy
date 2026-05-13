@@ -317,7 +317,8 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
                 <label key={t.id} className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={!!sel} onChange={() => toggleTopic(t.id)} className="accent-[var(--brand-accent)]" />
                   <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: t.color }} />
-                  <span className="text-sm text-gray-700">{t.name}</span>
+                  {/* Phase 26 D1 — description || name. */}
+                  <span className="text-sm text-gray-700">{t.description?.trim() || t.name}</span>
                   {t.sub_org_id && (
                     <span className="text-[10px] uppercase text-blue-600">{subOrg.name}</span>
                   )}
