@@ -651,12 +651,30 @@ def create_proposal(
             ),
         )
 
+    # Phase 25 B2 — 0-day deliberation skip. Mirrors the org-scoped path
+    # in routes/organizations.py::create_org_proposal. When the effective
+    # deliberation duration is zero, the proposal is created directly in
+    # 'voting' status with a single audit event.
+    skip_deliberation = (
+        effective_delib_days is not None and float(effective_delib_days) == 0.0
+    )
+    now_at_create = (
+        datetime.now(timezone.utc).replace(tzinfo=None) if skip_deliberation else None
+    )
+
     proposal = models.Proposal(
         title=body.title,
         body=body.body,
         author_id=current_user.id,
         voting_method=body.voting_method,
         num_winners=body.num_winners,
+        status="voting" if skip_deliberation else "draft",
+        deliberation_start=now_at_create,
+        voting_start=now_at_create,
+        voting_end=(
+            now_at_create + timedelta(days=float(effective_vote_days))
+            if skip_deliberation else None
+        ),
         pass_threshold=body.pass_threshold,
         quorum_threshold=body.quorum_threshold,
         deliberation_days=effective_delib_days,
@@ -665,6 +683,22 @@ def create_proposal(
     )
     db.add(proposal)
     db.flush()
+
+    if skip_deliberation:
+        log_audit_event(
+            db,
+            action="proposal.status_changed",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=current_user.id,
+            details={
+                "proposal_id": proposal.id,
+                "old_status": "draft",
+                "new_status": "voting",
+                "trigger": "zero_day_deliberation_skip",
+            },
+            ip_address=request.client.host if request.client else None,
+        )
 
     for t in body.topics:
         db.add(models.ProposalTopic(
