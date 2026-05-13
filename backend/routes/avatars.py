@@ -54,33 +54,49 @@ _BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 
 def _resolve_uploads_base() -> Path:
-    """Phase 12.7 I2 — resolve the uploads base directory in 3 tiers.
+    """Phase 25 B3 (revised after first-deploy 502) — env-driven uploads
+    base directory with a writability fallback.
 
-    1. ``UPLOADS_BASE_DIR`` env override. Used by tests + future
-       flexibility (point at a tmp_path, point at a different mount).
-    2. ``/data/uploads`` if the Railway Volume mount at ``/data`` exists
-       and is writable. This is the production target post-D1 (volume
-       provisioned via Railway dashboard, mount declared in railway.toml).
-    3. Local-dev fallback at ``backend/uploads``. Also kicks in on prod
-       if the Volume hasn't been provisioned yet — the
-       ship-with-fallback pattern keeps deploys safe regardless of
-       Volume state.
+    Resolution order:
+      1. ``UPLOAD_DIR`` (Phase 25 canonical name) — overrides everything.
+         Tests set this to a pytest ``tmp_path`` so each test run uses
+         an isolated tmpdir.
+      2. ``UPLOADS_BASE_DIR`` (Phase 12.7 legacy name) — backward-compat
+         alias.
+      3. ``/data/uploads`` if the Railway Volume mount is writable from
+         the app process. The Phase 25 initial deploy hard-defaulted to
+         this path without a fallback and crashed startup with
+         PermissionError because the volume mount was owned by root and
+         appuser couldn't mkdir inside it. The writability probe below
+         restores the Phase 12.7 fallback so an unwritable mount
+         degrades to ephemeral storage with a startup warning rather
+         than a 502.
+      4. Fallback to in-image ``backend/uploads`` (ephemeral on Railway).
+         The main.py startup hook logs a warning when the resolved
+         path isn't under ``/data/`` so the operator sees the state.
 
-    Resolution happens once at module import. Tests that need a custom
-    path monkeypatch ``AVATARS_BASE_DIR`` (and ``LOGOS_BASE_DIR``)
-    directly to a tmp_path, which works because every callsite reads
-    the module-level constant rather than recomputing.
+    Volume mount ownership is the real ops fix (Dockerfile runs as
+    appuser; Railway mounts /data/uploads as root). Tracked as deferred
+    work; until then this fallback keeps deploys safe.
     """
-    explicit = os.environ.get("UPLOADS_BASE_DIR")
+    explicit = os.environ.get("UPLOAD_DIR") or os.environ.get("UPLOADS_BASE_DIR")
     if explicit:
         return Path(explicit)
     railway_volume = Path("/data/uploads")
-    # The Volume is mounted at /data; the uploads/ subdir is ours to
-    # create. We only consider this tier viable when /data exists and
-    # is writable (i.e., the Volume actually mounted).
-    if railway_volume.parent.exists() and os.access(railway_volume.parent, os.W_OK):
-        return railway_volume
-    # Local dev fallback — also covers prod-without-volume.
+    try:
+        # Probe parent writability first — mkdir(.., parents=True,
+        # exist_ok=True) creates /data/uploads if absent then the
+        # avatars/logos subdirs inside it. Need write access to /data.
+        if railway_volume.parent.exists() and os.access(
+            railway_volume.parent, os.W_OK,
+        ):
+            return railway_volume
+        # /data/uploads itself may exist (mounted) even when /data
+        # isn't writable. Test it directly.
+        if railway_volume.exists() and os.access(railway_volume, os.W_OK):
+            return railway_volume
+    except OSError:
+        pass
     return _BACKEND_DIR / "uploads"
 
 
