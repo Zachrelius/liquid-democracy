@@ -573,14 +573,27 @@ def seed_org_from_bible(
             _resolve_proposal_status_and_times(bp.state_at_reset, bp.voting_method, now)
         )
 
+        # Phase 23.2 B3 — translate the bible's voting_method string to a
+        # value the cast_vote endpoint accepts. The bible vocabulary
+        # ('binary' | 'approval' | 'rcv' | 'stv') is content-author-
+        # friendly. The DB / vote handler vocabulary is
+        # ('binary' | 'approval' | 'ranked_choice'). RCV and STV both ride
+        # ranked_choice; STV is distinguished by Proposal.num_winners > 1
+        # at tally time.
+        bible_method = bp.voting_method
+        if bible_method in ('rcv', 'stv'):
+            db_voting_method = 'ranked_choice'
+        else:
+            db_voting_method = bible_method  # 'binary' or 'approval' pass through
+
         proposal = models.Proposal(
             title=bp.title,
             body=bp.body,
             author_id=author.id,
             org_id=org.id,
             status=status,
-            voting_method=bp.voting_method,
-            num_winners=1,
+            voting_method=db_voting_method,
+            num_winners=bp.num_winners,
             deliberation_start=delib_start,
             voting_start=vote_start,
             voting_end=vote_end,
