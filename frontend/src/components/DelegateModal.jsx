@@ -282,13 +282,33 @@ function ResultCard({
   );
 }
 
-export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
+export default function DelegateModal({
+  topicId,
+  topicName,
+  onClose,
+  onDone,
+  // Phase 26 D2 — when set, the modal opens with this user pre-selected
+  // (no search). Shape: {user_id, display_name, username, avatar_url}.
+  // Used from DelegatePublic.jsx so a viewer who clicked "Delegate to X
+  // on Topic" lands on the confirm UI instead of being asked to search
+  // for X again. A "Choose someone else" link below resets to the
+  // search flow. Existing callers (Delegations.jsx) don't pass this
+  // prop and see the original search-only behavior.
+  preselectedUser = null,
+}) {
   const { user } = useAuth();
   const { currentOrg, userOrgs } = useOrg();
   const unverified = !user?.email_verified;
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  // Phase 26 D2 — preselect mode state. Tracks the full enriched user
+  // record (with delegate_profiles, follow_status, etc.) fetched via
+  // the existing search endpoint using preselectedUser.username as the
+  // query. cleared when the user clicks "Choose someone else."
+  const [preselectMode, setPreselectMode] = useState(!!preselectedUser);
+  const [preselectedFull, setPreselectedFull] = useState(null);
+  const [preselectError, setPreselectError] = useState('');
   // Decision 4-bis — apply-to scope radio. Only shown for the global flow
   // (topicId === undefined) and only when the viewer is in at least one
   // sub-org. Default 'all' preserves the legacy single-row global delegation.
@@ -377,7 +397,49 @@ export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
     );
   }
 
+  // Phase 26 D2 — when preselectMode is on, fetch the full enriched
+  // record for preselectedUser via the existing search endpoint
+  // (q=username filter, then exact-match on user_id). This pulls the
+  // delegate_profiles / follow_status / follow_permission fields that
+  // ResultCard needs to render the correct action button. Skipped when
+  // preselectMode is off (user clicked "Choose someone else").
   useEffect(() => {
+    if (!preselectMode || !preselectedUser?.username) return;
+    let cancelled = false;
+    (async () => {
+      setSearching(true);
+      setPreselectError('');
+      try {
+        let url = `/api/users/search?q=${encodeURIComponent(preselectedUser.username)}&limit=10`;
+        if (currentOrg?.slug) {
+          url += `&org_slug=${encodeURIComponent(currentOrg.slug)}`;
+        }
+        const res = await api.get(url);
+        if (cancelled) return;
+        const match = (res || []).find(u => u.id === preselectedUser.user_id);
+        if (match) {
+          setPreselectedFull(match);
+        } else {
+          // Search couldn't enrich the user (rare — maybe they left the
+          // org between page load and click). Fall back to search flow.
+          setPreselectError(
+            "Couldn't find this delegate's profile. Use search instead."
+          );
+          setPreselectMode(false);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        setPreselectError(e.message || 'Failed to load delegate');
+        setPreselectMode(false);
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [preselectMode, preselectedUser, currentOrg]);
+
+  useEffect(() => {
+    if (preselectMode) return; // skip free-text search when preselect is active
     if (query.length < 2) { setResults([]); return; }
     const timer = setTimeout(async () => {
       setSearching(true);
@@ -399,7 +461,7 @@ export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [query, currentOrg]);
+  }, [query, currentOrg, preselectMode]);
 
   const showApplyToRadio = topicId === undefined && viewerSubOrgs.length > 0;
 
@@ -455,38 +517,81 @@ export default function DelegateModal({ topicId, topicName, onClose, onDone }) {
             </div>
           )}
 
-          <input
-            autoFocus
-            type="text"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Search by name or username..."
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
-          />
-          {searching && <p className="text-xs text-gray-400 text-center">Searching...</p>}
-          {results.length > 0 && (
-            <div className="space-y-2">
-              {results.map(u => (
-                <ResultCard
-                  key={u.id}
-                  user={u}
-                  topicId={topicId}
-                  onDone={onDone || onClose}
-                  unverified={unverified}
-                  scopeCoverage={scopeCoverage}
-                  onCreateTopicScopedDelegations={createTopicScopedDelegations}
-                  scopeFilterMode={scopeFilterMode}
-                  defaultChainBehavior={defaultChainBehavior}
-                  parentSlug={parentSlug}
-                />
-              ))}
-            </div>
-          )}
-          {query.length >= 2 && !searching && results.length === 0 && (
-            <p className="text-sm text-gray-400 text-center">No users found</p>
-          )}
-          {query.length < 2 && (
-            <p className="text-xs text-gray-400">Type at least 2 characters to search</p>
+          {/* Phase 26 D2 — preselect-mode UI. When the modal was
+              opened with preselectedUser (e.g. from DelegatePublic.jsx),
+              show the preselected ResultCard directly and offer a
+              "Choose someone else" link that resets to the search flow.
+              Free-text search input is hidden in this mode. */}
+          {preselectMode ? (
+            <>
+              {searching && !preselectedFull && (
+                <p className="text-xs text-gray-400 text-center">Loading delegate...</p>
+              )}
+              {preselectedFull && (
+                <div className="space-y-2">
+                  <ResultCard
+                    key={preselectedFull.id}
+                    user={preselectedFull}
+                    topicId={topicId}
+                    onDone={onDone || onClose}
+                    unverified={unverified}
+                    scopeCoverage={scopeCoverage}
+                    onCreateTopicScopedDelegations={createTopicScopedDelegations}
+                    scopeFilterMode={scopeFilterMode}
+                    defaultChainBehavior={defaultChainBehavior}
+                    parentSlug={parentSlug}
+                  />
+                  <button
+                    onClick={() => {
+                      setPreselectMode(false);
+                      setPreselectedFull(null);
+                    }}
+                    className="text-xs text-[var(--brand-accent)] hover:underline"
+                  >
+                    Choose someone else
+                  </button>
+                </div>
+              )}
+              {preselectError && (
+                <p className="text-xs text-red-500">{preselectError}</p>
+              )}
+            </>
+          ) : (
+            <>
+              <input
+                autoFocus
+                type="text"
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Search by name or username..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              />
+              {searching && <p className="text-xs text-gray-400 text-center">Searching...</p>}
+              {results.length > 0 && (
+                <div className="space-y-2">
+                  {results.map(u => (
+                    <ResultCard
+                      key={u.id}
+                      user={u}
+                      topicId={topicId}
+                      onDone={onDone || onClose}
+                      unverified={unverified}
+                      scopeCoverage={scopeCoverage}
+                      onCreateTopicScopedDelegations={createTopicScopedDelegations}
+                      scopeFilterMode={scopeFilterMode}
+                      defaultChainBehavior={defaultChainBehavior}
+                      parentSlug={parentSlug}
+                    />
+                  ))}
+                </div>
+              )}
+              {query.length >= 2 && !searching && results.length === 0 && (
+                <p className="text-sm text-gray-400 text-center">No users found</p>
+              )}
+              {query.length < 2 && (
+                <p className="text-xs text-gray-400">Type at least 2 characters to search</p>
+              )}
+            </>
           )}
         </div>
         <div className="p-4 border-t border-gray-100">

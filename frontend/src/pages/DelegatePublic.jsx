@@ -386,6 +386,16 @@ export default function DelegatePublic() {
         <DelegateModal
           topicId={delegateModalTopic.id}
           topicName={delegateModalTopic.name}
+          // Phase 26 D2 — pre-select this page's delegate. The viewer
+          // clicked "Delegate to X on Topic" from X's public page; they
+          // shouldn't have to search for X again. The modal still
+          // offers "Choose someone else" if they change their mind.
+          preselectedUser={{
+            user_id: userObj.id,
+            display_name: userObj.display_name || userObj.username,
+            username: userObj.username,
+            avatar_url: userObj.avatar_url,
+          }}
           onClose={() => setDelegateModalTopic(null)}
           onDone={() => setDelegateModalTopic(null)}
         />
