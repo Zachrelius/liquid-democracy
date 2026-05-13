@@ -416,6 +416,14 @@ def _build_event_template_vars(
         "topic_id": payload.get("topic_id") or "",
         "decision": payload.get("decision") or "",
         "outcome": payload.get("outcome") or "",
+        # Phase 24 — close-trigger differentiation for proposal.closed.
+        # ``outcome_detail`` is a per-method outcome string (e.g.
+        # "passed (5-3)", "failed (quorum not met)", "passed — Tuesday won").
+        # ``close_trigger`` is the payload.trigger value
+        # (stable_result_achieved | voting_end_reached | voting_end_backfill);
+        # templates can branch copy on it.
+        "outcome_detail": payload.get("outcome_detail") or payload.get("outcome") or "",
+        "close_trigger": payload.get("trigger") or "",
         "polis_title": payload.get("title") or "",
         "polis_id": polis_id,
         "support_fraction": payload.get("support_fraction") or "",
