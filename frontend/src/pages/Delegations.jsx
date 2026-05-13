@@ -163,6 +163,12 @@ export default function Delegations() {
       setLoading(false);
       return;
     }
+    // Phase 25 F3 — clear any stale error state from a prior load before
+    // re-fetching. Without this, a successful Retry click leaves the
+    // page stuck on the previous error UI because the error state was
+    // never reset; same shape for the in-page org switcher whose
+    // parentSlug change re-invokes `load` without unmounting the page.
+    setError('');
     try {
       const [dels, precs, tops] = await Promise.all([
         api.get(`/api/orgs/${parentSlug}/delegations`),

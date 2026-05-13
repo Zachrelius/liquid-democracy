@@ -238,10 +238,10 @@ app.include_router(demo_reset.router)
 # Static files — uploaded user content (Phase 9.8 W A1; Phase 12.7 I2)
 # ---------------------------------------------------------------------------
 # Files written by routes/avatars.py and routes/org_logos.py to the resolved
-# uploads base directory. Phase 12.7 I2 relocated the base from the in-image
-# ``backend/uploads/`` (ephemeral on Railway) to ``/data/uploads/`` on a
-# mounted Railway Volume — see ``routes/avatars.py::_resolve_uploads_base``
-# for the 3-tier fallback. We import the resolved constant rather than
+# uploads base directory. Phase 25 B3 switched from the Phase 12.7 3-tier
+# auto-detect to env-driven config: ``UPLOAD_DIR`` (or legacy
+# ``UPLOADS_BASE_DIR``) overrides; default is ``/data/uploads`` (Railway
+# Volume mount in prod). We import the resolved constant rather than
 # recomputing so tests that monkeypatch the constant continue to work and
 # the StaticFiles mount stays in sync with where files are actually
 # written.
@@ -282,17 +282,18 @@ async def startup() -> None:
     finally:
         db.close()
 
-    # Phase 12.8 audit Tier 1, Item 1 — surface ephemeral-uploads fallback.
-    # The 3-tier path resolver in routes/avatars.py silently falls back to
-    # backend/uploads/ when the Railway Volume isn't mounted. Without this
-    # warning the deploy looks healthy but uploaded logos/avatars vanish
-    # on the next redeploy. Logging makes the misconfiguration visible.
+    # Phase 25 B3 — surface ephemeral-uploads misconfiguration. Phase 25
+    # switched to env-driven config (default /data/uploads); a path NOT
+    # under /data/ usually means UPLOAD_DIR was overridden for local dev
+    # or the volume mount isn't reachable. Logging keeps the deploy state
+    # observable.
     if not str(_UPLOADS_BASE_DIR).startswith("/data/"):
         log.warning(
-            "UPLOADS storage is on ephemeral container path %s — "
-            "uploaded logos/avatars will be lost on the next redeploy. "
-            "Provision a Railway Volume at /data and run "
-            "scripts/phase12_7_migrate_uploads.py to migrate legacy files.",
+            "UPLOADS storage resolved to non-volume path %s — "
+            "uploaded logos/avatars will be lost on the next redeploy "
+            "unless this is local dev. Verify the Railway Volume mount "
+            "at /data/uploads is attached to this service and that "
+            "UPLOAD_DIR is unset in prod.",
             _UPLOADS_BASE_DIR,
         )
 
