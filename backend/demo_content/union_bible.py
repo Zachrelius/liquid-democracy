@@ -63,22 +63,22 @@ RECENT_HISTORY = """\
 MEMBERS = [
     Member(user_id='local_keisha', display_name='Keisha Brooks',
            quick_login=True, role='President (DPW Sanitation supervisor)',
-           notification_preset='high'),
+           notification_preset='high', platform_role='steward'),
     Member(user_id='local_sam', display_name='Sam Cole',
            quick_login=True, role='DPW Sanitation steward',
-           notification_preset='high'),
+           notification_preset='high', platform_role='moderator'),
     Member(user_id='local_dana', display_name='Dana Whitfield',
            quick_login=True, is_cross_org=True, role='Library steward (Reference librarian)',
-           notification_preset='medium'),
+           notification_preset='medium', platform_role='moderator'),
     Member(user_id='local_tony', display_name="Tony D'Amico",
            quick_login=True, role='Treasurer (Parks Department)',
-           notification_preset='medium'),
+           notification_preset='medium', platform_role='member'),
     Member(user_id='local_aisha', display_name='Aisha Robinson',
            quick_login=True, role='Parks Department (VP candidate)',
-           notification_preset='high'),
+           notification_preset='high', platform_role='member'),
     Member(user_id='local_walt', display_name='Walter "Walt" Hennessy',
            quick_login=True, role='Retiree member (former DPW Streets)',
-           notification_preset='low'),
+           notification_preset='low', platform_role='member'),
     Member(user_id='local_janet', display_name='Janet Reilly',
            quick_login=False, is_cross_org=True, role='Parks Department member',
            notification_preset='low'),
@@ -110,6 +110,10 @@ DELEGATE_PAGES = [
         topics=[
             TopicVisibility('Contract & Negotiations', 'public_accepting'),
             TopicVisibility('Grievances', 'public_accepting'),
+            # Phase 23.2 C1 — 'Elections' added so VP/Trustee election
+            # proposals (P-L-04, P-L-06) have a valid topic vocabulary
+            # entry. Private visibility per dispatch guidance.
+            TopicVisibility('Elections', 'private'),
         ],
         position_statements=[
             PositionStatement(
@@ -477,6 +481,7 @@ PROPOSALS = [
             "would affect every department under the contract. The cost of "
             "losing this arbitration is much higher than $12K."
         ),
+        topics=['Grievances', 'Local Finances', 'Contract Interpretation'],
     ),
 
     Proposal(
@@ -503,6 +508,7 @@ PROPOSALS = [
             "The contract says what it says; this resolution says the "
             "membership agrees we should make management prove it."
         ),
+        topics=['Grievances'],
     ),
 
     Proposal(
@@ -538,6 +544,7 @@ PROPOSALS = [
             "cut target. We can't fix that pattern through one campaign. We "
             "can win this round."
         ),
+        topics=['Library Issues'],
     ),
 
     Proposal(
@@ -606,6 +613,7 @@ PROPOSALS = [
                 "as a guest at the table."
             ),
         },
+        topics=['Elections'],
     ),
 
     Proposal(
@@ -635,6 +643,7 @@ PROPOSALS = [
             "The case is that $7/week now produces better contract terms in "
             "fourteen months, which compounds over the three-year contract."
         ),
+        topics=['Strike Fund', 'Local Finances'],
     ),
 
     Proposal(
@@ -689,6 +698,9 @@ PROPOSALS = [
                 "backstop; that's the work I'd bring to it."
             ),
         },
+        topics=['Elections', 'Local Finances'],
+        # Phase 23.2 B3: STV electing 3 trustee seats from 5 candidates.
+        num_winners=3,
     ),
 
     Proposal(
@@ -724,6 +736,7 @@ PROPOSALS = [
             "the membership mandate; the membership deserves a chance to weigh "
             "in before negotiations start."
         ),
+        topics=['Contract & Negotiations'],
     ),
 
     Proposal(
@@ -749,6 +762,7 @@ PROPOSALS = [
             "Should have done this five years ago. Brother Hennessy will "
             "probably say so."
         ),
+        topics=['Health & Safety', 'Grievances'],
     ),
 
     Proposal(
@@ -771,6 +785,7 @@ PROPOSALS = [
             "Stipending member work when the work matters is part of how we "
             "recognize that member labor has value."
         ),
+        topics=['Local Finances'],
     ),
 
     Proposal(
@@ -792,6 +807,7 @@ PROPOSALS = [
             "enforced day-to-day, and we've been under-investing in their "
             "development."
         ),
+        topics=['Local Finances', 'Grievances'],
     ),
 ]
 
@@ -822,6 +838,7 @@ DRAFTS = [
             "Will post after the VP election concludes — don't want it "
             "competing with that for member attention."
         ),
+        topics=['Grievances', 'Contract Interpretation'],
     ),
 ]
 
