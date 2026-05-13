@@ -102,6 +102,14 @@ import models
 # floor_approached recipient window (now removed).
 EXTENDED_BY_STABILITY_RECENT_VOTER_DAYS: int = 7
 
+# Phase 24 — close-trigger constants used by ``_close_proposal_now`` and
+# ``_emit_proposal_closed_*`` helpers. These show up in the audit-event
+# ``trigger`` field and the ``proposal.closed`` notification payload so the
+# UI / digest / email template can render the close reason.
+TRIGGER_STABLE_RESULT_ACHIEVED: str = "stable_result_achieved"  # Phase 20
+TRIGGER_VOTING_END_REACHED: str = "voting_end_reached"  # Phase 24
+TRIGGER_VOTING_END_BACKFILL: str = "voting_end_backfill"  # Phase 24 backfill
+
 log = logging.getLogger("sustained_majority_worker")
 
 
@@ -282,7 +290,7 @@ def _emit_proposal_closed_for_stability(
                     "old_status": old_status,
                     "new_status": new_status,
                     "outcome": new_status,
-                    "trigger": "stable_result_achieved",
+                    "trigger": TRIGGER_STABLE_RESULT_ACHIEVED,
                 },
             )
     except Exception as e:  # noqa: BLE001
@@ -392,7 +400,7 @@ def _emit_proposal_closed_natural(
                     "new_status": new_status,
                     "outcome": new_status,
                     "outcome_detail": outcome_detail,
-                    "trigger": "voting_end_reached",
+                    "trigger": TRIGGER_VOTING_END_REACHED,
                 },
             )
     except Exception as e:  # noqa: BLE001
@@ -406,7 +414,7 @@ def _close_proposal_now(
     db: Session,
     proposal: models.Proposal,
     *,
-    trigger: str = "stable_result_achieved",
+    trigger: str = TRIGGER_STABLE_RESULT_ACHIEVED,
     update_voting_end: bool = True,
 ) -> str:
     """Close the proposal in-place.
@@ -554,7 +562,7 @@ def evaluate_proposal(
             old_status = proposal.status
             new_status = _close_proposal_now(
                 db, proposal,
-                trigger="voting_end_reached",
+                trigger=TRIGGER_VOTING_END_REACHED,
                 update_voting_end=False,
             )
             _emit_proposal_closed_natural(
@@ -619,7 +627,7 @@ def evaluate_proposal(
             old_status = proposal.status
             new_status = _close_proposal_now(
                 db, proposal,
-                trigger="stable_result_achieved",
+                trigger=TRIGGER_STABLE_RESULT_ACHIEVED,
                 update_voting_end=True,
             )
             _emit_proposal_closed_for_stability(
