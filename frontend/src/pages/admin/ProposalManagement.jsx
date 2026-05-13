@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
 import StatusBadge from '../../components/StatusBadge';
@@ -642,11 +642,7 @@ export default function ProposalManagement() {
   const [topics, setTopics] = useState([]);
   const [subOrgs, setSubOrgs] = useState([]);
   const [loading, setLoading] = useState(true);
-  // Phase 25 F1 — open directly on the create form when the inbound
-  // link was /admin/proposals?create=1 (e.g. clicking "Create proposal"
-  // on the public Proposals page). Otherwise default to the list view.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [showCreate, setShowCreate] = useState(searchParams.get('create') === '1');
+  const [showCreate, setShowCreate] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
 
   const slug = currentOrg?.slug;
@@ -683,11 +679,8 @@ export default function ProposalManagement() {
 
   async function handleAdvance(proposalId) {
     try {
-      // Phase 25 B1.2 — backend now derives voting_end from the proposal's
-      // voting_days (or the org default) at the deliberation → voting
-      // transition. Sending an explicit voting_end here was a legacy
-      // hardcoded 7-day literal that ignored Phase 16 per-proposal overrides.
-      await api.post(`/api/orgs/${slug}/proposals/${proposalId}/advance`, {});
+      const votingEnd = new Date(Date.now() + 7 * 86400000).toISOString();
+      await api.post(`/api/orgs/${slug}/proposals/${proposalId}/advance`, { voting_end: votingEnd });
       toast.success('Proposal advanced');
       load();
     } catch (e) {
@@ -750,23 +743,8 @@ export default function ProposalManagement() {
           orgSettings={currentOrg.settings}
           topics={topics}
           subOrgs={subOrgs}
-          onCreated={() => {
-            setShowCreate(false);
-            // Phase 25 F1 — strip ?create=1 so back/refresh doesn't
-            // re-open the form unexpectedly.
-            if (searchParams.has('create')) {
-              searchParams.delete('create');
-              setSearchParams(searchParams, { replace: true });
-            }
-            load();
-          }}
-          onCancel={() => {
-            setShowCreate(false);
-            if (searchParams.has('create')) {
-              searchParams.delete('create');
-              setSearchParams(searchParams, { replace: true });
-            }
-          }}
+          onCreated={() => { setShowCreate(false); load(); }}
+          onCancel={() => setShowCreate(false)}
         />
       )}
 

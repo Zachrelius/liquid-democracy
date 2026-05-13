@@ -357,10 +357,7 @@ export default function Proposals() {
         <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Proposals</h1>
         {canCreateProposal && adminProposalsHref && (
           <Link
-            // Phase 25 F1 — append ?create=1 so the admin page opens
-            // directly on the create form instead of dropping the user
-            // on the proposals list with a second "Create" button to click.
-            to={`${adminProposalsHref}?create=1`}
+            to={adminProposalsHref}
             className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
           >
             Create proposal

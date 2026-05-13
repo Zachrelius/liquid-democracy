@@ -54,36 +54,34 @@ _BACKEND_DIR = Path(__file__).resolve().parent.parent
 
 
 def _resolve_uploads_base() -> Path:
-    """Phase 25 B3 — env-driven uploads base directory.
+    """Phase 12.7 I2 — resolve the uploads base directory in 3 tiers.
 
-    Resolution order:
-      1. ``UPLOAD_DIR`` (Phase 25 canonical name) — overrides everything.
-         Tests set this to a pytest ``tmp_path`` so each test run uses an
-         isolated tmpdir.
-      2. ``UPLOADS_BASE_DIR`` (Phase 12.7 legacy name) — kept for
-         backward compat with any existing fixture / env that still uses
-         the old name. New code should use ``UPLOAD_DIR``.
-      3. Default ``/data/uploads`` — the Railway Volume mount path
-         (declared in Railway dashboard, attached to the backend service
-         in prod). This is the production target; the volume persists
-         uploads across redeploys.
+    1. ``UPLOADS_BASE_DIR`` env override. Used by tests + future
+       flexibility (point at a tmp_path, point at a different mount).
+    2. ``/data/uploads`` if the Railway Volume mount at ``/data`` exists
+       and is writable. This is the production target post-D1 (volume
+       provisioned via Railway dashboard, mount declared in railway.toml).
+    3. Local-dev fallback at ``backend/uploads``. Also kicks in on prod
+       if the Volume hasn't been provisioned yet — the
+       ship-with-fallback pattern keeps deploys safe regardless of
+       Volume state.
 
-    Phase 12.7's 3-tier writability auto-detect was replaced because it
-    silently fell back to the ephemeral container path in prod when the
-    volume parent's permissions or mount timing made the auto-detect
-    return False. Phase 25 favors explicit env-driven config + a startup
-    warning over runtime detection, so prod misconfiguration is loud
-    rather than silent (the main.py startup hook still surfaces the
-    warning when the resolved path isn't under ``/data/``).
-
-    Module-import-time resolution. Tests that need a different path can
-    set ``UPLOAD_DIR`` before importing the module, or monkeypatch
-    ``AVATARS_BASE_DIR`` / ``LOGOS_BASE_DIR`` to a tmp_path directly.
+    Resolution happens once at module import. Tests that need a custom
+    path monkeypatch ``AVATARS_BASE_DIR`` (and ``LOGOS_BASE_DIR``)
+    directly to a tmp_path, which works because every callsite reads
+    the module-level constant rather than recomputing.
     """
-    explicit = os.environ.get("UPLOAD_DIR") or os.environ.get("UPLOADS_BASE_DIR")
+    explicit = os.environ.get("UPLOADS_BASE_DIR")
     if explicit:
         return Path(explicit)
-    return Path("/data/uploads")
+    railway_volume = Path("/data/uploads")
+    # The Volume is mounted at /data; the uploads/ subdir is ours to
+    # create. We only consider this tier viable when /data exists and
+    # is writable (i.e., the Volume actually mounted).
+    if railway_volume.parent.exists() and os.access(railway_volume.parent, os.W_OK):
+        return railway_volume
+    # Local dev fallback — also covers prod-without-volume.
+    return _BACKEND_DIR / "uploads"
 
 
 UPLOADS_BASE_DIR: Path = _resolve_uploads_base()

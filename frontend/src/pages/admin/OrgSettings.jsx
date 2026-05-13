@@ -736,16 +736,7 @@ export default function OrgSettings() {
                   value={accentColor}
                   onChange={(e) => setAccentColor(e.target.value)}
                   disabled={autoDeriveAccent}
-                  // Phase 25 F2 — keep the swatch at full opacity even
-                  // when the picker is disabled (auto-derive on) so the
-                  // displayed color always reflects the actual saved
-                  // accent. The previous `disabled:opacity-50` made the
-                  // swatch look washed-out / "primary-coloured", which is
-                  // what Z reported as the swatch-doesn't-match-hex bug.
-                  // The hex-input dimming below is kept (text input
-                  // dimming reads as "this field is locked," whereas
-                  // swatch dimming reads as "wrong colour").
-                  className="h-10 w-14 border border-gray-300 rounded cursor-pointer p-0 disabled:cursor-not-allowed"
+                  className="h-10 w-14 border border-gray-300 rounded cursor-pointer p-0 disabled:cursor-not-allowed disabled:opacity-50"
                   aria-label="Accent color picker"
                 />
                 <input

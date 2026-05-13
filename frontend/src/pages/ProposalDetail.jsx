@@ -752,10 +752,6 @@ export default function ProposalDetail() {
   const [linkedPolises, setLinkedPolises] = useState([]);
 
   const fetchData = useCallback(async () => {
-    // Phase 25 F3 — clear stale error before re-fetch so the Retry
-    // button on ErrorMessage actually exits the error UI on a
-    // successful refetch (same pattern as Delegations.jsx).
-    setError('');
     try {
       const [p, t, mv] = await Promise.allSettled([
         api.get(`/api/proposals/${id}`),

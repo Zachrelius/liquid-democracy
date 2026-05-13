@@ -484,15 +484,8 @@ class Proposal(Base):
     # null = inherit org default at advance-to-voting time; non-null = the
     # author/editor (with `proposal.set_durations`) explicitly set a custom
     # window. Floats so live-poll sub-day voting windows (>= 0.05 days =
-    # 72 minutes) are representable.
-    #
-    # Phase 25 B1.1 wires the actual advance-time consumption:
-    # `_compute_voting_end_at_advance` in routes/proposals.py reads
-    # `voting_days` at the deliberation → voting transition and sets
-    # `voting_end = voting_start + timedelta(days=voting_days)`. Phase 25
-    # B2 also reads `deliberation_days` at create time: when it resolves
-    # to 0, the proposal skips the deliberation phase and is created
-    # directly in `voting` status.
+    # 72 minutes) are representable. The actual voting_end DateTime is
+    # still computed at advance-time from voting_start + voting_days.
     deliberation_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     voting_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # Phase 8 / Phase 20: per-proposal "Stable Result Required" override.

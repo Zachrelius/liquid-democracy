@@ -2224,7 +2224,6 @@ def create_org_proposal(
     org_slug: str,
     body: schemas.ProposalCreate,
     request: Request,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_membership),
@@ -2400,18 +2399,6 @@ def create_org_proposal(
         if requested_vote_days is not None else default_vote_days
     )
 
-    # Phase 25 B2 — 0-day deliberation skip: when the effective
-    # deliberation duration resolves to zero (either an explicit
-    # per-proposal override or the org default), create the proposal
-    # directly in `voting` status. Single audit event (draft -> voting)
-    # rather than two-at-the-same-timestamp events; the user's intent is
-    # "skip deliberation," not "deliberate for zero seconds."
-    skip_deliberation = (
-        effective_delib_days is not None and float(effective_delib_days) == 0.0
-    )
-    initial_status = "voting" if skip_deliberation else "draft"
-    now_at_create = _now() if skip_deliberation else None
-
     proposal = models.Proposal(
         title=body.title,
         body=body.body,
@@ -2420,13 +2407,6 @@ def create_org_proposal(
         sub_org_id=target_sub_org.id if target_sub_org else None,
         voting_method=body.voting_method,
         num_winners=body.num_winners,
-        status=initial_status,
-        deliberation_start=now_at_create,
-        voting_start=now_at_create,
-        voting_end=(
-            now_at_create + timedelta(days=float(effective_vote_days))
-            if skip_deliberation else None
-        ),
         pass_threshold=effective_pass,
         quorum_threshold=effective_quorum,
         deliberation_days=effective_delib_days,
@@ -2436,25 +2416,6 @@ def create_org_proposal(
     )
     db.add(proposal)
     db.flush()
-
-    if skip_deliberation:
-        # Single audit event (draft -> voting) for the skip path. Per
-        # spec: the user's intent is "skip the phase," so the audit log
-        # records one transition, not two.
-        log_audit_event(
-            db,
-            action="proposal.status_changed",
-            target_type="proposal",
-            target_id=proposal.id,
-            actor_id=current_user.id,
-            details={
-                "proposal_id": proposal.id,
-                "old_status": "draft",
-                "new_status": "voting",
-                "trigger": "zero_day_deliberation_skip",
-            },
-            ip_address=request.client.host if request.client else None,
-        )
 
     if body.stable_result_required is True:
         log_audit_event(
@@ -2508,30 +2469,6 @@ def create_org_proposal(
 
     db.commit()
     db.refresh(proposal)
-
-    # Phase 25 B2 — when the 0-day-deliberation skip fired, emit the
-    # proposal.entered_voting notification path same as the advance flow
-    # would. Wrapped in try/except so a notification failure never sinks
-    # the create (matches the advance endpoint's pattern).
-    if skip_deliberation:
-        try:
-            from routes.proposals import _emit_proposal_status_notifications
-            _emit_proposal_status_notifications(
-                db, background_tasks, proposal,
-                old_status="draft", new_status="voting",
-                actor_id=current_user.id,
-            )
-            db.commit()
-        except Exception as e:  # noqa: BLE001
-            log.warning(
-                "proposal status emit failed on 0-day skip (draft -> voting): "
-                "%s: %s", type(e).__name__, e,
-            )
-            try:
-                db.rollback()
-            except Exception:  # noqa: BLE001
-                pass
-
     from routes.proposals import _build_proposal_out
     return _build_proposal_out(proposal, db)
 
@@ -2608,16 +2545,8 @@ def advance_org_proposal(
         proposal.deliberation_start = now
     elif next_status == "voting":
         proposal.voting_start = now
-        # Phase 25 B1.1 — derive voting_end from proposal.voting_days (or
-        # org default) when the body doesn't supply one. body.voting_end is
-        # honored if present but logs a deprecation warning.
-        from routes.proposals import _compute_voting_end_at_advance
-        proposal.voting_end = _compute_voting_end_at_advance(
-            voting_start=now,
-            body_voting_end=body.voting_end,
-            proposal=proposal,
-            org=org,
-        )
+        if body.voting_end:
+            proposal.voting_end = body.voting_end
     elif next_status == "passed":
         from delegation_engine import engine as delegation_engine, ApprovalTally, RCVTally
         from routes.proposals import _maybe_resolve_tie
