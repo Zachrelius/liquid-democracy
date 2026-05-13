@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
 import StatusBadge from '../../components/StatusBadge';
@@ -642,7 +642,11 @@ export default function ProposalManagement() {
   const [topics, setTopics] = useState([]);
   const [subOrgs, setSubOrgs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showCreate, setShowCreate] = useState(false);
+  // Phase 25 F1 — open directly on the create form when the inbound
+  // link was /admin/proposals?create=1 (e.g. clicking "Create proposal"
+  // on the public Proposals page). Otherwise default to the list view.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [showCreate, setShowCreate] = useState(searchParams.get('create') === '1');
   const [expandedId, setExpandedId] = useState(null);
 
   const slug = currentOrg?.slug;
@@ -746,8 +750,23 @@ export default function ProposalManagement() {
           orgSettings={currentOrg.settings}
           topics={topics}
           subOrgs={subOrgs}
-          onCreated={() => { setShowCreate(false); load(); }}
-          onCancel={() => setShowCreate(false)}
+          onCreated={() => {
+            setShowCreate(false);
+            // Phase 25 F1 — strip ?create=1 so back/refresh doesn't
+            // re-open the form unexpectedly.
+            if (searchParams.has('create')) {
+              searchParams.delete('create');
+              setSearchParams(searchParams, { replace: true });
+            }
+            load();
+          }}
+          onCancel={() => {
+            setShowCreate(false);
+            if (searchParams.has('create')) {
+              searchParams.delete('create');
+              setSearchParams(searchParams, { replace: true });
+            }
+          }}
         />
       )}
 
