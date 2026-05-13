@@ -18,7 +18,7 @@ from database import create_tables, get_db, SessionLocal
 from delegation_engine import graph_store
 from settings import settings
 from websocket import manager as ws_manager
-from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars, comments, permissions, role_permissions_routes, org_logos, notifications, delegate_profiles
+from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars, comments, permissions, role_permissions_routes, org_logos, notifications, delegate_profiles, demo_reset
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +227,11 @@ app.include_router(delegate_profiles.router)
 # matches the spec without colliding with the proposal-prefixed vote
 # endpoints).
 app.include_router(votes.rationale_router)
+# Phase 23.2 B0 — token-gated demo reset trigger (POST /api/demo/trigger-reset).
+# Code-team autonomy path: bearer-token-auth alternative to the admin-auth
+# endpoint at /api/admin/demo/reset. See backend/routes/demo_reset.py for the
+# scope boundary (single endpoint, reuses run_demo_reset_if_due force=True).
+app.include_router(demo_reset.router)
 
 
 # ---------------------------------------------------------------------------
