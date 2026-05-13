@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
@@ -38,6 +38,60 @@ STATUS_TRANSITIONS = {
     "deliberation": "voting",
     "voting": "passed",  # actual pass/fail determined at close; admin forces
 }
+
+
+def _compute_voting_end_at_advance(
+    *,
+    voting_start: datetime,
+    body_voting_end: Optional[datetime],
+    proposal: models.Proposal,
+    org: Optional[models.Organization],
+) -> datetime:
+    """Phase 25 B1.1 — derive ``voting_end`` at the deliberation → voting
+    transition.
+
+    Precedence:
+      1. ``body_voting_end`` — admin client explicitly setting a custom end.
+         Logs a deprecation warning so stale callers surface in logs over
+         time; future callers should PATCH ``voting_days`` instead.
+      2. ``proposal.voting_days`` — Phase 16 per-proposal override stored
+         on the row at create time.
+      3. Org default ``default_voting_days`` via ``get_default_proposal_durations``.
+
+    Raises ``HTTPException(400)`` if all three are unavailable or the
+    resolved value is <= 0 (org configuration error — would create a
+    proposal that closes immediately or never closes).
+
+    Fractional days are honored: ``voting_days=0.05`` produces ~72 minutes
+    via ``timedelta(days=0.05)``.
+    """
+    if body_voting_end is not None:
+        log.warning(
+            "advance_proposal: body.voting_end is deprecated; "
+            "set proposal.voting_days at create or via PATCH instead "
+            "(proposal_id=%s)",
+            proposal.id,
+        )
+        if body_voting_end.tzinfo is not None:
+            return body_voting_end.replace(tzinfo=None)
+        return body_voting_end
+
+    voting_days: Optional[float] = getattr(proposal, "voting_days", None)
+    if voting_days is None:
+        _, default_vote = get_default_proposal_durations(org)
+        voting_days = default_vote
+
+    if voting_days is None or voting_days <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Cannot advance to voting: proposal has no voting_days and "
+                "the organization has no positive default_voting_days. "
+                "Set proposal.voting_days or fix the org configuration."
+            ),
+        )
+
+    return voting_start + timedelta(days=float(voting_days))
 
 
 def _proposal_or_404(proposal_id: str, db: Session) -> models.Proposal:
@@ -1110,14 +1164,25 @@ def advance_proposal(
         raise HTTPException(status_code=400, detail=f"Cannot advance from status '{proposal.status}'")
 
     old_status = proposal.status
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     if next_status == "deliberation":
         proposal.deliberation_start = now
     elif next_status == "voting":
         proposal.voting_start = now
-        if body.voting_end:
-            proposal.voting_end = body.voting_end
+        # Phase 25 B1.1 — derive voting_end from proposal.voting_days (or
+        # org default) when the body doesn't supply one. body.voting_end is
+        # honored if present but logs a deprecation warning.
+        org_for_advance = (
+            db.get(models.Organization, proposal.org_id)
+            if proposal.org_id else None
+        )
+        proposal.voting_end = _compute_voting_end_at_advance(
+            voting_start=now,
+            body_voting_end=body.voting_end,
+            proposal=proposal,
+            org=org_for_advance,
+        )
     elif next_status == "passed":
         tally = delegation_engine.compute_tally(proposal, db)
         if proposal.voting_method == "approval":

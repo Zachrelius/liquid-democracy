@@ -679,8 +679,11 @@ export default function ProposalManagement() {
 
   async function handleAdvance(proposalId) {
     try {
-      const votingEnd = new Date(Date.now() + 7 * 86400000).toISOString();
-      await api.post(`/api/orgs/${slug}/proposals/${proposalId}/advance`, { voting_end: votingEnd });
+      // Phase 25 B1.2 — backend now derives voting_end from the proposal's
+      // voting_days (or the org default) at the deliberation → voting
+      // transition. Sending an explicit voting_end here was a legacy
+      // hardcoded 7-day literal that ignored Phase 16 per-proposal overrides.
+      await api.post(`/api/orgs/${slug}/proposals/${proposalId}/advance`, {});
       toast.success('Proposal advanced');
       load();
     } catch (e) {
