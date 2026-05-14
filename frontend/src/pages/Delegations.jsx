@@ -24,7 +24,22 @@ const CHAIN_OPTIONS = [
 
 
 // ── Delegation Row ─────────────────────────────────────────────────────────
-function DelegationRow({ delegation, topic, onChainChange, onChangeDelegate, onRemove, unverified, parentSlug }) {
+// Phase 28 F1 — DelegationRow renders inside the priority-ordered
+// Draggable. It receives a `priorityNumber` (1-indexed) and a
+// `dragHandleProps` set; the parent `Draggable` passes the row's
+// `innerRef` + `draggableProps` via the `dragProvided` arg.
+function DelegationRow({
+  delegation,
+  topic,
+  onChainChange,
+  onChangeDelegate,
+  onRemove,
+  unverified,
+  parentSlug,
+  priorityNumber,
+  dragProvided,
+  isDragging,
+}) {
   const [saving, setSaving] = useState(false);
 
   async function handleChainChange(e) {
@@ -41,10 +56,42 @@ function DelegationRow({ delegation, topic, onChainChange, onChangeDelegate, onR
     }
   }
 
+  // When rendered inside a Draggable, hook ref + draggableProps onto the
+  // <tr>. dragHandleProps goes on the explicit handle <span> so a click
+  // on a chain-behavior select / button doesn't accidentally start a drag.
+  const rowProps = dragProvided
+    ? {
+        ref: dragProvided.innerRef,
+        ...dragProvided.draggableProps,
+      }
+    : {};
+
   return (
-    <tr className="border-b border-gray-100 last:border-0">
+    <tr
+      {...rowProps}
+      className={`border-b border-gray-100 last:border-0 ${
+        isDragging ? 'bg-amber-50 shadow' : ''
+      }`}
+    >
+      <td className="py-3 px-2 w-8 text-center">
+        {dragProvided ? (
+          <span
+            {...dragProvided.dragHandleProps}
+            className="text-gray-300 hover:text-gray-500 cursor-grab select-none inline-block"
+            title="Drag to reorder priority"
+            aria-label="Drag to reorder priority"
+          >
+            ⠿
+          </span>
+        ) : null}
+      </td>
       <td className="py-3 px-4">
-        {topic ? <TopicBadge topic={topic} /> : <span className="text-xs italic text-gray-500">Global default</span>}
+        <div className="flex items-center gap-2">
+          {priorityNumber != null && (
+            <span className="text-xs text-gray-400 w-5 text-right select-none">{priorityNumber}.</span>
+          )}
+          {topic ? <TopicBadge topic={topic} /> : <span className="text-xs italic text-gray-500">Global default</span>}
+        </div>
       </td>
       <td className="py-3 px-4">
         <UserLink user={delegation.delegate} className="text-sm" />
@@ -73,7 +120,19 @@ function DelegationRow({ delegation, topic, onChainChange, onChangeDelegate, onR
 }
 
 // ── Mobile Delegation Card ─────────────────────────────────────────────────
-function DelegationCard({ delegation, topic, onChainChange, onChangeDelegate, onRemove, unverified, parentSlug }) {
+// Phase 28 F1 — same Draggable hookup pattern as DelegationRow.
+function DelegationCard({
+  delegation,
+  topic,
+  onChainChange,
+  onChangeDelegate,
+  onRemove,
+  unverified,
+  parentSlug,
+  priorityNumber,
+  dragProvided,
+  isDragging,
+}) {
   const [saving, setSaving] = useState(false);
 
   async function handleChainChange(e) {
@@ -90,10 +149,37 @@ function DelegationCard({ delegation, topic, onChainChange, onChangeDelegate, on
     }
   }
 
+  const cardProps = dragProvided
+    ? {
+        ref: dragProvided.innerRef,
+        ...dragProvided.draggableProps,
+      }
+    : {};
+
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        {topic ? <TopicBadge topic={topic} /> : <span className="text-xs italic text-gray-500">Global default</span>}
+    <div
+      {...cardProps}
+      className={`bg-white border border-gray-200 rounded-xl p-4 space-y-3 ${
+        isDragging ? 'shadow-lg border-[var(--brand-accent)]' : ''
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {dragProvided && (
+            <span
+              {...dragProvided.dragHandleProps}
+              className="text-gray-300 hover:text-gray-500 cursor-grab select-none"
+              title="Drag to reorder priority"
+              aria-label="Drag to reorder priority"
+            >
+              ⠿
+            </span>
+          )}
+          {priorityNumber != null && (
+            <span className="text-xs text-gray-400 select-none">{priorityNumber}.</span>
+          )}
+          {topic ? <TopicBadge topic={topic} /> : <span className="text-xs italic text-gray-500">Global default</span>}
+        </div>
         <div className="flex gap-3">
           <button onClick={() => onChangeDelegate(delegation)} disabled={unverified} className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline">Change</button>
           <button onClick={() => onRemove(delegation)} disabled={unverified} className="text-xs text-red-500 hover:underline disabled:opacity-50 disabled:no-underline">Remove</button>
@@ -217,6 +303,28 @@ export default function Delegations() {
     !delegations.some(d => d.topic_id === t.id)
   );
 
+  // Phase 28 F1 — order topic delegations by precedence so the table
+  // doubles as the user's priority list. Post-B3 backfill, every
+  // delegated topic has a precedence row; pre-backfill rows missing
+  // a precedence default to the end (priorityByTopic falls back to a
+  // large sentinel). Stable order within ties via the original
+  // delegations array order.
+  const priorityByTopic = Object.fromEntries(
+    precedences.map((p, i) => [p.topic_id, i])
+  );
+  const orderedTopicDels = useMemo(() => {
+    const arr = [...topicDels];
+    arr.sort((a, b) => {
+      const pa = priorityByTopic[a.topic_id] ?? 1e9;
+      const pb = priorityByTopic[b.topic_id] ?? 1e9;
+      return pa - pb;
+    });
+    return arr;
+    // priorityByTopic is rebuilt every render — that's fine; topicDels
+    // and precedences are the load-bearing deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topicDels, precedences]);
+
   async function handleRemove(delegation) {
     const topicId = delegation.topic_id ?? 'global';
     const ok = await confirm({
@@ -256,18 +364,23 @@ export default function Delegations() {
 
   async function handleDragEnd(result) {
     if (!result.destination) return;
-    const items = Array.from(precedences);
+    // Phase 28 F1 — drag-end now operates on the priority-ordered list
+    // of delegated topics (orderedTopicDels) instead of the standalone
+    // precedences list. Send the reordered topic_id sequence to the
+    // existing PUT /precedence endpoint; rely on `load()` to refresh
+    // both the delegations and precedences state from the server.
+    const items = Array.from(orderedTopicDels);
     const [moved] = items.splice(result.source.index, 1);
     items.splice(result.destination.index, 0, moved);
-    setPrecedences(items);
     setSavingPrec(true);
     try {
       await api.put(`/api/orgs/${parentSlug}/delegations/precedence`, {
-        ordered_topic_ids: items.map(p => p.topic_id),
+        ordered_topic_ids: items.map(d => d.topic_id),
       });
+      await load();
     } catch (e) {
       toast.error(e.message);
-      load(); // revert
+      load();
     } finally {
       setSavingPrec(false);
     }
@@ -414,45 +527,71 @@ export default function Delegations() {
         </div>
       </section>
 
-      {/* ── Section 2: Topic delegations — desktop table ── */}
+      {/* ── Section 2: Topic delegations — desktop table + mobile cards
+            (Phase 28 F1 merged the standalone Topic Priority section into
+            the table; delegated rows are drag-reorderable and show a
+            priority number, non-delegated rows render after with no
+            handle or number). */}
       <section>
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-          Topic Delegations
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-1">
+          Topic Delegations {savingPrec && <span className="text-xs text-gray-400 font-normal ml-2">Saving…</span>}
         </h2>
+        <p className="text-xs text-gray-400 mb-3">
+          Drag delegated topics to reorder priority. The top topic is used as a tiebreaker when relevance-weighted scores tie; for strict-priority strategy, it determines which delegate's vote applies first.
+        </p>
 
         {/* Desktop table */}
         <div className="hidden md:block bg-white border border-gray-200 rounded-xl overflow-hidden">
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="w-8" />
                 <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">Topic</th>
                 <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">Delegate</th>
                 <th className="text-left text-xs font-medium text-gray-500 uppercase px-4 py-3">Chain Behavior</th>
                 <th className="text-right text-xs font-medium text-gray-500 uppercase px-4 py-3">Actions</th>
               </tr>
             </thead>
-            <tbody className="px-4">
-              {topicDels.map(d => (
-                <DelegationRow
-                  key={d.id}
-                  delegation={d}
-                  topic={topicMap[d.topic_id]}
-                  onChainChange={load}
-                  onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.description?.trim() || topicMap[del.topic_id]?.name, existingDelegation: del })}
-                  onRemove={handleRemove}
-                  unverified={unverified}
-                  parentSlug={parentSlug}
-                />
-              ))}
+            <DragDropContext onDragEnd={handleDragEnd}>
+              <Droppable droppableId="delegated-rows">
+                {(provided) => (
+                  <tbody ref={provided.innerRef} {...provided.droppableProps}>
+                    {orderedTopicDels.map((d, index) => (
+                      <Draggable key={d.id} draggableId={d.id} index={index}>
+                        {(dragProvided, snapshot) => (
+                          <DelegationRow
+                            delegation={d}
+                            topic={topicMap[d.topic_id]}
+                            onChainChange={load}
+                            onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.description?.trim() || topicMap[del.topic_id]?.name, existingDelegation: del })}
+                            onRemove={handleRemove}
+                            unverified={unverified}
+                            parentSlug={parentSlug}
+                            priorityNumber={index + 1}
+                            dragProvided={dragProvided}
+                            isDragging={snapshot.isDragging}
+                          />
+                        )}
+                      </Draggable>
+                    ))}
+                    {provided.placeholder}
+                  </tbody>
+                )}
+              </Droppable>
+            </DragDropContext>
+            {/* Non-delegated rows live in a separate static tbody after
+                the draggable region, so they can't be drag-targets and
+                don't participate in priority. */}
+            <tbody>
               {undelegatedTopics.map(t => (
                 <tr key={t.id} className="border-b border-gray-100 last:border-0">
+                  <td className="w-8" />
                   <td className="py-3 px-4"><TopicBadge topic={t} /></td>
                   <td className="py-3 px-4 text-sm text-gray-400 italic">Not delegated</td>
                   <td className="py-3 px-4">—</td>
                   <td className="py-3 px-4 text-right">
                     <button
-                      // Phase 26 D1 — pass display name (description ||
-                      // name) to the modal so the header reads cleanly.
+                      // Phase 26 D1 — pass display name (description || name).
                       onClick={() => setModal({ topicId: t.id, topicName: t.description?.trim() || t.name, existingDelegation: null })}
                       disabled={unverified}
                       className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline"
@@ -462,8 +601,8 @@ export default function Delegations() {
                   </td>
                 </tr>
               ))}
-              {topicDels.length === 0 && undelegatedTopics.length === 0 && (
-                <tr><td colSpan={4} className="py-6 text-center text-gray-400 text-sm">No topics configured. Create topics from the admin panel.</td></tr>
+              {orderedTopicDels.length === 0 && undelegatedTopics.length === 0 && (
+                <tr><td colSpan={5} className="py-6 text-center text-gray-400 text-sm">No topics configured. Create topics from the admin panel.</td></tr>
               )}
             </tbody>
           </table>
@@ -471,23 +610,37 @@ export default function Delegations() {
 
         {/* Mobile cards */}
         <div className="md:hidden space-y-3">
-          {topicDels.map(d => (
-            <DelegationCard
-              key={d.id}
-              delegation={d}
-              topic={topicMap[d.topic_id]}
-              onChainChange={load}
-              onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.description?.trim() || topicMap[del.topic_id]?.name, existingDelegation: del })}
-              onRemove={handleRemove}
-              unverified={unverified}
-              parentSlug={parentSlug}
-            />
-          ))}
+          <DragDropContext onDragEnd={handleDragEnd}>
+            <Droppable droppableId="delegated-cards">
+              {(provided) => (
+                <div ref={provided.innerRef} {...provided.droppableProps} className="space-y-3">
+                  {orderedTopicDels.map((d, index) => (
+                    <Draggable key={d.id} draggableId={d.id} index={index}>
+                      {(dragProvided, snapshot) => (
+                        <DelegationCard
+                          delegation={d}
+                          topic={topicMap[d.topic_id]}
+                          onChainChange={load}
+                          onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.description?.trim() || topicMap[del.topic_id]?.name, existingDelegation: del })}
+                          onRemove={handleRemove}
+                          unverified={unverified}
+                          parentSlug={parentSlug}
+                          priorityNumber={index + 1}
+                          dragProvided={dragProvided}
+                          isDragging={snapshot.isDragging}
+                        />
+                      )}
+                    </Draggable>
+                  ))}
+                  {provided.placeholder}
+                </div>
+              )}
+            </Droppable>
+          </DragDropContext>
           {undelegatedTopics.map(t => (
             <div key={t.id} className="bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between">
               <TopicBadge topic={t} />
               <button
-                // Phase 26 D1 — pass display name (description || name).
                 onClick={() => setModal({ topicId: t.id, topicName: t.description?.trim() || t.name, existingDelegation: null })}
                 disabled={unverified}
                 className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline"
@@ -498,55 +651,6 @@ export default function Delegations() {
           ))}
         </div>
       </section>
-
-      {/* ── Section 3: Topic Precedence ── */}
-      {precedences.length > 0 && (
-        <section>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-1">
-            Topic Priority {savingPrec && <span className="text-xs text-gray-400 font-normal ml-2">Saving…</span>}
-          </h2>
-          <p className="text-xs text-gray-400 mb-3">
-            When a proposal covers multiple topics, your highest-priority topic's delegate determines your vote. Drag to reorder.
-          </p>
-
-          <DragDropContext onDragEnd={handleDragEnd}>
-            <Droppable droppableId="precedence-list">
-              {(provided) => (
-                <ul
-                  {...provided.droppableProps}
-                  ref={provided.innerRef}
-                  className="space-y-2"
-                >
-                  {precedences.map((p, index) => {
-                    const topic = topicMap[p.topic_id];
-                    return (
-                      <Draggable key={p.topic_id} draggableId={p.topic_id} index={index}>
-                        {(provided, snapshot) => (
-                          <li
-                            ref={provided.innerRef}
-                            {...provided.draggableProps}
-                            {...provided.dragHandleProps}
-                            className={`flex items-center gap-3 bg-white border rounded-xl px-4 py-3 cursor-grab transition-shadow ${
-                              snapshot.isDragging
-                                ? 'shadow-lg border-[var(--brand-accent)]'
-                                : 'border-gray-200'
-                            }`}
-                          >
-                            <span className="text-gray-300 text-sm select-none">⠿</span>
-                            <span className="text-sm text-gray-400 w-5 text-right">{index + 1}.</span>
-                            {topic ? <TopicBadge topic={topic} /> : <span className="text-xs text-gray-400">{p.topic_id}</span>}
-                          </li>
-                        )}
-                      </Draggable>
-                    );
-                  })}
-                  {provided.placeholder}
-                </ul>
-              )}
-            </Droppable>
-          </DragDropContext>
-        </section>
-      )}
 
       {/* Delegation Network Graph */}
       {network && network.nodes.length > 0 && (

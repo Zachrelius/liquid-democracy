@@ -309,6 +309,13 @@ export default function DelegateModal({
   const [preselectMode, setPreselectMode] = useState(!!preselectedUser);
   const [preselectedFull, setPreselectedFull] = useState(null);
   const [preselectError, setPreselectError] = useState('');
+  // Phase 28 F2 — candidate-list mode state. Active when no preselected
+  // user and topicId is set; populated with eligible delegates (public-
+  // accepting delegates for this topic + viewer's delegation-allowed
+  // followees). `searchOpen` opts into the free-text search fallback.
+  const [candidateResults, setCandidateResults] = useState([]);
+  const [candidateLoadError, setCandidateLoadError] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   // Decision 4-bis — apply-to scope radio. Only shown for the global flow
   // (topicId === undefined) and only when the viewer is in at least one
   // sub-org. Default 'all' preserves the legacy single-row global delegation.
@@ -438,6 +445,53 @@ export default function DelegateModal({
     return () => { cancelled = true; };
   }, [preselectMode, preselectedUser, currentOrg]);
 
+  // Phase 28 F2 — candidate-list fetch. Active when no preselected user
+  // and topicId is set (i.e., user clicked Set Delegate / Change for a
+  // specific topic). Builds the candidate set by union-ing the topic's
+  // public-accepting delegates with the viewer's delegation-allowed
+  // followees, then filters the org's user search to those IDs to get
+  // enriched ResultCard-compatible shapes. Single useEffect, no chained
+  // dependencies; runs once per (parentSlug, topicId) pair.
+  useEffect(() => {
+    if (preselectMode) return;
+    if (!topicId || !parentSlug || searchOpen) return;
+    let cancelled = false;
+    (async () => {
+      setSearching(true);
+      setCandidateLoadError('');
+      try {
+        const [publicDelegates, followingRels, allOrgUsers] = await Promise.all([
+          api.get(`/api/orgs/${parentSlug}/delegates?topic_id=${encodeURIComponent(topicId)}&limit=100`)
+            .catch(() => []),
+          api.get(`/api/orgs/${parentSlug}/follows/following`)
+            .catch(() => []),
+          api.get(`/api/users/search?q=&org_slug=${encodeURIComponent(parentSlug)}&limit=100`)
+            .catch(() => []),
+        ]);
+        if (cancelled) return;
+        const delegableFolloweeIds = new Set(
+          (followingRels || [])
+            .filter(r => r.permission_level === 'delegation_allowed')
+            .map(r => r.followed_id)
+        );
+        const publicDelegateIds = new Set(
+          (publicDelegates || []).map(d => d.user_id)
+        );
+        const candidateIds = new Set([...publicDelegateIds, ...delegableFolloweeIds]);
+        const enriched = (allOrgUsers || []).filter(u => candidateIds.has(u.id));
+        if (!cancelled) setCandidateResults(enriched);
+      } catch (e) {
+        if (!cancelled) {
+          setCandidateLoadError(e.message || 'Failed to load candidates');
+          setCandidateResults([]);
+        }
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [preselectMode, topicId, parentSlug, searchOpen]);
+
   useEffect(() => {
     if (preselectMode) return; // skip free-text search when preselect is active
     if (query.length < 2) { setResults([]); return; }
@@ -473,7 +527,10 @@ export default function DelegateModal({
             {topicName ? `Set delegate for ${topicName}` : 'Set global default delegate'}
           </h2>
           <p className="text-xs text-gray-400 mt-0.5">
-            Public delegates can be selected directly. Others require a follow request.
+            {/* Phase 28 F2 — copy adapts to candidate-list vs search mode. */}
+            {!preselectMode && topicId && !searchOpen
+              ? `Choose a delegate for ${topicName}, or search for someone else.`
+              : 'Public delegates can be selected directly. Others require a follow request.'}
           </p>
         </div>
         <div className="p-4 space-y-3 flex-1 overflow-y-auto">
@@ -556,8 +613,72 @@ export default function DelegateModal({
                 <p className="text-xs text-red-500">{preselectError}</p>
               )}
             </>
+          ) : topicId && !searchOpen ? (
+            // Phase 28 F2 — candidate-list mode. Pre-populated with
+            // eligible delegates (public-accepting for this topic +
+            // viewer's delegation-allowed followees). "Or search for
+            // someone else" opens the free-text search fallback.
+            <>
+              {searching && candidateResults.length === 0 && (
+                <p className="text-xs text-gray-400 text-center">Loading candidates...</p>
+              )}
+              {!searching && candidateResults.length === 0 && !candidateLoadError && (
+                <div className="text-center py-4 space-y-3">
+                  <p className="text-sm text-gray-500">
+                    No public delegates or approved followees for this topic yet.
+                  </p>
+                  <button
+                    onClick={() => setSearchOpen(true)}
+                    className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
+                  >
+                    Search for someone
+                  </button>
+                </div>
+              )}
+              {candidateResults.length > 0 && (
+                <div className="space-y-2">
+                  {candidateResults.map(u => (
+                    <ResultCard
+                      key={u.id}
+                      user={u}
+                      topicId={topicId}
+                      onDone={onDone || onClose}
+                      unverified={unverified}
+                      scopeCoverage={scopeCoverage}
+                      onCreateTopicScopedDelegations={createTopicScopedDelegations}
+                      scopeFilterMode={scopeFilterMode}
+                      defaultChainBehavior={defaultChainBehavior}
+                      parentSlug={parentSlug}
+                    />
+                  ))}
+                </div>
+              )}
+              {candidateLoadError && (
+                <p className="text-xs text-red-500">{candidateLoadError}</p>
+              )}
+              {(candidateResults.length > 0 || candidateLoadError) && (
+                <button
+                  onClick={() => setSearchOpen(true)}
+                  className="text-xs text-[var(--brand-accent)] hover:underline mt-2"
+                >
+                  Don&apos;t see who you&apos;re looking for? Search by name
+                </button>
+              )}
+            </>
           ) : (
             <>
+              {/* Phase 28 F2 — search mode. Either the global flow
+                  (topicId === undefined) or the user opened search
+                  from the candidate list. Back-link only shows when
+                  there's a candidate list to return to. */}
+              {topicId && (
+                <button
+                  onClick={() => setSearchOpen(false)}
+                  className="text-xs text-[var(--brand-accent)] hover:underline mb-1"
+                >
+                  ← Back to suggestions
+                </button>
+              )}
               <input
                 autoFocus
                 type="text"
