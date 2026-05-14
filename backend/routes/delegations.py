@@ -227,6 +227,31 @@ def upsert_delegation(
             },
             ip_address=ip,
         )
+
+        # Phase 28 B1 — auto-create a TopicPrecedence row at the bottom of
+        # the user's priority order for newly-delegated topics, mirroring
+        # the pattern Phase 27 F2 added to request_delegation. Only fires
+        # on create (not update — existing branch above leaves precedence
+        # untouched). Skipped for global delegations (topic_id=None).
+        if body.topic_id is not None:
+            existing_prec = db.query(models.TopicPrecedence).filter(
+                models.TopicPrecedence.user_id == current_user.id,
+                models.TopicPrecedence.topic_id == body.topic_id,
+            ).first()
+            if existing_prec is None:
+                max_prio = db.query(
+                    func.max(models.TopicPrecedence.priority)
+                ).filter(
+                    models.TopicPrecedence.user_id == current_user.id,
+                ).scalar()
+                next_prio = (max_prio + 1) if max_prio is not None else 0
+                db.add(models.TopicPrecedence(
+                    user_id=current_user.id,
+                    topic_id=body.topic_id,
+                    priority=next_prio,
+                ))
+                db.flush()
+
         db.commit()
         db.refresh(delegation)
         graph_store.add_delegation(
@@ -292,6 +317,19 @@ def revoke_delegation(
         ip_address=request.client.host if request.client else None,
     )
     db.delete(delegation)
+
+    # Phase 28 B2 — also remove the TopicPrecedence row for this topic so
+    # the user's priority order stays in sync with their active
+    # delegations. Re-densification is handled by set_topic_precedence on
+    # the next reorder; gaps in the priority sequence (`0, 1, 3` after
+    # removing priority 2) are tolerated by find_delegate_pure's sort.
+    # Globals (topic_id IS NULL) have no precedence row to clean up.
+    if resolved_topic_id is not None:
+        db.query(models.TopicPrecedence).filter(
+            models.TopicPrecedence.user_id == current_user.id,
+            models.TopicPrecedence.topic_id == resolved_topic_id,
+        ).delete()
+
     db.commit()
     graph_store.remove_delegation(current_user.id, resolved_topic_id, org_id=org_id)
 
