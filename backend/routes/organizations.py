@@ -844,12 +844,15 @@ class DemoPersonaOut(BaseModel):
     (seeded by the bible per D25/Amendment D). ``description`` is the
     Stage-8 one-sentence blurb; if a persona is bible-seeded without one
     the seed mechanism falls back to ``description = role`` so the card
-    always has non-empty text.
+    always has non-empty text. Phase 30 B3: ``avatar_url`` surfaces the
+    User.avatar_url (Phase 29 C6 portraits) so the /demo picker can
+    render AI-illustration portraits instead of initial circles.
     """
     username: str
     display_name: str
     role: str
     description: str
+    avatar_url: Optional[str] = None
 
 
 class DemoOrgCardOut(BaseModel):
@@ -1027,6 +1030,7 @@ def get_demo_directory(
                 display_name=p.get("display_name") or p.get("username"),
                 role=p.get("role") or "",
                 description=p.get("description") or p.get("role") or "",
+                avatar_url=p.get("avatar_url"),
             ))
 
         cards.append(DemoOrgCardOut(
