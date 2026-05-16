@@ -3705,3 +3705,34 @@ Two passes bundled. Pass 1 — Phase 27's relevance-weighted delegation extended
 ### Pass-summary
 
 **Phase 29 closes the relevance-weighted strategy across all four voting methods and turns Cedar Hollow into the showcase org Z wanted.** The B1/B2 resolver is small but completes the Phase 27 design — `relevance_weighted` users on approval / RCV / STV proposals now get the highest-relevance delegate's ballot verbatim instead of falling through to strict-precedence. The Cedar Hollow refresh trades breadth (3 demo orgs) for depth (1 dense org): 18 public delegates across 6 topics, ~70% filler delegation density, a working private-delegation showcase (Ravi → Linda on Budget backed by an approved delegation_allowed follow), pending follow requests so notification feeds show realistic activity, and 21 AI-illustration portraits matched to characters. The latent `TopicPrecedence`-wipe FK gap (would have bitten Phase 28's auto-precedence rows the next time prod ran a demo reset, but didn't manifest because no demo bible was creating those rows until Phase 29 C4) is patched as a side effect.
+
+## Phase 29.1 — Persona Delegations + Logo Wiring (shipped 2026-05-16, master `<TBD>`)
+
+Phase 29 shipped Cedar Hollow as the showcase but missed one piece: the 6 quick-login personas themselves (Janet, Brenda, Marcus, Don, Linda, Tomás) had no delegations of their own, so signing in to demo saw an empty Delegations page from the most visible entry points. Phase 29.1 closes that gap plus wires the logo Z dropped during Phase 29 but that wasn't tracked.
+
+| Cluster | Description |
+|---|---|
+| **B1** | `PersonaDelegationSpec` dataclass + `OrgBible.persona_delegations` field + `PERSONA_DELEGATIONS` list in `hoa_bible.py`. Six personas, three relevance_weighted (Janet, Brenda, Marcus, Tomás), one strict_precedence (Linda), one deliberately empty/strict_precedence (Don). Marcus and Linda are heavy delegators (4 topics each); Don's empty state is part of the showcase. New `_seed_persona_delegations` helper called after `_seed_relationships`; strict validation raises `ValueError` if a delegated topic isn't in `topic_precedence`. Maureen's Elections `TopicVisibility` flipped `public → public_accepting` so Marcus + Linda's Elections delegations resolve cleanly; position statement rewritten. |
+| **B2** | `User.delegation_strategy` set from the spec at seed time, overriding Phase 27's `relevance_weighted` migration default. Only Don deviates in this pass (strict_precedence). |
+| **B3** | `OrgBible.logo_path` field; HOA bible sets `/demo_assets/cedar_hollow_logo.jpg`; seed pipeline writes to `settings['branding']['logo_url']` alongside Phase 29 C5's `primary_color`. Frontend already wired (Phase 12.7 F5 — `Nav.jsx` line 90 reads `branding.logo_url`); no JSX changes needed. Logo JPG itself wasn't tracked in git from Phase 29; B3 follow-up commit fixed that. |
+| **B4** | 5 tests in `test_phase_29_1_persona_delegations.py` against an in-memory SQLite seed: all 6 personas match spec, Don's empty state, Marcus's precedence ordering, validation raises on missing topic, logo url lands. |
+
+**Commits:**
+
+1. `1e4d64f` — B1+B2+B3+B4: personas + logo + tests
+2. `7ff1425` — B3 follow-up: commit cedar_hollow_logo.jpg
+3. `<TBD>` — Merge phase-29-1 to master
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Backend pytest (full, excl. 3 demo-reset suites) | PASS — 1313 passed / 3 skipped / 0 failed (+5 over Phase 29) |
+| Backend pytest (delegation cross-suite: 27 + 28 + 29 + 29.1) | PASS — 39 passed |
+| PG smoke | Not required (no migration; settings JSON + delegation/precedence rows only) |
+| Frontend build | PASS — `index-r4SJIIFl.js` (unchanged from Phase 29; no JSX changed) |
+| File-count | 4 source files / 489 ins / 8 del + 1 logo JPG |
+
+### Pass-summary
+
+**Phase 29.1 makes the demo work from the front door.** A visitor signing in as Janet, Marcus, Linda, Tomás, or Brenda now sees a populated Delegations page with real topic-scoped pairings — the platform's headline feature lit up from every quick-login entry point. Don's empty Delegations page is the deliberate counterexample: it stays empty because he's the canonical "vote your own conscience" persona, and his strategy correctly renders as "By strict priority." The logo wiring is one bible line + one seed-pipeline branch and slots into the existing Phase 12.7 frontend rendering with no JSX churn. The strict validation in `_seed_persona_delegations` is the kind of guard that pays for itself when a future content author forgets to list a delegated topic in precedence — it'll raise loudly at seed time with the exact persona/topic in the error message.
