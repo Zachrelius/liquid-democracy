@@ -3737,7 +3737,7 @@ Phase 29 shipped Cedar Hollow as the showcase but missed one piece: the 6 quick-
 
 **Phase 29.1 makes the demo work from the front door.** A visitor signing in as Janet, Marcus, Linda, Tomás, or Brenda now sees a populated Delegations page with real topic-scoped pairings — the platform's headline feature lit up from every quick-login entry point. Don's empty Delegations page is the deliberate counterexample: it stays empty because he's the canonical "vote your own conscience" persona, and his strategy correctly renders as "By strict priority." The logo wiring is one bible line + one seed-pipeline branch and slots into the existing Phase 12.7 frontend rendering with no JSX churn. The strict validation in `_seed_persona_delegations` is the kind of guard that pays for itself when a future content author forgets to list a delegated topic in precedence — it'll raise loudly at seed time with the exact persona/topic in the error message.
 
-## Phase 30 — Public Delegate Registration + Demo Polish (shipped 2026-05-16, master `<TBD>`)
+## Phase 30 — Public Delegate Registration + Demo Polish (shipped 2026-05-16, master `0f889b6`)
 
 Z's post-Phase-29.1 browser tour surfaced five items: one real platform bug (the private → public_accepting transition in DelegateProfile.jsx exposed a raw 400 from the backend) and four demo-polish items (obsolete Settings registration section, demo persona portraits not rendering, My Delegations topic-name prefix leak, Cedar Hollow needs more active proposals).
 
@@ -3753,7 +3753,7 @@ Z's post-Phase-29.1 browser tour surfaced five items: one real platform bug (the
 **Commits:**
 
 1. `f6fb0d3` — B1+B2+B3+B4+C1+B5 (all clusters in one commit)
-2. `<TBD>` — Merge phase-30 to master
+2. `0f889b6` — Merge phase-30 to master
 
 **Pre-merge gates:**
 
