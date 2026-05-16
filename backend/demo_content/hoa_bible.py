@@ -90,6 +90,36 @@ MEMBERS = [
            quick_login=False, role='Member (President candidate)'),
     Member(user_id='hoa_ravi', display_name='Ravi Chandrasekaran',
            quick_login=False, role='Member'),
+    # Phase 29 C2 — Cedar Hollow showcase expansion: 13 additional named
+    # delegates with public pages. Goal is a dense, varied delegation
+    # graph rather than just a handful of council-adjacent personas.
+    # All quick_login=False; portraits supplied by Z (see C6).
+    Member(user_id='hoa_helen', display_name='Helen Krause',
+           quick_login=False, role='Member (retired teacher)'),
+    Member(user_id='hoa_frank', display_name='Frank Trembath',
+           quick_login=False, role='Member (retired plumber)'),
+    Member(user_id='hoa_diane', display_name='Diane Petruzzi',
+           quick_login=False, role='Member (insurance adjuster)'),
+    Member(user_id='hoa_wally', display_name='Walter "Wally" Bromley',
+           quick_login=False, role='Member (former county clerk)'),
+    Member(user_id='hoa_karen', display_name='Karen Mihalek',
+           quick_login=False, role='Member (retired RN, Cedar Court)'),
+    Member(user_id='hoa_ron', display_name='Ron Dziedzic',
+           quick_login=False, role='Member (auto shop owner)'),
+    Member(user_id='hoa_marisol', display_name='Marisol Henneman',
+           quick_login=False, role='Member (elementary school principal)'),
+    Member(user_id='hoa_ed', display_name='Edgar "Ed" Pawlowski',
+           quick_login=False, role='Member (retired Navy supply officer)'),
+    Member(user_id='hoa_bev', display_name='Beverly "Bev" Lindstrom',
+           quick_login=False, role='Member (real estate agent)'),
+    Member(user_id='hoa_carl', display_name='Carl Sundstrom',
+           quick_login=False, role='Member (water utility engineer)'),
+    Member(user_id='hoa_yolanda', display_name='Yolanda Beasley',
+           quick_login=False, role='Member (daycare director, Cedar Court)'),
+    Member(user_id='hoa_maureen', display_name='Maureen Czajka',
+           quick_login=False, role='Member (reference librarian)'),
+    Member(user_id='hoa_hank', display_name='Hank Renfro',
+           quick_login=False, role='Member (roofing contractor)'),
 ]
 
 
@@ -348,6 +378,718 @@ DELEGATE_PAGES = [
 
     # Tomás has page_visibility='private' — no delegate page rendered.
     # Voting record is private; he hasn't engaged with delegation system.
+
+    # =========================================================================
+    # Phase 29 C2 — showcase expansion: 13 additional public delegates.
+    # Voice: earnest with deadpan undertones, like the existing five.
+    # Authoring goal: distinct angle per delegate so the topic-relevance
+    # delegation graph reads as varied rather than concentrated. Each
+    # page covers a primary topic (public_accepting) + 0-2 secondaries
+    # (public), plus 3-5 vote rationales from P-H-01 through P-H-09.
+    # =========================================================================
+
+    DelegatePage(
+        member_user_id='hoa_helen',
+        page_visibility='public',
+        intro=(
+            "Thirty-eight years teaching fifth grade at Millbrook Elementary, "
+            "retired since 2019. Twenty-six years in Cedar Hollow. Most of what "
+            "I know about HOAs I learned from showing up.\n\n"
+            "If you delegate to me on Pool & Recreation, expect a community-"
+            "center frame rather than an amenity frame. Three generations of "
+            "Cedar Hollow kids learned to swim at this pool. That doesn't "
+            "settle every operational question but it does shape mine."
+        ),
+        topics=[
+            TopicVisibility('Pool & Recreation', 'public_accepting'),
+            TopicVisibility('Long-Term Planning', 'public'),
+        ],
+        position_statements=[
+            PositionStatement(
+                topic='Pool & Recreation',
+                text=(
+                    "The pool is the only place in Cedar Hollow where the whole "
+                    "neighborhood physically gathers. Pool decisions are also "
+                    "social-fabric decisions, whether the budget paperwork says "
+                    "so or not.\n\n"
+                    "That doesn't translate to 'spend any amount.' It does mean "
+                    "I'll vote against operational decisions that quietly degrade "
+                    "the pool's role as a gathering place — hours that exclude "
+                    "working families, fee structures that price out the Cedar "
+                    "Court households, that sort of thing. Reserve health "
+                    "matters too. I try to keep both in view."
+                ),
+            ),
+            PositionStatement(
+                topic='Long-Term Planning',
+                text=(
+                    "Public only because I'd rather you read what I write and "
+                    "decide on your own. I don't have a strong frame for capital "
+                    "sequencing — Linda and Frank do."
+                ),
+            ),
+        ],
+        vote_rationales=[
+            VoteRationale('P-H-01', 'yes',
+                          "Voting yes. Small adjustment, mostly painless, and Linda has the math right."),
+            VoteRationale('P-H-03', 'approval_1_2_3_4_5_6',
+                          "Approved the deferred-maintenance items. Items 7-8 are amenity expansion and don't belong this cycle, even from a community-center frame."),
+            VoteRationale('P-H-04', 'approval_B_C_D',
+                          "Evening extension matters most for the working families on Cedar Court. Weekend-only is a sensible compromise for the budget side. Conservative option stays on the table."),
+            VoteRationale('P-H-09', 'yes',
+                          "Voting yes. The floats are not a serious problem but the absence of governing language is. Better to write it down."),
+        ],
+    ),
+
+    DelegatePage(
+        member_user_id='hoa_frank',
+        page_visibility='public',
+        intro=(
+            "Cedar Hollow since 1998. Retired plumber, thirty-one-year career, "
+            "mostly commercial work in the Millbrook corridor. I know what "
+            "deferred maintenance looks like from underneath.\n\n"
+            "If you delegate to me on Long-Term Planning or Budget, expect "
+            "votes anchored to the actual condition of physical things. The "
+            "clubhouse roof is older than three of the existing board members. "
+            "That's not an opinion, it's a fact, and the budget should reflect "
+            "it."
+        ),
+        topics=[
+            TopicVisibility('Long-Term Planning', 'public_accepting'),
+            TopicVisibility('Budget', 'public'),
+        ],
+        position_statements=[
+            PositionStatement(
+                topic='Long-Term Planning',
+                text=(
+                    "Capital infrastructure in a 170-household HOA fails on a "
+                    "20-30 year cycle. Pool liner: 18 years. Clubhouse roof: "
+                    "21 years. Asphalt: 12-15 years on the high-traffic "
+                    "sections. We're inside the failure window on at least "
+                    "three of those.\n\n"
+                    "Long-term planning means sequencing replacements before "
+                    "they fail catastrophically. The fall 2025 pool repair is "
+                    "the exact pattern we get when we don't. I'll vote for "
+                    "spending that addresses sequencing and against spending "
+                    "that doesn't."
+                ),
+            ),
+            PositionStatement(
+                topic='Budget',
+                text=(
+                    "Public, not accepting. Linda is the right person to "
+                    "delegate Budget to. My role is to keep the physical-"
+                    "infrastructure picture visible when Budget decisions get "
+                    "made."
+                ),
+            ),
+        ],
+        vote_rationales=[
+            VoteRationale('P-H-01', 'yes',
+                          "Yes. The reserve needs to come up; the fee adjustment is one way to do it."),
+            VoteRationale('P-H-02', 'yes',
+                          "Voting yes. Linda's numbers are right and the deferred-maintenance backlog is real. The slow rebuild leaves us inside the failure window for another two years. Worth the assessment to get out from under it."),
+            VoteRationale('P-H-03', 'approval_1_2_3_4_5_6',
+                          "Items 1-6 are real backlog. The Cedar Court fence (item 4) should have been done five years ago."),
+            VoteRationale('P-H-04', 'approval_B_C',
+                          "Conservative on this one. Pool deck and filter system can't take expanded hours without maintenance budget I don't see coming."),
+            VoteRationale('P-H-08', 'approval_B_C',
+                          "Vendor B has the track record. Vendor C as backup if the board can document the cost difference is worth the risk."),
+        ],
+    ),
+
+    DelegatePage(
+        member_user_id='hoa_diane',
+        page_visibility='public',
+        intro=(
+            "Cedar Hollow since 2011. Day job: claims adjuster at a regional "
+            "insurance carrier. I read documents for a living and I notice "
+            "when language doesn't say what it appears to say.\n\n"
+            "If you delegate to me on Budget, expect a risk-and-exposure lens "
+            "rather than a moral one. Cedar Hollow's insurance posture is "
+            "tighter than people think; some of the proposals that look like "
+            "amenity questions are actually liability questions."
+        ),
+        topics=[
+            TopicVisibility('Budget', 'public_accepting'),
+            TopicVisibility('Bylaws & Procedure', 'public'),
+        ],
+        position_statements=[
+            PositionStatement(
+                topic='Budget',
+                text=(
+                    "The reserve isn't just a maintenance fund. It's also "
+                    "what stands between the HOA and a special assessment "
+                    "the next time something fails. Insurance covers the "
+                    "high-tail events; the reserve covers everything else. "
+                    "Reserve thinness is risk exposure, not just inconvenience.\n\n"
+                    "I'll vote for measured fee adjustments and against new "
+                    "spending that isn't either life-safety or reserve-"
+                    "rebuilding. I'm aligned with Linda on most votes and "
+                    "Janet on most votes; if those two diverge I tend toward "
+                    "whichever path preserves more flexibility."
+                ),
+            ),
+            PositionStatement(
+                topic='Bylaws & Procedure',
+                text=(
+                    "Public only because the right person to delegate to is "
+                    "Brenda. I read the bylaws closely but she reads them "
+                    "professionally."
+                ),
+            ),
+        ],
+        vote_rationales=[
+            VoteRationale('P-H-01', 'yes',
+                          "Voting yes. Modest fee adjustment, no real exposure, math works."),
+            VoteRationale('P-H-02', 'yes',
+                          "Voting yes against my instincts. A $300 assessment costs less than the exposure of staying under-reserved. The slow rebuild is a comfortable answer that doesn't actually rebuild the reserve fast enough."),
+            VoteRationale('P-H-03', 'approval_1_2_3_4_5_6',
+                          "Items 1-3 are life-safety, hence required regardless. Items 4-6 are reserve-protective in the medium term. 7-8 increase exposure without offsetting maintenance."),
+            VoteRationale('P-H-06', 'yes',
+                          "A study is informational. I want the dues-differential question studied. I want the answer to be made deliberately rather than drifted into."),
+            VoteRationale('P-H-08', 'approval_B',
+                          "Vendor B. The cheaper options carry coverage gaps I'd rather not learn about during the season."),
+        ],
+    ),
+
+    DelegatePage(
+        member_user_id='hoa_wally',
+        page_visibility='public',
+        intro=(
+            "Forty-six years in Cedar Hollow. Retired from the county clerk's "
+            "office in 2014. I have read Cedar Hollow's bylaws cover to cover "
+            "more times than is healthy for anyone.\n\n"
+            "If you delegate to me on Bylaws & Procedure, you'll see a strict-"
+            "constructionist read. The bylaws are not a vibe. They say things "
+            "in particular ways for particular reasons; we ignore those "
+            "reasons at our cost."
+        ),
+        topics=[
+            TopicVisibility('Bylaws & Procedure', 'public_accepting'),
+        ],
+        position_statements=[
+            PositionStatement(
+                topic='Bylaws & Procedure',
+                text=(
+                    "A small community governance document is more "
+                    "interpretive than a corporate bylaw and less interpretive "
+                    "than a constitution. The right register is somewhere in "
+                    "between, and Cedar Hollow has historically settled it on "
+                    "the loose side.\n\n"
+                    "I'll vote with Brenda when she sees a procedural problem "
+                    "and against amendments that solve problems Cedar Hollow "
+                    "hasn't actually had. I diverge from Brenda about once a "
+                    "year and usually on whether a given question is procedural "
+                    "or substantive."
+                ),
+            ),
+        ],
+        vote_rationales=[
+            VoteRationale('P-H-05', 'yes',
+                          "Voting yes. Brenda's cleanups are accurate and overdue. Low-stakes housekeeping, do it now or do it later."),
+            VoteRationale('P-H-06', 'no',
+                          "Voting no with Don. A study commissioned by the board is not a neutral information-gathering exercise; it's the front end of an amendment process. The dues structure is in the bylaws and the bylaws are the bylaws."),
+            VoteRationale('P-H-09', 'yes',
+                          "Yes. The bylaws should say what the practice already is. Better to write it down before someone's $90 float ends up in the dumpster and we have to litigate it."),
+        ],
+    ),
+
+    DelegatePage(
+        member_user_id='hoa_karen',
+        page_visibility='public',
+        intro=(
+            "Cedar Court resident, twelve years. Retired RN; thirty-two-year "
+            "career in pediatrics at Millbrook Memorial. I delegate-vote in "
+            "Cedar Court Issues because I live the dues-differential question "
+            "every quarter and I'd rather speak about it directly than have "
+            "the question abstracted by people who don't.\n\n"
+            "Aligned with Marcus on most Cedar Court positions but with a "
+            "sharper edge on the dues question specifically. I will not "
+            "pretend it's resolved when it isn't."
+        ),
+        topics=[
+            TopicVisibility('Cedar Court Issues', 'public_accepting'),
+            TopicVisibility('Budget', 'public'),
+        ],
+        position_statements=[
+            PositionStatement(
+                topic='Cedar Court Issues',
+                text=(
+                    "Cedar Court was annexed in 1991 with a dues differential "
+                    "that was explained at the time as transitional. It is now "
+                    "thirty-four years old and structural rather than "
+                    "transitional. We pay the same dues as single-family "
+                    "households for unit values that are 30-40% lower. The "
+                    "math on that has been wrong since the Clinton "
+                    "administration.\n\n"
+                    "I'll vote for the dues-differential study, for "
+                    "infrastructure spending that addresses Cedar Court items "
+                    "(the fence, the lot resurfacing), and against framing "
+                    "this as Cedar Court vs. SFH when the underlying question "
+                    "is whether the bylaws were ever consistent with their own "
+                    "stated intent."
+                ),
+            ),
+            PositionStatement(
+                topic='Budget',
+                text=(
+                    "Public, not accepting. Linda is the right Budget delegate. "
+                    "I keep my voice on Cedar Court Issues so the dues "
+                    "question stays visible."
+                ),
+            ),
+        ],
+        vote_rationales=[
+            VoteRationale('P-H-01', 'yes',
+                          "Voting yes; the adjustment is uniform across unit types so it doesn't worsen the differential."),
+            VoteRationale('P-H-02', 'no',
+                          "Voting no. A $300 flat assessment widens the Cedar Court / SFH gap by another fixed amount on already-mismatched valuations. The slow rebuild is more equitable even if it's slower."),
+            VoteRationale('P-H-03', 'approval_1_2_3_4_5_6',
+                          "Item 4 — Cedar Court fence — has been deferred long enough. Items 1-3 are life-safety. 5-6 are sensible."),
+            VoteRationale('P-H-06', 'yes',
+                          "Yes. The study is the entry point to a question that's been waiting thirty-four years. A study is not an amendment; Brenda is right on that."),
+        ],
+    ),
+
+    DelegatePage(
+        member_user_id='hoa_ron',
+        page_visibility='public',
+        intro=(
+            "Cedar Hollow since 2007. Own and operate Dziedzic Auto on Route 9. "
+            "I run a small business with a tight margin, which has taught me "
+            "the difference between operational decisions and one-time spending "
+            "decisions. Most of what I vote on is the difference between those "
+            "two.\n\n"
+            "If you delegate to me on Budget, expect a small-business operating "
+            "frame: every recurring obligation is a permanent obligation, "
+            "every special assessment is a temporary one, and the board should "
+            "be honest about which is which."
+        ),
+        topics=[
+            TopicVisibility('Budget', 'public_accepting'),
+            TopicVisibility('Pool & Recreation', 'public'),
+        ],
+        position_statements=[
+            PositionStatement(
+                topic='Budget',
+                text=(
+                    "Operational vs. capital matters. Operational lives in the "
+                    "monthly dues forever; capital is paid for once. Cedar "
+                    "Hollow's recurring spending has crept up while the reserve "
+                    "fell. That isn't a math problem, it's a discipline "
+                    "problem.\n\n"
+                    "I'll vote for fee adjustments that are clearly tied to "
+                    "either reserve rebuild or backlog completion. I'll vote "
+                    "against operational expansions dressed up as one-time "
+                    "spending. Some overlap with Linda; sharper edge on what "
+                    "counts as recurring."
+                ),
+            ),
+            PositionStatement(
+                topic='Pool & Recreation',
+                text=(
+                    "Public, not accepting. The pool is a fixed asset with a "
+                    "known operating profile. I vote it from the budget side."
+                ),
+            ),
+        ],
+        vote_rationales=[
+            VoteRationale('P-H-01', 'yes',
+                          "Yes. Recurring fee adjustment with a recurring purpose — that's the right shape."),
+            VoteRationale('P-H-02', 'no',
+                          "Voting no. The slow rebuild is the discipline answer. A special assessment papers over a recurring discipline problem with a one-time payment, which is the pattern we keep falling into."),
+            VoteRationale('P-H-03', 'approval_1_2_3_4_5_6',
+                          "Items 1-6. Standard backlog work. 7-8 are amenity expansion sold as maintenance and I'm not buying it."),
+            VoteRationale('P-H-08', 'approval_C',
+                          "Vendor C. Vendor B's renewal pricing has crept above market; Vendor C's references are solid. Vendor A and D are too unknown for a multi-year contract."),
+        ],
+    ),
+
+    DelegatePage(
+        member_user_id='hoa_marisol',
+        page_visibility='public',
+        intro=(
+            "Cedar Hollow since 2014. Principal at Millbrook Elementary since "
+            "2018. Two kids in the district. I came to the HOA from the "
+            "school side, which means I think about how decisions affect "
+            "households with children, and how the decisions get communicated.\n\n"
+            "If you delegate to me on Pool & Recreation, you'll see a family-"
+            "access lens. If you delegate on Long-Term Planning, you'll see a "
+            "communications lens — half the conflicts I watch on the board are "
+            "communications problems that turn into substantive ones."
+        ),
+        topics=[
+            TopicVisibility('Pool & Recreation', 'public_accepting'),
+            TopicVisibility('Long-Term Planning', 'public'),
+        ],
+        position_statements=[
+            PositionStatement(
+                topic='Pool & Recreation',
+                text=(
+                    "Two-thirds of Cedar Hollow households have children "
+                    "under 18 or grandchildren who visit weekly. Pool "
+                    "decisions land disproportionately on those households. "
+                    "Hours, fees, and access policies all read as small "
+                    "operational choices and play out as social ones.\n\n"
+                    "I'll vote for hours that include working families, for "
+                    "fee structures that don't squeeze the Cedar Court "
+                    "households, and against operational changes that "
+                    "concentrate access among households that already have "
+                    "the most flexibility."
+                ),
+            ),
+            PositionStatement(
+                topic='Long-Term Planning',
+                text=(
+                    "Public, not accepting. Linda and Frank carry this topic "
+                    "well. My job is to flag when long-term decisions need "
+                    "earlier or clearer communication to the membership."
+                ),
+            ),
+        ],
+        vote_rationales=[
+            VoteRationale('P-H-01', 'yes',
+                          "Yes. Modest, manageable, and the math is transparent."),
+            VoteRationale('P-H-03', 'approval_1_2_3_4_5_6',
+                          "Items 1-6. Item 4 in particular — Cedar Court has waited too long for that fence."),
+            VoteRationale('P-H-04', 'approval_C_D',
+                          "Evening and weekend options. Both expand access for households whose schedules don't accommodate midday pool time."),
+            VoteRationale('P-H-09', 'yes',
+                          "Yes. Tagged-vs-untagged is a clean rule and the community has been litigating it informally for years. Brenda's preamble is heroic; the rule is right."),
+        ],
+    ),
+
+    DelegatePage(
+        member_user_id='hoa_ed',
+        page_visibility='public',
+        intro=(
+            "Cedar Hollow since 1996. Retired Navy supply officer, 1972-1994. "
+            "Most of what I know about process I learned moving cargo through "
+            "ports for two decades.\n\n"
+            "If you delegate to me on Bylaws & Procedure or Long-Term "
+            "Planning, expect votes anchored to clarity and sequencing. The "
+            "HOA has historically run on goodwill and informal practice, "
+            "which works until it doesn't. Writing things down is not "
+            "bureaucracy; it's how a small organization stays the same "
+            "organization through generational turnover."
+        ),
+        topics=[
+            TopicVisibility('Bylaws & Procedure', 'public_accepting'),
+            TopicVisibility('Long-Term Planning', 'public'),
+        ],
+        position_statements=[
+            PositionStatement(
+                topic='Bylaws & Procedure',
+                text=(
+                    "Brenda has the legal-administrative read. Wally has the "
+                    "strict-constructionist read. I have neither. What I "
+                    "carry is the operational read: does this procedure work "
+                    "when the people running it are tired, distracted, or "
+                    "new? If it doesn't, it's not really a procedure, it's a "
+                    "set of habits in formal clothing.\n\n"
+                    "I'll vote for amendments that close procedural holes "
+                    "and against amendments that add formality without "
+                    "closing a hole. Aligned with Brenda 80% of the time; "
+                    "the divergence is on when 'rare amendment' becomes "
+                    "'should-have-amended-already.'"
+                ),
+            ),
+            PositionStatement(
+                topic='Long-Term Planning',
+                text=(
+                    "Public, not accepting. My frame on long-term planning "
+                    "is sequencing-and-supply-chain, which is partial. Frank "
+                    "and Linda carry the more complete picture."
+                ),
+            ),
+        ],
+        vote_rationales=[
+            VoteRationale('P-H-05', 'yes',
+                          "Yes. Procedural cleanup, exactly the kind of writing-down that prevents next year's argument."),
+            VoteRationale('P-H-06', 'yes',
+                          "Yes. A study addressing a question the bylaws don't currently address well is the right sequencing. Don's procedural concern is reasonable but reads to me as deflection."),
+            VoteRationale('P-H-09', 'yes',
+                          "Yes. The float-storage problem is small but the lack of governing language is the kind of gap that grows."),
+        ],
+    ),
+
+    DelegatePage(
+        member_user_id='hoa_bev',
+        page_visibility='public',
+        intro=(
+            "Cedar Hollow since 2003. Real estate agent at Henneman & "
+            "Lindstrom (Millbrook). My practice is mostly the school district, "
+            "so I know Cedar Hollow's reputation in the local market in some "
+            "detail.\n\n"
+            "If you delegate to me on Long-Term Planning, expect votes "
+            "informed by market signal — what kinds of HOAs hold value, what "
+            "kinds drift. Cedar Hollow is currently in the middle of the "
+            "Millbrook-area HOA market and could move either direction over "
+            "the next decade. The Long-Term Planning choices matter for that."
+        ),
+        topics=[
+            TopicVisibility('Long-Term Planning', 'public_accepting'),
+            TopicVisibility('Cedar Court Issues', 'public'),
+        ],
+        position_statements=[
+            PositionStatement(
+                topic='Long-Term Planning',
+                text=(
+                    "HOAs that maintain reserve discipline, complete deferred "
+                    "maintenance on visible schedule, and avoid the cycle of "
+                    "amenity-expansion-then-special-assessment hold value 8-12% "
+                    "better than HOAs that don't. That's the kind of number "
+                    "agents quote in coffee.\n\n"
+                    "Cedar Hollow has historically been a maintenance-discipline "
+                    "HOA. The drift since 2016 hasn't been catastrophic but it's "
+                    "visible from outside. I'll vote for spending that addresses "
+                    "the maintenance picture and against decisions that make "
+                    "Cedar Hollow look like an HOA that doesn't know its own "
+                    "balance sheet."
+                ),
+            ),
+            PositionStatement(
+                topic='Cedar Court Issues',
+                text=(
+                    "Public, not accepting. Cedar Court issues are material to "
+                    "long-term planning — the dues differential affects how "
+                    "the entire HOA is read in the local market — but Karen "
+                    "and Marcus are the right delegates for the topic itself."
+                ),
+            ),
+        ],
+        vote_rationales=[
+            VoteRationale('P-H-01', 'yes',
+                          "Yes. Visible from outside as a board doing the math correctly. Worth doing for that reason alone."),
+            VoteRationale('P-H-02', 'yes',
+                          "Voting yes with regret. The faster rebuild reads better to a buyer than the slow one, even though the membership won't go for it."),
+            VoteRationale('P-H-03', 'approval_1_2_3_4_5_6',
+                          "Items 1-6 are visible maintenance. 7-8 are visible amenity expansion at the wrong moment in the budget cycle."),
+            VoteRationale('P-H-06', 'yes',
+                          "Yes. The dues question is going to surface eventually; better to surface it through a study commissioned by the board than through a unit-value reassessment."),
+        ],
+    ),
+
+    DelegatePage(
+        member_user_id='hoa_carl',
+        page_visibility='public',
+        intro=(
+            "Cedar Hollow since 2010. Engineer at Millbrook Regional Water "
+            "Authority — twenty-two-year career, mostly distribution-side. "
+            "I am a pool skeptic in the technical-asset sense. The pool is "
+            "a high-maintenance fixed asset attached to a small reserve, "
+            "and that ratio has me uneasy.\n\n"
+            "I am not a pool skeptic in the social sense — Helen has a fair "
+            "point about gathering. If you delegate to me on Pool & "
+            "Recreation, expect a votes-from-the-engineering-side reading."
+        ),
+        topics=[
+            TopicVisibility('Pool & Recreation', 'public_accepting'),
+            TopicVisibility('Budget', 'public'),
+        ],
+        position_statements=[
+            PositionStatement(
+                topic='Pool & Recreation',
+                text=(
+                    "The pool's annual operating cost is ~$11K. Its "
+                    "replacement cost on a 25-year cycle, discounted "
+                    "appropriately, is another ~$3-4K/year equivalent. The "
+                    "HOA's reserve target should reflect both numbers.\n\n"
+                    "Operating decisions that increase wear (extended hours, "
+                    "higher chemical demand, expanded equipment) shorten "
+                    "replacement cycle. Operating decisions that improve "
+                    "access without increasing wear are mostly free. I sort "
+                    "the proposals along that axis and vote accordingly."
+                ),
+            ),
+            PositionStatement(
+                topic='Budget',
+                text=(
+                    "Public, not accepting. Linda and Frank are the right "
+                    "Budget delegates. I keep my voice on Pool & Recreation "
+                    "because that's the topic where my engineering frame "
+                    "translates."
+                ),
+            ),
+        ],
+        vote_rationales=[
+            VoteRationale('P-H-01', 'yes',
+                          "Yes. The pool fee component covers a real operating cost."),
+            VoteRationale('P-H-03', 'approval_1_2_3_4_5_6',
+                          "Items 1-6 are correct prioritization. Pool deck (item 5) is at end of life — voting yes on that one with some emphasis."),
+            VoteRationale('P-H-04', 'approval_B_C',
+                          "Conservative on hours. The filter system at Cedar Hollow is sized for current demand with little headroom; expanded hours need a chemical-demand calc the board hasn't shown me."),
+            VoteRationale('P-H-09', 'yes',
+                          "Yes. Operationally it changes nothing; procedurally it closes a small hole. Cost-free, vote yes."),
+        ],
+    ),
+
+    DelegatePage(
+        member_user_id='hoa_yolanda',
+        page_visibility='public',
+        intro=(
+            "Cedar Court resident, eight years. I run Beasley Day Care out of "
+            "the unit. Six kids most days, eight on Fridays. The Cedar Court "
+            "side of Cedar Hollow shows up in my living room every weekday.\n\n"
+            "I vote on Cedar Court Issues from the working-family side and on "
+            "Pool & Recreation from the kids-need-water-in-July side. Aligned "
+            "with Karen on most votes; sharper edge on access-and-affordability "
+            "specifically."
+        ),
+        topics=[
+            TopicVisibility('Cedar Court Issues', 'public_accepting'),
+            TopicVisibility('Pool & Recreation', 'public'),
+        ],
+        position_statements=[
+            PositionStatement(
+                topic='Cedar Court Issues',
+                text=(
+                    "Cedar Court households are disproportionately working "
+                    "families. The dues differential and the deferred-"
+                    "maintenance pattern both land hardest on the households "
+                    "with the tightest margins, which are the households "
+                    "least able to push back through board representation. "
+                    "That pattern needs explicit voice.\n\n"
+                    "I'll vote for infrastructure spending that addresses "
+                    "Cedar Court items, against assessments that widen the "
+                    "differential, and for the dues study Tomás proposed."
+                ),
+            ),
+            PositionStatement(
+                topic='Pool & Recreation',
+                text=(
+                    "Public, not accepting. Helen and Marisol carry this "
+                    "well. My voice on the pool stays focused on whether "
+                    "fees and access make sense for households with kids on "
+                    "the working-family side of the dues gap."
+                ),
+            ),
+        ],
+        vote_rationales=[
+            VoteRationale('P-H-01', 'yes',
+                          "Yes. Uniform adjustment, hits everyone proportionally."),
+            VoteRationale('P-H-02', 'no',
+                          "No. $300 flat is two weeks of groceries on the Cedar Court side and an inconvenience on the SFH side. Voting it down."),
+            VoteRationale('P-H-03', 'approval_1_2_3_4_5_6',
+                          "Item 4 — Cedar Court fence — has waited eleven years. Items 1-3 are life-safety. 5-6 are sensible."),
+            VoteRationale('P-H-04', 'approval_C_D',
+                          "Evening and weekend hours. Working families don't show up at 11am on a Tuesday."),
+            VoteRationale('P-H-06', 'yes',
+                          "Yes. The dues structure has been waiting for this study since before my kids were born."),
+        ],
+    ),
+
+    DelegatePage(
+        member_user_id='hoa_maureen',
+        page_visibility='public',
+        intro=(
+            "Cedar Hollow since 2008. Reference librarian at Millbrook "
+            "Public Library, third floor. I keep the institutional memory "
+            "of HOAs longer than the HOAs do — three of my regular patrons "
+            "are former Cedar Hollow board members and the Cedar Hollow "
+            "archive that exists is largely on a shelf I look after.\n\n"
+            "If you delegate to me on Bylaws & Procedure, you'll see votes "
+            "informed by what Cedar Hollow has actually done historically, "
+            "not what we say we've done."
+        ),
+        topics=[
+            TopicVisibility('Bylaws & Procedure', 'public_accepting'),
+            TopicVisibility('Elections', 'public'),
+        ],
+        position_statements=[
+            PositionStatement(
+                topic='Bylaws & Procedure',
+                text=(
+                    "The bylaws have been amended seventeen times since "
+                    "1987. I have copies of all seventeen amendments and "
+                    "all seventeen sets of meeting minutes that produced "
+                    "them. About half landed in response to a specific "
+                    "operational problem; about half landed in response to "
+                    "a procedural one. Cedar Hollow is best when those two "
+                    "kinds of amendments are kept distinct.\n\n"
+                    "I'll vote for amendments that show clear operational "
+                    "or procedural cause and against amendments that bundle "
+                    "the two. Aligned with Brenda and Wally on most votes; "
+                    "diverge mainly when there's a historical pattern they "
+                    "haven't seen and I have."
+                ),
+            ),
+            PositionStatement(
+                topic='Elections',
+                text=(
+                    "Public, not accepting. Cedar Hollow election procedure "
+                    "is documented in the bylaws and the Secretary runs it. "
+                    "My voice is informational — when something in current "
+                    "procedure matches or doesn't match historical practice, "
+                    "I flag it."
+                ),
+            ),
+        ],
+        vote_rationales=[
+            VoteRationale('P-H-05', 'yes',
+                          "Yes. The cross-reference errors Brenda is fixing are real and originated in the 2019 amendments, which were rushed. Standard cleanup."),
+            VoteRationale('P-H-06', 'yes',
+                          "Yes. The dues-differential question was last formally examined in 1994 (annual report; I have the copy). Thirty-one years is long enough."),
+            VoteRationale('P-H-09', 'yes',
+                          "Yes. The float-storage protocol Brenda is codifying matches what Cedar Hollow has been doing since 2003. Writing it down is overdue."),
+        ],
+    ),
+
+    DelegatePage(
+        member_user_id='hoa_hank',
+        page_visibility='public',
+        intro=(
+            "Cedar Hollow since 2015. Owner of Renfro Roofing — small firm, "
+            "six employees, twenty-mile service area. I have personally "
+            "looked at the clubhouse roof and the pool equipment shed.\n\n"
+            "If you delegate to me on Budget, expect contractor's-eye votes. "
+            "Deferred maintenance compounds faster than people realize, and "
+            "I have run the rebid numbers on enough underbid jobs to know "
+            "what the spread looks like."
+        ),
+        topics=[
+            TopicVisibility('Budget', 'public_accepting'),
+            TopicVisibility('Long-Term Planning', 'public'),
+        ],
+        position_statements=[
+            PositionStatement(
+                topic='Budget',
+                text=(
+                    "Cedar Hollow's deferred-maintenance backlog has the "
+                    "shape of a problem I've seen at thirty client sites. "
+                    "Items 1-6 of P-H-03 are reasonable line items at "
+                    "reasonable prices. Items 7-8 are amenity expansion "
+                    "that doesn't belong in the same vote.\n\n"
+                    "I'll vote for fee adjustments and assessments that "
+                    "fund backlog. I'll vote against amenity items in "
+                    "maintenance-shaped votes, which is a pattern boards "
+                    "fall into when they want amenity items to pass on "
+                    "maintenance momentum. Aligned with Linda; sharper on "
+                    "the framing question specifically."
+                ),
+            ),
+            PositionStatement(
+                topic='Long-Term Planning',
+                text=(
+                    "Public, not accepting. Frank is the right Long-Term "
+                    "Planning delegate. My voice on Budget already covers "
+                    "the maintenance-sequencing question from a different "
+                    "angle."
+                ),
+            ),
+        ],
+        vote_rationales=[
+            VoteRationale('P-H-01', 'yes',
+                          "Yes. Modest, well-framed."),
+            VoteRationale('P-H-02', 'yes',
+                          "Yes. The slow rebuild lets the backlog compound; I've seen what compound deferred maintenance looks like and would rather pay $300 now."),
+            VoteRationale('P-H-03', 'approval_1_2_3_4_5_6',
+                          "Items 1-6, no further. The pool deck (5) and clubhouse roof (6) are at the point where another year of deferral means a larger contract next year."),
+            VoteRationale('P-H-08', 'approval_B_C',
+                          "Vendor B has the references. Vendor C is the responsible second choice. The cheaper options are cheap for reasons."),
+        ],
+    ),
 ]
 
 
@@ -905,6 +1647,10 @@ HOA_BIBLE = OrgBible(
     approval_tie_resolution='broader_approval_base',
     rcv_tie_resolution='earliest_decisive_vote',
     quorum_threshold_default=0.35,
+    # Phase 29 C5: muted cedar-green for the showcase org. Routed into
+    # Organization.settings['branding']['primary_color'] by the seed
+    # pipeline; BrandingThemeApplier consumes from there.
+    brand_color='#3B5A3B',
     members=MEMBERS,
     delegate_pages=DELEGATE_PAGES,
     proposals=PROPOSALS,
