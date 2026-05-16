@@ -3664,7 +3664,7 @@ Z's post-Phase-27 browser verification surfaced two issues: the standalone "Topi
 
 **Phase 28 makes the Delegations page coherent: one table is both the active-delegations list and the priority order; the Set Delegate modal surfaces actionable candidates instead of an empty search box.** The backfill closes a UX glitch where pre-Phase-27 delegations didn't show up in the priority list at all. B1 + B2 keep the precedence ↔ delegation invariant under future create/revoke ops without needing periodic maintenance. F2's candidate list is the highest-visibility user-facing change — Z's complaint that the modal asked them to search for someone they'd just clicked through from is now resolved across both the "preselect from delegate page" path (Phase 26 D2) and the "Set Delegate on a topic" path (Phase 28 F2).
 
-## Phase 29 — Multi-Option Relevance Delegation + Cedar Hollow Showcase (shipped 2026-05-16, master `<TBD>`)
+## Phase 29 — Multi-Option Relevance Delegation + Cedar Hollow Showcase (shipped 2026-05-16, master `c527435`)
 
 Two passes bundled. Pass 1 — Phase 27's relevance-weighted delegation extended to approval, RCV, and STV (binary was already shipped). Pass 2 — Cedar Hollow demo refresh: hide the other two demo orgs from the public listing, add 13 new public delegates, bump filler delegation density, wire branding + portraits, seed private delegations and follows. The two passes shipped together because the multi-option resolver activates immediately on demo proposals once the new delegates land — natural live-fire verification without test scaffolding.
 
@@ -3690,17 +3690,17 @@ Two passes bundled. Pass 1 — Phase 27's relevance-weighted delegation extended
 5. `966af07` — C5+C2: brand color + 13 new public delegates
 6. `b5caa97` — C3: filler density 30 → 70
 7. `0b58b10` — C4+C6: private delegations, follows, portraits + wipe fix
-8. `<TBD>` — Merge phase-29 to master
+8. `c527435` — Merge phase-29 to master
 
 **Pre-merge gates:**
 
 | Gate | Result |
 |---|---|
 | Backend pytest (curated, 5 suites x 92 tests) | PASS — phase 23 reset, 23.2 metadata, 27, 28, 29 all green |
-| Backend pytest (full) | TBD — running |
+| Backend pytest (full, excl. 3 demo-reset suites — already verified separately) | PASS — 1308 passed / 3 skipped / 0 failed in 239s |
 | PG smoke | Not required (no migration; settings JSON only) |
-| Frontend build | TBD — F1 copy + portrait static assets |
-| File-count | TBD |
+| Frontend build | PASS — `index-r4SJIIFl.js`; 21 portraits in dist/demo_assets/portraits/ |
+| File-count | 13 files / 1728 insertions / 27 deletions |
 
 ### Pass-summary
 
