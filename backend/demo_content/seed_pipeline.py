@@ -426,6 +426,10 @@ def seed_org_from_bible(
     org = db.query(models.Organization).filter(
         models.Organization.slug == bible.slug,
     ).first()
+    # ``org.is_demo`` is the wipe/seed boundary — must stay True for any
+    # bible-seeded org so the daily reset cycle keeps catching it. The
+    # Phase 29 C1 "hide from /demo listing" semantic is layered on top via
+    # ``settings['hidden_from_demo_listing']`` (set below).
     if org is None:
         org = models.Organization(
             slug=bible.slug,
@@ -442,6 +446,27 @@ def seed_org_from_bible(
         org.description = bible.charter
         org.is_demo = True
         org.is_demo_resetting = False
+
+    # Phase 29 C1 + C5: bible-controlled cosmetics. Both go through
+    # Organization.settings so no schema migration is needed.
+    settings = dict(org.settings or {})
+
+    # C1 — hide from /demo public listing without breaking the seed/wipe
+    # cycle. The bible field ``is_demo`` is misnamed for back-compat —
+    # despite the name it controls listing visibility, not the wipe
+    # boundary (which is org.is_demo).
+    bible_listed = getattr(bible, "is_demo", True)
+    settings["hidden_from_demo_listing"] = (not bible_listed)
+
+    # C5 — brand color → user-facing branding slot consumed by
+    # BrandingThemeApplier (Phase 12.7). None leaves branding untouched.
+    brand_color = getattr(bible, "brand_color", None)
+    if brand_color:
+        branding = dict(settings.get("branding") or {})
+        branding["primary_color"] = brand_color
+        settings["branding"] = branding
+
+    org.settings = settings
 
     org.governance_type = config.get("governance_type")
     org.display_order = config.get("display_order")

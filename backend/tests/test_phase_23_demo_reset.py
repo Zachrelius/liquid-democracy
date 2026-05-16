@@ -951,9 +951,12 @@ class TestDemoDirectoryEndpoint:
         assert "orgs" in body
         assert "reset_time_pacific" in body
         assert "next_reset_at" in body
-        # Should return three demo orgs
-        assert len(body["orgs"]) == 3
+        # Phase 29 C1: only Cedar Hollow is publicly listed; Local 4021
+        # and Coalition still seed (cross-org users keep both memberships)
+        # but are flagged hidden_from_demo_listing in their bibles.
+        assert len(body["orgs"]) == 1
         sample = body["orgs"][0]
+        assert sample["slug"] == "demo-cedar-hollow"
         assert {
             "slug", "name", "governance_type", "charter_summary",
             "member_count", "active_proposal_count",
@@ -984,9 +987,10 @@ class TestDemoDirectoryExcludesNonDemo:
         assert resp.status_code == 200
         slugs = {o["slug"] for o in resp.json()["orgs"]}
         assert "real-foo" not in slugs
-        assert slugs == {
-            "demo-cedar-hollow", "demo-local-4021", "demo-westgate-coalition",
-        }
+        # Phase 29 C1: Local 4021 + Coalition hidden from public listing.
+        # They still seed (verify via Organization table separately) but
+        # aren't part of the /demo directory response.
+        assert slugs == {"demo-cedar-hollow"}
 
 
 class TestDemoDirectoryOrdering:

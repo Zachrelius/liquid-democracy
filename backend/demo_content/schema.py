@@ -136,6 +136,19 @@ class OrgBible:
     approval_tie_resolution: str = ''
     rcv_tie_resolution: str = ''
     quorum_threshold_default: float = 0.35          # 35% for non-financial proposals
+    # Phase 29 C1: when False, the org still seeds (so cross-org users keep
+    # their second membership and wipe/reset still validates the pipeline)
+    # but is hidden from the /demo public listing. The flag is misnamed for
+    # back-compat — despite the name it does NOT control Organization.is_demo
+    # (the wipe boundary stays True for every bible-seeded org). The seed
+    # pipeline writes the listing-visibility flag into
+    # ``Organization.settings['hidden_from_demo_listing']`` so no schema
+    # migration is required. Default True for back-compat.
+    is_demo: bool = True
+    # Phase 29 C5: hex color (e.g. "#3B5A3B") written to
+    # Organization.settings['branding']['primary_color'] at seed time. None
+    # leaves branding untouched.
+    brand_color: Optional[str] = None
     members: list[Member] = field(default_factory=list)
     delegate_pages: list[DelegatePage] = field(default_factory=list)
     proposals: list[Proposal] = field(default_factory=list)
