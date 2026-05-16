@@ -3461,3 +3461,247 @@ Phase 23.1's first manual reset attempt (via the new B0 trigger endpoint) return
 ### Pass-summary
 
 **Phase 23.2 shipped after rescuing a stalled agent and finding the critical "Phase 23.1 never actually applied" bug.** 20 commits (12 implementation + 4 B0 + 4 merges/fixes). 18 new tests, 1 existing test re-aligned. No migration, no frontend churn. The headline outcome is that the demo daily reset now actually works — without B7, none of the careful seed-pipeline work in 23.1 or 23.2 would have ever reached a real user. B0's token-gated trigger + the script helper means the code team can iterate on bible content end-to-end without involving Z, which closes the autonomy gap left by 23.1's "manual admin login required" workflow.
+
+---
+
+## Phase 24 — Proposal Auto-Close on voting_end (shipped 2026-05-13, master `abf3b28`)
+
+Diagnostic-A surfaced that time-based auto-close (`now > voting_end → status=passed/failed`) **never existed** in the codebase. The `sustained_majority_worker` ticks every 5 min and snapshots all voting proposals, but its only close path was gated behind Stable Result Required (SRR) + inside an extension window. Non-SRR proposals (`stable_result_required = None`) — i.e. essentially every real-org proposal — got snapshotted forever past their declared deadline and never closed. Two GameNights proposals from Z were 3 days stuck; seven legacy "demo" org proposals were 11-21 days stuck. Pure missing functionality, not a regression.
+
+| Cluster | Description |
+|---|---|
+| **Diagnostic-A** | Read-only investigation. Confirmed worker is healthy (5-min ticks, 17 voting proposals), DB column shapes are clean (naive UTC, no timezone bug), no commit ever added time-based close. Found 9 stuck non-demo proposals platform-wide. |
+| **B1** | New `evaluate_proposal` branches in `sustained_majority_worker.py`. Non-SRR branch: when `voting_end < now`, call `_close_proposal_now(trigger="voting_end_reached", update_voting_end=False)` immediately. SRR-exhausted fallback at the bottom of the function: after SRR's destabilization-at-max path runs, if the proposal is still voting + past voting_end, close naturally. `_close_proposal_now` gained optional `trigger` + `update_voting_end` kwargs (defaults preserve SRR-stable behavior). New `_emit_proposal_closed_natural` helper + `_build_outcome_detail` per-method outcome string ("passed (5-3)", "failed (quorum not met)", "passed — Tuesday won"). |
+| **B2** | `voting_end_reached` trigger constant + `outcome_detail` payload field in the `proposal.closed` notification. `_build_event_template_vars` exposes both; `proposal.closed.html` email template renders the richer outcome. `digest_scheduler._summarize_event` prefers `outcome_detail` when present. |
+| **B3** | 10 new worker tests in `test_phase_24_voting_end_close.py`. Binary passed/failed/failed-quorum, approval winner, RCV winner, future-voting-end-skip, already-closed idempotency, SRR-extended-not-preempted, SRR-exhausted fallback close, trigger-string sanity. 3 existing destabilization-at-max tests in `test_sustained_majority_worker.py` updated (proposals that previously stuck in voting now close via the fallback). |
+| **B4** | `scripts/close_stuck_proposals.py` — one-time backfill. Finds proposals with `status='voting' AND voting_end < now() - 24h AND is_demo=false`, calls `_close_proposal_now(trigger="voting_end_backfill", update_voting_end=False)` for each. `--dry-run` flag. No notification emitted (proposals 11-21 days past deadline; weeks-late "voting closed" emails would be noise). |
+
+**Commits:**
+
+1. `5aa07c1` → `378e743` (rebased) — B1.1: `_close_proposal_now` params + natural-close helpers
+2. `664a444` — B1.2: `evaluate_proposal` natural-close branches
+3. `a29ae8a` — B2: trigger constants + outcome_detail wiring
+4. `1c7cdc9` — B3: 10 worker tests + SRR-extended early return
+5. `aa8aaa6` — B4: backfill script
+6. `abf3b28` — Merge `phase-24/proposal-autoclose` to master
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Backend pytest (full, 23 min) | 1313 → 1323 passed (+10 Phase 24 tests), 3 skipped, 0 failed |
+| Worker `--once` smoke on SQLite | PASS — clean boot, 0 proposals processed |
+| Email template render check | PASS — `Voting closed on 'Games Tonight?' / Result: passed (5-3)` |
+| File-count | 7 files / 1079 ins / 65 del |
+
+**Backfill verification on prod:** dry-run identified exactly the 9 expected proposals (7 legacy `demo`, 2 `gamenights`). Real run closed all 9: 8 passed, 1 failed (`Phase 7 Demo: Annual Team Offsite Destination`). Post-backfill `SELECT COUNT(*) FROM proposals WHERE status='voting' AND voting_end < NOW() AND is_demo=false` = 0. Original `voting_end` values preserved on the rows (`update_voting_end=False` on backfill). Worker tick after deploy: `processed 8 proposals` (17 - 9 backfilled = 8 active), no errors.
+
+### Pass-summary
+
+**Phase 24 closed the auto-close gap that had been silently broken since Phase 8.** Five commits, 10 new tests, one one-off backfill script. No migration. Worker is now closing proposals on time; backfill cleared the 9 stuck legacy ones. The fix is small (one new branch in `evaluate_proposal` + an emit helper) and the test surface is wide (10 cases across binary/approval/RCV/SRR-interaction). One incident-flavor watch-out: Phase 16 era model comment claimed "voting_end is computed at advance-time from voting_start + voting_days" — that claim was aspirational/false until Phase 25 actually wired it.
+
+---
+
+## Phase 25 — Polish Bundle (shipped 2026-05-13 after one revert + redeploy, master `6052f07`)
+
+Eight items bundled into one pass; two were load-bearing (duration overrides + uploads persistence); the rest were UX polish + a Diagnostic-A follow-on. **The initial deploy 502'd** on a Railway volume permission error in B3; reverted in ~30 seconds, fixed-forward in `phase-25-1/polish-bundle-redeploy`, redeployed clean.
+
+| Cluster | Description |
+|---|---|
+| **B1** | Duration override consumption at advance time. New helper `_compute_voting_end_at_advance(voting_start, body_voting_end, proposal, org)` with precedence: explicit `body.voting_end` (deprecation-logged) → `proposal.voting_days` → org default. `timedelta(days=float)` so 0.05 produces ~72 minutes. Raises 400 if no positive source. Both advance endpoints (`routes/proposals.py` legacy + `routes/organizations.py` org-scoped) call the helper. Frontend `handleAdvance` stops sending the legacy hardcoded `Date.now() + 7 * 86400000` literal. **Diagnostic-A found this was the root cause Z's 0.05-day voting window got "7 days" — the JS literal predated Phase 16 and was never updated.** |
+| **B2** | 0-day deliberation skip at create. When `effective_deliberation_days == 0`, proposal created directly in `voting` status with `deliberation_start = voting_start = now`, `voting_end = now + timedelta(days=voting_days)`. Single audit event (`draft → voting`, `trigger=zero_day_deliberation_skip`) instead of two-at-the-same-timestamp. Both create endpoints honor the skip. `proposal.entered_voting` notifications fire same as the advance flow. |
+| **B3** | File upload path env-driven. `UPLOAD_DIR` / `UPLOADS_BASE_DIR` env override; default `/data/uploads`. **Initial shipped without a writability fallback and crashed app startup with PermissionError because Railway volume mount was owned by root + Dockerfile drops privs to appuser.** Phase 25.1 fix restored the Phase 12.7 writability probe: if `/data` parent isn't writable, fall back to `backend/uploads` (ephemeral) with a startup warning. Volume mount ownership remains tracked for Phase 26. |
+| **B4** | No-op verification — Phase 16 already wired `_validate_duration_floors` at the PATCH handler (`routes/proposals.py:784`). |
+| **B5** | No-op verification — Phase 23.2 `40275f0` realigned the only STV-asserting test. Swept all `voting_method == 'stv' / 'rcv'` references; none stale. |
+| **F1** | "Create proposal" button direct nav. `?create=1` query param; `ProposalManagement.jsx` reads via `useSearchParams` at mount and initializes `showCreate=true`. Param stripped via `setSearchParams({replace:true})` on success/cancel so back/refresh doesn't re-pop the form. |
+| **F2** | Accent-color swatch defensive fix. Removed `disabled:opacity-50` from the `<input type="color">` swatch so the disabled state doesn't dim into a "primary-blue-looking" wash. (Phase 26 later identified the actual Chromium-renders-disabled-color-input-as-system-default root cause.) |
+| **F3** | Error state cleared on route change. `setError('')` at the top of `Delegations.jsx::load` and `ProposalDetail.jsx::fetchData` so a successful Retry click exits the "Not Found Try Again" wedge instead of leaving the error state intact. Other ErrorMessage callers (CommentThread, Members, RolePermissionsPage) were already correct. |
+| **B6** | 13 tests in `test_phase_25_polish_bundle.py`. |
+
+**Commits (final shape, post-redeploy):**
+
+1. `47a34c5` — B1: duration override at advance
+2. `54362aa` — B2: 0-day deliberation skip
+3. `b7afd30` — B3 (initial, hard-default `/data/uploads`)
+4. `7fcdc94` — F1: `?create=1` nav
+5. `c1a3a6c` — F2: opacity removal
+6. `ed2fb72` — F3: setError('') at top of load
+7. `b101f12` — B6: 13 tests
+8. `8fa4e6b` — Merge phase-25 to master (subsequently **reverted** in `ef2f41b`)
+9. `3029b99` — Phase 25.1 B3 redeploy fix: restore writability fallback
+10. `6052f07` — Merge phase-25-1 to master (final)
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Backend pytest (full) | 1323 → ~1336 passed (Phase 25 contributes +13 tests; one test count discrepancy from B3 test re-shape) |
+| `bash start.sh` worker smoke | PASS |
+| Frontend build | PASS — bundle `index-jh-fDtWF.js` |
+| File-count | 11 files / ~810 ins / ~52 del |
+
+**Incident — initial deploy 502:** the Phase 25 first merge `8fa4e6b` hit prod and crashed at app startup with `PermissionError: '/data/uploads/avatars'`. Railway volume `/data/uploads` is owned by root; Dockerfile drops privileges to `appuser`; `main.py:250 mkdir(parents=True, exist_ok=True)` failed; uvicorn workers couldn't import; service returned 502. Detected within seconds via post-push health check; reverted (`ef2f41b`) immediately. Phase 25.1 (`3029b99`) restored the writability fallback from Phase 12.7 (default still `/data/uploads`, falls back to `backend/uploads` on perm-check failure with a louder startup warning). Re-merged at `6052f07`. Total downtime: ~2-3 minutes. Volume mount ownership tracked as Phase 26 work.
+
+### Pass-summary
+
+**Phase 25 closed Z's duration-override pilot blocker + landed UX polish; recovered cleanly from a same-day 502.** Eight clusters merged in one bundle, then reverted-and-redeployed when B3's volume-mount permission assumption proved wrong. Final shape is a healthy combination: B1 makes per-proposal `voting_days` actually consumed at advance time (it was dead-on-arrival since Phase 16); B2 honors the "0 = skip" deliberation spec; B3 sets up the path for upload persistence (final fix in Phase 26 B1); F3 fixes a wedge pattern that will hit other pages too. The incident is a useful reminder that volume mount permissions are an ops contract, not just a code assumption.
+
+---
+
+## Phase 26 — Loose Ends Bundle (shipped 2026-05-13, master `a4918eb`)
+
+Four small items closing Phase 25's tech-debt and a couple of cross-pass nits surfaced through Z's browser verification. Most-impactful was B1 — the actual fix for the Phase 25.1 fallback, getting uploads to persist across redeploys.
+
+| Cluster | Description |
+|---|---|
+| **B1** | Railway volume permission via Dockerfile entrypoint. New `backend/entrypoint.sh` runs as root, `chown -R appuser:appuser /data/uploads` (idempotent — no-op when ownership matches), then `exec gosu appuser bash /app/start.sh`. Dockerfile adds `gosu` to the apt install, removes the `USER appuser` line, changes CMD to `./entrypoint.sh`. The brief root window only spans the chown; long-running code paths still run as appuser. SIGTERM propagates correctly via `exec` (replaces the bash process). |
+| **D1** | Topic name display sweep — `description` with fallback to `name`. Phase 25 C3 covered 6 surfaces; this sweep covers the remaining ~11 (Delegations, Delegates, DelegatePublic, DelegateApplicationsReview, Proposals, admin/ProposalManagement, admin/SubOrgProposals, admin/Topics confirm-dialog, DelegationNetworkGraph) + 2 backend serializers (`list_delegate_applications`, public-delegate-page topic name resolution). Admin-edit pages where `name` is the value being managed (admin/Topics list, admin/SubOrgTopics list, SetupWizard, Nav.jsx parent-name = org name) intentionally left as-is. CLAUDE.md frontend-conventions section gained a Topic display name rule. |
+| **D2** | DelegateModal `preselectedUser` prop. When set, modal skips search and renders the preselected user's ResultCard directly (fetched via `/api/users/search?q=<username>` exact-match for enrichment). `DelegatePublic.jsx` passes the prop derived from the page's `userObj`. "Choose someone else" link resets to search. `Delegations.jsx` callers unaffected. |
+| **F1** | Accent-color swatch real fix. Root cause: Chromium ignores the `value` attribute on disabled `<input type="color">` and paints a system-default rectangle. Phase 25 F2's opacity removal didn't help because the underlying value was being ignored entirely. Fix: when `autoDeriveAccent` is true, render a plain `<div style={{backgroundColor: accentColor}}>` instead of the disabled input. Divs paint backgroundColor reliably across browsers. |
+| **V1** | Z's Phase 24 fresh-proposal E2E verification — Z action, deferred. |
+| **V2** | Upload persistence verification post-B1 — Z action, deferred. |
+
+**Commits:**
+
+1. `754bfb8` — B1: Dockerfile entrypoint + gosu chown
+2. `79e695c` — D1: topic display sweep (12 files + CLAUDE.md convention)
+3. `3135804` — D2: DelegateModal preselectedUser prop
+4. `8ada02b` — F1: replace disabled color input with div swatch
+5. `a4918eb` — Merge phase-26 to master
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Smoke pytest (worker + adjacent) | 216 passed, 0 failed (~4:28) |
+| Frontend build | PASS — new bundle `index-BAfFX1rA.js` |
+| File-count | 16 files / ~315 ins / ~80 del |
+
+**B1 verified at deploy:** post-deploy Railway logs show `Mounting volume on: /var/lib/containers/.../vol_jef758407mw9cjm6 → Starting Container → … → Worker starting; check_interval=300s → stable_result tick: processed 9 proposals (snapshots written: 9) → Startup complete.` — **no "UPLOADS storage resolved to non-volume path" warning**. The chown landed; appuser can now write to `/data/uploads`. Uploads will persist across redeploys.
+
+### Pass-summary
+
+**Phase 26 closed the volume-permission ops gap and swept a long-standing display nit.** Four clusters, all small, all visible. B1 is the real fix for Phase 25.1's fallback — Z's profile picture and org logos will now persist across redeploys. D1 + the CLAUDE.md convention should keep the topic-name display issue from re-emerging on new pages. F1 finally identified the Chromium-disabled-color-input behavior that Phase 25 F2 had treated symptomatically.
+
+---
+
+## Phase 27 — Relevance-Weighted Delegation (shipped 2026-05-13, master `ff5c6da`)
+
+First headline feature pass on top of the Phase 23-26 correctness baseline: a second delegation resolution strategy that uses per-proposal topic relevance scores to determine which delegate's vote applies for binary proposals. The model layer was anticipated — `User.delegation_strategy`, `ProposalTopic.relevance`, `TopicPrecedence` all existed pre-Phase-27. This pass adds the resolver, dispatcher, migration, endpoint, frontend toggle, and auto-precedence-on-create.
+
+| Cluster | Description |
+|---|---|
+| **B1** | New pure function `find_vote_via_relevance_weighting_pure` in `delegation_engine.py`. Groups each topic's delegate vote by direction (yes/no/abstain), sums per-topic relevance scores, picks the direction with the highest total. Strict-precedence tiebreaker among tied directions. Helper `_resolve_delegate_ballot` extracts the direct-ballot-then-chain_behavior lookup so the relevance-weighted path matches existing semantics. Multi-option delegate ballots (`vote_value=None`) are skipped — ballot-merging across delegates is documented future work. |
+| **B2** | Dispatcher inside `resolve_vote_pure`. After the direct-ballot check, if `user.delegation_strategy == 'relevance_weighted'` AND `voting_method == 'binary'`, call the new resolver. Falls through to strict-precedence + global-fallback when the resolver returns None (no topic-specific delegation produced a vote). Approval and RCV/STV bypass the new path even when user is on relevance_weighted (documented limitation). `ProposalContext` gained `proposal_topic_relevances: dict[str, float]` and `user_strategies: dict[str, str]`; `_build_context` populates both. |
+| **B3** | Alembic migration `d4e3a91c5f0b` flips every existing `User.delegation_strategy = 'strict_precedence'` to `'relevance_weighted'`. Model default also flipped so new registrations start there. Reversible, idempotent. PG smoke pass. |
+| **B4** | `PATCH /api/users/me/delegation-strategy` endpoint. Validates `{strategy: 'strict_precedence' \| 'relevance_weighted'}`; 400 with enumerated allowed list on unknowns. No audit log (user preference like notification settings). |
+| **F1** | Delegation Strategy section on the Delegations page. Two radio buttons + explanatory copy ("By topic relevance" / "By strict priority"). Calls B4 endpoint, refreshes the user object via `AuthContext.refreshUser`. |
+| **F2** | Auto-create `TopicPrecedence` row at the bottom of the user's priority order when a delegation is created via `POST /api/orgs/{slug}/delegations/request`. Idempotent on re-delegation; skipped for global delegations. (Drag-and-drop reorder UI itself was already wired pre-Phase-27.) |
+| **F3** | Vote-detail explainability — **descoped**. Logged as Phase 29+ candidate; the dispatch explicitly allowed descope if >3-4h. |
+| **B5** | 17 tests in `test_phase_27_relevance_weighted.py` (target was 15). |
+
+**Commits:**
+
+1. `378e743` — B1+B2: resolver + dispatcher
+2. `27acbbb` — B3: migration + model default
+3. `a709151` — B4: PATCH endpoint
+4. `52c87a8` — F1+F2: strategy toggle + auto-precedence on POST /request
+5. `854e3d2` — B5: 17 tests
+6. `ff5c6da` — Merge phase-27 to master
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Backend pytest (full, 23 min) | 1344 → 1361 passed (+17), 3 skipped, 0 failed |
+| PG smoke (mode upgrade, prior `c7e8a3d419f5`) | PASS |
+| `bash start.sh` local boot | PASS — alembic stamps head at `d4e3a91c5f0b`, worker imports clean |
+| Frontend build | PASS — new bundle `index-BcrzXJmZ.js` |
+| File-count | 8 files / 1037 ins / 3 del |
+
+**Migration verified on prod after deploy:** Railway logs show `Running upgrade c7e8a3d419f5 -> d4e3a91c5f0b, Phase 27 default users to relevance_weighted strategy`. Prod DB SELECT: 237/237 users on `relevance_weighted`, 0 on `strict_precedence`. Alembic head = `d4e3a91c5f0b`. One transient 502 during the rolling restart between containers — recovered within 30s without intervention.
+
+### Pass-summary
+
+**Phase 27 ships the second delegation strategy with all 237 existing users migrated to the new default.** Binary proposals with per-topic relevance produce richer vote resolutions; degenerate cases (uniform/missing relevance) cleanly fall back to strict-precedence (the new resolver's tiebreaker IS strict-precedence). The dispatcher is purely additive — strict-precedence users take the existing code path unchanged. Architecture pays off: `ProposalContext`-based design made the feature drop in without touching the rest of the tally pipeline. F3 (explainability) descoped on purpose; Phase 28 onwards.
+
+---
+
+## Phase 28 — Delegation Table Consolidation + Modal Candidate List (shipped 2026-05-14, master `7659bab`)
+
+Z's post-Phase-27 browser verification surfaced two issues: the standalone "Topic Priority" section was confusing (separate from the Topic Delegations table that conceptually contains the same data), and pre-Phase-27 delegations didn't have corresponding `TopicPrecedence` rows so the priority list looked broken (3 delegations, 1 priority entry). Phase 28 merges the two into one table, backfills missing precedence rows, and replaces the modal's free-text search with a candidate list of eligible delegates when there's topic context.
+
+| Cluster | Description |
+|---|---|
+| **B1** | Auto-precedence on `PUT /api/orgs/{slug}/delegations` upsert. The legacy create endpoint now mirrors Phase 27 F2's auto-precedence pattern from `request_delegation`. Create-only (updates leave existing rows untouched); idempotent; globals skipped. |
+| **B2** | Auto-cleanup `TopicPrecedence` on `DELETE /api/orgs/{slug}/delegations/{topic}`. Deletes the matching (user_id, topic_id) row alongside the Delegation so the priority list stays in sync. Globals (`topic_id=None`) have no row to clean up. Gaps in priority sequence are tolerated; `set_topic_precedence` re-densifies on the next reorder. |
+| **B3** | Backfill migration `f3a8b25e90c7`. For every `(user_id, topic_id)` Delegation pair lacking a `TopicPrecedence` row, inserts one at the bottom of the user's existing order (max+1, or 0 if none). Python-loop implementation (SQLite-compatible); idempotent; downgrade is no-op. PG smoke pass. |
+| **F1** | Merge Topic Priority into the Topic Delegations table. Removed the standalone "Topic Priority" section entirely. Delegated rows show a drag handle (`⠿`) + small priority number (`1.`, `2.`, `3.`) and are wrapped in `@hello-pangea/dnd` Draggable/Droppable. Non-delegated rows render in a separate static `<tbody>` below with no handle or number. Desktop + mobile parallel. `handleDragEnd` operates on the `orderedTopicDels` useMemo (topicDels sorted by precedence). New help text under the table heading mentions both relevance-weighted tiebreaking and strict-priority semantics. |
+| **F2** | DelegateModal candidate-list mode. Three states: (1) preselect (Phase 26 D2 behavior); (2) candidate list — default when `topicId` is set, no preselect; (3) search — global flow or fallback. Candidate fetch: parallel requests for `/api/orgs/{slug}/delegates?topic_id=...` (public delegates) + `/api/orgs/{slug}/follows/following` (delegation-allowed filter) + `/api/users/search?q=&org_slug=...` (enriched org-user list). Filter the search results to the union of public-delegate IDs + delegation-allowed-followee IDs. Empty-state shows a prominent "Search for someone" button. `Don't see who you're looking for? Search by name` opens the search input; `← Back to suggestions` returns. Header copy adapts per state. |
+| **B4** | 9 backend tests in `test_phase_28_delegation_consolidation.py`. |
+
+**Commits:**
+
+1. `71f36d8` — B1+B2: auto-precedence on PUT + cleanup on revoke
+2. `b047243` — B3: backfill migration
+3. `c568afb` — F1: merge Topic Priority into table
+4. `6ca725c` — F2: DelegateModal candidate-list mode
+5. `9f156f7` — B4: 9 tests
+6. `7659bab` — Merge phase-28 to master
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Backend pytest (full, 23 min) | 1361 → 1370 passed (+9), 3 skipped, 0 failed |
+| PG smoke (mode upgrade, prior `d4e3a91c5f0b`) | PASS |
+| Frontend build | PASS — new bundle `index-D2Y-3ANW.js` |
+| File-count | 5 files / 944 ins / 94 del |
+
+**Backfill verified on prod:** alembic head = `f3a8b25e90c7`. Post-migration counts: 113 topic-scoped delegations, 119 precedence rows; **zero invariant violations** (no user has more delegations than precedence rows). The 6 surplus precedence rows are from pre-Phase-28 revokes — users with rows for topics they previously un-delegated. Harmless; cleared lazily on next reorder via `set_topic_precedence`'s wipe-and-rewrite. Top-3 by delegation count: 3 / 3 precedences each for two users, 3 / 6 for the third (legacy stale rows).
+
+### Pass-summary
+
+**Phase 28 makes the Delegations page coherent: one table is both the active-delegations list and the priority order; the Set Delegate modal surfaces actionable candidates instead of an empty search box.** The backfill closes a UX glitch where pre-Phase-27 delegations didn't show up in the priority list at all. B1 + B2 keep the precedence ↔ delegation invariant under future create/revoke ops without needing periodic maintenance. F2's candidate list is the highest-visibility user-facing change — Z's complaint that the modal asked them to search for someone they'd just clicked through from is now resolved across both the "preselect from delegate page" path (Phase 26 D2) and the "Set Delegate on a topic" path (Phase 28 F2).
+
+## Phase 29 — Multi-Option Relevance Delegation + Cedar Hollow Showcase (shipped 2026-05-16, master `<TBD>`)
+
+Two passes bundled. Pass 1 — Phase 27's relevance-weighted delegation extended to approval, RCV, and STV (binary was already shipped). Pass 2 — Cedar Hollow demo refresh: hide the other two demo orgs from the public listing, add 13 new public delegates, bump filler delegation density, wire branding + portraits, seed private delegations and follows. The two passes shipped together because the multi-option resolver activates immediately on demo proposals once the new delegates land — natural live-fire verification without test scaffolding.
+
+| Cluster | Description |
+|---|---|
+| **B1** | New `find_vote_via_relevance_for_multi_option_pure` in `delegation_engine.py`. Walks proposal topics in `(-relevance, precedence)` order; for the first topic where the user's delegation resolves, returns that delegate's ballot verbatim. No merging, no per-direction summing — picks one ballot. Dispatcher in `resolve_vote_pure` now branches on `voting_method` within the `relevance_weighted` strategy: binary uses Phase 27's summer, multi-option uses the new resolver, both fall through to `find_delegate_pure` + global on failure. |
+| **B2** | 8 pure-function tests in `test_phase_29_multi_option_relevance.py`. Covers highest-relevance pick (approval + RCV), strict-precedence tiebreaker on equal relevance (both orderings), iteration past an unresolved high-relevance delegate to the next topic, fallthrough to global when no topic-specific delegation exists, and dispatcher routing for both strategies. |
+| **F1** | "By topic relevance" copy on `Delegations.jsx` updated to describe both paths (binary: weighted summing; approval/RCV/STV: highest-relevance delegate's ballot verbatim). Shipped in the same merge as B1 so the help text never lags the code. |
+| **C1** | `OrgBible.is_demo` field (back-compat misnamed — it controls /demo listing visibility, NOT the wipe boundary). Union + Coalition bibles flipped to `is_demo=False`. Seed pipeline writes `Organization.settings['hidden_from_demo_listing']`; `Organization.is_demo` stays True for every bible-seeded org so the daily wipe still catches all three. `/api/orgs/demo` filters the hidden flag out. No migration — settings is existing JSON. |
+| **C2** | 13 new public delegates authored inline (per spec D12) in the existing "earnest with deadpan undertones" voice, suburban mid-Atlantic/Midwest names. Each has Member entry + DelegatePage (intro, 1-2 position statements, 3-5 vote rationales on existing proposals). Coverage spread across 5 of 6 topics (Pool & Recreation, Budget, Bylaws & Procedure, Cedar Court Issues, Long-Term Planning). Public delegate count: 5 → 18. |
+| **C3** | Filler delegation density `0.30 → 0.70` in `filler_generator.py`. Density bump applies to all three orgs but only matters for Cedar Hollow since C1 hid the others. With ~45 fillers, expected ~30 carrying a delegation (up from ~13). |
+| **C4** | `FollowSeed` + `PrivateDelegationSeed` dataclasses in `schema.py`; `follows` + `private_delegations` fields on OrgBible. HOA bible declares 12 FOLLOWS (6 delegation_allowed, 3 view_only, 3 pending) + 6 PRIVATE_DELEGATIONS. New `_seed_relationships` helper writes FollowRequest + FollowRelationship + Delegation + TopicPrecedence rows; validates the follow→delegation linkage. |
+| **C5** | `OrgBible.brand_color` field + HOA value `#3B5A3B`. Seed pipeline writes to `Organization.settings['branding']['primary_color']`, consumed by `BrandingThemeApplier` (Phase 12.7 path, not the top-level `Organization.brand_color` column from Phase 23 Amendment F). No migration. |
+| **C6** | 21 portraits at `frontend/public/demo_assets/portraits/<user_id>.jpg` (Z-provided). Seed pipeline writes `User.avatar_url` for HOA bible members only; cross-org users keep the HOA portrait. |
+| **Wipe fix** | `TopicPrecedence` rows referenced by demo-org topics MUST be wiped before the bulk `Topic` delete or PG raises `ForeignKeyViolation` (same shape as Phase 23.2 B7's ProposalOption/ProposalTopic fix). Phase 29 C4 is the first seed code that creates `TopicPrecedence` rows, surfacing the latent gap. |
+
+**Commits:**
+
+1. `02b1f97` — B1: multi-option resolver + dispatcher
+2. `b48f88f` — B2: 8 pure-function tests
+3. `fcab1c5` — F1: strategy toggle copy
+4. `0604872` — C1: hide Local 4021 + Coalition from /demo
+5. `966af07` — C5+C2: brand color + 13 new public delegates
+6. `b5caa97` — C3: filler density 30 → 70
+7. `0b58b10` — C4+C6: private delegations, follows, portraits + wipe fix
+8. `<TBD>` — Merge phase-29 to master
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Backend pytest (curated, 5 suites x 92 tests) | PASS — phase 23 reset, 23.2 metadata, 27, 28, 29 all green |
+| Backend pytest (full) | TBD — running |
+| PG smoke | Not required (no migration; settings JSON only) |
+| Frontend build | TBD — F1 copy + portrait static assets |
+| File-count | TBD |
+
+### Pass-summary
+
+**Phase 29 closes the relevance-weighted strategy across all four voting methods and turns Cedar Hollow into the showcase org Z wanted.** The B1/B2 resolver is small but completes the Phase 27 design — `relevance_weighted` users on approval / RCV / STV proposals now get the highest-relevance delegate's ballot verbatim instead of falling through to strict-precedence. The Cedar Hollow refresh trades breadth (3 demo orgs) for depth (1 dense org): 18 public delegates across 6 topics, ~70% filler delegation density, a working private-delegation showcase (Ravi → Linda on Budget backed by an approved delegation_allowed follow), pending follow requests so notification feeds show realistic activity, and 21 AI-illustration portraits matched to characters. The latent `TopicPrecedence`-wipe FK gap (would have bitten Phase 28's auto-precedence rows the next time prod ran a demo reset, but didn't manifest because no demo bible was creating those rows until Phase 29 C4) is patched as a side effect.

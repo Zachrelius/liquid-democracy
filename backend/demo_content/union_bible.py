@@ -1082,6 +1082,10 @@ LOCAL_4021_BIBLE = OrgBible(
     approval_tie_resolution='broader_approval_base',
     rcv_tie_resolution='earliest_decisive_vote',
     quorum_threshold_default=0.35,
+    # Phase 29 C1: hidden from /demo while Cedar Hollow is the showcase.
+    # Cross-org users (Marcus, Dana, Janet) still seed with their union
+    # membership so their dual identity remains intact.
+    is_demo=False,
     members=MEMBERS,
     delegate_pages=DELEGATE_PAGES,
     proposals=PROPOSALS,

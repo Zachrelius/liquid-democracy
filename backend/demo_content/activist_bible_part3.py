@@ -309,6 +309,8 @@ COALITION_BIBLE = OrgBible(
     approval_tie_resolution='expand_winners',
     rcv_tie_resolution='earliest_decisive_vote',
     quorum_threshold_default=0.35,
+    # Phase 29 C1: hidden from /demo while Cedar Hollow is the showcase.
+    is_demo=False,
     members=MEMBERS,
     delegate_pages=DELEGATE_PAGES,
     proposals=PROPOSALS,

@@ -339,6 +339,74 @@ def find_vote_via_relevance_weighting_pure(
     )
 
 
+# ---------------------------------------------------------------------------
+# Phase 29 — multi-option relevance-weighted delegation resolver
+# ---------------------------------------------------------------------------
+
+def find_vote_via_relevance_for_multi_option_pure(
+    user_id: str,
+    proposal_topics: list[str],
+    proposal_topic_relevances: dict[str, float],
+    user_precedences: dict[str, int],
+    user_delegations: dict[Optional[str], "DelegationData"],
+    ctx: ProposalContext,
+    _visited: Optional[set[str]] = None,
+) -> Optional[BallotResult]:
+    """Phase 29 — relevance-first delegate selection for multi-option methods.
+
+    Walks proposal topics in ``(-relevance, precedence)`` order. For each
+    topic the user has a delegation on, attempts to resolve that
+    delegate's ballot. Returns the first ballot that resolves successfully
+    (any non-None BallotResult from ``_resolve_delegate_ballot``).
+
+    Differs from ``find_vote_via_relevance_weighting_pure`` (Phase 27,
+    binary): that function sums relevance per vote direction across
+    delegates and picks the highest-summed direction. Approval and RCV
+    ballots aren't trivially comparable across delegates (two approval
+    lists aren't "equal" or "different" the way yes/no/abstain are), so
+    Phase 29's multi-option path picks ONE delegate's ballot — the
+    delegate on the highest-relevance topic — rather than attempting to
+    merge ballots. No merging, no summing.
+
+    Iteration semantics: if the highest-relevance topic's delegate
+    didn't vote (or their chain didn't resolve), the function continues
+    to the next-highest-relevance topic. Returns None only when ALL
+    topic-specific delegations failed to resolve — caller's strict-
+    precedence path then handles the global fallback.
+
+    Tiebreaker: when two topics have equal relevance, the topic with
+    lower precedence priority (higher in the user's ordering) is tried
+    first.
+
+    Pure function. Recursion via _visited; method-agnostic — returns
+    whatever ballot the delegate cast (approval list, ranking, or
+    vote_value).
+    """
+    if _visited is None:
+        _visited = set()
+
+    sorted_topics = sorted(
+        proposal_topics,
+        key=lambda t: (
+            -float(proposal_topic_relevances.get(t, 1.0)),
+            user_precedences.get(t, 9999),
+        ),
+    )
+    for topic_id in sorted_topics:
+        d = user_delegations.get(topic_id)
+        if d is None:
+            continue
+        delegate_result = _resolve_delegate_ballot(
+            delegate_id=d.delegate_id,
+            chain_behavior=d.chain_behavior,
+            ctx=ctx,
+            _visited=_visited,
+        )
+        if delegate_result is not None:
+            return delegate_result
+    return None
+
+
 def _resolve_delegate_ballot(
     delegate_id: str,
     chain_behavior: str,
@@ -431,28 +499,40 @@ def resolve_vote_pure(
     user_delegations = ctx.all_delegations.get(user_id, {})
     user_precedences = ctx.all_precedences.get(user_id, {})
 
-    # Phase 27 — strategy dispatcher. Binary-only relevance-weighted path
-    # activates when the user has opted in. Approval/RCV stay on strict-
-    # precedence regardless of strategy choice (documented limitation;
-    # ballot-merging semantics are out of scope for this pass).
+    # Phase 27 / Phase 29 — strategy dispatcher. relevance_weighted now
+    # covers all voting methods: binary uses Phase 27's direction-summing
+    # resolver; approval/RCV/STV use Phase 29's highest-relevance-ballot
+    # resolver (no ballot merging across delegates — that's future work).
+    # Both paths fall through to the strict-precedence + global-fallback
+    # path below when no topic-specific delegation produced a ballot.
     user_strategy = ctx.user_strategies.get(user_id, "strict_precedence")
-    if user_strategy == "relevance_weighted" and ctx.voting_method == "binary":
-        rw_result = find_vote_via_relevance_weighting_pure(
-            user_id=user_id,
-            proposal_topics=ctx.proposal_topics,
-            proposal_topic_relevances=ctx.proposal_topic_relevances,
-            user_precedences=user_precedences,
-            user_delegations=user_delegations,
-            ctx=ctx,
-            _visited=_visited,
-        )
+    if user_strategy == "relevance_weighted":
+        if ctx.voting_method == "binary":
+            rw_result = find_vote_via_relevance_weighting_pure(
+                user_id=user_id,
+                proposal_topics=ctx.proposal_topics,
+                proposal_topic_relevances=ctx.proposal_topic_relevances,
+                user_precedences=user_precedences,
+                user_delegations=user_delegations,
+                ctx=ctx,
+                _visited=_visited,
+            )
+        else:
+            # Phase 29 — multi-option (approval / ranked_choice / STV).
+            rw_result = find_vote_via_relevance_for_multi_option_pure(
+                user_id=user_id,
+                proposal_topics=ctx.proposal_topics,
+                proposal_topic_relevances=ctx.proposal_topic_relevances,
+                user_precedences=user_precedences,
+                user_delegations=user_delegations,
+                ctx=ctx,
+                _visited=_visited,
+            )
         if rw_result is not None:
             return rw_result
         # Fall through to the strict-precedence + global-fallback path
         # below. The relevance-weighted resolver returns None when no
-        # topic-specific delegation produced a vote — handing off to
-        # the legacy global-delegation fallback (D3 in spec) keeps the
-        # existing behavior for that edge case unchanged.
+        # topic-specific delegation produced a ballot.
 
     # 2. Find delegate (strict-precedence + global fallback)
     delegation = find_delegate_pure(

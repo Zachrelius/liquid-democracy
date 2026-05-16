@@ -316,6 +316,24 @@ def _wipe_demo_orgs(db: Session, demo_orgs: list[models.Organization]) -> int:
     )
     rows_wiped += n_odp or 0
 
+    # Phase 29 C4: explicit delete of TopicPrecedence BEFORE Topic.
+    # Same FK-violation shape as Phase 23.2 B7's ProposalOption/Topic
+    # fix — TopicPrecedence.topic_id FKs to topics.id without ON DELETE
+    # CASCADE, so the bulk Topic delete below would otherwise FK-fail
+    # on PG. Filter via join on Topic.org_id since TopicPrecedence has
+    # no org_id of its own.
+    org_topic_ids = [
+        t.id for t in db.query(models.Topic)
+        .filter(models.Topic.org_id.in_(org_ids)).all()
+    ]
+    if org_topic_ids:
+        n_tprec = (
+            db.query(models.TopicPrecedence)
+            .filter(models.TopicPrecedence.topic_id.in_(org_topic_ids))
+            .delete(synchronize_session=False)
+        )
+        rows_wiped += n_tprec or 0
+
     # Topics (will cascade ProposalTopic; but those rows are gone already
     # with the proposals).
     n_topics = (

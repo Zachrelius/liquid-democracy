@@ -386,6 +386,145 @@ def _ensure_membership(
     return m
 
 
+def _seed_relationships(
+    db: Session,
+    bible: OrgBible,
+    org,
+    bible_uid_to_user: dict,
+    topics_by_name: dict,
+    now: datetime,
+) -> None:
+    """Phase 29 C4 — seed follows + private delegations from the bible.
+
+    Follows produce FollowRequest rows (and FollowRelationship rows for
+    approved entries). Private delegations require a matching
+    delegation_allowed follow above (or a public_accepting DelegateProfile
+    on the topic); entries without a path are logged and skipped.
+
+    Each Delegation also gets a TopicPrecedence row per Phase 28 B1.
+    Priority assignment uses 100 + per-delegator index so concurrent
+    delegations sort deterministically without colliding on the unique
+    (user_id, topic_id) key.
+    """
+    import models
+
+    org_id = org.id
+
+    # ---- Follows -------------------------------------------------------
+    for fs in bible.follows:
+        follower = bible_uid_to_user.get(fs.follower_user_id)
+        followed = bible_uid_to_user.get(fs.followed_user_id)
+        if follower is None or followed is None:
+            log.warning(
+                "seed_pipeline._seed_relationships: skipping follow "
+                "(%s → %s) — unknown bible user_id",
+                fs.follower_user_id, fs.followed_user_id,
+            )
+            continue
+        if fs.status == "approved" and fs.permission_level is None:
+            log.warning(
+                "seed_pipeline._seed_relationships: approved follow "
+                "(%s → %s) missing permission_level; skipping",
+                fs.follower_user_id, fs.followed_user_id,
+            )
+            continue
+
+        req = models.FollowRequest(
+            requester_id=follower.id,
+            target_id=followed.id,
+            org_id=org_id,
+            status=fs.status,
+            permission_level=fs.permission_level,
+            requested_at=now,
+            responded_at=now if fs.status == "approved" else None,
+        )
+        db.add(req)
+
+        if fs.status == "approved":
+            rel = models.FollowRelationship(
+                follower_id=follower.id,
+                followed_id=followed.id,
+                org_id=org_id,
+                permission_level=fs.permission_level,
+                created_at=now,
+            )
+            db.add(rel)
+    db.flush()
+
+    # ---- Private delegations ------------------------------------------
+    # Track per-delegator topic-precedence priority counter so new
+    # private-delegation rows assign monotonically-increasing priorities
+    # that won't collide with whatever Phase 28's auto-precedence logic
+    # will create later for the public delegations.
+    precedence_counters: dict[str, int] = {}
+
+    for pds in bible.private_delegations:
+        delegator = bible_uid_to_user.get(pds.delegator_user_id)
+        delegate = bible_uid_to_user.get(pds.delegate_user_id)
+        if delegator is None or delegate is None:
+            log.warning(
+                "seed_pipeline._seed_relationships: skipping private "
+                "delegation %s → %s — unknown bible user_id",
+                pds.delegator_user_id, pds.delegate_user_id,
+            )
+            continue
+
+        # topics_by_name is keyed by the bible's unscoped topic name
+        # (e.g. "Budget"), not the slug-scoped DB name.
+        topic = topics_by_name.get(pds.topic)
+        if topic is None:
+            log.warning(
+                "seed_pipeline._seed_relationships: skipping private "
+                "delegation %s → %s on topic %r — topic not seeded",
+                pds.delegator_user_id, pds.delegate_user_id, pds.topic,
+            )
+            continue
+
+        # Verify a matching delegation_allowed follow exists in THIS
+        # bible's follows list. Cheap O(N) over the FOLLOWS list; this
+        # is seed-time, not request-time.
+        has_follow = any(
+            fs.follower_user_id == pds.delegator_user_id
+            and fs.followed_user_id == pds.delegate_user_id
+            and fs.status == "approved"
+            and fs.permission_level == "delegation_allowed"
+            for fs in bible.follows
+        )
+        if not has_follow:
+            log.warning(
+                "seed_pipeline._seed_relationships: skipping private "
+                "delegation %s → %s — no backing delegation_allowed follow",
+                pds.delegator_user_id, pds.delegate_user_id,
+            )
+            continue
+
+        deleg = models.Delegation(
+            delegator_id=delegator.id,
+            delegate_id=delegate.id,
+            org_id=org_id,
+            topic_id=topic.id,
+            chain_behavior=pds.chain_behavior,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(deleg)
+
+        # Phase 28 B1 — every delegation gets a TopicPrecedence row.
+        next_pri = precedence_counters.get(delegator.id, 100)
+        precedence_counters[delegator.id] = next_pri + 1
+        existing = db.query(models.TopicPrecedence).filter(
+            models.TopicPrecedence.user_id == delegator.id,
+            models.TopicPrecedence.topic_id == topic.id,
+        ).first()
+        if existing is None:
+            db.add(models.TopicPrecedence(
+                user_id=delegator.id,
+                topic_id=topic.id,
+                priority=next_pri,
+            ))
+    db.flush()
+
+
 # =============================================================================
 # Main orchestrator
 # =============================================================================
@@ -426,6 +565,10 @@ def seed_org_from_bible(
     org = db.query(models.Organization).filter(
         models.Organization.slug == bible.slug,
     ).first()
+    # ``org.is_demo`` is the wipe/seed boundary — must stay True for any
+    # bible-seeded org so the daily reset cycle keeps catching it. The
+    # Phase 29 C1 "hide from /demo listing" semantic is layered on top via
+    # ``settings['hidden_from_demo_listing']`` (set below).
     if org is None:
         org = models.Organization(
             slug=bible.slug,
@@ -442,6 +585,27 @@ def seed_org_from_bible(
         org.description = bible.charter
         org.is_demo = True
         org.is_demo_resetting = False
+
+    # Phase 29 C1 + C5: bible-controlled cosmetics. Both go through
+    # Organization.settings so no schema migration is needed.
+    settings = dict(org.settings or {})
+
+    # C1 — hide from /demo public listing without breaking the seed/wipe
+    # cycle. The bible field ``is_demo`` is misnamed for back-compat —
+    # despite the name it controls listing visibility, not the wipe
+    # boundary (which is org.is_demo).
+    bible_listed = getattr(bible, "is_demo", True)
+    settings["hidden_from_demo_listing"] = (not bible_listed)
+
+    # C5 — brand color → user-facing branding slot consumed by
+    # BrandingThemeApplier (Phase 12.7). None leaves branding untouched.
+    brand_color = getattr(bible, "brand_color", None)
+    if brand_color:
+        branding = dict(settings.get("branding") or {})
+        branding["primary_color"] = brand_color
+        settings["branding"] = branding
+
+    org.settings = settings
 
     org.governance_type = config.get("governance_type")
     org.display_order = config.get("display_order")
@@ -461,6 +625,14 @@ def seed_org_from_bible(
         underlying = _underlying_username(m.user_id)
         user = _ensure_user(db, underlying, m.display_name)
         bible_uid_to_user[m.user_id] = user
+
+        # Phase 29 C6 — wire portrait. Only HOA bible carries portraits;
+        # files live at ``frontend/public/demo_assets/portraits/<uid>.jpg``
+        # and serve from ``/demo_assets/portraits/<uid>.jpg`` at runtime.
+        # Other bibles (Local 4021, Coalition) leave avatar_url untouched
+        # so cross-org users keep the HOA portrait the HOA seed assigned.
+        if bible.slug == "demo-cedar-hollow":
+            user.avatar_url = f"/demo_assets/portraits/{m.user_id}.jpg"
 
         # Phase 23.2 B2.2 — look up the per-org Role that matches this
         # member's bible-declared platform_role. Cross-org users (Marcus,
@@ -585,6 +757,20 @@ def seed_org_from_bible(
                     dp_row.public_accepting_approved_at = now
                 db.add(dp_row)
                 db.flush()
+
+    # ---- 5.5 Phase 29 C4 — follows + private delegations -----------------
+    # Named-only relationships. Each FollowSeed becomes a FollowRequest
+    # row (status/permission per the seed); approved ones additionally
+    # produce a FollowRelationship. Each PrivateDelegationSeed becomes
+    # a Delegation row + the matching TopicPrecedence row (Phase 28 B1).
+    _seed_relationships(
+        db=db,
+        bible=bible,
+        org=org,
+        bible_uid_to_user=bible_uid_to_user,
+        topics_by_name=topics_by_name,
+        now=now,
+    )
 
     # ---- 6. Proposals (PROPOSALS + DRAFTS) -------------------------------
     proposals_by_bible_id: dict[str, "models.Proposal"] = {}

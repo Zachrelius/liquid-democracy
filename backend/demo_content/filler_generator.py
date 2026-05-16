@@ -130,7 +130,11 @@ def generate_filler_members(
         used_usernames.add(username)
 
         delegates_to: Optional[tuple[str, str]] = None
-        if delegate_pool and rng.random() < 0.30:
+        # Phase 29 C3: bumped from 0.30 → 0.70 so Cedar Hollow's
+        # delegation graph reads as dense in the showcase. ~70%
+        # filler participation lands roughly 30 filler delegations
+        # across the ~45-filler pool.
+        if delegate_pool and rng.random() < 0.70:
             delegates_to = rng.choice(delegate_pool)
 
         fillers.append(FillerMember(

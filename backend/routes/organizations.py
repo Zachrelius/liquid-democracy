@@ -977,6 +977,14 @@ def get_demo_directory(
         )
         .all()
     )
+    # Phase 29 C1: filter out orgs flagged as hidden from the public demo
+    # listing in their bible. ``org.is_demo`` stays True (the daily-reset
+    # wipe boundary); the listing-visibility flag lives in settings JSON
+    # so no migration is required.
+    orgs = [
+        o for o in orgs
+        if not (o.settings or {}).get("hidden_from_demo_listing")
+    ]
 
     cards: list[DemoOrgCardOut] = []
     for org in orgs:

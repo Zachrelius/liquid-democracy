@@ -125,6 +125,34 @@ class NotificationFeed:
 
 
 @dataclass
+class FollowSeed:
+    """Phase 29 C4 — declarative follow relationship for the seed pipeline.
+
+    follower → followed within a specific org. ``permission_level`` is
+    optional only for ``status='pending'`` rows. ``status='approved'``
+    rows MUST set permission_level (the seed helper rejects otherwise).
+    """
+    follower_user_id: str
+    followed_user_id: str
+    status: Literal['pending', 'approved']
+    permission_level: Optional[Literal['view_only', 'delegation_allowed']] = None
+
+
+@dataclass
+class PrivateDelegationSeed:
+    """Phase 29 C4 — declarative private delegation for the seed pipeline.
+
+    The delegator must have an ``approved`` follow with permission_level
+    ``delegation_allowed`` to the delegate (or the seed helper logs and
+    skips the entry — same pattern as the topic-name resolver).
+    """
+    delegator_user_id: str
+    delegate_user_id: str
+    topic: str
+    chain_behavior: Literal['accept_sub', 'revert_direct', 'abstain'] = 'accept_sub'
+
+
+@dataclass
 class OrgBible:
     slug: str
     display_name: str
@@ -136,12 +164,30 @@ class OrgBible:
     approval_tie_resolution: str = ''
     rcv_tie_resolution: str = ''
     quorum_threshold_default: float = 0.35          # 35% for non-financial proposals
+    # Phase 29 C1: when False, the org still seeds (so cross-org users keep
+    # their second membership and wipe/reset still validates the pipeline)
+    # but is hidden from the /demo public listing. The flag is misnamed for
+    # back-compat — despite the name it does NOT control Organization.is_demo
+    # (the wipe boundary stays True for every bible-seeded org). The seed
+    # pipeline writes the listing-visibility flag into
+    # ``Organization.settings['hidden_from_demo_listing']`` so no schema
+    # migration is required. Default True for back-compat.
+    is_demo: bool = True
+    # Phase 29 C5: hex color (e.g. "#3B5A3B") written to
+    # Organization.settings['branding']['primary_color'] at seed time. None
+    # leaves branding untouched.
+    brand_color: Optional[str] = None
     members: list[Member] = field(default_factory=list)
     delegate_pages: list[DelegatePage] = field(default_factory=list)
     proposals: list[Proposal] = field(default_factory=list)
     drafts: list[Proposal] = field(default_factory=list)
     comments: list[Comment] = field(default_factory=list)
     notification_feeds: list[NotificationFeed] = field(default_factory=list)
+    # Phase 29 C4 — seed-time follow + private-delegation declarations.
+    # Empty defaults keep the existing bibles unchanged; only HOA
+    # populates these in Phase 29.
+    follows: list[FollowSeed] = field(default_factory=list)
+    private_delegations: list[PrivateDelegationSeed] = field(default_factory=list)
 
 
 # =============================================================================
@@ -208,6 +254,8 @@ __all__ = [
     'Proposal',
     'NotificationEvent',
     'NotificationFeed',
+    'FollowSeed',
+    'PrivateDelegationSeed',
     'OrgBible',
     # Trajectory dataclasses
     'Waypoint',
