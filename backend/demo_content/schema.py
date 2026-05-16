@@ -125,6 +125,34 @@ class NotificationFeed:
 
 
 @dataclass
+class FollowSeed:
+    """Phase 29 C4 — declarative follow relationship for the seed pipeline.
+
+    follower → followed within a specific org. ``permission_level`` is
+    optional only for ``status='pending'`` rows. ``status='approved'``
+    rows MUST set permission_level (the seed helper rejects otherwise).
+    """
+    follower_user_id: str
+    followed_user_id: str
+    status: Literal['pending', 'approved']
+    permission_level: Optional[Literal['view_only', 'delegation_allowed']] = None
+
+
+@dataclass
+class PrivateDelegationSeed:
+    """Phase 29 C4 — declarative private delegation for the seed pipeline.
+
+    The delegator must have an ``approved`` follow with permission_level
+    ``delegation_allowed`` to the delegate (or the seed helper logs and
+    skips the entry — same pattern as the topic-name resolver).
+    """
+    delegator_user_id: str
+    delegate_user_id: str
+    topic: str
+    chain_behavior: Literal['accept_sub', 'revert_direct', 'abstain'] = 'accept_sub'
+
+
+@dataclass
 class OrgBible:
     slug: str
     display_name: str
@@ -155,6 +183,11 @@ class OrgBible:
     drafts: list[Proposal] = field(default_factory=list)
     comments: list[Comment] = field(default_factory=list)
     notification_feeds: list[NotificationFeed] = field(default_factory=list)
+    # Phase 29 C4 — seed-time follow + private-delegation declarations.
+    # Empty defaults keep the existing bibles unchanged; only HOA
+    # populates these in Phase 29.
+    follows: list[FollowSeed] = field(default_factory=list)
+    private_delegations: list[PrivateDelegationSeed] = field(default_factory=list)
 
 
 # =============================================================================
@@ -221,6 +254,8 @@ __all__ = [
     'Proposal',
     'NotificationEvent',
     'NotificationFeed',
+    'FollowSeed',
+    'PrivateDelegationSeed',
     'OrgBible',
     # Trajectory dataclasses
     'Waypoint',

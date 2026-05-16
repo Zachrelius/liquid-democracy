@@ -25,6 +25,8 @@ from .schema import (
     Proposal,
     NotificationEvent,
     NotificationFeed,
+    FollowSeed,
+    PrivateDelegationSeed,
     OrgBible,
 )
 
@@ -1633,6 +1635,46 @@ NOTIFICATION_FEEDS = [
 
 
 # -----------------------------------------------------------------------------
+# Phase 29 C4 — Follows + private delegations
+# -----------------------------------------------------------------------------
+# Mix of approved-with-permission, view-only, and pending. The seed
+# pipeline writes FollowRequest rows for all entries and additionally
+# creates FollowRelationship rows for approved entries. Private
+# delegations below require a delegation_allowed follow to the same
+# delegate (or are skipped with a warning).
+
+FOLLOWS = [
+    # Approved, delegation_allowed — backing private delegations below.
+    FollowSeed('hoa_ravi', 'hoa_linda', 'approved', 'delegation_allowed'),
+    FollowSeed('hoa_patty', 'hoa_don', 'approved', 'delegation_allowed'),
+    FollowSeed('hoa_helen', 'hoa_marisol', 'approved', 'delegation_allowed'),
+    FollowSeed('hoa_yolanda', 'hoa_karen', 'approved', 'delegation_allowed'),
+    FollowSeed('hoa_diane', 'hoa_linda', 'approved', 'delegation_allowed'),
+    FollowSeed('hoa_hank', 'hoa_frank', 'approved', 'delegation_allowed'),
+
+    # Approved, view_only — read access without delegation rights.
+    FollowSeed('hoa_tomas', 'hoa_marcus', 'approved', 'view_only'),
+    FollowSeed('hoa_carl', 'hoa_frank', 'approved', 'view_only'),
+    FollowSeed('hoa_ed', 'hoa_wally', 'approved', 'view_only'),
+
+    # Pending — visible as a notification to the target.
+    FollowSeed('hoa_ravi', 'hoa_brenda', 'pending', None),
+    FollowSeed('hoa_bev', 'hoa_maureen', 'pending', None),
+    FollowSeed('hoa_ron', 'hoa_linda', 'pending', None),
+]
+
+PRIVATE_DELEGATIONS = [
+    # Each entry must be backed by a delegation_allowed follow above.
+    PrivateDelegationSeed('hoa_ravi', 'hoa_linda', 'Budget'),
+    PrivateDelegationSeed('hoa_patty', 'hoa_don', 'Budget'),
+    PrivateDelegationSeed('hoa_helen', 'hoa_marisol', 'Pool & Recreation'),
+    PrivateDelegationSeed('hoa_yolanda', 'hoa_karen', 'Cedar Court Issues'),
+    PrivateDelegationSeed('hoa_diane', 'hoa_linda', 'Budget'),
+    PrivateDelegationSeed('hoa_hank', 'hoa_frank', 'Long-Term Planning'),
+]
+
+
+# -----------------------------------------------------------------------------
 # OrgBible assembly
 # -----------------------------------------------------------------------------
 
@@ -1657,6 +1699,8 @@ HOA_BIBLE = OrgBible(
     drafts=DRAFTS,
     comments=COMMENTS,
     notification_feeds=NOTIFICATION_FEEDS,
+    follows=FOLLOWS,
+    private_delegations=PRIVATE_DELEGATIONS,
 )
 
 
