@@ -153,6 +153,28 @@ class PrivateDelegationSeed:
 
 
 @dataclass
+class PersonaDelegationSpec:
+    """Phase 29.1 — declarative delegation pattern for a quick-login persona.
+
+    Encodes the persona's delegation_strategy, their topic-scoped
+    delegations, and their topic_precedence ordering. The seed pipeline
+    validates that every delegated topic also appears in
+    ``topic_precedence`` (lower index = higher priority) — strict
+    enforcement, not warning, catches content-authoring mistakes at seed
+    time rather than as silent runtime bugs.
+
+    Don's "no delegations" case is represented as empty lists for both
+    ``delegations`` and ``topic_precedence`` plus ``delegation_strategy
+    = 'strict_precedence'``; that's the canonical "vote your own
+    conscience" pattern, not a bug.
+    """
+    delegator_user_id: str
+    delegation_strategy: Literal['relevance_weighted', 'strict_precedence']
+    delegations: list[tuple[str, str]] = field(default_factory=list)
+    topic_precedence: list[str] = field(default_factory=list)
+
+
+@dataclass
 class OrgBible:
     slug: str
     display_name: str
@@ -177,6 +199,11 @@ class OrgBible:
     # Organization.settings['branding']['primary_color'] at seed time. None
     # leaves branding untouched.
     brand_color: Optional[str] = None
+    # Phase 29.1 B3: root-relative path (e.g. "/demo_assets/cedar_hollow_logo.jpg")
+    # written to Organization.settings['branding']['logo_url'] at seed time.
+    # None leaves logo_url untouched. Frontend rendering of the value is
+    # gated by B3.3's investigation.
+    logo_path: Optional[str] = None
     members: list[Member] = field(default_factory=list)
     delegate_pages: list[DelegatePage] = field(default_factory=list)
     proposals: list[Proposal] = field(default_factory=list)
@@ -188,6 +215,11 @@ class OrgBible:
     # populates these in Phase 29.
     follows: list[FollowSeed] = field(default_factory=list)
     private_delegations: list[PrivateDelegationSeed] = field(default_factory=list)
+    # Phase 29.1 B1 — quick-login persona delegations + per-user
+    # delegation_strategy + topic precedence orderings. Validation in the
+    # seed helper is strict: every delegated topic must also appear in
+    # the matching topic_precedence list.
+    persona_delegations: list[PersonaDelegationSpec] = field(default_factory=list)
 
 
 # =============================================================================
@@ -256,6 +288,7 @@ __all__ = [
     'NotificationFeed',
     'FollowSeed',
     'PrivateDelegationSeed',
+    'PersonaDelegationSpec',
     'OrgBible',
     # Trajectory dataclasses
     'Waypoint',

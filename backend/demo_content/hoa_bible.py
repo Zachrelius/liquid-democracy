@@ -27,6 +27,7 @@ from .schema import (
     NotificationFeed,
     FollowSeed,
     PrivateDelegationSeed,
+    PersonaDelegationSpec,
     OrgBible,
 )
 
@@ -997,7 +998,11 @@ DELEGATE_PAGES = [
         ),
         topics=[
             TopicVisibility('Bylaws & Procedure', 'public_accepting'),
-            TopicVisibility('Elections', 'public'),
+            # Phase 29.1 — flipped from 'public' to 'public_accepting' so
+            # the Elections topic has an accepting delegate to point
+            # persona delegations at (Marcus + Linda both delegate
+            # Elections here).
+            TopicVisibility('Elections', 'public_accepting'),
         ],
         position_statements=[
             PositionStatement(
@@ -1020,11 +1025,13 @@ DELEGATE_PAGES = [
             PositionStatement(
                 topic='Elections',
                 text=(
-                    "Public, not accepting. Cedar Hollow election procedure "
-                    "is documented in the bylaws and the Secretary runs it. "
-                    "My voice is informational — when something in current "
-                    "procedure matches or doesn't match historical practice, "
-                    "I flag it."
+                    "Accepting on Elections — the Secretary runs the "
+                    "mechanics, but the question of how Cedar Hollow has "
+                    "actually elected presidents over forty years is the "
+                    "kind of thing my archive carries. If you delegate "
+                    "here, expect votes anchored to whether a candidate's "
+                    "framing matches what the bylaws and the historical "
+                    "record actually say the President's job is."
                 ),
             ),
         ],
@@ -1675,6 +1682,94 @@ PRIVATE_DELEGATIONS = [
 
 
 # -----------------------------------------------------------------------------
+# Phase 29.1 — Quick-Login Persona Delegations
+# -----------------------------------------------------------------------------
+# Each of the 6 quick-login HOA personas gets a delegation pattern so a
+# demo visitor signing in sees a populated Delegations page immediately.
+# Pool delegations distribute across Helen / Marisol / Carl (all
+# public_accepting on Pool & Recreation from Phase 29 C2) so no single
+# delegate hoards every Pool delegation. Elections all point at Maureen
+# (the only public_accepting Elections delegate; her TopicVisibility was
+# flipped from 'public' to 'public_accepting' in this pass).
+
+PERSONA_DELEGATIONS = [
+    # Janet (President, admin) — light delegator, relevance_weighted
+    PersonaDelegationSpec(
+        delegator_user_id='hoa_janet',
+        delegation_strategy='relevance_weighted',
+        delegations=[
+            ('Bylaws & Procedure', 'hoa_brenda'),
+            ('Long-Term Planning', 'hoa_marcus'),
+        ],
+        topic_precedence=['Bylaws & Procedure', 'Long-Term Planning'],
+    ),
+    # Brenda (Secretary, moderator) — light delegator, relevance_weighted
+    PersonaDelegationSpec(
+        delegator_user_id='hoa_brenda',
+        delegation_strategy='relevance_weighted',
+        delegations=[
+            ('Cedar Court Issues', 'hoa_marcus'),
+            ('Pool & Recreation', 'hoa_helen'),
+        ],
+        topic_precedence=['Cedar Court Issues', 'Pool & Recreation'],
+    ),
+    # Marcus (Member-at-Large) — heavy delegator, relevance_weighted
+    PersonaDelegationSpec(
+        delegator_user_id='hoa_marcus',
+        delegation_strategy='relevance_weighted',
+        delegations=[
+            ('Budget', 'hoa_linda'),
+            ('Pool & Recreation', 'hoa_marisol'),
+            ('Bylaws & Procedure', 'hoa_brenda'),
+            ('Elections', 'hoa_maureen'),
+        ],
+        topic_precedence=[
+            'Budget',
+            'Pool & Recreation',
+            'Bylaws & Procedure',
+            'Elections',
+        ],
+    ),
+    # Don (former VP) — NO DELEGATIONS, strict_precedence by setting.
+    # Empty delegations + empty topic_precedence is correct, not a bug —
+    # exemplifies Don's canonical "vote your own conscience" voice.
+    PersonaDelegationSpec(
+        delegator_user_id='hoa_don',
+        delegation_strategy='strict_precedence',
+        delegations=[],
+        topic_precedence=[],
+    ),
+    # Linda (Treasurer, moderator) — heavy delegator, strict_precedence
+    PersonaDelegationSpec(
+        delegator_user_id='hoa_linda',
+        delegation_strategy='strict_precedence',
+        delegations=[
+            ('Cedar Court Issues', 'hoa_marcus'),
+            ('Long-Term Planning', 'hoa_marcus'),
+            ('Pool & Recreation', 'hoa_carl'),
+            ('Elections', 'hoa_maureen'),
+        ],
+        topic_precedence=[
+            'Cedar Court Issues',
+            'Long-Term Planning',
+            'Pool & Recreation',
+            'Elections',
+        ],
+    ),
+    # Tomás — light delegator, relevance_weighted (default)
+    PersonaDelegationSpec(
+        delegator_user_id='hoa_tomas',
+        delegation_strategy='relevance_weighted',
+        delegations=[
+            ('Budget', 'hoa_linda'),
+            ('Bylaws & Procedure', 'hoa_brenda'),
+        ],
+        topic_precedence=['Budget', 'Bylaws & Procedure'],
+    ),
+]
+
+
+# -----------------------------------------------------------------------------
 # OrgBible assembly
 # -----------------------------------------------------------------------------
 
@@ -1693,6 +1788,10 @@ HOA_BIBLE = OrgBible(
     # Organization.settings['branding']['primary_color'] by the seed
     # pipeline; BrandingThemeApplier consumes from there.
     brand_color='#3B5A3B',
+    # Phase 29.1 B3: Z dropped this asset during Phase 29 but it wasn't
+    # wired. Routed into Organization.settings['branding']['logo_url']
+    # by the seed pipeline.
+    logo_path='/demo_assets/cedar_hollow_logo.jpg',
     members=MEMBERS,
     delegate_pages=DELEGATE_PAGES,
     proposals=PROPOSALS,
@@ -1701,6 +1800,7 @@ HOA_BIBLE = OrgBible(
     notification_feeds=NOTIFICATION_FEEDS,
     follows=FOLLOWS,
     private_delegations=PRIVATE_DELEGATIONS,
+    persona_delegations=PERSONA_DELEGATIONS,
 )
 
 

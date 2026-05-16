@@ -525,6 +525,114 @@ def _seed_relationships(
     db.flush()
 
 
+def _seed_persona_delegations(
+    db: Session,
+    bible: OrgBible,
+    org,
+    bible_uid_to_user: dict,
+    topics_by_name: dict,
+) -> None:
+    """Phase 29.1 B1.3 — seed quick-login persona delegations from the
+    bible's ``persona_delegations`` list.
+
+    For each spec:
+      1. Write ``delegation_strategy`` to ``User.delegation_strategy``
+         (overriding the Phase 27 migration default of
+         ``relevance_weighted`` where the bible disagrees — Don is the
+         only such case in Cedar Hollow).
+      2. Create one ``TopicPrecedence`` row per entry in
+         ``topic_precedence`` (priority = index, lower wins).
+      3. Create one ``Delegation`` row per entry in ``delegations``.
+
+    Validation is strict — raises ``ValueError`` on missing topics or
+    unknown delegate user_ids so content-authoring mistakes surface at
+    seed time rather than as silent runtime bugs. Don's empty
+    delegations/precedence is correct and just skips the inner loops.
+    """
+    import models
+
+    for spec in bible.persona_delegations:
+        delegator = bible_uid_to_user.get(spec.delegator_user_id)
+        if delegator is None:
+            log.warning(
+                "seed_pipeline._seed_persona_delegations: unknown "
+                "delegator_user_id %r — skipping",
+                spec.delegator_user_id,
+            )
+            continue
+
+        # B2 — override Phase 27's migrated default per the bible.
+        delegator.delegation_strategy = spec.delegation_strategy
+
+        # Validate every delegated topic appears in topic_precedence.
+        precedence_set = set(spec.topic_precedence)
+        for topic_name, _ in spec.delegations:
+            if topic_name not in precedence_set:
+                raise ValueError(
+                    f"persona_delegations for {spec.delegator_user_id}: "
+                    f"topic {topic_name!r} in delegations but not in "
+                    f"topic_precedence. Add it to topic_precedence with "
+                    f"the desired priority order."
+                )
+
+        # Wipe any existing TopicPrecedence rows for this user before
+        # writing the bible-specified ordering. Without this, a re-seed
+        # would hit the unique (user_id, topic_id) constraint when the
+        # bible reuses topics the user already has precedence rows on
+        # (e.g., Brenda's Phase 28 B3 backfill rows).
+        if spec.topic_precedence:
+            existing_topic_ids = [
+                topics_by_name[t].id for t in spec.topic_precedence
+                if t in topics_by_name
+            ]
+            if existing_topic_ids:
+                db.query(models.TopicPrecedence).filter(
+                    models.TopicPrecedence.user_id == delegator.id,
+                    models.TopicPrecedence.topic_id.in_(existing_topic_ids),
+                ).delete(synchronize_session=False)
+
+        for idx, topic_name in enumerate(spec.topic_precedence):
+            topic = topics_by_name.get(topic_name)
+            if topic is None:
+                raise ValueError(
+                    f"persona_delegations: unknown topic "
+                    f"{topic_name!r} in precedence for "
+                    f"{spec.delegator_user_id}"
+                )
+            db.add(models.TopicPrecedence(
+                user_id=delegator.id,
+                topic_id=topic.id,
+                priority=idx,
+            ))
+
+        for topic_name, delegate_uid in spec.delegations:
+            delegate = bible_uid_to_user.get(delegate_uid)
+            if delegate is None:
+                raise ValueError(
+                    f"persona_delegations: unknown delegate "
+                    f"{delegate_uid!r} in delegations for "
+                    f"{spec.delegator_user_id}"
+                )
+            topic = topics_by_name[topic_name]
+            db.add(models.Delegation(
+                delegator_id=delegator.id,
+                delegate_id=delegate.id,
+                org_id=org.id,
+                topic_id=topic.id,
+                chain_behavior="accept_sub",
+            ))
+
+        db.flush()
+        log.info(
+            "seed_pipeline: persona %s strategy=%s — %d delegations, "
+            "%d precedence rows",
+            spec.delegator_user_id,
+            spec.delegation_strategy,
+            len(spec.delegations),
+            len(spec.topic_precedence),
+        )
+
+
 # =============================================================================
 # Main orchestrator
 # =============================================================================
@@ -599,10 +707,15 @@ def seed_org_from_bible(
 
     # C5 — brand color → user-facing branding slot consumed by
     # BrandingThemeApplier (Phase 12.7). None leaves branding untouched.
+    # 29.1 B3.2 — logo_url joins it in the same branding sub-dict.
     brand_color = getattr(bible, "brand_color", None)
-    if brand_color:
+    logo_path = getattr(bible, "logo_path", None)
+    if brand_color or logo_path:
         branding = dict(settings.get("branding") or {})
-        branding["primary_color"] = brand_color
+        if brand_color:
+            branding["primary_color"] = brand_color
+        if logo_path:
+            branding["logo_url"] = logo_path
         settings["branding"] = branding
 
     org.settings = settings
@@ -770,6 +883,17 @@ def seed_org_from_bible(
         bible_uid_to_user=bible_uid_to_user,
         topics_by_name=topics_by_name,
         now=now,
+    )
+
+    # ---- 5.6 Phase 29.1 B1.3 — quick-login persona delegations -----------
+    # Strict validation; raises if any delegated topic isn't in the
+    # corresponding topic_precedence list.
+    _seed_persona_delegations(
+        db=db,
+        bible=bible,
+        org=org,
+        bible_uid_to_user=bible_uid_to_user,
+        topics_by_name=topics_by_name,
     )
 
     # ---- 6. Proposals (PROPOSALS + DRAFTS) -------------------------------
