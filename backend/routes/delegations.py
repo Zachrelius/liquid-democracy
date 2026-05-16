@@ -463,8 +463,10 @@ def personal_delegation_network(
         for d in dels:
             if d.topic_id and d.topic_id in topics:
                 t = topics[d.topic_id]
-                topic_names.append(t.name)
-                edge_topics.append(schemas.PersonalNetworkEdgeTopic(name=t.name, color=t.color))
+                topic_names.append((t.description or "").strip() or t.name)
+                edge_topics.append(schemas.PersonalNetworkEdgeTopic(
+                    name=t.name, color=t.color, description=t.description or None,
+                ))
             else:
                 topic_names.append("Global")
                 edge_topics.append(schemas.PersonalNetworkEdgeTopic(name="Global", color="#95a5a6"))
@@ -502,8 +504,10 @@ def personal_delegation_network(
         for d in dels:
             if d.topic_id and d.topic_id in topics:
                 t = topics[d.topic_id]
-                topic_names.append(t.name)
-                edge_topics.append(schemas.PersonalNetworkEdgeTopic(name=t.name, color=t.color))
+                topic_names.append((t.description or "").strip() or t.name)
+                edge_topics.append(schemas.PersonalNetworkEdgeTopic(
+                    name=t.name, color=t.color, description=t.description or None,
+                ))
             else:
                 topic_names.append("Global")
                 edge_topics.append(schemas.PersonalNetworkEdgeTopic(name="Global", color="#95a5a6"))

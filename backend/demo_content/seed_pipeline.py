@@ -785,6 +785,11 @@ def seed_org_from_bible(
             "description": QUICK_LOGIN_DESCRIPTIONS.get(
                 m.user_id, m.role or "Member",
             ),
+            # Phase 30 B3: surface the User.avatar_url (wired by Phase 29 C6)
+            # into the personas JSONB so /demo's quick-login tiles render
+            # the AI-illustration portrait. None falls back to the default
+            # initials circle in Avatar.jsx.
+            "avatar_url": bible_uid_to_user[m.user_id].avatar_url,
         }
         for m in bible.members if m.quick_login
         and m.user_id in bible_uid_to_user

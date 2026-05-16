@@ -233,6 +233,37 @@ function TopicRow({
 
   async function setVisibility(newVis) {
     if (newVis === visibility) return;
+    // Phase 30 B2 — bridge private -> public_accepting in one click. The
+    // backend lifecycle requires two steps (PATCH to public, POST submit
+    // for accepting) and the PATCH endpoint rejects 'public_accepting'
+    // directly. Without this branch the user saw a raw 400 from the
+    // PATCH attempt. Sequential issue: if the POST fails after the PATCH
+    // succeeds the topic is left at 'public' and the user can manually
+    // click "Submit for approval" to finish — acceptable.
+    if (newVis === 'public_accepting' && visibility === 'private') {
+      setBusy(true);
+      try {
+        await api.patch(
+          `/api/orgs/${slug}/delegate-profile/topics/${topic.id}`,
+          { visibility: 'public' }
+        );
+        const res = await api.post(
+          `/api/orgs/${slug}/delegate-profile/topics/${topic.id}/submit-public-accepting`
+        );
+        onChanged?.(res);
+        const topicAfter = (res?.topics || []).find(t => t.topic_id === topic.id);
+        if (topicAfter?.visibility === 'public_accepting') {
+          toast.success('You are now a public delegate on this topic');
+        } else {
+          toast.success('Submitted for approval — pending review by org administrators');
+        }
+      } catch (e) {
+        toast.error(e.message || 'Failed to register as public delegate');
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     // Backend rejects direct public_accepting -> use submit endpoint.
     if (newVis === 'public_accepting' && visibility === 'public') {
       setBusy(true);
