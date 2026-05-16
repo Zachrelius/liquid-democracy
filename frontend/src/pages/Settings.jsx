@@ -4,7 +4,6 @@ import { useOrg } from '../OrgContext';
 import api from '../api';
 import { resizeImageFile } from '../utils/imageResize';
 import Avatar from '../components/Avatar';
-import TopicBadge from '../components/TopicBadge';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 import AccessHistory from '../components/AccessHistory';
@@ -28,126 +27,10 @@ const POLICY_OPTIONS = [
   },
 ];
 
-function DelegateCard({ topic, profile, onRegister, onEdit, onStepDown, confirm }) {
-  const [editing, setEditing] = useState(false);
-  const [bio, setBio] = useState(profile?.bio || '');
-  const [registering, setRegistering] = useState(false);
-  const [saving, setSaving] = useState(false);
-
-  if (!profile || !profile.is_active) {
-    // Not registered
-    if (registering) {
-      return (
-        <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
-          <div className="flex items-center gap-2">
-            <TopicBadge topic={topic} />
-            <span className="text-xs text-gray-400">Not registered</span>
-          </div>
-          <textarea
-            value={bio}
-            onChange={e => setBio(e.target.value)}
-            placeholder="Tell others why they should trust you on this topic (50-1000 chars)"
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
-            rows={3}
-          />
-          <p className="text-xs text-gray-400">Your votes on {topic.description?.trim() || topic.name} proposals will become publicly visible.</p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => { onRegister(topic.id, bio); setRegistering(false); }}
-              disabled={bio.length < 50}
-              className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
-            >
-              Register
-            </button>
-            <button
-              onClick={() => setRegistering(false)}
-              className="text-xs px-3 py-1.5 border border-gray-300 text-gray-500 rounded-lg hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <TopicBadge topic={topic} />
-          <span className="text-xs text-gray-400">Not registered</span>
-        </div>
-        <button
-          onClick={() => setRegistering(true)}
-          className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
-        >
-          Become a Delegate
-        </button>
-      </div>
-    );
-  }
-
-  // Active delegate profile
-  return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <TopicBadge topic={topic} />
-          <span className="text-xs text-green-600 font-medium bg-green-50 px-2 py-0.5 rounded">Active</span>
-        </div>
-        <div className="flex gap-2">
-          {!editing && (
-            <button
-              onClick={() => { setBio(profile.bio); setEditing(true); }}
-              className="text-xs text-[var(--brand-accent)] hover:underline"
-            >
-              Edit Bio
-            </button>
-          )}
-          <button
-            onClick={async () => {
-              const ok = await confirm({
-                title: 'Step Down as Delegate',
-                message: `This will remove you as a public delegate for ${topic.description?.trim() || topic.name}. People who delegated to you on this topic will need to choose a new delegate. Are you sure?`,
-                destructive: true,
-              });
-              if (ok) onStepDown(topic.id);
-            }}
-            className="text-xs text-red-500 hover:underline"
-          >
-            Step Down
-          </button>
-        </div>
-      </div>
-      {editing ? (
-        <div className="space-y-2">
-          <textarea
-            value={bio}
-            onChange={e => setBio(e.target.value)}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
-            rows={3}
-          />
-          <div className="flex gap-2">
-            <button
-              onClick={async () => {
-                setSaving(true);
-                await onEdit(topic.id, bio);
-                setSaving(false);
-                setEditing(false);
-              }}
-              disabled={saving || bio.length < 50}
-              className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
-            >
-              {saving ? 'Saving...' : 'Save'}
-            </button>
-            <button onClick={() => setEditing(false)} className="text-xs text-gray-500 hover:underline">Cancel</button>
-          </div>
-        </div>
-      ) : (
-        profile.bio && <p className="text-sm text-gray-600 italic">"{profile.bio}"</p>
-      )}
-    </div>
-  );
-}
+// Phase 30 B1 — DelegateCard component removed along with the Settings
+// page's obsolete public-delegate-registration section. The canonical
+// surface is /{slug}/delegate-profile (DelegateProfile.jsx). See the
+// "Public Delegate Page" section below for the replacement link.
 
 export default function Settings() {
   const { user: authUser, refreshUser, logout } = useAuth();
@@ -156,8 +39,6 @@ export default function Settings() {
   const confirm = useConfirm();
   const fileInputRef = useRef(null);
   const [user, setUser] = useState(null);
-  const [topics, setTopics] = useState([]);
-  const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [displayName, setDisplayName] = useState('');
   const [policy, setPolicy] = useState('require_approval');
@@ -173,24 +54,14 @@ export default function Settings() {
 
   const load = useCallback(async () => {
     try {
-      const topicsUrl = currentOrg
-        ? `/api/orgs/${currentOrg.slug}/topics`
-        : '/api/topics';
-      const [me, tops] = await Promise.all([
-        api.get('/api/auth/me'),
-        api.get(topicsUrl),
-      ]);
+      const me = await api.get('/api/auth/me');
       setUser(me);
       setDisplayName(me.display_name);
       setPolicy(me.default_follow_policy);
-      setTopics(tops);
-      // Get delegate profiles for current user
-      const profileData = await api.get(`/api/users/${me.id}/profile`);
-      setProfiles(profileData.delegate_profiles || []);
     } catch { /* ignore */ } finally {
       setLoading(false);
     }
-  }, [currentOrg]);
+  }, []);
 
   useEffect(() => { load(); }, [load]);
 
@@ -213,33 +84,6 @@ export default function Settings() {
       setTimeout(() => setPolicyMsg(''), 2000);
     } catch (e) {
       setPolicyMsg(e.message);
-    }
-  }
-
-  async function handleRegister(topicId, bio) {
-    try {
-      await api.post('/api/delegates/register', { topic_id: topicId, bio });
-      load();
-    } catch (e) {
-      toast.error(e.message);
-    }
-  }
-
-  async function handleEditBio(topicId, bio) {
-    try {
-      await api.post('/api/delegates/register', { topic_id: topicId, bio });
-      load();
-    } catch (e) {
-      toast.error(e.message);
-    }
-  }
-
-  async function handleStepDown(topicId) {
-    try {
-      await api.delete(`/api/delegates/register/${topicId}`);
-      load();
-    } catch (e) {
-      toast.error(e.message);
     }
   }
 
@@ -340,12 +184,6 @@ export default function Settings() {
       <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
   );
-
-  // Build a map of profile by topic_id
-  const profileByTopic = {};
-  for (const p of profiles) {
-    profileByTopic[p.topic_id] = p;
-  }
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-10">
@@ -477,29 +315,33 @@ export default function Settings() {
       </section>
 
       {/* Section: Public Delegate Registration */}
+      {/* Phase 30 B1 — obsolete public-delegate-registration section
+          replaced with a link to the canonical /{slug}/delegate-profile
+          page. The legacy /api/delegates/register endpoint and the
+          DelegateCard inline editor predate the per-topic visibility
+          lifecycle (private / public / public_accepting) and don't
+          match the current backend contract; managing your delegate
+          page from here would 400 on most transitions. */}
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Public Delegate Registration</h2>
-        <p className="text-xs text-gray-400">
-          Register as a public delegate to let anyone delegate to you on a topic. Your votes on that topic become publicly visible.
-        </p>
-        {currentOrg?.settings?.public_delegate_policy === 'admin_approval' && (
-          <div className="p-3 bg-blue-50 border border-blue-200 text-blue-700 text-xs rounded-lg">
-            This organization requires admin approval for delegate applications. Your application will be reviewed by an administrator.
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Public Delegate Page</h2>
+        {currentOrg?.slug ? (
+          <div className="p-4 bg-[var(--brand-surface-soft,#f3f4f6)] border border-gray-200 rounded-xl">
+            <p className="text-sm text-gray-700 mb-3">
+              Become a public delegate, set position statements per topic, and
+              write vote rationales from your delegate page.
+            </p>
+            <Link
+              to={`/${currentOrg.slug}/delegate-profile`}
+              className="inline-block text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:opacity-90"
+            >
+              Go to My Delegate Page
+            </Link>
           </div>
+        ) : (
+          <p className="text-xs text-gray-400">
+            Select an organization to manage your delegate page.
+          </p>
         )}
-        <div className="space-y-3">
-          {topics.map(t => (
-            <DelegateCard
-              key={t.id}
-              topic={t}
-              profile={profileByTopic[t.id]}
-              onRegister={handleRegister}
-              onEdit={handleEditBio}
-              onStepDown={handleStepDown}
-              confirm={confirm}
-            />
-          ))}
-        </div>
       </section>
 
       {/* Section: Account */}

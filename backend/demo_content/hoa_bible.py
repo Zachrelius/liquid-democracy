@@ -182,6 +182,11 @@ DELEGATE_PAGES = [
                           "Voted for the modest evening extension (C), kept the conservative option (B) on the table, and supported the weekend-only extension (D). Approval cap on E because the morning extension doesn't have demonstrated demand."),
             VoteRationale('P-H-06', 'yes',
                           "A study is informational, not a bylaw amendment — Marcus is correct on the procedural point. Voted yes; the dues differential question is worth examining even if the bylaws are the bylaws."),
+            # Phase 30 C1 — new active proposals.
+            VoteRationale('P-H-11', 'approval_1_2',
+                          "Both A and B work for me; A is the safer refresh, B is more contemporary. Either improves on the current scheme."),
+            VoteRationale('P-H-12', 'yes',
+                          "Linda's numbers are right. The pool reserve has been bleeding for two seasons. 15% on a 5% inflation environment is more than I'd like, but the alternative is cross-subsidization which is worse for non-pool-using households."),
         ],
     ),
 
@@ -229,6 +234,9 @@ DELEGATE_PAGES = [
             VoteRationale('P-H-05', 'yes', "Proposing, voting yes. (Expecting low participation; that's a separate problem.)"),
             VoteRationale('P-H-06', 'yes', "Procedurally clean — a study is informational, not a bylaw amendment."),
             VoteRationale('P-H-09', 'yes', "Proposing, voting yes."),
+            # Phase 30 C1 — new active proposals.
+            VoteRationale('P-H-11', 'approval_1', "I voted A. The current scheme is recognizable to long-time residents; refreshing rather than replacing keeps continuity."),
+            VoteRationale('P-H-12', 'yes', "The bylaws committee considered cross-subsidization in 2024 and rejected it for the same reasons Linda cites. The fee structure should reflect usage. 15% reflects actual cost movement."),
         ],
     ),
 
@@ -286,6 +294,9 @@ DELEGATE_PAGES = [
             VoteRationale('P-H-03', 'approval_1_2_3_4_5_6', "Items 1-3 are life-safety. Item 4 is the Cedar Court fence — overdue, regardless of unit type. Items 5-6 are sensible. 7-8 aren't this cycle."),
             VoteRationale('P-H-04', 'approval_C_D', "Evening extension and weekend-only — those map to actual demonstrated demand."),
             VoteRationale('P-H-06', 'yes', "Tomás is right that the dues differential is worth examining. Brenda is right that a study isn't a bylaw amendment. Don is right that the bylaws are the bylaws. All three things can be true; this proposal works inside the procedural envelope."),
+            # Phase 30 C1 — new active proposals.
+            VoteRationale('P-H-11', 'approval_2_3', "B and C both feel more like 2026 than the old scheme. I lean B but C is also fine."),
+            VoteRationale('P-H-12', 'no', "I support pool sustainability but 15% in one season is a lot for households on fixed incomes. I'd back a phased increase — 8% this season, 7% next — but not the full 15% now."),
         ],
     ),
 
@@ -336,6 +347,9 @@ DELEGATE_PAGES = [
             VoteRationale('P-H-03', 'approval_1_2_3', "Life-safety items only. Items 4-8 are deferred-maintenance the board should be sequencing in the operating budget, not approving via special vote."),
             VoteRationale('P-H-04', 'approval_B', "Conservative hours. The HOA owns the pool; expanding access expands maintenance demand. Reserve doesn't support that right now."),
             VoteRationale('P-H-06', 'no', "The dues structure is in the bylaws. A 'study' that produces 'recommendations' is a slow-motion amendment process. Voting no."),
+            # Phase 30 C1 — new active proposals.
+            VoteRationale('P-H-11', 'approval_1_4', "A and D are the only options that don't feel like they're trying too hard. Either is fine; B and C feel like rebranding for its own sake."),
+            VoteRationale('P-H-12', 'no', "I'd vote yes on 10%. 15% is more than the increase warrants once you factor in the existing modest reserve we're already building back into. Linda's a careful Treasurer; I just think she's being slightly too cautious this time."),
         ],
     ),
 
@@ -376,6 +390,9 @@ DELEGATE_PAGES = [
             VoteRationale('P-H-03', 'approval_1_2_3_4_5_6', "Items 1-6 fit; 7-8 don't this cycle."),
             VoteRationale('P-H-04', 'approval_B_C', "Conservative options. Expansion requires demonstrated maintenance impact."),
             VoteRationale('P-H-06', 'no', "Don's procedural argument is the right call. Studies on bylaw-defined questions are how amendments get back-doored."),
+            # Phase 30 C1 — new active proposals.
+            VoteRationale('P-H-11', 'approval_2', "Just B. Picking one keeps the vendor process simple; approval voting works better when most people vote for fewer options."),
+            VoteRationale('P-H-12', 'yes', "Author. The math is in the body — 18% cost increase over two seasons, 15% fee increase recovers it with a small reserve cushion. Anything less leaves us in the same hole next year."),
         ],
     ),
 
@@ -1430,6 +1447,81 @@ PROPOSALS = [
             "litigate it again next summer.)"
         ),
         topics=['Bylaws & Procedure', 'Pool & Recreation'],
+    ),
+
+    # =========================================================================
+    # Phase 30 C1 — three new active proposals (1 deliberation + 2 voting)
+    # =========================================================================
+
+    Proposal(
+        proposal_id='P-H-10',
+        title='Adopt EV Charging Station Policy for Common Areas',
+        proposer_user_id='hoa_marcus',
+        voting_method='binary',
+        state_at_reset='deliberation, hour 42 of 168',
+        body=(
+            "Proposed policy: install two Level-2 EV chargers in the visitor "
+            "parking area near the clubhouse, funded by a one-time $180 "
+            "assessment per unit. Chargers would be metered with charging "
+            "fees set to recover electricity costs plus a 10% maintenance "
+            "reserve.\n\n"
+            "Background: 14 of 187 units currently have EVs. Cedar Court "
+            "and the units along Maple Drive have no garage charging "
+            "options, creating an equity gap. The Long-Term Planning "
+            "subcommittee has flagged EV infrastructure as a likely "
+            "requirement within 5-10 years; this is the first concrete "
+            "step.\n\n"
+            "Alternative considered: defer until 2027 budget. Rejected "
+            "because the federal tax credit for HOA EV infrastructure "
+            "expires end of 2026 — current credit covers ~30% of install "
+            "cost."
+        ),
+        topics=['Long-Term Planning', 'Budget'],
+    ),
+
+    Proposal(
+        proposal_id='P-H-11',
+        title='Choose Color Scheme for Updated Entrance Signage',
+        proposer_user_id='hoa_brenda',
+        voting_method='approval',
+        state_at_reset='voting, hour 36 of 96',
+        body=(
+            "The entrance signage at Cedar Hollow Drive and Pine Ridge is "
+            "due for replacement (approved separately in P-H-09). The "
+            "vendor offers four color schemes; this proposal selects which "
+            "the board commissions. Approval voting; any option(s) above "
+            "50% threshold wins; if multiple, the board picks among them.\n\n"
+            "Quorum: standard 35%."
+        ),
+        options=[
+            'A: Forest green on cream (current scheme, refreshed)',
+            'B: Deep navy on cream (more contemporary)',
+            'C: Slate gray with cedar accents (subtle/modern)',
+            'D: Warm brown on tan (rustic/traditional)',
+        ],
+        topics=['Budget', 'Long-Term Planning'],
+    ),
+
+    Proposal(
+        proposal_id='P-H-12',
+        title='Raise Pool Membership Fees by 15% for 2026 Season',
+        proposer_user_id='hoa_linda',
+        voting_method='binary',
+        state_at_reset='voting, hour 30 of 72',
+        body=(
+            "Treasurer's recommendation: raise pool season-pass fees from "
+            "$420 to $483 per household, effective the 2026 season. "
+            "Rationale: pool operating costs (chemicals, lifeguard wages, "
+            "facility maintenance) have risen 18% over the past two "
+            "seasons. The fee increase covers the operating gap and "
+            "rebuilds the pool reserve fund from $4,200 to ~$7,500 by "
+            "end of season.\n\n"
+            "Alternative considered: cross-subsidize from general HOA dues. "
+            "Rejected because non-pool-using households (estimated 35-40%) "
+            "would be subsidizing pool members.\n\n"
+            "Quorum: standard 35%. Pass threshold: simple majority."
+        ),
+        topics=['Budget', 'Pool & Recreation'],
     ),
 ]
 

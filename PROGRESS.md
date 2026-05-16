@@ -3736,3 +3736,38 @@ Phase 29 shipped Cedar Hollow as the showcase but missed one piece: the 6 quick-
 ### Pass-summary
 
 **Phase 29.1 makes the demo work from the front door.** A visitor signing in as Janet, Marcus, Linda, Tomás, or Brenda now sees a populated Delegations page with real topic-scoped pairings — the platform's headline feature lit up from every quick-login entry point. Don's empty Delegations page is the deliberate counterexample: it stays empty because he's the canonical "vote your own conscience" persona, and his strategy correctly renders as "By strict priority." The logo wiring is one bible line + one seed-pipeline branch and slots into the existing Phase 12.7 frontend rendering with no JSX churn. The strict validation in `_seed_persona_delegations` is the kind of guard that pays for itself when a future content author forgets to list a delegated topic in precedence — it'll raise loudly at seed time with the exact persona/topic in the error message.
+
+## Phase 30 — Public Delegate Registration + Demo Polish (shipped 2026-05-16, master `<TBD>`)
+
+Z's post-Phase-29.1 browser tour surfaced five items: one real platform bug (the private → public_accepting transition in DelegateProfile.jsx exposed a raw 400 from the backend) and four demo-polish items (obsolete Settings registration section, demo persona portraits not rendering, My Delegations topic-name prefix leak, Cedar Hollow needs more active proposals).
+
+| Cluster | Description |
+|---|---|
+| **B1** | Hide obsolete Settings public-delegate registration section. Removed `DelegateCard` inline editor + `handleRegister`/`handleEditBio`/`handleStepDown` + `TopicBadge` import + `topics`/`profiles`/`profileByTopic` state. The legacy `/api/delegates/register` endpoint predates the per-topic visibility lifecycle and 400s on most transitions. Replaced with a "Public Delegate Page" card linking to `/{slug}/delegate-profile`. |
+| **B2** | Fix `private → public_accepting` transition gap in `DelegateProfile.jsx`. PATCH rejects `public_accepting` directly; submit-public-accepting requires `public` state. New branch in `setVisibility`: PATCH first, then POST submit. Toast reflects auto-approve vs. pending. Partial-failure shape (PATCH ok, POST fails) leaves topic at `public` and user can manually click "Submit for approval" — acceptable. |
+| **B3** | Demo persona portraits. Seed pipeline adds `avatar_url` to `org.personas` JSONB; `DemoPersonaTile` swaps the manual initials circle for the `Avatar` component. Falls back to initials when avatar missing/404s. |
+| **B4** | My Delegations topic-name prefix leak. `PersonalNetworkEdgeTopic` now serializes `description` alongside `name`; node-level `topic_names` array uses the user-visible label. `Delegations.jsx` lookup matches by description-first-then-name. Surface fix; root-cause (Topic.name global unique constraint forces demo prefix) logged as tech debt — recurring across Phases 23.1 / 25 / 26 / 28 / 30. |
+| **C1** | Three new Cedar Hollow proposals: P-H-10 EV Charging Policy (binary, deliberation), P-H-11 Entrance Signage Color (approval, voting, 4 options), P-H-12 Pool Membership Fees +15% (binary, voting, contested 50/50 → 53-47 narrow pass). Two trajectory entries in `trajectory_waypoints.py`. Five named-delegate vote rationales added to each voting proposal; P-H-10 (deliberation) has no votes. P-H-12 votes match the trajectory: Linda/Brenda/Janet yes, Marcus/Don no. |
+| **B5** | 10 tests in `test_phase_30_polish.py` (target was 6; expanded for finer cluster coverage). Personas avatar_url, three new-proposal-status tests, three trajectory-snapshot tests, P-H-12 3-2 split, B2 backend contract preserved (both private→reject and public→submit paths). |
+
+**Commits:**
+
+1. `f6fb0d3` — B1+B2+B3+B4+C1+B5 (all clusters in one commit)
+2. `<TBD>` — Merge phase-30 to master
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Backend pytest (full, excl. 3 demo-reset suites) | PASS — 1323 passed / 3 skipped / 0 failed (+10 over Phase 29.1) |
+| PG smoke | Not required (no migration) |
+| Frontend build | PASS — new bundle `index-DZXKKu1G.js` (Settings/DelegateProfile/Demo/Delegations JSX changed) |
+| File-count | 10 files / 559 ins / 198 del |
+
+### Pass-summary
+
+**Phase 30 is mostly polish on top of the Phase 29.1 ship.** The one real platform bug — the private → public_accepting two-step bridge — only surfaced in the wild after Phase 29.1 made the demo personas approachable from the front door; Z hit it within minutes of trying to make Marcus accept delegations on a new topic. The Settings page registration removal is dead-code cleanup that should have happened around Phase 19 when `/{slug}/delegate-profile` became the canonical surface. The demo polish items (portraits, topic prefix, three new proposals with a contested-vote trajectory showcase) tighten Cedar Hollow into a coherent demo where a visitor can sign in as any persona, see real delegations, browse meaningful proposals, and watch a 50/50 trajectory chart play out. The `PersonalNetworkEdgeTopic.description` serialization closes the last known surface where the `demo-cedar-hollow:` prefix leaked into user-visible text without the description fallback applying.
+
+**Tech debt logged (deferred):**
+- `Topic.name` global unique constraint root cause (B4). The proper fix is `(org_id, name)` scoped uniqueness + a sweep to use Topic.name everywhere; estimated 3-4 hours. The prefix workaround has now appeared in 5 phases as a recurring footgun.
+- Bible vote_rationales' `text` field isn't persisted into `DelegateVoteRationale` rows by the seed pipeline — the text only influences which Vote row gets created, not where the explanation lives. Pre-existing; not introduced by Phase 30.

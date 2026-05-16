@@ -209,6 +209,67 @@ P_H_09 = Trajectory(
 )
 
 
+# Phase 30 C1 — three new active Cedar Hollow proposals.
+# P_H_10 is in deliberation; no trajectory entry (snapshots only
+# generate for voting-state proposals).
+
+P_H_11 = Trajectory(
+    proposal_id='P-H-11',
+    voting_method='approval',
+    duration_hours=96,
+    waypoints=[
+        Waypoint(hour=0, support_pct=0.0),
+        Waypoint(hour=6, support_pct=12.0),
+        Waypoint(hour=12, support_pct=22.0),
+        Waypoint(hour=24, support_pct=35.0),
+        Waypoint(hour=36, support_pct=44.0),
+        Waypoint(hour=48, support_pct=52.0),
+        Waypoint(hour=60, support_pct=58.0),
+        Waypoint(hour=72, support_pct=64.0),
+        Waypoint(hour=84, support_pct=68.0),
+        Waypoint(hour=96, support_pct=72.0),
+    ],
+    events=[
+        TrajectoryEvent(0, 'voting_open', label='Voting opens'),
+        TrajectoryEvent(96, 'voting_close', label='Voting closes'),
+    ],
+    final_result='Option B (deep navy) chosen with 58% approval',
+    notes='Approval voting; Option B leads throughout, A second.',
+)
+
+P_H_12 = Trajectory(
+    proposal_id='P-H-12',
+    voting_method='binary',
+    duration_hours=72,
+    waypoints=[
+        Waypoint(hour=0, support_pct=0.0),
+        Waypoint(hour=4, support_pct=58.0),
+        Waypoint(hour=8, support_pct=54.0),
+        Waypoint(hour=12, support_pct=51.0),
+        Waypoint(hour=18, support_pct=49.0),
+        Waypoint(hour=24, support_pct=52.0),
+        Waypoint(hour=30, support_pct=50.0),
+        Waypoint(hour=36, support_pct=51.0),
+        Waypoint(hour=42, support_pct=49.0),
+        Waypoint(hour=48, support_pct=52.0),
+        Waypoint(hour=54, support_pct=53.0),
+        Waypoint(hour=60, support_pct=54.0),
+        Waypoint(hour=66, support_pct=53.0),
+        Waypoint(hour=72, support_pct=53.0),
+    ],
+    events=[
+        TrajectoryEvent(0, 'voting_open', label='Voting opens'),
+        TrajectoryEvent(72, 'voting_close', label='Voting closes'),
+    ],
+    final_result='53-47 passed (narrow)',
+    notes=(
+        'Contested proposal showcasing a 50/50 trajectory. '
+        'Pool-using households favor; non-pool-using households resist. '
+        'Demonstrates the platform handling a genuinely close vote.'
+    ),
+)
+
+
 # -----------------------------------------------------------------------------
 # Local 4021 trajectories
 # -----------------------------------------------------------------------------
@@ -714,6 +775,7 @@ P_C_11 = Trajectory(
 
 ALL_TRAJECTORIES = [
     P_H_01, P_H_02, P_H_03, P_H_04, P_H_05, P_H_06, P_H_07, P_H_08, P_H_09,
+    P_H_11, P_H_12,  # Phase 30 C1
     P_L_01, P_L_02, P_L_03, P_L_04, P_L_05, P_L_06, P_L_07, P_L_08, P_L_09, P_L_10,
     P_C_01, P_C_02, P_C_03, P_C_04, P_C_05, P_C_06, P_C_07, P_C_08, P_C_09, P_C_10, P_C_11,
 ]

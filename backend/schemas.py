@@ -947,6 +947,11 @@ class PersonalNetworkNode(BaseModel):
 class PersonalNetworkEdgeTopic(BaseModel):
     name: str
     color: str
+    # Phase 30 B4 — surface the user-visible label (Topic.description)
+    # so the frontend's description-fallback rendering can strip the
+    # demo-org "slug:" prefix that scoped uniqueness adds to Topic.name.
+    # None for the synthesized "Global" placeholder (no Topic row exists).
+    description: Optional[str] = None
 
 
 class PersonalNetworkEdge(BaseModel):

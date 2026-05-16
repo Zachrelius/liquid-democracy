@@ -674,13 +674,22 @@ export default function Delegations() {
               <DelegationNetworkGraph
                 data={network}
                 onChangeDelegate={(node) => {
-                  // Find a topic this user delegates on to open the modal
+                  // Phase 30 B4 — node.topics now carries the user-visible
+                  // label (Topic.description or Topic.name fallback) from
+                  // the backend, so the topicMap lookup matches against
+                  // description first and falls back to name.
                   const topics = [...new Set(node.topics)];
                   const topic = topics.length > 0 ? topics.find(t => t !== 'Global') : null;
-                  const topicObj = topic ? Object.values(topicMap).find(t => t.name === topic) : null;
+                  const topicObj = topic
+                    ? Object.values(topicMap).find(
+                        t => (t.description?.trim() || t.name) === topic
+                      )
+                    : null;
                   setModal({
                     topicId: topicObj?.id ?? undefined,
-                    topicName: topicObj?.name ?? null,
+                    topicName: topicObj
+                      ? (topicObj.description?.trim() || topicObj.name)
+                      : null,
                     existingDelegation: delegations.find(d => d.delegate_id === node.id),
                   });
                 }}

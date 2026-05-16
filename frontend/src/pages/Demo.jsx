@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import PublicLayout from '../components/PublicLayout';
 import { useToast } from '../components/Toast';
+import Avatar from '../components/Avatar';
 import api, { setTokens } from '../api';
 
 /**
@@ -293,7 +294,6 @@ function DemoPersonaTile({ persona, orgName, loading, disabled, onClick }) {
   const displayName = persona.display_name || persona.username;
   const role = persona.role || '';
   const description = persona.description || role || '';
-  const initial = displayName.charAt(0).toUpperCase();
   return (
     <button
       onClick={onClick}
@@ -302,8 +302,19 @@ function DemoPersonaTile({ persona, orgName, loading, disabled, onClick }) {
       className="flex flex-col items-start text-left p-4 bg-white rounded-lg border border-gray-200 hover:border-[var(--brand-accent)] hover:shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-gray-200 disabled:hover:shadow-none"
     >
       <div className="flex items-center gap-3 mb-2 w-full">
-        <div className="w-9 h-9 rounded-full bg-[var(--brand-primary)] text-white flex items-center justify-center text-sm font-bold shrink-0">
-          {initial}
+        {/* Phase 30 B3 — render the AI-illustration portrait when present
+            (personas.avatar_url is wired by seed_pipeline.py from
+            User.avatar_url). Avatar falls back to a deterministic
+            initials circle when avatar_url is missing or 404s. */}
+        <div className="shrink-0">
+          <Avatar
+            user={{
+              display_name: displayName,
+              avatar_url: persona.avatar_url,
+              username: persona.username,
+            }}
+            size="md"
+          />
         </div>
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold text-[var(--brand-primary)] truncate">
