@@ -450,10 +450,10 @@ export default function Delegations() {
             <div>
               <div className="font-medium text-[var(--brand-primary)]">By topic relevance</div>
               <div className="text-xs text-gray-500">
-                For each proposal, sum the relevance scores of your delegates who agree.
-                The vote direction with the highest summed relevance wins. Ties fall back
-                to the priority order below. Binary proposals only — approval / ranked-choice
-                proposals continue to use strict priority.
+                For each proposal, the topic relevances pick which delegate speaks for
+                you. Binary proposals sum agreement weighted by relevance. Approval,
+                ranked-choice, and STV proposals adopt the highest-relevance delegate's
+                ballot verbatim. Ties fall back to the priority order below.
               </div>
             </div>
           </label>
