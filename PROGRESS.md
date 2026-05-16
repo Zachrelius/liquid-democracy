@@ -3706,7 +3706,7 @@ Two passes bundled. Pass 1 — Phase 27's relevance-weighted delegation extended
 
 **Phase 29 closes the relevance-weighted strategy across all four voting methods and turns Cedar Hollow into the showcase org Z wanted.** The B1/B2 resolver is small but completes the Phase 27 design — `relevance_weighted` users on approval / RCV / STV proposals now get the highest-relevance delegate's ballot verbatim instead of falling through to strict-precedence. The Cedar Hollow refresh trades breadth (3 demo orgs) for depth (1 dense org): 18 public delegates across 6 topics, ~70% filler delegation density, a working private-delegation showcase (Ravi → Linda on Budget backed by an approved delegation_allowed follow), pending follow requests so notification feeds show realistic activity, and 21 AI-illustration portraits matched to characters. The latent `TopicPrecedence`-wipe FK gap (would have bitten Phase 28's auto-precedence rows the next time prod ran a demo reset, but didn't manifest because no demo bible was creating those rows until Phase 29 C4) is patched as a side effect.
 
-## Phase 29.1 — Persona Delegations + Logo Wiring (shipped 2026-05-16, master `<TBD>`)
+## Phase 29.1 — Persona Delegations + Logo Wiring (shipped 2026-05-16, master `5407723`)
 
 Phase 29 shipped Cedar Hollow as the showcase but missed one piece: the 6 quick-login personas themselves (Janet, Brenda, Marcus, Don, Linda, Tomás) had no delegations of their own, so signing in to demo saw an empty Delegations page from the most visible entry points. Phase 29.1 closes that gap plus wires the logo Z dropped during Phase 29 but that wasn't tracked.
 
@@ -3721,7 +3721,7 @@ Phase 29 shipped Cedar Hollow as the showcase but missed one piece: the 6 quick-
 
 1. `1e4d64f` — B1+B2+B3+B4: personas + logo + tests
 2. `7ff1425` — B3 follow-up: commit cedar_hollow_logo.jpg
-3. `<TBD>` — Merge phase-29-1 to master
+3. `5407723` — Merge phase-29-1 to master
 
 **Pre-merge gates:**
 
