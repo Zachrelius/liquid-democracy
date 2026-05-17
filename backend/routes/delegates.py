@@ -517,21 +517,24 @@ def public_delegate_page(
     db: Session = Depends(get_db),
     current_user: Optional[models.User] = Depends(auth_utils.get_optional_user),
 ):
-    """Phase 19 — public read of any delegate's per-org page.
+    """Phase 30.3 — public read of any delegate's per-org page.
 
     Resolves ``handle_or_username`` against ``User.delegate_handle`` first
     (D10 — handle takes precedence), falling back to ``User.username``.
-    Per D12: page renders both ``public`` and ``public_accepting`` topics;
-    ``private`` topics are hidden. The browse endpoint surfaces only
-    ``public_accepting`` users (D11), but a transparent-only delegate is
-    still reachable via this single-page endpoint.
 
-    Auth gate via ``OrgDelegateProfile.effective_page_visibility(db)``:
-      - ``public``  → anyone may view (anonymous OK).
-      - ``private_delegators`` → must be approved follower in this org
-        (Phase 18 follow-org-scoping: ``FollowRelationship`` row with
-        ``org_id = page_org_id`` AND status approved).
-      - ``private`` → 404 (owner uses ``/delegate-profile`` instead).
+    Auth gate (post-Phase-30.3): derived from the highest per-topic
+    visibility in the org (see ``_highest_topic_visibility``):
+      - ``public`` (at least one public / public_accepting topic) →
+        anyone may view, including anonymous.
+      - ``followers_only`` (at least one followers_only, none public) →
+        author + approved followers in this org.
+      - ``private`` (all topics private, or no topics) → author only;
+        404 to everyone else.
+
+    Topics in the response are filtered per viewer relationship:
+    anonymous viewers see public + public_accepting only; approved
+    followers also see followers_only; the author sees all (including
+    private — but that's only the case when viewing their own page).
 
     404 covers both "no such user/page" and "page exists but you can't
     see it" so existence isn't leaked.
@@ -568,38 +571,60 @@ def public_delegate_page(
     if odp is None:
         raise HTTPException(status_code=404, detail="Delegate page not found")
 
-    effective = odp.effective_page_visibility(db)
-    if effective == "private":
-        raise HTTPException(status_code=404, detail="Delegate page not found")
-    if effective == "private_delegators":
-        # Owner sees their own page; otherwise must be an approved follower
-        # in this org.
-        if current_user is None or current_user.id != target.id:
-            if current_user is None:
-                raise HTTPException(status_code=404, detail="Delegate page not found")
-            is_approved_follower = (
-                db.query(models.FollowRelationship)
-                .filter(
-                    models.FollowRelationship.follower_id == current_user.id,
-                    models.FollowRelationship.followed_id == target.id,
-                    models.FollowRelationship.org_id == org.id,
-                )
-                .first()
-                is not None
-            )
-            if not is_approved_follower:
-                raise HTTPException(status_code=404, detail="Delegate page not found")
+    viewer_id = current_user.id if current_user is not None else None
+    is_author = viewer_id == target.id
 
-    # Topics: only non-private (public + public_accepting per D12).
-    topic_rows = (
+    # Derive page reachability from per-topic state.
+    all_topic_rows = (
         db.query(models.DelegateProfile)
         .filter(
             models.DelegateProfile.user_id == target.id,
             models.DelegateProfile.org_id == org.id,
-            models.DelegateProfile.visibility.in_(("public", "public_accepting")),
+            models.DelegateProfile.is_active.is_(True),
         )
         .all()
     )
+    visibilities = {p.visibility for p in all_topic_rows}
+    has_public = bool(
+        visibilities & {"public", "public_accepting"}
+    )
+    has_followers_only = "followers_only" in visibilities
+
+    is_approved_follower = False
+    if viewer_id is not None and not is_author:
+        is_approved_follower = (
+            db.query(models.FollowRelationship)
+            .filter(
+                models.FollowRelationship.follower_id == viewer_id,
+                models.FollowRelationship.followed_id == target.id,
+                models.FollowRelationship.org_id == org.id,
+            )
+            .first()
+            is not None
+        )
+
+    if not is_author:
+        if has_public:
+            pass  # anyone may view
+        elif has_followers_only:
+            if not is_approved_follower:
+                raise HTTPException(
+                    status_code=404, detail="Delegate page not found",
+                )
+        else:
+            # All private or no topics.
+            raise HTTPException(
+                status_code=404, detail="Delegate page not found",
+            )
+
+    # Filter topics for the viewer's relationship.
+    if is_author:
+        allowed_states = {"private", "followers_only", "public", "public_accepting"}
+    elif is_approved_follower:
+        allowed_states = {"followers_only", "public", "public_accepting"}
+    else:
+        allowed_states = {"public", "public_accepting"}
+    topic_rows = [p for p in all_topic_rows if p.visibility in allowed_states]
     # Resolve topic display labels in one query. Phase 30.1 B5 — Topic.name
     # is now scoped per-org and display-safe; the Phase 26 D1 description
     # fallback workaround for the old global-unique constraint is no

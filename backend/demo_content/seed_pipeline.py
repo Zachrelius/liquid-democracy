@@ -832,16 +832,13 @@ def seed_org_from_bible(
             models.OrgDelegateProfile.org_id == org.id,
         ).first()
         if odp is None:
-            # Map page_visibility 'public' → 'private' on stored col (effective
-            # public comes from non-private topic profiles per D3).
-            stored_pv = dp.page_visibility if dp.page_visibility in (
-                "private", "private_delegators",
-            ) else "private"
+            # Phase 30.3: dp.page_visibility is accepted-and-ignored in
+            # the bible schema for back-compat. Per-topic visibility
+            # below is the sole audience control.
             odp = models.OrgDelegateProfile(
                 user_id=user.id,
                 org_id=org.id,
                 intro=dp.intro or "",
-                page_visibility=stored_pv,
             )
             db.add(odp)
             db.flush()

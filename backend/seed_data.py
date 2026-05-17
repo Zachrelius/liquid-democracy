@@ -273,29 +273,26 @@ def _register_delegate_with_visibility(
 def _get_or_create_org_delegate_profile(
     db: Session, user: models.User, org: models.Organization,
     intro: Optional[str] = None,
-    page_visibility: str = "private",
+    page_visibility: str = "private",  # accepted-and-ignored post-Phase-30.3
 ) -> models.OrgDelegateProfile:
-    """Phase 19 (B5) — idempotent OrgDelegateProfile getter.
+    """Idempotent OrgDelegateProfile getter.
 
-    Per D9 the default ``page_visibility`` on first creation is
-    ``'private'`` (drafting state). Effective visibility derives to
-    ``'public'`` when the user has any non-``'private'`` topic.
+    Phase 30.3: ``page_visibility`` column dropped from the model;
+    callers still pass the legacy kwarg (back-compat) but it's ignored.
+    Per-topic ``DelegateProfile.visibility`` is now the sole audience
+    control.
     """
     existing = db.query(models.OrgDelegateProfile).filter(
         models.OrgDelegateProfile.user_id == user.id,
         models.OrgDelegateProfile.org_id == org.id,
     ).first()
     if existing:
-        # Update intro / page_visibility additively so re-running the
-        # seed reflects the latest demo content without duplicating rows.
         if intro is not None:
             existing.intro = intro
-        existing.page_visibility = page_visibility
         db.flush()
         return existing
     odp = models.OrgDelegateProfile(
         user_id=user.id, org_id=org.id, intro=intro,
-        page_visibility=page_visibility,
     )
     db.add(odp)
     db.flush()

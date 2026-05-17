@@ -720,14 +720,22 @@ class DelegateProfile(Base):
     # explicit states. ``server_default='public_accepting'`` mirrors the
     # migration's D8 backwards-compat default so existing rows keep
     # behaving as public-accepting delegates without action.
+    # Phase 30.3 — added "followers_only" between private and public to
+    # collapse the two-layer visibility model (was: this column + the
+    # separate OrgDelegateProfile.page_visibility). The new ladder:
+    # private < followers_only < public < public_accepting. Default for
+    # new rows is "followers_only" so a user with at least one approved
+    # follower has their activity visible by default (matches the
+    # de-facto pre-Phase-30.3 behavior where any follow-relationship
+    # row granted vote visibility).
     visibility: Mapped[str] = mapped_column(
         Enum(
-            "private", "public", "public_accepting",
+            "private", "followers_only", "public", "public_accepting",
             name="delegate_profile_visibility",
         ),
         nullable=False,
-        default="public_accepting",
-        server_default="public_accepting",
+        default="followers_only",
+        server_default="followers_only",
     )
     # Phase 19 — optional per-topic position statement (markdown).
     position_statement: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -765,15 +773,11 @@ class DelegateProfile(Base):
 class OrgDelegateProfile(Base):
     """Phase 19 (D2) — per-user-per-org delegate identity.
 
-    Each row holds the org-scoped intro markdown + ``page_visibility``
-    setting. A user is a public delegate per-org, not platform-wide.
-
-    ``page_visibility`` enum is two values: ``'private'`` (only the user)
-    and ``'private_delegators'`` (any approved follower in this org per
-    Phase 18 follow-org-scoping). The third logical state — ``'public'``
-    — is DERIVED, not stored: see ``effective_page_visibility(db)``
-    below. Page-visibility is a ceiling; per-topic ``DelegateProfile.visibility``
-    state is the floor; effective visibility is the lower of the two.
+    Holds the org-scoped intro markdown. Phase 30.3 dropped the
+    ``page_visibility`` column + its supporting enum (and the
+    ``effective_page_visibility`` derivation method); per-topic
+    ``DelegateProfile.visibility`` is the sole source of truth for
+    audience now.
     """
 
     __tablename__ = "org_delegate_profiles"
@@ -792,15 +796,6 @@ class OrgDelegateProfile(Base):
         String, ForeignKey("organizations.id"), nullable=False, index=True,
     )
     intro: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    page_visibility: Mapped[str] = mapped_column(
-        Enum(
-            "private", "private_delegators",
-            name="org_delegate_page_visibility",
-        ),
-        nullable=False,
-        default="private",
-        server_default="private",
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_now, nullable=False,
     )
@@ -816,35 +811,6 @@ class OrgDelegateProfile(Base):
         "Organization", back_populates="delegate_profiles_org",
         foreign_keys=[org_id],
     )
-
-    def effective_page_visibility(self, db) -> str:
-        """The single source of truth for delegate-page visibility.
-
-        Returns one of ``'private'``, ``'private_delegators'``,
-        ``'public'``. Returns ``'public'`` if the user has at least
-        one ``DelegateProfile`` row in this org with
-        ``visibility != 'private'`` (D3 — page-visibility-public is
-        derived, not stored). Otherwise returns the stored
-        ``self.page_visibility``.
-
-        Every render boundary (browse endpoint, delegate-page endpoint,
-        rationale GET, vote graph) must call this — do NOT re-implement
-        the derivation in routes per spec line 326.
-        """
-        # Late import + same-file class reference; using the model
-        # directly avoids a circular import.
-        non_private_topic_count = (
-            db.query(DelegateProfile)
-            .filter(
-                DelegateProfile.user_id == self.user_id,
-                DelegateProfile.org_id == self.org_id,
-                DelegateProfile.visibility != "private",
-            )
-            .count()
-        )
-        if non_private_topic_count > 0:
-            return "public"
-        return self.page_visibility
 
 
 class DelegateVoteRationale(Base):

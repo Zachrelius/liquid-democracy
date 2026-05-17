@@ -44,8 +44,12 @@ import renderMarkdown from '../utils/renderMarkdown';
 import { urlFor } from '../utils/urls';
 import DelegateModal from '../components/DelegateModal';
 
-function VoteRow({ vote, slug, rationale }) {
-  const [expanded, setExpanded] = useState(false);
+function VoteRow({ vote, slug, rationale, allRationalesExpanded }) {
+  const [individuallyExpanded, setIndividuallyExpanded] = useState(false);
+  // Phase 30.3 F3 — global "show all rationales" overrides individual
+  // per-row state; switching it off collapses everything regardless of
+  // local state (clean reset).
+  const expanded = allRationalesExpanded || individuallyExpanded;
   if (!vote.visible) {
     return (
       <li className="text-sm text-gray-400 italic py-1.5">
@@ -77,13 +81,13 @@ function VoteRow({ vote, slug, rationale }) {
         {vote.cast_at && (
           <span>{new Date(vote.cast_at).toLocaleDateString()}</span>
         )}
-        {rationale && (
+        {rationale && !allRationalesExpanded && (
           <button
             type="button"
-            onClick={() => setExpanded(v => !v)}
+            onClick={() => setIndividuallyExpanded(v => !v)}
             className="text-[var(--brand-accent)] hover:underline"
           >
-            {expanded ? 'Hide rationale' : 'Show rationale'}
+            {individuallyExpanded ? 'Hide rationale' : 'Show rationale'}
           </button>
         )}
       </div>
@@ -110,6 +114,7 @@ export default function DelegatePublic() {
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState('');
   const [delegateModalTopic, setDelegateModalTopic] = useState(null);
+  const [allRationalesExpanded, setAllRationalesExpanded] = useState(false);
 
   const slug = org_slug || currentOrg?.slug || null;
 
@@ -119,39 +124,51 @@ export default function DelegatePublic() {
     setNotFound(false);
     setError('');
     try {
-      // Step 1: resolve handle/username via the org browse endpoint.
-      // The endpoint paginates; we walk pages until we find a match. For
-      // an org with hundreds of delegates this is suboptimal — flagged for
-      // a backend follow-up to add a direct ``GET /api/orgs/{slug}/
-      // delegates/{handle_or_username}`` resolver.
-      let found = null;
-      let offset = 0;
-      const PAGE = 100;
-      while (true) {
-        const page = await api.get(
-          `/api/orgs/${slug}/delegates?limit=${PAGE}&offset=${offset}`
+      // Phase 30.2 B1 — load the public delegate page via the
+      // dedicated endpoint (which serves the full per-topic profile
+      // shape including bio + position_statement) rather than walking
+      // the browse list (which ships only {topic_id, name, visibility}).
+      // The browse-walk approach was the original source of the
+      // missing bio/position render bug; the dedicated endpoint has
+      // existed since Phase 19 — we just weren't using it.
+      let page;
+      try {
+        page = await api.get(
+          `/api/orgs/${slug}/delegates/${encodeURIComponent(handle_or_username)}`
         );
-        if (!page || page.length === 0) break;
-        found = page.find(
-          d => d.delegate_handle === handle_or_username
-            || d.username === handle_or_username
-        );
-        if (found) break;
-        if (page.length < PAGE) break;
-        offset += PAGE;
+      } catch (e) {
+        // 404 from the endpoint means no page exists or the viewer
+        // can't see it (existence isn't leaked per the endpoint's
+        // contract). Surface as not-found.
+        if (e.status === 404 || /404|not found/i.test(e.message || '')) {
+          setNotFound(true);
+          return;
+        }
+        throw e;
       }
-      if (!found) {
+      if (!page) {
         setNotFound(true);
         return;
       }
-      setDelegate(found);
+      // Adapt the response shape to the legacy `delegate` state the
+      // rest of this component already reads (display_name / username /
+      // avatar_url / intro / public_topics). Map `topics` → `public_topics`.
+      setDelegate({
+        user_id: page.user_id,
+        username: page.username,
+        display_name: page.display_name,
+        avatar_url: page.avatar_url,
+        delegate_handle: page.delegate_handle,
+        intro: page.intro,
+        public_topics: page.topics || [],
+      });
 
       // Step 2: pull the user's full profile for vote history. The legacy
       // /api/users/{id}/profile endpoint already does visibility gating;
       // hidden votes come back with visible=false and we render a privacy
       // placeholder for them.
       try {
-        const prof = await api.get(`/api/users/${found.user_id}/profile`);
+        const prof = await api.get(`/api/users/${page.user_id}/profile`);
         setProfile(prof);
 
         // Step 3: best-effort fetch of rationale per visible vote.
@@ -288,27 +305,32 @@ export default function DelegatePublic() {
           </h2>
           <div className="space-y-4">
             {delegate.public_topics.map(t => {
-              // Fetch per-topic bio + position_statement: not in the browse
-              // payload (it ships {topic_id, name, visibility} only). Per
-              // the API gap noted at the top of this file, we surface the
-              // topic name + visibility label only and link to vote history
-              // below. A future backend addition could ship the full
-              // per-topic profile detail in the browse / public-page
-              // payload.
-              const labelClasses = t.visibility === 'public_accepting'
-                ? 'bg-green-50 text-green-700'
-                : 'bg-blue-50 text-blue-700';
-              const label = t.visibility === 'public_accepting'
-                ? 'Accepting delegation'
-                : 'Transparent only';
-              // Phase 26 D1 — display-name resolution: description with
-              // fallback to name. Demos prefix names for scoping; the
-              // description is the user-visible label.
-              const topicLabel = t.name;
+              // Phase 30.2 B1 — bio + position_statement now flow through
+              // the public-page endpoint and render here. Mirrors the
+              // edit-view's TopicRow layout sans edit controls.
+              // Phase 30.3 — three badges now (followers_only added).
+              let labelClasses;
+              let label;
+              if (t.visibility === 'public_accepting') {
+                labelClasses = 'bg-green-50 text-green-700';
+                label = 'Accepting delegation';
+              } else if (t.visibility === 'followers_only') {
+                labelClasses = 'bg-violet-50 text-violet-700';
+                label = 'Followers only';
+              } else {
+                labelClasses = 'bg-blue-50 text-blue-700';
+                label = 'Transparent only';
+              }
+              // Phase 30.1 B5 — Topic.name is the canonical display label;
+              // demos no longer prefix the name.
+              const topicLabel = t.topic_name || t.name;
+              const bio = (t.bio || '').trim();
+              const positionStatement = (t.position_statement || '').trim();
+              const hasContent = bio || positionStatement;
               return (
                 <div
                   key={t.topic_id}
-                  className="bg-white border border-gray-200 rounded-xl p-4 space-y-2"
+                  className="bg-white border border-gray-200 rounded-xl p-4 space-y-3"
                 >
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <h3 className="text-base font-semibold text-[var(--brand-primary)]">
@@ -320,6 +342,21 @@ export default function DelegatePublic() {
                       {label}
                     </span>
                   </div>
+                  {hasContent && (
+                    <div className="space-y-2">
+                      {bio && (
+                        <p className="text-sm text-[#2C3E50] italic">"{bio}"</p>
+                      )}
+                      {positionStatement && (
+                        <div
+                          className="text-sm text-[#2C3E50] leading-relaxed whitespace-pre-wrap"
+                          dangerouslySetInnerHTML={{
+                            __html: renderMarkdown(positionStatement),
+                          }}
+                        />
+                      )}
+                    </div>
+                  )}
                   {t.visibility === 'public_accepting' && !isSelf && (
                     <button
                       onClick={() => setDelegateModalTopic({
@@ -345,9 +382,20 @@ export default function DelegatePublic() {
 
       {/* Voting record + rationales */}
       <section>
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-          Voting record
-        </h2>
+        <div className="flex items-center justify-between mb-3 gap-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Voting record
+          </h2>
+          {visibleVotes.length > 0 && Object.keys(rationales).length > 0 && (
+            <button
+              type="button"
+              onClick={() => setAllRationalesExpanded(v => !v)}
+              className="text-xs text-[var(--brand-accent)] hover:underline"
+            >
+              {allRationalesExpanded ? 'Hide all rationales' : 'Show all rationales'}
+            </button>
+          )}
+        </div>
         {visibleVotes.length === 0 ? (
           <p className="text-sm text-gray-400 italic">
             No public votes yet.
@@ -360,6 +408,7 @@ export default function DelegatePublic() {
                 vote={v}
                 slug={slug}
                 rationale={rationales[v.id] || null}
+                allRationalesExpanded={allRationalesExpanded}
               />
             ))}
           </ul>

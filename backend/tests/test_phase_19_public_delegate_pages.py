@@ -239,13 +239,16 @@ def _make_org_delegate_profile(
     org: models.Organization,
     *,
     intro: Optional[str] = None,
-    page_visibility: str = "private",
+    page_visibility: str = "private",  # accepted-and-ignored post-Phase-30.3
 ) -> models.OrgDelegateProfile:
+    # Phase 30.3: page_visibility column dropped; kwarg preserved for
+    # caller back-compat. Tests that exercised page_visibility-specific
+    # behavior either no longer apply or have been retargeted to the
+    # new per-topic visibility model.
     odp = models.OrgDelegateProfile(
         user_id=user.id,
         org_id=org.id,
         intro=intro,
-        page_visibility=page_visibility,
     )
     db.add(odp)
     db.flush()
@@ -354,6 +357,12 @@ class TestOrgDelegateProfileLifecycle:
             _make_org_delegate_profile(test_db, user, org)
             test_db.flush()
 
+    @pytest.mark.skip(
+        reason="Phase 30.3 — page_visibility column dropped; "
+        "default-on-create behavior moved to per-topic "
+        "DelegateProfile.visibility ('followers_only'), covered by "
+        "TestNewDelegateProfileDefaultsToFollowersOnly."
+    )
     def test_default_page_visibility_is_private(self, test_db: Session):
         """D9: default page_visibility on first creation is 'private'."""
         org = _make_org(test_db, "lc2_org")
@@ -373,6 +382,11 @@ class TestOrgDelegateProfileLifecycle:
         test_db.refresh(odp)
         assert odp.intro == "updated intro"
 
+    @pytest.mark.skip(
+        reason="Phase 30.3 — page_visibility column dropped; "
+        "'private_delegators' state replaced by per-topic "
+        "'followers_only'."
+    )
     def test_page_visibility_can_be_set_to_private_delegators(
         self, test_db: Session,
     ):
@@ -388,10 +402,9 @@ class TestOrgDelegateProfileLifecycle:
         self, client: TestClient, test_db: Session,
     ):
         """Per spec §B3: GET /api/orgs/{slug}/delegate-profile creates
-        the row on first access with page_visibility='private'.
-
-        Coordination note: implemented by Backend Agent #2 — until that
-        wave commits, expect 404. Skip on missing route."""
+        the row on first access. (Phase 30.3 dropped page_visibility
+        from the response shape; test no longer asserts on it.)
+        """
         org = _make_org(test_db, "lc5_org")
         user = _make_user(test_db, "lc5_user")
         make_org_membership(
@@ -408,7 +421,8 @@ class TestOrgDelegateProfileLifecycle:
             )
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert body.get("page_visibility") == "private"
+        # Phase 30.3: row should exist with no audience-state field.
+        assert body.get("id") is not None
 
     def test_relationship_user_to_org_delegate_profiles(
         self, test_db: Session,
@@ -510,6 +524,12 @@ class TestTopicVisibilityTransitions:
 # ===========================================================================
 
 
+@pytest.mark.skip(
+    reason="Phase 30.3 — OrgDelegateProfile.page_visibility + the "
+    "effective_page_visibility() derivation method were removed. "
+    "Per-topic DelegateProfile.visibility is now the sole audience "
+    "control; coverage moved to test_phase_30_3_visibility_consolidation."
+)
 class TestEffectivePageVisibility:
     """``min(page_visibility, max(topic_visibility))`` semantic.
 
@@ -1280,6 +1300,12 @@ class TestDelegateHandle:
 # ===========================================================================
 
 
+@pytest.mark.skip(
+    reason="Phase 30.3 — 'private_delegators' page-visibility removed. "
+    "Equivalent semantic is now per-topic 'followers_only'; covered by "
+    "TestPublicPageShowsFollowersOnlyToFollower in "
+    "test_phase_30_3_visibility_consolidation."
+)
 class TestPrivateDelegatorsPageVisibility:
     """When page_visibility='private_delegators' AND no public topics,
     only approved followers in the org can see the page."""
@@ -1356,14 +1382,18 @@ class TestPrivateDelegatorsPageVisibility:
 
 
 class TestBackwardsCompat:
-    """D8: existing DelegateProfile rows default to visibility='public_accepting'."""
+    """Phase 30.3 changed the default from public_accepting (Phase 19
+    back-compat for pre-existing rows) to followers_only. The original
+    "browse endpoint surfaces legacy rows" semantic still applies if
+    the row is at public_accepting — newly-defaulted rows at
+    followers_only do NOT surface on browse (that endpoint filters on
+    visibility='public_accepting')."""
 
-    def test_new_delegate_profile_defaults_to_public_accepting(
+    def test_default_visibility_is_followers_only(
         self, test_db: Session,
     ):
-        """Direct ORM construction (no explicit visibility) gets the
-        default. Mirrors what the migration's server_default provides
-        for existing rows."""
+        """Phase 30.3 D2: direct ORM construction lands at
+        followers_only (was public_accepting in Phase 19 back-compat)."""
         org = _make_org(test_db, "bc1_org")
         user = _make_user(test_db, "bc1_user")
         topic = _make_topic(test_db, org)
@@ -1377,23 +1407,26 @@ class TestBackwardsCompat:
         test_db.add(dp)
         test_db.flush()
         test_db.refresh(dp)
-        assert dp.visibility == "public_accepting"
+        assert dp.visibility == "followers_only"
 
-    def test_existing_legacy_row_remains_browsable(
+    def test_public_accepting_row_remains_browsable(
         self, client: TestClient, test_db: Session,
     ):
-        """A DelegateProfile created without explicit Phase-19 fields
-        (only bio + is_active) still surfaces on the browse endpoint."""
+        """A DelegateProfile explicitly at public_accepting still
+        surfaces on the browse endpoint. The Phase 19 "legacy rows
+        default to public_accepting" semantic doesn't apply post-
+        Phase-30.3 (new default is followers_only), but explicit rows
+        at public_accepting still work."""
         org = _make_org(test_db, "bc2_org")
         user = _make_user(test_db, "bc2_user")
         topic = _make_topic(test_db, org, "BC2Topic")
-        # Legacy-shape construction.
         dp = models.DelegateProfile(
             user_id=user.id,
             topic_id=topic.id,
             org_id=org.id,
-            bio="legacy bio",
+            bio="x" * 60,
             is_active=True,
+            visibility="public_accepting",
         )
         test_db.add(dp)
         _make_org_delegate_profile(test_db, user, org)

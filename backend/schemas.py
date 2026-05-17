@@ -1795,12 +1795,13 @@ class _OrgDelegateProfileTopicOut(BaseModel):
 
 
 class OrgDelegateProfileOut(BaseModel):
-    """Phase 19 B3 — response shape for ``GET /api/orgs/{slug}/delegate-
-    profile`` (caller's own profile in this org).
+    """Response shape for ``GET /api/orgs/{slug}/delegate-profile``
+    (caller's own profile in this org).
 
-    ``effective_page_visibility`` is computed via the centralized helper
-    on ``OrgDelegateProfile.effective_page_visibility(db)``; the route is
-    the single caller — do NOT re-derive in code that consumes this shape.
+    Phase 30.3: ``page_visibility`` and ``effective_page_visibility``
+    fields were removed when the page-visibility layer was consolidated
+    into per-topic ``DelegateProfile.visibility``. The frontend reads
+    audience state from the per-topic ``topics[].visibility`` field.
     """
 
     id: str
@@ -1808,8 +1809,6 @@ class OrgDelegateProfileOut(BaseModel):
     org_id: str
     org_slug: str
     intro: Optional[str] = None
-    page_visibility: str  # 'private' | 'private_delegators'
-    effective_page_visibility: str  # 'private' | 'private_delegators' | 'public'
     created_at: datetime
     updated_at: datetime
     topics: list[_OrgDelegateProfileTopicOut] = Field(default_factory=list)
@@ -1849,36 +1848,31 @@ class PublicDelegatePageOut(BaseModel):
 
 
 class OrgDelegateProfilePatch(BaseModel):
-    """Body for ``PATCH /api/orgs/{slug}/delegate-profile``. Both fields
-    optional — the route applies whichever fields are present.
+    """Body for ``PATCH /api/orgs/{slug}/delegate-profile``.
+
+    Phase 30.3: ``page_visibility`` dropped — the column is gone and
+    per-topic ``DelegateProfile.visibility`` is the sole audience
+    control. The schema preserves backward-compat by accepting the
+    field as a no-op (any value validates; the route ignores it). A
+    future cleanup pass can drop the field once no clients send it.
     """
 
     intro: Optional[str] = None
-    page_visibility: Optional[str] = None  # 'private' | 'private_delegators'
-
-    @field_validator("page_visibility")
-    @classmethod
-    def _validate_page_visibility(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
-        if v not in ("private", "private_delegators"):
-            raise ValueError(
-                "page_visibility must be 'private' or 'private_delegators'"
-            )
-        return v
+    # Deprecated post-Phase-30.3 — accepted-and-ignored for back-compat.
+    page_visibility: Optional[str] = None
 
 
 class DelegateProfileTopicPatch(BaseModel):
     """Body for ``PATCH /api/orgs/{slug}/delegate-profile/topics/{topic_id}``.
 
-    All fields optional. The ``visibility`` field accepts ``'private'``
-    and ``'public'`` — the route REJECTS direct ``'public_accepting'``
-    transitions (use the dedicated submit endpoint per spec §B3).
+    Phase 30.3: ``visibility`` accepts ``'private'``, ``'followers_only'``,
+    or ``'public'``. ``'public_accepting'`` transitions must go through
+    the dedicated submit endpoint (approval gate).
     """
 
     bio: Optional[str] = None
     position_statement: Optional[str] = None
-    visibility: Optional[str] = None  # 'private' | 'public'
+    visibility: Optional[str] = None  # 'private' | 'followers_only' | 'public'
 
     @field_validator("visibility")
     @classmethod
@@ -1887,10 +1881,10 @@ class DelegateProfileTopicPatch(BaseModel):
             return v
         # NB: 'public_accepting' is intentionally rejected here — it must
         # go through the submit-public-accepting endpoint (approval gate).
-        if v not in ("private", "public"):
+        if v not in ("private", "followers_only", "public"):
             raise ValueError(
-                "visibility on PATCH must be 'private' or 'public'; "
-                "use POST .../submit-public-accepting for "
+                "visibility on PATCH must be 'private', 'followers_only', "
+                "or 'public'; use POST .../submit-public-accepting for "
                 "public_accepting transitions"
             )
         return v
@@ -1903,6 +1897,28 @@ class DelegateApplicationDeny(BaseModel):
     """
 
     comment: str = Field(min_length=1, max_length=2000)
+
+
+class HardRevertBody(BaseModel):
+    """Phase 30.3 — optional body for the hard-revert endpoint. The
+    endpoint historically only reverted to ``'private'``; post-Phase-30.3
+    it also accepts ``'followers_only'`` as a softer destination (public
+    delegators still get revoked, but the topic stays visible to
+    approved followers).
+    """
+
+    target_visibility: Optional[str] = "private"
+
+    @field_validator("target_visibility")
+    @classmethod
+    def _validate(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return "private"
+        if v not in ("private", "followers_only"):
+            raise ValueError(
+                "target_visibility must be 'private' or 'followers_only'"
+            )
+        return v
 
 
 class PendingApplicationOut(BaseModel):

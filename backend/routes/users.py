@@ -411,7 +411,13 @@ def get_user_profile(
     for v in direct_votes:
         proposal = db.get(models.Proposal, v.proposal_id)
         proposal_topics = [pt.topic_id for pt in (proposal.proposal_topics if proposal else [])]
-        visible = can_see_votes(db, viewer_id, user_id, proposal_topics)
+        # Phase 30.3 B4 — pass org_id so the follower-relationship check
+        # is org-scoped (Phase 18 D2 was missing here).
+        proposal_org_id = proposal.org_id if proposal else None
+        visible = can_see_votes(
+            db, viewer_id, user_id, proposal_topics,
+            org_id=proposal_org_id,
+        )
         if visible:
             votes_out.append(schemas.VoteVisibility(
                 id=v.id,
@@ -623,10 +629,13 @@ def user_votes(
     for v in direct_votes:
         proposal = db.get(models.Proposal, v.proposal_id)
         proposal_topics = [pt.topic_id for pt in (proposal.proposal_topics if proposal else [])]
-
-        # Visible if: self, follower, OR public delegate topic
+        # Phase 30.3 B4 — pass org_id for the org-scoped follower check.
+        proposal_org_id = proposal.org_id if proposal else None
         visible = (
-            can_see_votes(db, viewer_id, user_id, proposal_topics)
+            can_see_votes(
+                db, viewer_id, user_id, proposal_topics,
+                org_id=proposal_org_id,
+            )
             or bool(pub_topic_ids.intersection(proposal_topics))
         )
         result.append(schemas.VoteVisibility(

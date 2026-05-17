@@ -263,19 +263,25 @@ def _auth_header(user_id: str) -> dict:
     return {"Authorization": f"Bearer {auth_utils.create_access_token(user_id)}"}
 
 
-class TestSubmitPublicAcceptingFromPrivateRejectedAtBackend:
-    """Calling submit-public-accepting when the profile is at 'private'
-    must return 400 with the existing error message. The frontend
-    bridge issues a PATCH first; the backend contract doesn't change."""
+class TestSubmitPublicAcceptingFromPrivateAutoPromotes:
+    """Phase 30.3 B6: the backend now auto-promotes private →
+    public before running the submit (defensive layer that handles
+    direct API callers + frontends that don't bridge client-side).
+    Was: returned 400 in Phase 30 / 30.1 / 30.2."""
 
-    def test_returns_400(self, org_with_user, client):
-        _, org, user, topic = org_with_user
+    def test_auto_promotes_to_public_accepting(self, org_with_user, client):
+        db, org, user, topic = org_with_user
         resp = client.post(
             f"/api/orgs/{org.slug}/delegate-profile/topics/{topic.id}/submit-public-accepting",
             headers=_auth_header(user.id),
         )
-        assert resp.status_code == 400
-        assert "public" in resp.json().get("detail", "").lower()
+        assert resp.status_code == 200, resp.text
+        dp = db.query(models.DelegateProfile).filter_by(
+            user_id=user.id, topic_id=topic.id,
+        ).first()
+        # No approvers in this test org → auto-approves all the way to
+        # public_accepting.
+        assert dp.visibility == "public_accepting"
 
 
 class TestSubmitPublicAcceptingFromPublicStillWorks:
