@@ -103,10 +103,10 @@ def _seed_delegate(
     db.add(topic); db.flush()
 
     # Parent OrgDelegateProfile required for the public page to be
-    # reachable; effective_page_visibility derives from topic states.
+    # reachable. Phase 30.3 dropped page_visibility; visibility lives
+    # entirely on per-topic DelegateProfile.visibility.
     odp = models.OrgDelegateProfile(
         user_id=delegate.id, org_id=org.id,
-        page_visibility="private",
         intro="An intro.",
     )
     db.add(odp)

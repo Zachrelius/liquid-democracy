@@ -40,8 +40,17 @@ def make_delegate_profile(
     user: models.User,
     topic: models.Topic,
     bio: str = "Test bio",
+    visibility: str = "public_accepting",
 ) -> models.DelegateProfile:
-    p = models.DelegateProfile(user_id=user.id, topic_id=topic.id, bio=bio)
+    # Phase 30.3: default visibility for new rows shifted from
+    # public_accepting to followers_only. Tests in this file pre-date
+    # that shift and assume "public-delegate" semantics — pass
+    # public_accepting explicitly so the broad-visibility expectations
+    # still hold.
+    p = models.DelegateProfile(
+        user_id=user.id, topic_id=topic.id,
+        bio=bio, visibility=visibility,
+    )
     db.add(p)
     db.flush()
     return p
@@ -340,18 +349,28 @@ def test_public_delegate_votes_not_visible_on_other_topics(db):
 
 
 def test_follower_can_see_votes(db):
+    """Phase 30.3 — followers can see a target's votes only when the
+    target has a per-topic DelegateProfile at followers_only (or
+    higher) on that topic. The pre-Phase-30.3 broad "any follow →
+    sees all votes" shortcut is gone."""
     alice = make_user(db, "alice")
     bob = make_user(db, "bob")
     health = make_topic(db, "health")
+    # Bob makes the topic followers_only — alice (an approved follower)
+    # can see his votes on it.
+    make_delegate_profile(db, bob, health, visibility="followers_only")
     make_follow_relationship(db, alice, bob, "view_only")
 
     assert can_see_votes(db, alice.id, bob.id, [health.id]) is True
 
 
 def test_non_follower_cannot_see_votes(db):
+    """Phase 30.3 — non-followers can't see followers_only-topic votes."""
     alice = make_user(db, "alice")
     bob = make_user(db, "bob")
     health = make_topic(db, "health")
+    make_delegate_profile(db, bob, health, visibility="followers_only")
+    # No follow relationship.
 
     assert can_see_votes(db, alice.id, bob.id, [health.id]) is False
 
