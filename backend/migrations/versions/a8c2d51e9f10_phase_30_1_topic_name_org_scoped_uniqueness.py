@@ -73,6 +73,20 @@ def upgrade() -> None:
     #     the table without the column-level UNIQUE if the column
     #     definition is updated, but here we instead drop_constraint
     #     by name and tolerate failure.
+    # Idempotency check: in test stacks where the schema was built via
+    # ``Base.metadata.create_all`` AFTER Phase 30.1 updated models.py,
+    # the new constraint is already in place. Skip the swap then.
+    import sqlalchemy as _sa
+    inspector = _sa.inspect(bind)
+    existing_constraints = inspector.get_unique_constraints("topics")
+    has_new_constraint = any(
+        c.get("name") == "uq_topics_org_id_name"
+        and set(c.get("column_names") or []) == {"org_id", "name"}
+        for c in existing_constraints
+    )
+    if has_new_constraint:
+        return
+
     if bind.dialect.name == "postgresql":
         # On PG, prefer explicit drop_constraint outside batch mode
         # so the constraint truly goes away.

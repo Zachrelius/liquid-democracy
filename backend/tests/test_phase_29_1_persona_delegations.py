@@ -145,10 +145,8 @@ class TestMarcusPrecedenceOrderingCorrect:
             .filter(models.TopicPrecedence.user_id == marcus.id)
             .all()
         )
-        # Strip the per-bible "demo-cedar-hollow:" prefix.
-        by_topic = {
-            t.name.split(":", 1)[1]: p.priority for (p, t) in rows
-        }
+        # Phase 30.1 B5 — topic names are no longer prefixed.
+        by_topic = {t.name: p.priority for (p, t) in rows}
         assert by_topic == {
             "Budget": 0,
             "Pool & Recreation": 1,
