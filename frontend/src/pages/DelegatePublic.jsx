@@ -44,8 +44,12 @@ import renderMarkdown from '../utils/renderMarkdown';
 import { urlFor } from '../utils/urls';
 import DelegateModal from '../components/DelegateModal';
 
-function VoteRow({ vote, slug, rationale }) {
-  const [expanded, setExpanded] = useState(false);
+function VoteRow({ vote, slug, rationale, allRationalesExpanded }) {
+  const [individuallyExpanded, setIndividuallyExpanded] = useState(false);
+  // Phase 30.3 F3 — global "show all rationales" overrides individual
+  // per-row state; switching it off collapses everything regardless of
+  // local state (clean reset).
+  const expanded = allRationalesExpanded || individuallyExpanded;
   if (!vote.visible) {
     return (
       <li className="text-sm text-gray-400 italic py-1.5">
@@ -77,13 +81,13 @@ function VoteRow({ vote, slug, rationale }) {
         {vote.cast_at && (
           <span>{new Date(vote.cast_at).toLocaleDateString()}</span>
         )}
-        {rationale && (
+        {rationale && !allRationalesExpanded && (
           <button
             type="button"
-            onClick={() => setExpanded(v => !v)}
+            onClick={() => setIndividuallyExpanded(v => !v)}
             className="text-[var(--brand-accent)] hover:underline"
           >
-            {expanded ? 'Hide rationale' : 'Show rationale'}
+            {individuallyExpanded ? 'Hide rationale' : 'Show rationale'}
           </button>
         )}
       </div>
@@ -110,6 +114,7 @@ export default function DelegatePublic() {
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState('');
   const [delegateModalTopic, setDelegateModalTopic] = useState(null);
+  const [allRationalesExpanded, setAllRationalesExpanded] = useState(false);
 
   const slug = org_slug || currentOrg?.slug || null;
 
@@ -303,12 +308,19 @@ export default function DelegatePublic() {
               // Phase 30.2 B1 — bio + position_statement now flow through
               // the public-page endpoint and render here. Mirrors the
               // edit-view's TopicRow layout sans edit controls.
-              const labelClasses = t.visibility === 'public_accepting'
-                ? 'bg-green-50 text-green-700'
-                : 'bg-blue-50 text-blue-700';
-              const label = t.visibility === 'public_accepting'
-                ? 'Accepting delegation'
-                : 'Transparent only';
+              // Phase 30.3 — three badges now (followers_only added).
+              let labelClasses;
+              let label;
+              if (t.visibility === 'public_accepting') {
+                labelClasses = 'bg-green-50 text-green-700';
+                label = 'Accepting delegation';
+              } else if (t.visibility === 'followers_only') {
+                labelClasses = 'bg-violet-50 text-violet-700';
+                label = 'Followers only';
+              } else {
+                labelClasses = 'bg-blue-50 text-blue-700';
+                label = 'Transparent only';
+              }
               // Phase 30.1 B5 — Topic.name is the canonical display label;
               // demos no longer prefix the name.
               const topicLabel = t.topic_name || t.name;
@@ -370,9 +382,20 @@ export default function DelegatePublic() {
 
       {/* Voting record + rationales */}
       <section>
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-          Voting record
-        </h2>
+        <div className="flex items-center justify-between mb-3 gap-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Voting record
+          </h2>
+          {visibleVotes.length > 0 && Object.keys(rationales).length > 0 && (
+            <button
+              type="button"
+              onClick={() => setAllRationalesExpanded(v => !v)}
+              className="text-xs text-[var(--brand-accent)] hover:underline"
+            >
+              {allRationalesExpanded ? 'Hide all rationales' : 'Show all rationales'}
+            </button>
+          )}
+        </div>
         {visibleVotes.length === 0 ? (
           <p className="text-sm text-gray-400 italic">
             No public votes yet.
@@ -385,6 +408,7 @@ export default function DelegatePublic() {
                 vote={v}
                 slug={slug}
                 rationale={rationales[v.id] || null}
+                allRationalesExpanded={allRationalesExpanded}
               />
             ))}
           </ul>

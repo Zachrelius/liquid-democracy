@@ -52,7 +52,8 @@ class Member:
 @dataclass
 class TopicVisibility:
     topic: str
-    state: Literal['private', 'public', 'public_accepting']
+    # Phase 30.3 D1 — followers_only added between private and public.
+    state: Literal['private', 'followers_only', 'public', 'public_accepting']
 
 
 @dataclass
@@ -71,8 +72,13 @@ class VoteRationale:
 @dataclass
 class DelegatePage:
     member_user_id: str
-    page_visibility: Literal['private', 'private_delegators', 'public']
-    intro: str
+    # Phase 30.3: page_visibility is accepted-and-ignored. The column it
+    # used to back has been dropped; per-topic visibility on
+    # ``TopicVisibility.state`` is the sole audience control. Kept here
+    # for back-compat with existing bibles; new bibles can omit (default
+    # empty string) or remove explicit values.
+    page_visibility: str = ''
+    intro: str = ''
     topics: list[TopicVisibility] = field(default_factory=list)
     position_statements: list[PositionStatement] = field(default_factory=list)
     vote_rationales: list[VoteRationale] = field(default_factory=list)

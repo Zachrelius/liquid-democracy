@@ -39,13 +39,14 @@ If a future pass adds the ``delegation_intent_id`` FK column, the helper
 should be updated to filter on the column directly (one query, not a
 join + python set membership).
 
-Visibility centralization
--------------------------
+Visibility model (post-Phase-30.3)
+----------------------------------
 
-Every render boundary calls
-``OrgDelegateProfile.effective_page_visibility(db)`` from the model
-layer. Routes do NOT re-derive ``'public'`` from topic state — the
-helper is the single source of truth (spec line 326).
+Audience lives per-topic on ``DelegateProfile.visibility``. The single
+ladder is ``private < followers_only < public < public_accepting``.
+There is no separate page-level visibility — page reachability derives
+from the highest per-topic visibility (see ``routes/delegates.py``
+``_can_view_public_page`` for the gate).
 """
 from __future__ import annotations
 
@@ -89,8 +90,11 @@ def _get_or_create_org_delegate_profile(
     db: Session, user_id: str, org_id: str,
 ) -> models.OrgDelegateProfile:
     """Return the caller's OrgDelegateProfile for this org, creating one
-    with ``page_visibility='private'`` (D9 default) on first access. The
-    GET endpoint is idempotent — no error on re-call.
+    on first access. The GET endpoint is idempotent — no error on
+    re-call.
+
+    Phase 30.3: ``page_visibility`` column dropped; visibility lives
+    entirely on per-topic ``DelegateProfile.visibility`` now.
     """
     odp = (
         db.query(models.OrgDelegateProfile)
@@ -107,7 +111,6 @@ def _get_or_create_org_delegate_profile(
         user_id=user_id,
         org_id=org_id,
         intro=None,
-        page_visibility="private",
     )
     db.add(odp)
     db.flush()
@@ -120,7 +123,6 @@ def _get_or_create_org_delegate_profile(
         details={
             "user_id": user_id,
             "org_id": org_id,
-            "page_visibility": "private",
             "via": "get_or_create",
         },
     )
@@ -151,8 +153,7 @@ def _serialize_org_delegate_profile(
     org: models.Organization,
 ) -> schemas.OrgDelegateProfileOut:
     """Build the GET response shape, including all per-topic DelegateProfile
-    rows for (user_id, org_id) joined with topic names. Calls the
-    centralized ``effective_page_visibility`` helper (spec line 326).
+    rows for (user_id, org_id) joined with topic names.
     """
     topic_rows = (
         db.query(models.DelegateProfile)
@@ -174,16 +175,12 @@ def _serialize_org_delegate_profile(
         _serialize_topic_row(dp, topics_by_id.get(dp.topic_id))
         for dp in topic_rows
     ]
-    # Centralized derivation — per spec line 326 do NOT re-implement.
-    eff = odp.effective_page_visibility(db)
     return schemas.OrgDelegateProfileOut(
         id=odp.id,
         user_id=odp.user_id,
         org_id=odp.org_id,
         org_slug=org.slug,
         intro=odp.intro,
-        page_visibility=odp.page_visibility,
-        effective_page_visibility=eff,
         created_at=odp.created_at,
         updated_at=odp.updated_at,
         topics=serialized_topics,
@@ -204,16 +201,13 @@ def _topic_in_org_or_404(
 def _get_or_create_delegate_profile(
     db: Session, user_id: str, org_id: str, topic_id: str,
 ) -> models.DelegateProfile:
-    """Get-or-create a DelegateProfile row for (user, org, topic). New
-    rows default to ``visibility='private'`` (the user is implicitly
-    drafting; nothing about the topic is publicly visible until they
-    raise visibility).
+    """Get-or-create a DelegateProfile row for (user, org, topic).
 
-    The Phase 19 enum default on the column itself is
-    ``'public_accepting'`` (D8 backwards-compat for legacy rows) but
-    NEW rows created from this route default to ``'private'`` because
-    a Phase-19-aware caller should explicitly opt into a non-private
-    state via the lifecycle transitions.
+    Phase 30.3 D2: new rows default to ``visibility='followers_only'``
+    (was ``'private'``). For a user with no approved followers this
+    is identical to private in practice (no audience); for a user with
+    followers this preserves the pre-Phase-30.3 default behavior where
+    any FollowRelationship granted vote visibility.
     """
     dp = (
         db.query(models.DelegateProfile)
@@ -233,7 +227,7 @@ def _get_or_create_delegate_profile(
         org_id=org_id,
         bio="",
         is_active=True,
-        visibility="private",
+        visibility="followers_only",
     )
     db.add(dp)
     db.flush()
@@ -632,9 +626,13 @@ def patch_my_org_delegate_profile(
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_membership),
 ):
-    """Update the caller's OrgDelegateProfile (intro, page_visibility).
+    """Update the caller's OrgDelegateProfile (intro only post-Phase-30.3).
     User-only — implicitly enforced by always operating on the caller's
     own row (idempotent get-or-create then mutate).
+
+    Phase 30.3: ``page_visibility`` is gone; the schema accepts it as a
+    no-op for back-compat. Visibility lives on per-topic
+    ``DelegateProfile.visibility`` now.
     """
     org = db.get(models.Organization, membership.org_id)
     if org is None:
@@ -648,9 +646,7 @@ def patch_my_org_delegate_profile(
     if body.intro is not None:
         changes["intro"] = body.intro
         odp.intro = body.intro
-    if body.page_visibility is not None:
-        changes["page_visibility"] = body.page_visibility
-        odp.page_visibility = body.page_visibility
+    # body.page_visibility — accepted-and-ignored per Phase 30.3.
 
     if changes:
         db.flush()
@@ -817,13 +813,27 @@ def submit_public_accepting(
             status_code=400,
             detail="Topic is already in public_accepting state",
         )
-    if dp.visibility != "public":
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Topic must be in 'public' state before submitting for "
-                "public_accepting; currently '" + dp.visibility + "'"
-            ),
+    # Phase 30.3 B6 — backend bridge from non-public states. The
+    # frontend bridges these too (Phase 30 B2 + Phase 30.3 F1.3), but
+    # defensive server-side promotion catches direct API callers + any
+    # frontend that hasn't been updated. Logs an audit event so the
+    # promotion is traceable.
+    if dp.visibility in ("private", "followers_only"):
+        prior_visibility = dp.visibility
+        dp.visibility = "public"
+        db.flush()
+        log_audit_event(
+            db,
+            action="delegate_profile.auto_promoted_to_public",
+            target_type="delegate_profile",
+            target_id=dp.id,
+            actor_id=current_user.id,
+            details={
+                "prior_visibility": prior_visibility,
+                "org_id": membership.org_id,
+                "topic_id": topic.id,
+            },
+            ip_address=request.client.host if request.client else None,
         )
     if dp.public_accepting_submitted_at is not None and \
             dp.public_accepting_approved_at is None and \
@@ -1396,21 +1406,34 @@ def revert_to_private(
     topic_id: str,
     request: Request,
     background_tasks: BackgroundTasks,
+    body: Optional[schemas.HardRevertBody] = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_membership),
 ):
     """Hard revert per D7 / D15: ``public`` or ``public_accepting`` ->
-    ``private``. Auto-revokes public-origin delegations on this topic
-    via the centralized
-    ``_revoke_public_origin_delegations_on_topic`` helper. Private-origin
-    delegations (those with an activated ``DelegationIntent`` matching
-    their shape) are preserved unchanged. Per-revoked-delegation
-    notifications are emitted by the helper.
+    ``private`` (default) or ``followers_only`` (Phase 30.3 — softer
+    revert that still hides the topic from the public delegate browse
+    + revokes public-origin delegators, but keeps it visible to
+    approved followers). Either destination auto-revokes public-origin
+    delegations on this topic via the centralized helper. Private-
+    origin delegations (those with an activated ``DelegationIntent``
+    matching their shape) are preserved unchanged. Per-revoked-
+    delegation notifications are emitted by the helper.
+
+    Endpoint name kept as ``revert-to-private`` for back-compat; the
+    target is in the body.
     """
     org = db.get(models.Organization, membership.org_id)
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
+
+    target_visibility = (body.target_visibility if body else None) or "private"
+    if target_visibility not in ("private", "followers_only"):
+        raise HTTPException(
+            status_code=400,
+            detail="target_visibility must be 'private' or 'followers_only'",
+        )
 
     topic = _topic_in_org_or_404(db, topic_id, membership.org_id)
     dp = (
@@ -1430,13 +1453,13 @@ def revert_to_private(
             status_code=400,
             detail=(
                 "Topic must be in 'public' or 'public_accepting' state to "
-                "hard-revert to 'private'; currently '" + dp.visibility + "'"
+                "hard-revert; currently '" + dp.visibility + "'"
             ),
         )
 
     old_visibility = dp.visibility
-    dp.visibility = "private"
-    # Clear pending markers — topic is fully private now.
+    dp.visibility = target_visibility
+    # Clear pending markers — topic no longer in the public-accepting flow.
     dp.public_accepting_submitted_at = None
     db.flush()
 

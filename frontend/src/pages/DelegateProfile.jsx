@@ -42,11 +42,20 @@ import Avatar from '../components/Avatar';
 import TopicBadge from '../components/TopicBadge';
 import renderMarkdown from '../utils/renderMarkdown';
 
+// Phase 30.3 D1 — single ladder: private < followers_only < public < public_accepting.
 const VISIBILITY_LABELS = {
   private: 'Private (only me)',
+  followers_only: 'Visible to my approved followers in this org',
   public: 'Public — transparent only',
   public_accepting: 'Public — accepting delegation',
 };
+
+const VISIBILITY_OPTIONS = [
+  'private',
+  'followers_only',
+  'public',
+  'public_accepting',
+];
 
 // --------------------------------------------------------------------------
 // Hard-revert dialog (D15) — modal with friction proportional to consequence.
@@ -54,6 +63,7 @@ const VISIBILITY_LABELS = {
 function HardRevertDialog({
   topic,
   fromVisibility, // 'public' | 'public_accepting'
+  targetVisibility = 'private', // Phase 30.3 — 'private' or 'followers_only'
   affectedDelegators, // [{user_id, display_name}]
   privateDelegatorCount, // number; 0 = no reassurance row
   onCancel,
@@ -66,6 +76,13 @@ function HardRevertDialog({
   const displayName = topic.name;
   const typedOk = !requireType || typed.trim() === displayName;
   const showSoft = fromVisibility === 'public_accepting';
+  // Phase 30.3 — softer copy when reverting to followers_only vs private.
+  const targetLabel = targetVisibility === 'followers_only'
+    ? 'restrict to approved followers'
+    : 'make private';
+  const targetHeading = targetVisibility === 'followers_only'
+    ? `Restrict "${displayName}" to approved followers?`
+    : `Make "${displayName}" private?`;
 
   const namedToShow = affectedDelegators.slice(0, 10);
   const more = Math.max(0, affectedDelegators.length - namedToShow.length);
@@ -75,7 +92,7 @@ function HardRevertDialog({
       <div className="absolute inset-0 bg-black/40" onClick={onCancel} />
       <div className="relative bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 p-6 space-y-4">
         <h3 className="text-lg font-semibold text-gray-800">
-          Make &quot;{displayName}&quot; private?
+          {targetHeading}
         </h3>
 
         {affectedDelegators.length > 0 ? (
@@ -233,14 +250,18 @@ function TopicRow({
 
   async function setVisibility(newVis) {
     if (newVis === visibility) return;
-    // Phase 30 B2 — bridge private -> public_accepting in one click. The
-    // backend lifecycle requires two steps (PATCH to public, POST submit
-    // for accepting) and the PATCH endpoint rejects 'public_accepting'
-    // directly. Without this branch the user saw a raw 400 from the
-    // PATCH attempt. Sequential issue: if the POST fails after the PATCH
-    // succeeds the topic is left at 'public' and the user can manually
-    // click "Submit for approval" to finish — acceptable.
-    if (newVis === 'public_accepting' && visibility === 'private') {
+
+    // Phase 30.3 F1.3 — bridge any non-public state to public_accepting
+    // in one click. The backend lifecycle requires PATCH to 'public'
+    // then POST submit; the frontend bridges both. (Phase 30 B2 originally
+    // covered the private→public_accepting path; Phase 30.3 extends to
+    // followers_only→public_accepting.) Sequential issue: if POST fails
+    // after PATCH succeeds, topic is at 'public' and the user can
+    // manually click "Submit for approval" to finish.
+    if (
+      newVis === 'public_accepting'
+      && (visibility === 'private' || visibility === 'followers_only')
+    ) {
       setBusy(true);
       try {
         await api.patch(
@@ -264,7 +285,7 @@ function TopicRow({
       }
       return;
     }
-    // Backend rejects direct public_accepting -> use submit endpoint.
+    // Backend rejects direct public_accepting on PATCH — use submit endpoint.
     if (newVis === 'public_accepting' && visibility === 'public') {
       setBusy(true);
       try {
@@ -296,12 +317,22 @@ function TopicRow({
       }
       return;
     }
-    // Backend rejects PATCH for hard revert; trigger dialog.
-    if (newVis === 'private' && (visibility === 'public' || visibility === 'public_accepting')) {
-      onRequestHardRevert(topic, visibility);
+    // Phase 30.3 F1.3 — hard-revert path covers two destinations:
+    // public_accepting → private  (existing)
+    // public_accepting → followers_only  (NEW; public delegators get revoked)
+    // public → private (existing)
+    // public → followers_only (NEW; the topic stops appearing in the
+    //   public delegate browse). Same revocation shape as private since
+    //   any public-origin delegators lose their public-flow target.
+    if (
+      (newVis === 'private' || newVis === 'followers_only')
+      && (visibility === 'public' || visibility === 'public_accepting')
+    ) {
+      onRequestHardRevert(topic, visibility, newVis);
       return;
     }
-    // Plain private<->public toggles allowed via PATCH.
+    // Everything else is a simple PATCH (private↔followers_only and
+    // followers_only↔public both fall through).
     await patchTopic({ visibility: newVis });
   }
 
@@ -327,9 +358,9 @@ function TopicRow({
         )}
       </div>
 
-      {/* Visibility radio group */}
+      {/* Visibility radio group — Phase 30.3 D1 single ladder. */}
       <fieldset className="space-y-1">
-        {['private', 'public', 'public_accepting'].map(v => (
+        {VISIBILITY_OPTIONS.map(v => (
           <label key={v} className="flex items-start gap-2 text-sm">
             <input
               type="radio"
@@ -704,33 +735,26 @@ export default function DelegateProfile() {
     }
   }
 
-  async function setPageVisibility(newPv) {
-    try {
-      const res = await api.patch(`/api/orgs/${slug}/delegate-profile`, {
-        page_visibility: newPv,
-      });
-      setProfile(res);
-      toast.success('Visibility updated');
-    } catch (e) {
-      toast.error(e.message || 'Update failed');
-    }
-  }
-
-  function handleRequestHardRevert(topic, fromVisibility) {
-    setRevertDialog({ topic, fromVisibility });
+  function handleRequestHardRevert(topic, fromVisibility, targetVisibility = 'private') {
+    setRevertDialog({ topic, fromVisibility, targetVisibility });
   }
 
   async function handleConfirmHardRevert() {
     if (!revertDialog) return;
+    const target = revertDialog.targetVisibility || 'private';
     setRevertActing(true);
     try {
       const res = await api.post(
-        `/api/orgs/${slug}/delegate-profile/topics/${revertDialog.topic.id}/revert-to-private`
+        `/api/orgs/${slug}/delegate-profile/topics/${revertDialog.topic.id}/revert-to-private`,
+        { target_visibility: target },
       );
       setProfile(res);
       setRevertDialog(null);
-      toast.success('Topic reverted to private');
-      // Reload network to refresh delegator info.
+      toast.success(
+        target === 'followers_only'
+          ? 'Topic restricted to approved followers'
+          : 'Topic reverted to private',
+      );
       load();
     } catch (e) {
       toast.error(e.message || 'Revert failed');
@@ -786,8 +810,6 @@ export default function DelegateProfile() {
           </h1>
           <p className="text-sm text-gray-500 mt-1">
             Manage your delegate identity in {currentOrg?.name || slug}.
-            Effective visibility:{' '}
-            <strong>{profile.effective_page_visibility}</strong>.
           </p>
         </div>
         {handleOrUsername && (
@@ -840,98 +862,6 @@ export default function DelegateProfile() {
         </div>
       </section>
 
-      {/* Page visibility */}
-      <section className="space-y-2">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-          Page visibility
-        </h2>
-        {(() => {
-          // Phase 30.1 B1 — when effective is auto-derived to public
-          // (at least one topic is public or public_accepting), the
-          // stored Private / Visible-to-followers preferences are
-          // overridden until topics are taken private again. Disable
-          // those radios with an explanatory help message instead of
-          // letting clicks silently write a preference that has no
-          // visible effect.
-          const isPublicAutoDerived =
-            profile.effective_page_visibility === 'public';
-          const lowerDisabled = isPublicAutoDerived;
-          return (
-            <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
-              <label
-                className={`flex items-start gap-2 text-sm ${
-                  lowerDisabled ? 'opacity-50' : 'cursor-pointer'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="page_vis"
-                  checked={profile.page_visibility === 'private'}
-                  disabled={lowerDisabled}
-                  onChange={() => setPageVisibility('private')}
-                  className="mt-1"
-                />
-                <div>
-                  <div className="font-medium">Private (only me)</div>
-                  <div className="text-xs text-gray-500">
-                    Only you can see this page. Default for drafting.
-                  </div>
-                </div>
-              </label>
-              <label
-                className={`flex items-start gap-2 text-sm ${
-                  lowerDisabled ? 'opacity-50' : 'cursor-pointer'
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="page_vis"
-                  checked={profile.page_visibility === 'private_delegators'}
-                  disabled={lowerDisabled}
-                  onChange={() => setPageVisibility('private_delegators')}
-                  className="mt-1"
-                />
-                <div>
-                  <div className="font-medium">
-                    Visible to my approved followers in this org
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {followerCount === null
-                      ? 'Visible to your approved followers in this org.'
-                      : followerCount === 0
-                        ? 'No approved followers in this org yet; only you can see this page.'
-                        : `Currently visible to ${followerCount} approved follower${followerCount === 1 ? '' : 's'} in ${currentOrg?.name || slug}.`}
-                  </div>
-                </div>
-              </label>
-              <label className="flex items-start gap-2 text-sm">
-                <input
-                  type="radio"
-                  name="page_vis"
-                  checked={profile.effective_page_visibility === 'public'}
-                  disabled
-                  className="mt-1"
-                />
-                <div>
-                  <div className="font-medium text-gray-500">
-                    Public (auto-derived)
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    Public is derived automatically when you set at least
-                    one topic to public or public-accepting below.
-                  </div>
-                </div>
-              </label>
-              {isPublicAutoDerived && (
-                <div className="mt-2 px-3 py-2 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-800">
-                  To make your page private or restrict to followers,
-                  first set all your topics below to private.
-                </div>
-              )}
-            </div>
-          );
-        })()}
-      </section>
 
       {/* Per-topic editor */}
       <section className="space-y-2">
@@ -1008,6 +938,7 @@ export default function DelegateProfile() {
         <HardRevertDialog
           topic={revertDialog.topic}
           fromVisibility={revertDialog.fromVisibility}
+          targetVisibility={revertDialog.targetVisibility || 'private'}
           affectedDelegators={delegatorsByTopic[revertDialog.topic.id] || []}
           privateDelegatorCount={privateDelegatorCountByTopic[revertDialog.topic.id] || 0}
           onCancel={() => setRevertDialog(null)}

@@ -78,38 +78,66 @@ def can_see_votes(
     viewer_id: Optional[str],
     target_user_id: str,
     topic_ids: list[str],
+    org_id: Optional[str] = None,
 ) -> bool:
-    """
-    Return True if viewer can see target_user_id's votes on proposals
-    that include any of the given topic_ids.
+    """Phase 30.3 — vote visibility tied to per-topic visibility.
+
+    Returns True if the viewer can see the target's votes on proposals
+    that include any of ``topic_ids``. The viewer must satisfy the
+    visibility rule for at least ONE of the supplied topic_ids — i.e.,
+    this is an OR over topics, matching the pre-Phase-30.3 "can see
+    votes if topic is non-private" pattern.
 
     Rules:
-      - viewer is the target themselves → always True
-      - target is a public delegate for any of the proposal's topics → True
-      - viewer has any follow relationship with target → True
+      - Author (viewer == target): always True.
+      - Topic at ``public`` or ``public_accepting``: anyone (including
+        anonymous viewers).
+      - Topic at ``followers_only``: viewer must be an approved
+        follower of ``target_user_id`` in ``org_id`` (either follow
+        permission level — view_only and delegation_allowed both
+        grant information access per D6).
+      - Topic at ``private``: nobody except the author.
+
+    ``org_id`` is optional for backward compatibility but new callers
+    should pass it explicitly so the follower check is org-scoped per
+    Phase 18 D2. When ``org_id`` is None, the follower check accepts
+    a FollowRelationship in any org.
+
+    Empty ``topic_ids`` returns False (no topics to check).
     """
     if viewer_id == target_user_id:
         return True
-
-    # Public delegate on a matching topic
-    if topic_ids:
-        profile = db.query(models.DelegateProfile).filter(
-            models.DelegateProfile.user_id == target_user_id,
-            models.DelegateProfile.topic_id.in_(topic_ids),
-            models.DelegateProfile.is_active.is_(True),
-        ).first()
-        if profile:
-            return True
-
-    if viewer_id is None:
+    if not topic_ids:
         return False
 
-    # Any follow relationship (view_only or delegation_allowed)
-    rel = db.query(models.FollowRelationship).filter(
-        models.FollowRelationship.follower_id == viewer_id,
-        models.FollowRelationship.followed_id == target_user_id,
-    ).first()
-    return rel is not None
+    profiles = db.query(models.DelegateProfile).filter(
+        models.DelegateProfile.user_id == target_user_id,
+        models.DelegateProfile.topic_id.in_(topic_ids),
+        models.DelegateProfile.is_active.is_(True),
+    ).all()
+
+    # public / public_accepting on ANY topic → permit.
+    for p in profiles:
+        if p.visibility in ("public", "public_accepting"):
+            return True
+
+    # followers_only on any topic → check follow relationship.
+    has_followers_only = any(p.visibility == "followers_only" for p in profiles)
+    if has_followers_only and viewer_id is not None:
+        follow_q = db.query(models.FollowRelationship).filter(
+            models.FollowRelationship.follower_id == viewer_id,
+            models.FollowRelationship.followed_id == target_user_id,
+        )
+        if org_id is not None:
+            follow_q = follow_q.filter(
+                models.FollowRelationship.org_id == org_id,
+            )
+        if follow_q.first() is not None:
+            return True
+
+    # All matching topics are at 'private' (or there are none at all
+    # because the target hasn't set up a DelegateProfile for them).
+    return False
 
 
 def public_delegate_topic_ids(db: Session, user_id: str) -> set[str]:
