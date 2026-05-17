@@ -469,7 +469,9 @@ def _get_or_create_org(
                 "default_pass_threshold": 0.50,
                 "default_quorum_threshold": 0.40,
                 "allow_public_delegates": True,
-                "public_delegate_policy": "admin_approval",
+                # Phase 30.1 B4 — public_delegate_policy removed; the
+                # legacy admin-approval flow was replaced by the
+                # Phase 19 DelegateProfile lifecycle.
                 "require_email_verification": True,
                 # Phase 20: legacy ``sustained_majority_floor`` removed.
                 # Stable Result Required defaults are picked up from

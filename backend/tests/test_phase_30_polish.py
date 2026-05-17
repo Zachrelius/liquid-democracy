@@ -128,7 +128,9 @@ class TestNewProposalsSeedCorrectly:
         assert p is not None
         assert p.status == "deliberation"
         assert p.voting_method == "binary"
-        topic_names = {pt.topic.description for pt in p.proposal_topics}
+        # Phase 30.1 B5 — Topic.name is now scoped per-org so demos no
+        # longer prefix the name; assert directly on .name.
+        topic_names = {pt.topic.name for pt in p.proposal_topics}
         assert "Long-Term Planning" in topic_names
         assert "Budget" in topic_names
 

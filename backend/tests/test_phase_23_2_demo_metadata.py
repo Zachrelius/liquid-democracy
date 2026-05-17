@@ -438,7 +438,8 @@ class TestSeedPipelinePrimaryTopicIsFirst:
         primary_topic = test_db.query(models.Topic).filter(
             models.Topic.id == primary_pt.topic_id,
         ).one()
-        assert primary_topic.description == "Beta"
+        # Phase 30.1 B5 — Topic.name is scoped per-org now; assert on name.
+        assert primary_topic.name == "Beta"
         assert primary_pt.relevance == 1.0
 
 

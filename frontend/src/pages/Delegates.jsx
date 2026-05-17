@@ -90,7 +90,7 @@ function DelegateCard({ delegate, slug }) {
                     className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700"
                   >
                     {/* Phase 26 D1 — description || name. */}
-                    {t.description?.trim() || t.name}
+                    {t.name}
                   </span>
                 ))}
               {delegate.public_topics.filter(t => t.visibility === 'public_accepting').length > 6 && (
@@ -210,7 +210,7 @@ export default function Delegates() {
             <option value="">All topics</option>
             {topics.map(t => (
               // Phase 26 D1 — option label reads description || name.
-              <option key={t.id} value={t.id}>{t.description?.trim() || t.name}</option>
+              <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
         </div>

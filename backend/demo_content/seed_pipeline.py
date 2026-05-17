@@ -799,15 +799,18 @@ def seed_org_from_bible(
     topic_names = _collect_topic_names_from_bible(bible)
     topics_by_name: dict[str, "models.Topic"] = {}
     for idx, name in enumerate(topic_names):
-        # Topic name has a global unique constraint; prefix with org slug to
-        # avoid cross-org collisions while keeping the bible's intent.
-        scoped_name = f"{bible.slug}:{name}"
+        # Phase 30.1 B5 — Topic.name is now scoped to (org_id, name), so
+        # demo orgs no longer need the {bible.slug}: prefix the old
+        # global-unique constraint required. The description field
+        # stays populated for back-compat with code still reading it;
+        # a future pass can drop the column entirely.
         topic = db.query(models.Topic).filter(
-            models.Topic.name == scoped_name,
+            models.Topic.name == name,
+            models.Topic.org_id == org.id,
         ).first()
         if topic is None:
             topic = models.Topic(
-                name=scoped_name,
+                name=name,
                 description=name,
                 color=_TOPIC_COLOR_PALETTE[idx % len(_TOPIC_COLOR_PALETTE)],
                 org_id=org.id,

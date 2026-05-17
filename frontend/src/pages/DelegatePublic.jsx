@@ -304,7 +304,7 @@ export default function DelegatePublic() {
               // Phase 26 D1 — display-name resolution: description with
               // fallback to name. Demos prefix names for scoping; the
               // description is the user-visible label.
-              const topicLabel = t.description?.trim() || t.name;
+              const topicLabel = t.name;
               return (
                 <div
                   key={t.topic_id}

@@ -163,7 +163,7 @@ export default function StableResultHelp() {
 
       {/* Phase 22 — Support trajectory chart */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Support trajectory chart (Phase 22)</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Support trajectory chart</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           Below the results panel on every proposal, a <strong>Show support trajectory</strong> button expands a chart of how support evolved over time. Snapshots are captured every 5 minutes during voting.
         </p>

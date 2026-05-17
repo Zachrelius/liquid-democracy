@@ -600,18 +600,19 @@ def public_delegate_page(
         )
         .all()
     )
-    # Resolve topic display labels in one query. Phase 26 D1 — prefer
-    # topic.description over topic.name so demos with prefixed names
-    # render cleanly. Falls back to name when description is empty.
+    # Resolve topic display labels in one query. Phase 30.1 B5 — Topic.name
+    # is now scoped per-org and display-safe; the Phase 26 D1 description
+    # fallback workaround for the old global-unique constraint is no
+    # longer needed.
     topic_ids = [tp.topic_id for tp in topic_rows]
     name_by_topic_id: dict[str, str] = {}
     if topic_ids:
-        for tid, name, description in (
-            db.query(models.Topic.id, models.Topic.name, models.Topic.description)
+        for tid, name in (
+            db.query(models.Topic.id, models.Topic.name)
             .filter(models.Topic.id.in_(topic_ids))
             .all()
         ):
-            name_by_topic_id[tid] = (description or "").strip() or name
+            name_by_topic_id[tid] = name
 
     topics_out = [
         schemas._OrgDelegateProfileTopicOut(

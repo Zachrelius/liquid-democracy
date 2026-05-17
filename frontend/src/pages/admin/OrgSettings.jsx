@@ -1334,30 +1334,15 @@ export default function OrgSettings() {
             />
             <span className="text-sm text-gray-700">Allow public delegates in this organization</span>
           </label>
-          {settings.allow_public_delegates !== false && (
-            <div className="pl-6 space-y-2">
-              <p className="text-xs text-gray-500 mb-1">Public delegate policy:</p>
-              {[
-                { value: 'admin_approval', label: 'Require admin approval', desc: 'Admins review delegate applications' },
-                { value: 'open', label: 'Open registration', desc: 'Anyone can register as a public delegate' },
-              ].map(opt => (
-                <label key={opt.value} className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="delegatePolicy"
-                    value={opt.value}
-                    checked={(settings.public_delegate_policy ?? 'admin_approval') === opt.value}
-                    onChange={() => updateSetting('public_delegate_policy', opt.value)}
-                    className="mt-0.5 accent-[var(--brand-accent)]"
-                  />
-                  <div>
-                    <p className="text-sm text-gray-700">{opt.label}</p>
-                    <p className="text-xs text-gray-400">{opt.desc}</p>
-                  </div>
-                </label>
-              ))}
-            </div>
-          )}
+          <p className="text-xs text-gray-500 pl-6">
+            Members can promote topics on their delegate page to public-accepting via the Delegate Applications review flow.
+          </p>
+          {/* Phase 30.1 B4 — the public_delegate_policy radio (admin_approval
+              vs. open) was removed. The legacy admin-approval flow it gated
+              is gone; the Phase 19 lifecycle now governs accepting-delegate
+              transitions through the Delegate Applications page (when an
+              approver role exists in the org) or auto-approves when none
+              does. */}
         </div>
       </section>
 

@@ -65,8 +65,9 @@ export function urlFor(org, kind, ...args) {
       return `/${slug}/admin/proposals`;
     case 'admin-topics':
       return `/${slug}/admin/topics`;
-    case 'admin-delegates':
-      return `/${slug}/admin/delegates`;
+    // Phase 30.1 B4 — 'admin-delegates' URL case removed. The legacy
+    // admin Delegate Applications page was deleted; the canonical
+    // surface lives at urlFor(slug, 'delegate-applications').
     case 'admin-analytics':
       return `/${slug}/admin/analytics`;
     case 'admin-polises':

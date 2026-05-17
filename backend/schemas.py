@@ -1433,34 +1433,12 @@ class InvitationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-class DelegateApplicationCreate(BaseModel):
-    topic_id: str
-    bio: str = Field(min_length=1, max_length=2000)
-
-    @field_validator("topic_id")
-    @classmethod
-    def validate_topic_id(cls, v: str) -> str:
-        return _validate_uuid(v)
-
-
-class DelegateApplicationOut(BaseModel):
-    id: str
-    user_id: str
-    username: str = ""
-    display_name: str = ""
-    # Phase 9.8 — see UserOut.avatar_url.
-    avatar_url: Optional[str] = None
-    topic_id: str
-    topic_name: str = ""
-    bio: str
-    status: str
-    feedback: Optional[str] = None
-    created_at: datetime
-    model_config = ConfigDict(from_attributes=True)
-
-
-class DelegateApplicationReview(BaseModel):
-    feedback: Optional[str] = None
+# Phase 30.1 B4 — DelegateApplicationCreate / DelegateApplicationOut /
+# DelegateApplicationReview removed alongside the legacy admin-approval
+# surface. The Phase 19 DelegateProfile lifecycle replaces them; per-
+# profile-id approve/deny endpoints in delegate_profiles.py use
+# OrgDelegateProfileOut + DelegateApplicationDeny (preserved below for
+# the new flow's deny-comment payload).
 
 
 class AnalyticsOut(BaseModel):
@@ -1920,10 +1898,29 @@ class DelegateProfileTopicPatch(BaseModel):
 
 class DelegateApplicationDeny(BaseModel):
     """Body for ``POST /api/orgs/{slug}/delegate-profile/topics/{topic_id}
-    /deny``. Required non-empty comment per spec §B3.
+    /deny`` and the Phase 30.1 B2 per-profile-id deny endpoint. Required
+    non-empty comment per spec §B3.
     """
 
     comment: str = Field(min_length=1, max_length=2000)
+
+
+class PendingApplicationOut(BaseModel):
+    """Phase 30.1 B2 — one row of GET /delegate-applications-pending.
+
+    Returns enough context (applicant info, intro, bio, position) for the
+    approver UI to make a decision without further roundtrips. The
+    ``delegate_page_url`` is a frontend route (not an API path).
+    """
+    profile_id: str
+    applicant: dict
+    topic_id: str
+    topic_name: str
+    submitted_at: datetime
+    bio: str
+    position_statement: Optional[str] = None
+    intro: Optional[str] = None
+    delegate_page_url: str
 
 
 class DelegateVoteRationaleOut(BaseModel):

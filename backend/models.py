@@ -104,7 +104,6 @@ class Organization(Base):
     delegate_profiles: Mapped[list["DelegateProfile"]] = relationship(
         "DelegateProfile", back_populates="organization", foreign_keys="DelegateProfile.org_id"
     )
-    delegate_applications: Mapped[list["DelegateApplication"]] = relationship("DelegateApplication", back_populates="organization")
     # Phase 8.5: parent ↔ sub-orgs.
     parent_org: Mapped[Optional["Organization"]] = relationship(
         "Organization",
@@ -266,24 +265,12 @@ class Invitation(Base):
     inviter: Mapped["User"] = relationship("User")
 
 
-class DelegateApplication(Base):
-    __tablename__ = "delegate_applications"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
-    org_id: Mapped[str] = mapped_column(String, ForeignKey("organizations.id"), nullable=False, index=True)
-    topic_id: Mapped[str] = mapped_column(String, ForeignKey("topics.id"), nullable=False)
-    bio: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String, default="pending")  # pending, approved, denied
-    feedback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    reviewed_by: Mapped[Optional[str]] = mapped_column(String, ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
-    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-
-    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
-    organization: Mapped["Organization"] = relationship("Organization", back_populates="delegate_applications")
-    topic: Mapped["Topic"] = relationship("Topic")
-    reviewer: Mapped[Optional["User"]] = relationship("User", foreign_keys=[reviewed_by])
+# Phase 30.1 B4 — DelegateApplication model removed. The Phase 19
+# lifecycle (DelegateProfile.visibility transitions through
+# private / public / public_accepting with submitted_at/approved_at
+# state on the DP row itself) supersedes it; the legacy approve/deny
+# flow it backed is gone. Migration `b9e3f51c2a40` drops the underlying
+# table.
 
 
 class User(Base):
@@ -426,9 +413,19 @@ class User(Base):
 
 class Topic(Base):
     __tablename__ = "topics"
+    # Phase 30.1 B5: uniqueness scoped to (org_id, name) — was previously
+    # a global unique on `name`. The change kills the recurring "demo orgs
+    # need to prefix Topic.name with bible.slug for global uniqueness"
+    # footgun (Phases 23.1 / 25 / 26 / 28 / 30 all patched display-side
+    # leakage of that prefix). Migration ``a8c2d51e9f10`` drops the
+    # global constraint, adds the scoped one, and strips the prefix from
+    # existing rows.
+    __table_args__ = (
+        UniqueConstraint("org_id", "name", name="uq_topics_org_id_name"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
-    name: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False, index=True)
     description: Mapped[str] = mapped_column(String, nullable=False, default="")
     color: Mapped[str] = mapped_column(String, nullable=False, default="#6366f1")
     org_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("organizations.id"), nullable=True, index=True)

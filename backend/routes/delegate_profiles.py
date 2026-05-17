@@ -427,6 +427,168 @@ def _users_with_approve_permission(db: Session, org_id: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Phase 30.1 B2 — shared approve/deny helpers
+# ---------------------------------------------------------------------------
+
+
+def _approve_profile(
+    db: Session,
+    dp: "models.DelegateProfile",
+    org: "models.Organization",
+    topic: "models.Topic",
+    actor: "models.User",
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> "models.OrgDelegateProfile":
+    """Shared core for both the per-topic and per-profile-id approve
+    endpoints. Caller is responsible for the permission gate +
+    locating the DP row + verifying it's in a pending state.
+
+    Side effects:
+      - Flips DP to ``public_accepting`` + records ``approved_at`` /
+        ``approved_by_id``.
+      - Writes the audit-log entry.
+      - Emits the ``delegate_application_approved`` notification.
+      - Returns the applicant's freshly-resolved OrgDelegateProfile for
+        the route to serialize.
+    """
+    applicant_id = dp.user_id
+    dp.visibility = "public_accepting"
+    dp.public_accepting_approved_at = _now()
+    dp.public_accepting_approved_by_id = actor.id
+    dp.public_accepting_denied_comment = None
+    db.flush()
+
+    log_audit_event(
+        db,
+        action="delegate_profile.public_accepting_approved",
+        target_type="delegate_profile",
+        target_id=dp.id,
+        actor_id=actor.id,
+        details={
+            "applicant_user_id": applicant_id,
+            "org_id": org.id,
+            "topic_id": topic.id,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+
+    actor_display = actor.display_name or actor.username
+    try:
+        emit_notification(
+            db,
+            background_tasks,
+            event_type="delegate_application_approved",
+            user_id=applicant_id,
+            org_id=org.id,
+            actor_id=actor.id,
+            target_type="delegate_profile",
+            target_id=dp.id,
+            payload={
+                "org_id": org.id,
+                "org_slug": org.slug,
+                "org_name": org.name,
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "actor_display_name": actor_display,
+            },
+        )
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "delegate_application_approved emit failed: %s: %s",
+            type(e).__name__, e,
+        )
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+    applicant_odp = _get_or_create_org_delegate_profile(
+        db, applicant_id, org.id,
+    )
+    db.commit()
+    db.refresh(applicant_odp)
+    return applicant_odp
+
+
+def _deny_profile(
+    db: Session,
+    dp: "models.DelegateProfile",
+    org: "models.Organization",
+    topic: "models.Topic",
+    comment: str,
+    actor: "models.User",
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> "models.OrgDelegateProfile":
+    """Shared deny-core. Same side-effect shape as ``_approve_profile``:
+    audit + notification + return applicant ODP."""
+    applicant_id = dp.user_id
+    # Topic stays at 'public' (or wherever it was). Clear the pending
+    # marker; record the denial comment.
+    dp.public_accepting_submitted_at = None
+    dp.public_accepting_denied_comment = comment
+    db.flush()
+
+    log_audit_event(
+        db,
+        action="delegate_profile.public_accepting_denied",
+        target_type="delegate_profile",
+        target_id=dp.id,
+        actor_id=actor.id,
+        details={
+            "applicant_user_id": applicant_id,
+            "org_id": org.id,
+            "topic_id": topic.id,
+            "comment": comment,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+
+    actor_display = actor.display_name or actor.username
+    try:
+        emit_notification(
+            db,
+            background_tasks,
+            event_type="delegate_application_denied",
+            user_id=applicant_id,
+            org_id=org.id,
+            actor_id=actor.id,
+            target_type="delegate_profile",
+            target_id=dp.id,
+            payload={
+                "org_id": org.id,
+                "org_slug": org.slug,
+                "org_name": org.name,
+                "topic_id": topic.id,
+                "topic_name": topic.name,
+                "actor_display_name": actor_display,
+                "denial_comment": comment,
+            },
+        )
+        db.commit()
+    except Exception as e:  # noqa: BLE001
+        log.warning(
+            "delegate_application_denied emit failed: %s: %s",
+            type(e).__name__, e,
+        )
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+    applicant_odp = _get_or_create_org_delegate_profile(
+        db, applicant_id, org.id,
+    )
+    db.commit()
+    db.refresh(applicant_odp)
+    return applicant_odp
+
+
+# ---------------------------------------------------------------------------
 # Routes — caller's own OrgDelegateProfile
 # ---------------------------------------------------------------------------
 
@@ -869,68 +1031,13 @@ def approve_topic(
             detail="No pending public_accepting submission for this topic",
         )
 
-    applicant_id = dp.user_id
-    dp.visibility = "public_accepting"
-    dp.public_accepting_approved_at = _now()
-    dp.public_accepting_approved_by_id = current_user.id
-    dp.public_accepting_denied_comment = None
-    db.flush()
-
-    log_audit_event(
-        db,
-        action="delegate_profile.public_accepting_approved",
-        target_type="delegate_profile",
-        target_id=dp.id,
-        actor_id=current_user.id,
-        details={
-            "applicant_user_id": applicant_id,
-            "org_id": membership.org_id,
-            "topic_id": topic.id,
-        },
-        ip_address=request.client.host if request.client else None,
+    # Phase 30.1 B2 — shared core. The per-topic + per-profile-id
+    # endpoints both flow through ``_approve_profile``.
+    applicant_odp = _approve_profile(
+        db=db, dp=dp, org=org, topic=topic,
+        actor=current_user, request=request,
+        background_tasks=background_tasks,
     )
-    db.commit()
-
-    actor_display = current_user.display_name or current_user.username
-    try:
-        emit_notification(
-            db,
-            background_tasks,
-            event_type="delegate_application_approved",
-            user_id=applicant_id,
-            org_id=membership.org_id,
-            actor_id=current_user.id,
-            target_type="delegate_profile",
-            target_id=dp.id,
-            payload={
-                "org_id": membership.org_id,
-                "org_slug": org.slug,
-                "org_name": org.name,
-                "topic_id": topic.id,
-                "topic_name": topic.name,
-                "actor_display_name": actor_display,
-            },
-        )
-        db.commit()
-    except Exception as e:  # noqa: BLE001
-        log.warning(
-            "delegate_application_approved emit failed: %s: %s",
-            type(e).__name__, e,
-        )
-        try:
-            db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
-
-    # Return the applicant's view of their OrgDelegateProfile (the one
-    # we just approved a topic on). This is the most useful response
-    # shape for QA harnesses / approver UIs that want to confirm the
-    # transition; the approver isn't editing their own profile here.
-    applicant_odp = _get_or_create_org_delegate_profile(
-        db, applicant_id, membership.org_id,
-    )
-    db.commit()
-    db.refresh(applicant_odp)
     return _serialize_org_delegate_profile(db, applicant_odp, org)
 
 
@@ -987,66 +1094,217 @@ def deny_topic(
             detail="No pending public_accepting submission for this topic",
         )
 
-    applicant_id = dp.user_id
-    # Topic stays at 'public' (or wherever it was — typically 'public').
-    # Clear the pending marker; record the denial comment.
-    dp.public_accepting_submitted_at = None
-    dp.public_accepting_denied_comment = body.comment
-    db.flush()
-
-    log_audit_event(
-        db,
-        action="delegate_profile.public_accepting_denied",
-        target_type="delegate_profile",
-        target_id=dp.id,
-        actor_id=current_user.id,
-        details={
-            "applicant_user_id": applicant_id,
-            "org_id": membership.org_id,
-            "topic_id": topic.id,
-            "comment": body.comment,
-        },
-        ip_address=request.client.host if request.client else None,
+    # Phase 30.1 B2 — shared core.
+    applicant_odp = _deny_profile(
+        db=db, dp=dp, org=org, topic=topic,
+        comment=body.comment, actor=current_user,
+        request=request, background_tasks=background_tasks,
     )
-    db.commit()
+    return _serialize_org_delegate_profile(db, applicant_odp, org)
 
-    actor_display = current_user.display_name or current_user.username
-    try:
-        emit_notification(
-            db,
-            background_tasks,
-            event_type="delegate_application_denied",
-            user_id=applicant_id,
-            org_id=membership.org_id,
-            actor_id=current_user.id,
-            target_type="delegate_profile",
-            target_id=dp.id,
-            payload={
-                "org_id": membership.org_id,
-                "org_slug": org.slug,
-                "org_name": org.name,
-                "topic_id": topic.id,
-                "topic_name": topic.name,
-                "actor_display_name": actor_display,
-                "denial_comment": body.comment,
+
+# ---------------------------------------------------------------------------
+# Phase 30.1 B2 — list pending + per-profile-id approve/deny
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{org_slug}/delegate-applications-pending",
+    response_model=list[schemas.PendingApplicationOut],
+)
+def list_pending_applications(
+    org_slug: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Approver-only — return every pending public_accepting application
+    in this org. Used by the rebuilt approver page (Phase 30.1 B3).
+
+    A profile is pending iff ``public_accepting_submitted_at`` is set,
+    ``public_accepting_approved_at`` is null, and there's no denial
+    comment.
+    """
+    if not has_permission(
+        db, current_user.id, membership.org_id,
+        "delegate_application.approve",
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "You do not have the delegate_application.approve "
+                "permission in this organization."
+            ),
+        )
+
+    rows = (
+        db.query(models.DelegateProfile)
+        .filter(
+            models.DelegateProfile.org_id == membership.org_id,
+            models.DelegateProfile.public_accepting_submitted_at.is_not(None),
+            models.DelegateProfile.public_accepting_approved_at.is_(None),
+            models.DelegateProfile.public_accepting_denied_comment.is_(None),
+        )
+        .order_by(models.DelegateProfile.public_accepting_submitted_at.asc())
+        .all()
+    )
+    if not rows:
+        return []
+
+    user_ids = list({r.user_id for r in rows})
+    topic_ids = list({r.topic_id for r in rows})
+    users_by_id = {
+        u.id: u for u in db.query(models.User)
+        .filter(models.User.id.in_(user_ids)).all()
+    }
+    topics_by_id = {
+        t.id: t for t in db.query(models.Topic)
+        .filter(models.Topic.id.in_(topic_ids)).all()
+    }
+    odps_by_user = {
+        odp.user_id: odp for odp in db.query(models.OrgDelegateProfile)
+        .filter(
+            models.OrgDelegateProfile.org_id == membership.org_id,
+            models.OrgDelegateProfile.user_id.in_(user_ids),
+        ).all()
+    }
+
+    result: list[schemas.PendingApplicationOut] = []
+    for r in rows:
+        u = users_by_id.get(r.user_id)
+        t = topics_by_id.get(r.topic_id)
+        if u is None or t is None:
+            continue
+        odp = odps_by_user.get(r.user_id)
+        handle = getattr(u, "delegate_handle", None) or u.username
+        result.append(schemas.PendingApplicationOut(
+            profile_id=r.id,
+            applicant={
+                "id": u.id,
+                "username": u.username,
+                "display_name": u.display_name or u.username,
+                "avatar_url": u.avatar_url,
             },
-        )
-        db.commit()
-    except Exception as e:  # noqa: BLE001
-        log.warning(
-            "delegate_application_denied emit failed: %s: %s",
-            type(e).__name__, e,
-        )
-        try:
-            db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
+            topic_id=t.id,
+            topic_name=t.name,
+            submitted_at=r.public_accepting_submitted_at,
+            bio=r.bio or "",
+            position_statement=r.position_statement,
+            intro=odp.intro if odp else None,
+            delegate_page_url=f"/{org_slug}/delegates/{handle}",
+        ))
+    return result
 
-    applicant_odp = _get_or_create_org_delegate_profile(
-        db, applicant_id, membership.org_id,
+
+def _pending_profile_or_404(
+    db: Session, profile_id: str, org_id: str,
+) -> "models.DelegateProfile":
+    """Look up a DelegateProfile by id + verify it belongs to org + is
+    in a pending state. Used by the per-profile approve/deny endpoints."""
+    dp = db.get(models.DelegateProfile, profile_id)
+    if dp is None or dp.org_id != org_id:
+        raise HTTPException(
+            status_code=404, detail="Application not found",
+        )
+    if (
+        dp.public_accepting_submitted_at is None
+        or dp.public_accepting_approved_at is not None
+        or dp.public_accepting_denied_comment is not None
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Application is not in a pending state",
+        )
+    return dp
+
+
+@router.post(
+    "/{org_slug}/delegate-applications/{profile_id}/approve",
+    response_model=schemas.OrgDelegateProfileOut,
+)
+def approve_application_by_profile_id(
+    org_slug: str,
+    profile_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Phase 30.1 B2 — approve a specific pending application by its
+    DelegateProfile id. Replaces the per-topic "oldest pending" semantic
+    when the approver UI lists per-row."""
+    if not has_permission(
+        db, current_user.id, membership.org_id,
+        "delegate_application.approve",
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "You do not have the delegate_application.approve "
+                "permission in this organization."
+            ),
+        )
+
+    org = db.get(models.Organization, membership.org_id)
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    dp = _pending_profile_or_404(db, profile_id, membership.org_id)
+    topic = db.get(models.Topic, dp.topic_id)
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    applicant_odp = _approve_profile(
+        db=db, dp=dp, org=org, topic=topic,
+        actor=current_user, request=request,
+        background_tasks=background_tasks,
     )
-    db.commit()
-    db.refresh(applicant_odp)
+    return _serialize_org_delegate_profile(db, applicant_odp, org)
+
+
+@router.post(
+    "/{org_slug}/delegate-applications/{profile_id}/deny",
+    response_model=schemas.OrgDelegateProfileOut,
+)
+def deny_application_by_profile_id(
+    org_slug: str,
+    profile_id: str,
+    body: schemas.DelegateApplicationDeny,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Phase 30.1 B2 — deny a specific pending application by its
+    DelegateProfile id with a required non-empty comment."""
+    if not has_permission(
+        db, current_user.id, membership.org_id,
+        "delegate_application.approve",
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "You do not have the delegate_application.approve "
+                "permission in this organization."
+            ),
+        )
+
+    org = db.get(models.Organization, membership.org_id)
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    dp = _pending_profile_or_404(db, profile_id, membership.org_id)
+    topic = db.get(models.Topic, dp.topic_id)
+    if topic is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    applicant_odp = _deny_profile(
+        db=db, dp=dp, org=org, topic=topic,
+        comment=body.comment, actor=current_user,
+        request=request, background_tasks=background_tasks,
+    )
     return _serialize_org_delegate_profile(db, applicant_odp, org)
 
 

@@ -1,6 +1,8 @@
 export default function TopicBadge({ topic, relevance }) {
   const color = topic?.color || '#6366f1';
-  const displayName = topic?.description?.trim() || topic?.name;
+  // Phase 30.1 B5 — Topic.name is now scoped per-org and display-safe;
+  // the legacy description?.trim() fallback is no longer needed.
+  const displayName = topic?.name;
   const label = relevance != null && relevance < 1.0
     ? `${displayName} (${Math.round(relevance * 100)}%)`
     : displayName;

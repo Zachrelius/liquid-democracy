@@ -165,20 +165,11 @@ EVENT_REGISTRY: list[EventDefinition] = [
         signal_level="always_on",
     ),
     # ---- Delegation -----------------------------------------------------
-    EventDefinition(
-        key="delegate.applied",
-        label="New delegate application",
-        description="Someone applied to become a public delegate in an organization where you can review applications.",
-        category="Delegation",
-        signal_level="standard",
-    ),
-    EventDefinition(
-        key="delegate.application_decided",
-        label="Your delegate application",
-        description="Your delegate application was approved or denied.",
-        category="Delegation",
-        signal_level="always_on",
-    ),
+    # Phase 30.1 B4 — delegate.applied / delegate.application_decided
+    # event definitions removed alongside the legacy
+    # DelegateApplication surface. The Phase 19 events
+    # (delegate_application_submitted / delegate_application_approved /
+    # delegate_application_denied) below cover the new lifecycle.
     EventDefinition(
         key="follow.requested",
         label="Follow request",
@@ -194,11 +185,11 @@ EVENT_REGISTRY: list[EventDefinition] = [
         signal_level="always_on",
     ),
     # Phase 19 — public-delegate-page approval workflow + hard-revert.
-    # Distinct from ``delegate.applied`` / ``delegate.application_decided``
-    # (the legacy single-step DelegateApplication surface) — these fire on
-    # the new per-topic ``DelegateProfile.visibility`` lifecycle introduced
-    # in Phase 19 B3. Old surface stays in place; new events ride the same
-    # notification infrastructure.
+    # The legacy single-step ``delegate.applied`` /
+    # ``delegate.application_decided`` events that these supplanted were
+    # removed in Phase 30.1 B4 (alongside the DelegateApplication model).
+    # These events fire on the per-topic ``DelegateProfile.visibility``
+    # lifecycle.
     EventDefinition(
         key="delegate_application_submitted",
         label="New public-delegate application (Phase 19)",

@@ -426,7 +426,7 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
                     />
                     {/* Phase 26 D1 — display name reads description with
                         fallback (demos prefix the name for scoping). */}
-                    <span className="text-sm text-gray-700">{t.description?.trim() || t.name}</span>
+                    <span className="text-sm text-gray-700">{t.name}</span>
                     {t.sub_org_id && (
                       <span className="text-[10px] uppercase text-blue-600">scoped</span>
                     )}

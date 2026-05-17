@@ -72,7 +72,7 @@ export default function OrganizationsHelp() {
           Three of the four policies (Invite only public, Approval required, Open) get a public landing page at <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">/{`{slug}`}</code>. Stewards control what visitors see:
         </p>
         <ul className="text-sm text-gray-700 leading-relaxed list-disc pl-6 space-y-1">
-          <li><strong>Logo + name + brand color</strong> — set via Org Settings → Branding (Phase 12.7). The splash uses your org's primary color for headings + the join button.</li>
+          <li><strong>Logo + name + brand color</strong> — set via Org Settings → Branding. The splash uses your org's primary color for headings + the join button.</li>
           <li><strong>Description</strong> — the existing one-line description shown on OrgSelector cards.</li>
           <li><strong>Intro</strong> — an optional longer markdown block in Org Settings → Public landing page intro. Hidden when empty. Use it to explain the org's purpose, link to a website, or set expectations for new members. Markdown is supported (same renderer used for proposal bodies); links, headings, lists, emphasis all work.</li>
         </ul>
@@ -89,7 +89,7 @@ export default function OrganizationsHelp() {
         <ol className="text-sm text-gray-700 leading-relaxed list-decimal pl-6 space-y-1">
           <li>A logged-in non-member visits your public landing page and clicks "Request to join."</li>
           <li>They become a pending member. The page now shows "Request pending review" with an option to cancel.</li>
-          <li>A notification fires to all org members with the <em>approve member joins</em> permission (subject to their notification preferences from Phase 13).</li>
+          <li>A notification fires to all org members with the <em>approve member joins</em> permission (subject to their notification preferences).</li>
           <li>Any of those members visits Members in the admin nav and approves or denies the request.</li>
           <li>On approval, the requester becomes an active Member. On denial, the pending row is removed.</li>
         </ol>
