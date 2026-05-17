@@ -88,7 +88,7 @@ export default function Topics() {
   }
 
   async function handlePromote(topic) {
-    const displayName = topic.description?.trim() || topic.name;
+    const displayName = topic.name;
     const ok = await confirm({
       title: 'Promote to org-wide?',
       message: `"${displayName}" will become visible to all parent-org members and usable by any proposal. This is IRREVERSIBLE.`,
@@ -325,7 +325,7 @@ export default function Topics() {
                         // Phase 26 D1 — pass display name (description ||
                         // name) to the confirm dialog so the user sees
                         // the label they recognize.
-                        onClick={() => handleDeactivate(t.id, t.description?.trim() || t.name)}
+                        onClick={() => handleDeactivate(t.id, t.name)}
                         className="text-xs text-red-500 hover:underline"
                       >
                         Deactivate

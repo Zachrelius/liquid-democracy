@@ -51,10 +51,10 @@ export function formatNotification(notif) {
     case 'invitation.accepted':
       return `${actor(notif)} accepted your invitation${p.org_name ? ` to ${p.org_name}` : ''}`;
     // ---- Delegation ---------------------------------------------------
-    case 'delegate.applied':
-      return `${actor(notif)} applied as a delegate${p.org_name ? ` in ${p.org_name}` : ''}`;
-    case 'delegate.application_decided':
-      return `Your delegate application was ${p.decision || 'decided'}`;
+    // Phase 30.1 B4 — legacy delegate.applied / delegate.application_decided
+    // notification formatters removed alongside the legacy
+    // DelegateApplication surface. The Phase 19 events
+    // (delegate_application_*) are formatted further down.
     case 'follow.requested':
       return `${actor(notif)} wants to follow you`;
     case 'follow.approved':
@@ -101,12 +101,10 @@ export function notificationHref(notif) {
     return '/notifications';
   }
 
-  // Delegate events route to the org's delegate-applications admin page —
-  // applies to both `delegate.applied` (reviewer) and
-  // `delegate.application_decided` (applicant lands on the same page).
-  if (eventType.startsWith('delegate.')) {
-    return `/${slug}/admin/delegates`;
-  }
+  // Phase 30.1 B4 — legacy "delegate.*" event-type routing removed; the
+  // /admin/delegates page no longer exists. The Phase 19
+  // delegate_application_* events route via target_type/target_id in the
+  // standard handler below.
 
   // Phase 20 — Stable Result Required extension events point at the
   // proposal that just got extended.

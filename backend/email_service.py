@@ -522,10 +522,9 @@ def _build_cta_url(
         if not org_slug:
             return fallback
         return f"{base_url}/{org_slug}/members"
-    if event_type in ("delegate.applied", "delegate.application_decided"):
-        if not org_slug:
-            return fallback
-        return f"{base_url}/{org_slug}/delegates"
+    # Phase 30.1 B4 — legacy delegate.applied / delegate.application_decided
+    # link-destination block removed alongside the legacy
+    # DelegateApplication surface.
     # Phase 19 — public-delegate-page workflow events.
     if event_type == "delegate_application_submitted":
         if not org_slug:

@@ -563,7 +563,7 @@ export default function Delegations() {
                             delegation={d}
                             topic={topicMap[d.topic_id]}
                             onChainChange={load}
-                            onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.description?.trim() || topicMap[del.topic_id]?.name, existingDelegation: del })}
+                            onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.name, existingDelegation: del })}
                             onRemove={handleRemove}
                             unverified={unverified}
                             parentSlug={parentSlug}
@@ -592,7 +592,7 @@ export default function Delegations() {
                   <td className="py-3 px-4 text-right">
                     <button
                       // Phase 26 D1 — pass display name (description || name).
-                      onClick={() => setModal({ topicId: t.id, topicName: t.description?.trim() || t.name, existingDelegation: null })}
+                      onClick={() => setModal({ topicId: t.id, topicName: t.name, existingDelegation: null })}
                       disabled={unverified}
                       className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline"
                     >
@@ -621,7 +621,7 @@ export default function Delegations() {
                           delegation={d}
                           topic={topicMap[d.topic_id]}
                           onChainChange={load}
-                          onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.description?.trim() || topicMap[del.topic_id]?.name, existingDelegation: del })}
+                          onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.name, existingDelegation: del })}
                           onRemove={handleRemove}
                           unverified={unverified}
                           parentSlug={parentSlug}
@@ -641,7 +641,7 @@ export default function Delegations() {
             <div key={t.id} className="bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between">
               <TopicBadge topic={t} />
               <button
-                onClick={() => setModal({ topicId: t.id, topicName: t.description?.trim() || t.name, existingDelegation: null })}
+                onClick={() => setModal({ topicId: t.id, topicName: t.name, existingDelegation: null })}
                 disabled={unverified}
                 className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline"
               >
@@ -682,13 +682,13 @@ export default function Delegations() {
                   const topic = topics.length > 0 ? topics.find(t => t !== 'Global') : null;
                   const topicObj = topic
                     ? Object.values(topicMap).find(
-                        t => (t.description?.trim() || t.name) === topic
+                        t => (t.name) === topic
                       )
                     : null;
                   setModal({
                     topicId: topicObj?.id ?? undefined,
                     topicName: topicObj
-                      ? (topicObj.description?.trim() || topicObj.name)
+                      ? (topicObj.name)
                       : null,
                     existingDelegation: delegations.find(d => d.delegate_id === node.id),
                   });

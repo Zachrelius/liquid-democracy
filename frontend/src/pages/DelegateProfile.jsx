@@ -63,7 +63,7 @@ function HardRevertDialog({
 }) {
   const [typed, setTyped] = useState('');
   const requireType = affectedDelegators.length > 5;
-  const displayName = topic.description?.trim() || topic.name;
+  const displayName = topic.name;
   const typedOk = !requireType || typed.trim() === displayName;
   const showSoft = fromVisibility === 'public_accepting';
 
@@ -845,64 +845,92 @@ export default function DelegateProfile() {
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
           Page visibility
         </h2>
-        <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
-          <label className="flex items-start gap-2 text-sm cursor-pointer">
-            <input
-              type="radio"
-              name="page_vis"
-              checked={profile.page_visibility === 'private'}
-              onChange={() => setPageVisibility('private')}
-              className="mt-1"
-            />
-            <div>
-              <div className="font-medium">Private (only me)</div>
-              <div className="text-xs text-gray-500">
-                Only you can see this page. Default for drafting.
-              </div>
+        {(() => {
+          // Phase 30.1 B1 — when effective is auto-derived to public
+          // (at least one topic is public or public_accepting), the
+          // stored Private / Visible-to-followers preferences are
+          // overridden until topics are taken private again. Disable
+          // those radios with an explanatory help message instead of
+          // letting clicks silently write a preference that has no
+          // visible effect.
+          const isPublicAutoDerived =
+            profile.effective_page_visibility === 'public';
+          const lowerDisabled = isPublicAutoDerived;
+          return (
+            <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-2">
+              <label
+                className={`flex items-start gap-2 text-sm ${
+                  lowerDisabled ? 'opacity-50' : 'cursor-pointer'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="page_vis"
+                  checked={profile.page_visibility === 'private'}
+                  disabled={lowerDisabled}
+                  onChange={() => setPageVisibility('private')}
+                  className="mt-1"
+                />
+                <div>
+                  <div className="font-medium">Private (only me)</div>
+                  <div className="text-xs text-gray-500">
+                    Only you can see this page. Default for drafting.
+                  </div>
+                </div>
+              </label>
+              <label
+                className={`flex items-start gap-2 text-sm ${
+                  lowerDisabled ? 'opacity-50' : 'cursor-pointer'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="page_vis"
+                  checked={profile.page_visibility === 'private_delegators'}
+                  disabled={lowerDisabled}
+                  onChange={() => setPageVisibility('private_delegators')}
+                  className="mt-1"
+                />
+                <div>
+                  <div className="font-medium">
+                    Visible to my approved followers in this org
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {followerCount === null
+                      ? 'Visible to your approved followers in this org.'
+                      : followerCount === 0
+                        ? 'No approved followers in this org yet; only you can see this page.'
+                        : `Currently visible to ${followerCount} approved follower${followerCount === 1 ? '' : 's'} in ${currentOrg?.name || slug}.`}
+                  </div>
+                </div>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="radio"
+                  name="page_vis"
+                  checked={profile.effective_page_visibility === 'public'}
+                  disabled
+                  className="mt-1"
+                />
+                <div>
+                  <div className="font-medium text-gray-500">
+                    Public (auto-derived)
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    Public is derived automatically when you set at least
+                    one topic to public or public-accepting below.
+                  </div>
+                </div>
+              </label>
+              {isPublicAutoDerived && (
+                <div className="mt-2 px-3 py-2 bg-blue-50 border border-blue-100 rounded-lg text-xs text-blue-800">
+                  To make your page private or restrict to followers,
+                  first set all your topics below to private.
+                </div>
+              )}
             </div>
-          </label>
-          <label className="flex items-start gap-2 text-sm cursor-pointer">
-            <input
-              type="radio"
-              name="page_vis"
-              checked={profile.page_visibility === 'private_delegators'}
-              onChange={() => setPageVisibility('private_delegators')}
-              className="mt-1"
-            />
-            <div>
-              <div className="font-medium">
-                Visible to my approved followers in this org
-              </div>
-              <div className="text-xs text-gray-500">
-                {/* F6 — follower count surfaced. */}
-                {followerCount === null
-                  ? 'Visible to your approved followers in this org.'
-                  : followerCount === 0
-                    ? 'No approved followers in this org yet; only you can see this page.'
-                    : `Currently visible to ${followerCount} approved follower${followerCount === 1 ? '' : 's'} in ${currentOrg?.name || slug}.`}
-              </div>
-            </div>
-          </label>
-          <label className="flex items-start gap-2 text-sm">
-            <input
-              type="radio"
-              name="page_vis"
-              checked={profile.effective_page_visibility === 'public'}
-              disabled
-              className="mt-1"
-            />
-            <div>
-              <div className="font-medium text-gray-500">
-                Public (auto-derived)
-              </div>
-              <div className="text-xs text-gray-500">
-                Public is derived automatically when you set at least one
-                topic to public or public-accepting below. To raise visibility
-                to public, mark a topic public.
-              </div>
-            </div>
-          </label>
-        </div>
+          );
+        })()}
       </section>
 
       {/* Per-topic editor */}

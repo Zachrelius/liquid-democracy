@@ -43,7 +43,6 @@ import RolePermissionsPage from './pages/admin/RolePermissionsPage';
 import Members from './pages/admin/Members';
 import ProposalManagement from './pages/admin/ProposalManagement';
 import Topics from './pages/admin/Topics';
-import DelegateApplications from './pages/admin/DelegateApplications';
 import Analytics from './pages/admin/Analytics';
 // Phase 8.5 — sub-org admin route family
 import SubOrgList from './pages/admin/SubOrgList';
@@ -478,18 +477,9 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-        <Route
-          path="/:org_slug/admin/delegates"
-          element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <AdminOnlyRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.delegates}>
-                  <OrgScopedLayout><DelegateApplications /></OrgScopedLayout>
-                </AdminOnlyRoute>
-              </OrgProvider>
-            </ProtectedRoute>
-          }
-        />
+        {/* Phase 30.1 B4 — /:org_slug/admin/delegates removed. The
+            legacy admin Delegate Applications page was replaced by the
+            canonical Phase 19 surface at /:org_slug/delegate-applications. */}
         <Route
           path="/:org_slug/admin/analytics"
           element={

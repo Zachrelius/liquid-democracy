@@ -113,11 +113,12 @@ export default function DelegationNetworkGraph({ data, onChangeDelegate, onRemov
     edges.forEach(e => {
       const topicList = e.topics.length ? e.topics : [{ name: 'Global', color: '#95a5a6' }];
       topicList.forEach((t, i) => {
-        // Phase 26 D1 — topic label uses description with fallback to
-        // name. Demos prefix the name for scoping; the description is
-        // the user-visible label. Synthesized "Global" placeholder has
-        // no description so the fallback returns "Global" unchanged.
-        const topicLabel = t.description?.trim() || t.name;
+        // Phase 30.1 B5 — Topic.name is the canonical display label.
+        // The description fallback (Phase 26 D1) was a workaround for
+        // the global Topic.name unique constraint that demo orgs had
+        // to prefix; the constraint is now (org_id, name) scoped so
+        // name is always display-safe.
+        const topicLabel = t.name;
         flatEdges.push({
           source: e.source,
           target: e.target,

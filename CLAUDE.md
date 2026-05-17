@@ -175,7 +175,7 @@ Three demo orgs (`demo-cedar-hollow`, `demo-local-4021`, `demo-westgate-coalitio
 
 ### Topic display name
 
-When rendering a Topic in user-facing surfaces, read `topic.description` with fallback to `topic.name`: `{topic.description?.trim() || topic.name}`. The `name` field is reserved for internal scoping (demo orgs prefix the name so the daily reset can target rows safely); descriptions are display-safe. The same applies to backend serializers that send a `topic_name` field to the frontend — prefer `(topic.description or "").strip() or topic.name`. Phase 23.1 introduced the description column; Phase 25 C3 and Phase 26 D1 swept existing display surfaces. New pages should follow the convention from the start.
+Read `topic.name` directly. The field is the canonical display name and is uniquely scoped per-org via `UniqueConstraint("org_id", "name")` (Phase 30.1 B5 migration `a8c2d51e9f10`). The legacy `topic.description` field is preserved for back-compat but should not be read in new code — the Phase 23.1-introduced description-fallback workaround (re-applied across Phases 25 / 26 / 28 / 30) was patching around the old global-unique `Topic.name` constraint, which the Phase 30.1 root-cause fix removed. Demo orgs no longer prefix names with `{slug}:`; the seed pipeline writes plain names directly.
 
 ### Tailwind arbitrary-value syntax
 

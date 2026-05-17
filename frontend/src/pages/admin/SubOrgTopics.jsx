@@ -69,7 +69,7 @@ export default function SubOrgTopics() {
   }
 
   async function handlePromote(topic) {
-    const displayName = topic.description?.trim() || topic.name;
+    const displayName = topic.name;
     const ok = await confirm({
       title: 'Promote to org-wide?',
       message: `"${displayName}" will become visible to all parent-org members and usable by any proposal in the org. This is IRREVERSIBLE.`,
@@ -85,7 +85,7 @@ export default function SubOrgTopics() {
   }
 
   async function handleDeactivate(topic) {
-    const displayName = topic.description?.trim() || topic.name;
+    const displayName = topic.name;
     const ok = await confirm({
       title: 'Deactivate Topic',
       message: `Deactivate "${displayName}"?`,

@@ -386,12 +386,6 @@ export default function Nav() {
                         showProposals && { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
                         showTopics && { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
                         showPolises && { to: urlFor(parentSlugForLinks, 'admin-polises'), label: 'Polises' },
-                        showDelegates && { to: urlFor(parentSlugForLinks, 'admin-delegates'), label: 'Delegate Applications (legacy)' },
-                        // Phase 19 F5 — new public_accepting application
-                        // approval surface. Same permission key as the
-                        // legacy admin entry above, but the page itself
-                        // operates against the Phase 19 inline-on-
-                        // DelegateProfile pending state.
                         showDelegates && { to: urlFor(parentSlugForLinks, 'delegate-applications-review'), label: 'Delegate Applications' },
                         showAnalytics && { to: urlFor(parentSlugForLinks, 'admin-analytics'), label: 'Analytics' },
                         showSubOrgs && { to: urlFor(parentSlugForLinks, 'admin-sub-orgs'), label: 'Sub-Organizations' },
@@ -602,8 +596,6 @@ export default function Nav() {
                 showProposals && { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
                 showTopics && { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
                 showPolises && { to: urlFor(parentSlugForLinks, 'admin-polises'), label: 'Polises' },
-                showDelegates && { to: urlFor(parentSlugForLinks, 'admin-delegates'), label: 'Delegate Apps (legacy)' },
-                // Phase 19 F5 — mobile mirror.
                 showDelegates && { to: urlFor(parentSlugForLinks, 'delegate-applications-review'), label: 'Delegate Apps' },
                 showAnalytics && { to: urlFor(parentSlugForLinks, 'admin-analytics'), label: 'Analytics' },
                 showSubOrgs && { to: urlFor(parentSlugForLinks, 'admin-sub-orgs'), label: 'Sub-Orgs' },

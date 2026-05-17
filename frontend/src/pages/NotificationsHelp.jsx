@@ -125,7 +125,7 @@ export default function NotificationsHelp() {
       </section>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Preset selector (Phase 21)</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Preset selector</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
           With 19 events plus four channels each, choosing every toggle from scratch is tedious. Three presets at the top of the preferences page stamp curated defaults across all events with one click:
         </p>
