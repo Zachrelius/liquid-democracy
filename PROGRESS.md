@@ -3771,3 +3771,41 @@ Z's post-Phase-29.1 browser tour surfaced five items: one real platform bug (the
 **Tech debt logged (deferred):**
 - `Topic.name` global unique constraint root cause (B4). The proper fix is `(org_id, name)` scoped uniqueness + a sweep to use Topic.name everywhere; estimated 3-4 hours. The prefix workaround has now appeared in 5 phases as a recurring footgun.
 - Bible vote_rationales' `text` field isn't persisted into `DelegateVoteRationale` rows by the seed pipeline — the text only influences which Vote row gets created, not where the explanation lives. Pre-existing; not introduced by Phase 30.
+
+## Phase 30.1 — Delegate Approval UX + Topic.name Root-Cause (shipped 2026-05-16, master `<TBD>`)
+
+Phase 30 polish pass surfaced three more items and one long-deferred root-cause fix: page-visibility radios that wrote no-op preferences, an approver page that wasn't usable (no list, no applicant info), two competing delegate-application pages backed by different data models, and the recurring `Topic.name` prefix footgun that Phases 23.1 / 25 / 26 / 28 / 30 all patched at the surface level. Phase 30.1 fixes them properly.
+
+| Cluster | Description |
+|---|---|
+| **B1** | `DelegateProfile.jsx` Page Visibility section disables the Private + Visible-to-followers radios when `effective_page_visibility` auto-derives to `'public'` (at least one topic is public). Adds an explanatory help message instead of accepting silent-no-op clicks that wrote a stored preference with no visible effect. |
+| **B2** | New backend endpoints: `GET /delegate-applications-pending` returns every pending application with applicant info + topic_name + bio + position_statement + intro + delegate_page_url. `POST /delegate-applications/{profile_id}/approve` and `/deny` target specific applications (replacing the legacy "oldest pending on topic" semantic). Extracted `_approve_profile` / `_deny_profile` helpers shared with the legacy per-topic endpoints (kept for back-compat). |
+| **B3** | Full frontend rebuild of `DelegateApplicationsReview.jsx`: list-per-application UX with applicant avatar + name + handle + applied-date + topic badge + intro + bio + position statement + link to delegate page + Approve/Deny per row. Deny opens inline textarea for the required comment. Removes the per-topic dropdown + JSON dump + "Phase 19" text + link to legacy admin page. |
+| **B4** | Legacy delegate-applications surface removed. Backend: `DelegateApplication` model + 4 legacy routes + `DelegateApplicationCreate/Out/Review` schemas + `public_delegate_policy` setting + `delegate.applied` / `delegate.application_decided` notification events + legacy email-link branch + `test_delegate_applications.py` + Site 8+9 block in `test_notification_emissions.py`. Frontend: `admin/DelegateApplications.jsx` file + App.jsx route + Nav.jsx links (desktop + mobile) + `urls.js` 'admin-delegates' case + OrgSettings.jsx policy-radio block + `formatNotification.js` legacy formatter + router branch. Migration `b9e3f51c2a40` drops `delegate_applications` table (idempotent — skips if table absent on test DBs built post-Phase-30.1). |
+| **B5** | `Topic.name` root-cause fix. Migration `a8c2d51e9f10`: drops global unique constraint on `topics.name`, adds `(org_id, name)` scoped constraint, strips `{slug}:` prefix from existing rows. Dialect-aware (PG ALTER TABLE DROP CONSTRAINT IF EXISTS + batch_alter_table recreate for SQLite). Idempotent for test stacks that built the post-Phase-30.1 schema via `Base.metadata.create_all` (skips swap when constraint already in place). `models.py` updated. Seed pipeline drops the prefix; demo topics now have plain names (`Budget`, not `demo-cedar-hollow:Budget`). Sweep across 13 frontend files + 2 backend serializers + 2 test files removed the `topic.description?.trim() \|\| topic.name` workaround pattern. `CLAUDE.md` convention updated. |
+| **B6** | User-facing "Phase N" sweep: removed "(Phase 22)" from StableResultHelp, "(Phase 21)" from NotificationsHelp, "(Phase 12.7)" + "from Phase 13" from OrganizationsHelp. Code comments preserved per dispatch convention. |
+| **B7** | 11 tests in `test_phase_30_1_delegate_approval.py` (target was 10). |
+
+**Commits:**
+
+1. `f6...` (Phase 30 base — context only) → branched `phase-30-1/delegate-approval-and-topic-name-rootcause`
+2. `<commit-a>` — full B1-B7 (single commit)
+3. `31e3d26` — fixup: idempotent migrations + Phase 29.1 prefix-strip test
+4. `<TBD>` — Merge phase-30-1 to master
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Backend pytest (full, excl. 3 demo-reset suites) | PASS — 1325 passed / 3 skipped / 0 failed (+2 over Phase 30) |
+| Migration cycle suite (`-k migration_cycle`) | PASS — 37 passed |
+| PG smoke (mode=both, prior=`f3a8b25e90c7`) | TBD |
+| Frontend build | PASS — `index-FR2M4uMC.js` |
+| File-count | TBD |
+
+### Pass-summary
+
+**Phase 30.1 closes the legacy/canonical-page split + the recurring topic-prefix footgun that's been patched at the surface five times.** B3's rebuild gives approvers a real list-per-application UX where they can see the applicant's intro/bio/position before deciding — the previous Phase 19 page had the right data model but UX that didn't scale past a topic dropdown. B4's removal cleans up ~600 lines of dead code (legacy backend routes + schemas + frontend page + admin nav links + notification events + tests) and drops one unused table. B5's root-cause fix means future surfaces don't need to remember the `topic.description?.trim() || topic.name` ritual — `Topic.name` is now uniquely scoped per-org and display-safe everywhere. The B1 radio-disable + B6 phase-reference sweep are small but each closes a "would-not-have-noticed-without-Z's-eyes-on" UX gap.
+
+**Tech debt logged (deferred):**
+- `Topic.description` column is still populated by the seed pipeline (same value as name) for back-compat; a future pass can drop the column.
