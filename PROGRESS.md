@@ -3772,7 +3772,7 @@ Z's post-Phase-29.1 browser tour surfaced five items: one real platform bug (the
 - `Topic.name` global unique constraint root cause (B4). The proper fix is `(org_id, name)` scoped uniqueness + a sweep to use Topic.name everywhere; estimated 3-4 hours. The prefix workaround has now appeared in 5 phases as a recurring footgun.
 - Bible vote_rationales' `text` field isn't persisted into `DelegateVoteRationale` rows by the seed pipeline — the text only influences which Vote row gets created, not where the explanation lives. Pre-existing; not introduced by Phase 30.
 
-## Phase 30.1 — Delegate Approval UX + Topic.name Root-Cause (shipped 2026-05-16, master `<TBD>`)
+## Phase 30.1 — Delegate Approval UX + Topic.name Root-Cause (shipped 2026-05-16, master `86a4859`)
 
 Phase 30 polish pass surfaced three more items and one long-deferred root-cause fix: page-visibility radios that wrote no-op preferences, an approver page that wasn't usable (no list, no applicant info), two competing delegate-application pages backed by different data models, and the recurring `Topic.name` prefix footgun that Phases 23.1 / 25 / 26 / 28 / 30 all patched at the surface level. Phase 30.1 fixes them properly.
 
@@ -3791,7 +3791,7 @@ Phase 30 polish pass surfaced three more items and one long-deferred root-cause 
 1. `f6...` (Phase 30 base — context only) → branched `phase-30-1/delegate-approval-and-topic-name-rootcause`
 2. `<commit-a>` — full B1-B7 (single commit)
 3. `31e3d26` — fixup: idempotent migrations + Phase 29.1 prefix-strip test
-4. `<TBD>` — Merge phase-30-1 to master
+4. `86a4859` — Merge phase-30-1 to master
 
 **Pre-merge gates:**
 
@@ -3799,9 +3799,9 @@ Phase 30 polish pass surfaced three more items and one long-deferred root-cause 
 |---|---|
 | Backend pytest (full, excl. 3 demo-reset suites) | PASS — 1325 passed / 3 skipped / 0 failed (+2 over Phase 30) |
 | Migration cycle suite (`-k migration_cycle`) | PASS — 37 passed |
-| PG smoke (mode=both, prior=`f3a8b25e90c7`) | TBD |
+| PG smoke (mode=both, prior=`f3a8b25e90c7`) | PASS |
 | Frontend build | PASS — `index-FR2M4uMC.js` |
-| File-count | TBD |
+| File-count | 41 files / 1405 ins / 1362 del (incl. 2 deletes + 4 creates) |
 
 ### Pass-summary
 
