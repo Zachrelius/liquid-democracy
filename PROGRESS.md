@@ -3809,3 +3809,57 @@ Phase 30 polish pass surfaced three more items and one long-deferred root-cause 
 
 **Tech debt logged (deferred):**
 - `Topic.description` column is still populated by the seed pipeline (same value as name) for back-compat; a future pass can drop the column.
+
+## Phase 30.3 — Visibility Model Consolidation + Rationale Toggle (shipped 2026-05-17, master `fa6406d`)
+
+Phase 30.2 split into B1 (public-page bio render fix on a paused branch) and B2 (visibility audit). The audit confirmed Z's proposed consolidation works cleanly. Phase 30.3 ships both — B1 cherry-picked from the abandoned 30.2 branch, plus the consolidation itself.
+
+The semantic shift is real: today's `FollowRelationship` row → "see all of this person's votes" shortcut goes away. Vote visibility is now gated per-topic by that topic's visibility setting. A user can have a `followers_only` topic (followers see) AND a `private` topic (nobody sees, not even followers) AND a `public` topic (everyone sees) in the same org. "Private really means private."
+
+| Cluster | Description |
+|---|---|
+| **B1-B3** | Migration `c7d4e0a91f23`: add `followers_only` enum value (PG: `ADD VALUE IF NOT EXISTS` in autocommit block; SQLite: batch_alter_table recreate). Backfill all `private` rows → `followers_only` (de-facto behavior preservation per D5). Drop `org_delegate_profiles.page_visibility` column + the `org_delegate_page_visibility` enum type. |
+| **B4** | `can_see_votes` rewritten with `org_id` parameter + per-topic gate. Public/public_accepting → anyone. followers_only → approved follower (either permission level per D6). private → author only. Both callers in `routes/users.py` updated. |
+| **B5** | Public-page endpoint refactored with `_highest_topic_visibility` derivation + per-viewer topic filtering. Anonymous → public + public_accepting only. Approved follower → adds followers_only. Author → all (incl. private). |
+| **B6** | New `DelegateProfile` rows default to `followers_only`. Backend submit-public-accepting auto-promotes from private OR followers_only (defensive layer; frontend bridges too). |
+| **B7** | PATCH validator accepts `private`/`followers_only`/`public`; rejects `public_accepting` (must use submit). |
+| **F1** | `DelegateProfile.jsx`: 4-option radio per topic; Page Visibility section + effective-visibility subtitle removed entirely (92 lines deleted). setVisibility transitions cover all bridges; HardRevertDialog gains `targetVisibility` prop with adjusted copy. Hard-revert endpoint extended with `HardRevertBody{target_visibility}` for the new softer revert path. |
+| **F2** | `DelegatePublic.jsx`: B1 ported (bio + position via dedicated endpoint); third "Followers only" violet badge. |
+| **F3** | Show/hide all rationales toggle in Voting Record header. Per-row link suppressed when global is on; switching off cleanly resets all per-row state. Per-row on-demand fetch (Option A per dispatch; bounded vote count makes parallel fetches acceptable). |
+| **B8** | 14 new tests in `test_phase_30_3_visibility_consolidation.py`. |
+
+**Test fixups for the semantic shift:**
+
+- `test_phase3a_permissions`: `make_delegate_profile` now defaults to `public_accepting`; `test_follower_can_see_votes` + `test_non_follower_cannot_see_votes` rewritten against the new per-topic gate (explicit `followers_only` DP required to exercise follower visibility).
+- `test_phase_19_public_delegate_pages`: helper accepts-and-ignores `page_visibility`; `@pytest.mark.skip` on `TestEffectivePageVisibility`, `TestPrivateDelegatorsPageVisibility`, and 2 individual tests with Phase 30.3 reasons; `TestBackwardsCompat` rewritten to assert the new `followers_only` default.
+- `test_phase_30_polish::TestSubmitPublicAcceptingFromPrivateRejectedAtBackend` → `TestSubmitPublicAcceptingFromPrivateAutoPromotes` asserting the new B6 server-side bridge.
+- `test_phase_30_2_public_page_render`: drop `page_visibility` kwarg from fixture.
+- `seed_data.py::_get_or_create_org_delegate_profile`: accept-and-ignore the legacy kwarg.
+
+**Commits on branch:**
+
+1. `d76f74d` — Phase 30.2 B1+B3 cherry-pick (public page bio render fix + audit findings file).
+2. `e0...` — Phase 30.3 main commit (B1-B7 + F1-F3 + B8).
+3. `ca9f1be` — Test fixups for the consolidation's semantic shifts.
+4. `fa6406d` — Merge phase-30-3 to master.
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Backend pytest (full, excl. 3 demo-reset suites) | PASS — 1329 passed / 17 skipped / 0 failed (+18 over Phase 30.1 baseline) |
+| Migration cycle suite | PASS |
+| PG smoke (mode=upgrade, prior=`b9e3f51c2a40`) | PASS |
+| Frontend build | PASS — `index-ZLdDO4GT.js` |
+| File-count | 18 files / 1546 ins / 409 del |
+
+**Abandoned branch:** `phase-30-2/visibility-audit-and-delegate-page-fix` deleted post-merge per dispatch instruction. B1 and the audit findings file landed via cherry-pick onto the 30.3 branch.
+
+### Pass-summary
+
+**Phase 30.3 is the single largest semantic shift since Phase 27.** The two-layer visibility model — `OrgDelegateProfile.page_visibility` × per-topic `DelegateProfile.visibility` — collapses into a single per-topic ladder. The page-level layer was load-bearing only as a URL-gate on the dedicated public-page endpoint (audited in Phase 30.2 B2); per-topic visibility now gates that too. Vote visibility shifts from "any approved follower sees everything" to "per-topic visibility-aware" — a user's private topics are now strictly private even to followers, and their followers_only topics are visible to followers but not to the general public. The B6 default-to-followers_only change preserves the pre-Phase-30.3 de-facto behavior (most users were de-facto sharing with their followers via the broad shortcut); explicit `private` becomes opt-in for "strictly nobody but me." Z's framing "follow = info access, delegation_allowed = action permission" stays intact — both permission levels grant follower visibility (D6). The B1 deploy (paused since Phase 30.2 split) ships in the same merge so the public-page bio/position render fix lands alongside the consolidation.
+
+**Tech debt logged (deferred):**
+- `DelegateProfile.is_active` legacy column is still read by `can_see_votes` but always True post-creation; a future pass can drop the column.
+- PG enum downgrade leaves `followers_only` in the type vocabulary (Postgres limitation, standard to accept).
+- Bible `DelegatePage.page_visibility` field is accepted-and-ignored; eventually drop from bibles + schema.
