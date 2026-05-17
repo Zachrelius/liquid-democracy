@@ -41,9 +41,42 @@ depends_on = None
 def upgrade() -> None:
     bind = op.get_bind()
 
-    # ---- Step 1 — backfill prefix-strip BEFORE the constraint change.
-    # Doing this first means the new (org_id, name) constraint is
-    # added against already-deduplicated data and can't violate.
+    # Idempotency check: when ``Base.metadata.create_all`` already built
+    # the post-Phase-30.1 schema (e.g. test stacks), the new constraint
+    # is in place and there's nothing to do. Skip everything.
+    import sqlalchemy as _sa
+    inspector = _sa.inspect(bind)
+    existing_constraints = inspector.get_unique_constraints("topics")
+    has_new_constraint = any(
+        c.get("name") == "uq_topics_org_id_name"
+        and set(c.get("column_names") or []) == {"org_id", "name"}
+        for c in existing_constraints
+    )
+    if has_new_constraint:
+        return
+
+    # ---- Step 1 — drop the legacy uniqueness BEFORE the backfill.
+    # PG enforces the global unique on every UPDATE row by row, so
+    # stripping a prefix on one topic can collide with another topic
+    # in a different org that already had the un-prefixed name. The
+    # constraint MUST be gone before we start renaming.
+    #
+    # The model carried both ``unique=True`` (auto-named constraint
+    # ``topics_name_key``) AND ``index=True`` (auto-named index
+    # ``ix_topics_name``) on the column; the index is ALSO unique by
+    # virtue of the column-level unique, so both must go.
+    if bind.dialect.name == "postgresql":
+        bind.execute(text(
+            "ALTER TABLE topics DROP CONSTRAINT IF EXISTS topics_name_key"
+        ))
+        # Drop the (now-unique) index too. Re-create it as a NON-unique
+        # index for query performance — model still has ``index=True``.
+        bind.execute(text("DROP INDEX IF EXISTS ix_topics_name"))
+        bind.execute(text("CREATE INDEX ix_topics_name ON topics (name)"))
+
+    # ---- Step 2 — backfill prefix-strip. Now safe because the global
+    # unique is gone; the new scoped unique hasn't been added yet so
+    # transient duplicates across orgs are allowed during the loop.
     orgs = {
         row[0]: row[1]
         for row in bind.execute(text(
@@ -63,36 +96,8 @@ def upgrade() -> None:
                 {"new": tname[len(prefix):], "id": tid},
             )
 
-    # ---- Step 2 — constraint swap. Wrapped in batch_alter_table so
-    # SQLite can use the table-recreate path; PG operates in place.
-    # Drop attempts are best-effort because the legacy constraint
-    # name differs across deployments and dialects:
-    #   - PG auto-generated `topics_name_key` (the typical pattern).
-    #   - SQLite has no named constraint — the column-level UNIQUE
-    #     is part of the table schema. batch_alter_table recreates
-    #     the table without the column-level UNIQUE if the column
-    #     definition is updated, but here we instead drop_constraint
-    #     by name and tolerate failure.
-    # Idempotency check: in test stacks where the schema was built via
-    # ``Base.metadata.create_all`` AFTER Phase 30.1 updated models.py,
-    # the new constraint is already in place. Skip the swap then.
-    import sqlalchemy as _sa
-    inspector = _sa.inspect(bind)
-    existing_constraints = inspector.get_unique_constraints("topics")
-    has_new_constraint = any(
-        c.get("name") == "uq_topics_org_id_name"
-        and set(c.get("column_names") or []) == {"org_id", "name"}
-        for c in existing_constraints
-    )
-    if has_new_constraint:
-        return
-
+    # ---- Step 3 — add the new (org_id, name) scoped unique constraint.
     if bind.dialect.name == "postgresql":
-        # On PG, prefer explicit drop_constraint outside batch mode
-        # so the constraint truly goes away.
-        bind.execute(text(
-            "ALTER TABLE topics DROP CONSTRAINT IF EXISTS topics_name_key"
-        ))
         op.create_unique_constraint(
             "uq_topics_org_id_name",
             "topics",
