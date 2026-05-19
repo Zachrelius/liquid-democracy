@@ -306,8 +306,19 @@ class OptionOut(BaseModel):
     description: str
     display_order: int
     created_at: datetime
+    # Phase 32 W1 — write-in attribution. NULL/false on original options
+    # that were created at proposal-create time.
+    added_by_user_id: Optional[str] = None
+    added_at: Optional[datetime] = None
+    is_write_in: bool = False
 
     model_config = {"from_attributes": True}
+
+
+class WriteInOptionCreate(BaseModel):
+    """Phase 32 W2 — body for ``POST /api/proposals/{id}/options``."""
+    label: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
 
 
 class ProposalCreate(BaseModel):
@@ -344,6 +355,16 @@ class ProposalCreate(BaseModel):
     # deliberation_days >= 0 (zero is valid; negative is rejected).
     deliberation_days: Optional[float] = Field(default=None)
     voting_days: Optional[float] = Field(default=None)
+    # Phase 32 — per-proposal overrides for the three new deliberation-
+    # engagement features. All Optional; null = inherit org default.
+    allow_write_in_options: Optional[bool] = None
+    allow_write_ins_during_voting: Optional[bool] = None
+    max_write_ins: Optional[int] = Field(default=None, ge=1, le=100)
+    allow_pre_voting: Optional[bool] = None
+    show_votes_during_deliberation: Optional[bool] = None
+    edit_lockout_fraction: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0,
+    )
 
     @field_validator("voting_method")
     @classmethod
@@ -390,6 +411,15 @@ class ProposalUpdate(BaseModel):
     # below-floor values return 400 (not 422). Both default to None.
     deliberation_days: Optional[float] = Field(default=None)
     voting_days: Optional[float] = Field(default=None)
+    # Phase 32 — per-proposal overrides; null = inherit org default.
+    allow_write_in_options: Optional[bool] = Field(default=None)
+    allow_write_ins_during_voting: Optional[bool] = Field(default=None)
+    max_write_ins: Optional[int] = Field(default=None, ge=1, le=100)
+    allow_pre_voting: Optional[bool] = Field(default=None)
+    show_votes_during_deliberation: Optional[bool] = Field(default=None)
+    edit_lockout_fraction: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0,
+    )
 
     @field_validator("topics", mode="before")
     @classmethod
@@ -437,6 +467,29 @@ class ProposalOut(BaseModel):
     # JSON column; resolved into rich objects on detail GET.
     linked_polis_ids: Optional[list[str]] = None
     linked_polises: Optional[list[dict]] = None
+    # Phase 32 — per-proposal overrides for deliberation-engagement
+    # features. null = inherit org default.
+    allow_write_in_options: Optional[bool] = None
+    allow_write_ins_during_voting: Optional[bool] = None
+    max_write_ins: Optional[int] = None
+    allow_pre_voting: Optional[bool] = None
+    show_votes_during_deliberation: Optional[bool] = None
+    edit_lockout_fraction: Optional[float] = None
+
+    model_config = {"from_attributes": True}
+
+
+class ProposalRevisionOut(BaseModel):
+    """Phase 32 E4 — one row in the proposal change log."""
+    id: str
+    proposal_id: str
+    org_id: str
+    edited_by_user_id: str
+    edited_at: datetime
+    snapshot_before: dict
+    snapshot_after: dict
+    changed_fields: list[str]
+    editor: Optional[UserOut] = None
 
     model_config = {"from_attributes": True}
 

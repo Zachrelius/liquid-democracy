@@ -512,6 +512,27 @@ class Proposal(Base):
     # used by the `require_polis_for_new_proposals` enforcement and the
     # admin "linked deliberations" picker.
     linked_polis_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # Phase 32 — per-proposal overrides for org-level deliberation-engagement
+    # settings. All nullable; null = inherit the org's ``settings.<key>``
+    # JSONB default (resolved at read time by the route handler). Phase 32
+    # D22 says pre-existing proposals are unaffected: nulls preserve
+    # today's behavior.
+    allow_write_in_options: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True,
+    )
+    allow_write_ins_during_voting: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True,
+    )
+    max_write_ins: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    allow_pre_voting: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True,
+    )
+    show_votes_during_deliberation: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True,
+    )
+    edit_lockout_fraction: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now, nullable=False)
 
@@ -533,6 +554,11 @@ class Proposal(Base):
     vote_snapshots: Mapped[list["VoteSnapshot"]] = relationship(
         "VoteSnapshot", back_populates="proposal", cascade="all, delete-orphan"
     )
+    revisions: Mapped[list["ProposalRevision"]] = relationship(
+        "ProposalRevision", back_populates="proposal",
+        cascade="all, delete-orphan",
+        order_by="ProposalRevision.edited_at",
+    )
 
     @property
     def topic_ids(self) -> list[str]:
@@ -549,7 +575,73 @@ class ProposalOption(Base):
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
+    # Phase 32 W1 — write-in attribution. Original options created at
+    # proposal-create time have ``added_by_user_id=NULL`` /
+    # ``added_at=NULL`` / ``is_write_in=False``. Write-ins added via
+    # ``POST /api/proposals/{id}/options`` carry the adder's user ID +
+    # the insert timestamp, and ``is_write_in=True``.
+    added_by_user_id: Mapped[Optional[str]] = mapped_column(
+        String,
+        ForeignKey(
+            "users.id",
+            name="fk_proposal_options_added_by_user_id_users",
+        ),
+        nullable=True,
+    )
+    added_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True,
+    )
+    is_write_in: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0",
+    )
+
     proposal: Mapped["Proposal"] = relationship("Proposal", back_populates="options")
+    added_by: Mapped[Optional["User"]] = relationship(
+        "User", foreign_keys=[added_by_user_id],
+    )
+
+
+class ProposalRevision(Base):
+    """Phase 32 E1 — versioned snapshot of every author edit during
+    deliberation.
+
+    One row per ``PATCH /api/proposals/{id}`` call that mutates editable
+    fields (D15). Snapshots are JSON-serialized states of the relevant
+    fields BEFORE and AFTER the edit; ``changed_fields`` lists which keys
+    actually differ. Visible to all org members per D17 (transparency-
+    first; opt-in inspection via the change-log accordion on the
+    proposal detail page).
+
+    Phase 18 multi-tenancy convention: ``org_id`` on day one so any
+    cross-org / org-scoped query against revisions is correctly scoped
+    without joining through Proposal.
+    """
+    __tablename__ = "proposal_revisions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    proposal_id: Mapped[str] = mapped_column(
+        String, ForeignKey("proposals.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    edited_by_user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True,
+    )
+    edited_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
+    )
+    snapshot_before: Mapped[dict] = mapped_column(JSON, nullable=False)
+    snapshot_after: Mapped[dict] = mapped_column(JSON, nullable=False)
+    changed_fields: Mapped[list] = mapped_column(JSON, nullable=False)
+
+    proposal: Mapped["Proposal"] = relationship(
+        "Proposal", back_populates="revisions",
+    )
+    editor: Mapped["User"] = relationship(
+        "User", foreign_keys=[edited_by_user_id],
+    )
 
 
 class ProposalTopic(Base):
