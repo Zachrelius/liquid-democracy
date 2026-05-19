@@ -1543,6 +1543,40 @@ PROPOSALS = [
         ),
         topics=['Budget', 'Pool & Recreation'],
     ),
+    # Phase 32 D23 — Community Garden naming proposal. Exercises the
+    # write-in surface end-to-end: approval-method, write-ins allowed
+    # during deliberation AND voting, currently in deliberation so the
+    # add-option UI is exposed. Members can write in new garden names
+    # alongside the four seeded options.
+    Proposal(
+        proposal_id='P-H-13',
+        title='Name the New Community Garden',
+        proposer_user_id='hoa_brenda',
+        voting_method='approval',
+        state_at_reset='deliberation, hour 24 of 72',
+        body=(
+            "The new garden plots behind the Cedar Court clubhouse are "
+            "ready for the spring season. The Garden Committee is asking "
+            "the community to weigh in on a name.\n\n"
+            "Four committee-proposed options below — but if you have a "
+            "better idea, use the 'Add an option' button to put it on "
+            "the ballot. Approval voting; vote for as many as you'd "
+            "support.\n\n"
+            "Quorum: standard 35%. Multiple winners possible; the "
+            "committee will pick the top vote-getter as the official "
+            "name."
+        ),
+        options=[
+            'Cedar Court Community Garden',
+            'The Hollow Garden',
+            'Neighbor\'s Plot',
+            'Cedar Grove',
+        ],
+        topics=['Long-Term Planning'],
+        allow_write_in_options=True,
+        allow_write_ins_during_voting=True,
+        max_write_ins=6,
+    ),
 ]
 
 
