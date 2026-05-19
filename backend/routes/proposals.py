@@ -734,6 +734,14 @@ def create_proposal(
         deliberation_days=effective_delib_days,
         voting_days=effective_vote_days,
         stable_result_required=stable_result_required,
+        # Phase 32 — per-proposal overrides; null = inherit org default
+        # at read time (resolved by ``proposal_engagement_config``).
+        allow_write_in_options=body.allow_write_in_options,
+        allow_write_ins_during_voting=body.allow_write_ins_during_voting,
+        max_write_ins=body.max_write_ins,
+        allow_pre_voting=body.allow_pre_voting,
+        show_votes_during_deliberation=body.show_votes_during_deliberation,
+        edit_lockout_fraction=body.edit_lockout_fraction,
     )
     db.add(proposal)
     db.flush()
@@ -787,6 +795,7 @@ def get_proposal(proposal_id: str, db: Session = Depends(get_db)):
 def update_proposal(
     proposal_id: str,
     body: schemas.ProposalUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
@@ -796,6 +805,48 @@ def update_proposal(
         raise HTTPException(status_code=400, detail="Only draft or deliberation proposals can be edited")
     if proposal.author_id != current_user.id and not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Not the proposal author")
+
+    # Phase 32 E3 — edit lockout enforcement. Applies only during the
+    # deliberation phase; draft proposals are unaffected (the author is
+    # still composing). Fraction is resolved per-proposal-override-or-
+    # org-default. Edge case (D17 operational watch-out): if the PATCH
+    # also extends ``deliberation_days``, the lockout check runs against
+    # the ORIGINAL deliberation_end — author can't dodge lockout by
+    # extending then editing in one call. We achieve this by reading
+    # ``proposal.deliberation_days`` here BEFORE applying the body's
+    # updated value.
+    from proposal_engagement_config import resolve_edit_lockout_fraction
+    if proposal.status == "deliberation":
+        org_for_lockout = (
+            db.get(models.Organization, proposal.org_id)
+            if proposal.org_id else None
+        )
+        lockout = resolve_edit_lockout_fraction(proposal, org_for_lockout)
+        delib_start = proposal.deliberation_start
+        if delib_start is not None and proposal.deliberation_days is not None:
+            delib_end = delib_start + timedelta(
+                days=float(proposal.deliberation_days)
+            )
+            duration = (delib_end - delib_start).total_seconds()
+            if duration > 0:
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                elapsed = (now - delib_start).total_seconds()
+                if elapsed / duration >= lockout:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(
+                            f"Editing is locked for the final "
+                            f"{int(round((1 - lockout) * 100))}% of "
+                            f"deliberation"
+                        ),
+                    )
+
+    # Phase 32 E1/E2 — capture snapshot_before for the revision log. We
+    # take this BEFORE any mutation so the diff captures what the field
+    # values were at the moment the author submitted the edit. The set
+    # of tracked fields mirrors D15's editable-during-deliberation list
+    # plus the Phase 32 per-proposal override fields.
+    snapshot_before = _snapshot_revisable_fields(proposal)
 
     # Phase 12.5 — threshold-override gate. Resolved BEFORE the field
     # writes below so a permission-denied PATCH leaves the proposal
@@ -903,6 +954,25 @@ def update_proposal(
                 },
             )
 
+    # Phase 32 — per-proposal override fields. Authors can flip these
+    # during deliberation; they're not subject to a separate permission
+    # gate beyond the existing author-or-admin check at the top of the
+    # endpoint. Only persist when the field is in the payload AND the
+    # value actually changes (matches the SRR pattern above).
+    for _phase32_field in (
+        "allow_write_in_options",
+        "allow_write_ins_during_voting",
+        "max_write_ins",
+        "allow_pre_voting",
+        "show_votes_during_deliberation",
+        "edit_lockout_fraction",
+    ):
+        if _phase32_field in body.model_fields_set:
+            new_val = getattr(body, _phase32_field)
+            old_val = getattr(proposal, _phase32_field)
+            if old_val != new_val:
+                setattr(proposal, _phase32_field, new_val)
+
     # Phase 9 — linked Polises diff. Only run when the field is present in
     # the payload (omitted = leave existing links alone). For org-scoped
     # proposals, validate against scope rules (existence + viewer scope +
@@ -933,9 +1003,478 @@ def update_proposal(
             actor_id=current_user.id,
         )
 
+    # Phase 32 E1/E2 — diff snapshot_before vs current state; if anything
+    # changed AND the proposal is in deliberation (drafts don't generate
+    # revisions — author is still composing), write a ProposalRevision
+    # row + fire the ``proposal.edited`` notification to engaged members.
+    # Drafts are intentionally excluded: revisions are visible to all
+    # org members per D17, and surfacing the author's draft iteration
+    # would be noise.
+    db.flush()  # ensure topic/option changes are visible to snapshot_after
+    snapshot_after = _snapshot_revisable_fields(proposal)
+    changed_fields = _diff_revisable_snapshots(
+        snapshot_before, snapshot_after,
+    )
+    if changed_fields and proposal.status == "deliberation":
+        revision = models.ProposalRevision(
+            proposal_id=proposal.id,
+            org_id=proposal.org_id,
+            edited_by_user_id=current_user.id,
+            snapshot_before=snapshot_before,
+            snapshot_after=snapshot_after,
+            changed_fields=changed_fields,
+        )
+        db.add(revision)
+        db.flush()
+
+        log_audit_event(
+            db,
+            action="proposal.edited",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=current_user.id,
+            details={
+                "changed_fields": changed_fields,
+                "revision_id": revision.id,
+            },
+        )
+
+        # E5 — fire ``proposal.edited`` notification to engaged members
+        # (commented OR voted; editor excluded). Engaged-set derivation
+        # is the union of two queries; documented in closeout as the
+        # first-pass derivation.
+        engaged_voter_ids = {
+            row[0] for row in (
+                db.query(models.Vote.user_id)
+                .filter(models.Vote.proposal_id == proposal.id)
+                .all()
+            )
+        }
+        engaged_commenter_ids = {
+            row[0] for row in (
+                db.query(models.Comment.author_id)
+                .filter(models.Comment.proposal_id == proposal.id)
+                .all()
+            )
+        }
+        engaged = (engaged_voter_ids | engaged_commenter_ids)
+        engaged.discard(current_user.id)
+        for uid in engaged:
+            emit_notification(
+                db,
+                background_tasks,
+                event_type="proposal.edited",
+                user_id=uid,
+                org_id=proposal.org_id,
+                actor_id=current_user.id,
+                target_type="proposal",
+                target_id=proposal.id,
+                payload={
+                    "proposal_id": proposal.id,
+                    "proposal_title": proposal.title,
+                    "changed_fields": changed_fields,
+                    "editor_username": current_user.username,
+                },
+            )
+
     db.commit()
     db.refresh(proposal)
     return _build_proposal_out(proposal, db)
+
+
+# ===========================================================================
+# Phase 32 E — revision capture helpers + endpoints
+# ===========================================================================
+
+
+def _snapshot_revisable_fields(proposal: models.Proposal) -> dict:
+    """Phase 32 E1 — serialize the editable-during-deliberation fields
+    into a JSON-safe dict.
+
+    Tracks: title, body, deliberation_days (proxy for deliberation_end
+    which is derived), topics (list of {topic_id, relevance}), options
+    (list of {id, label, description, display_order, is_write_in}),
+    and the six Phase 32 per-proposal override flags.
+    """
+    return {
+        "title": proposal.title,
+        "body": proposal.body,
+        "deliberation_days": proposal.deliberation_days,
+        "voting_days": proposal.voting_days,
+        "pass_threshold": proposal.pass_threshold,
+        "quorum_threshold": proposal.quorum_threshold,
+        "topics": sorted(
+            [
+                {"topic_id": pt.topic_id, "relevance": pt.relevance}
+                for pt in proposal.proposal_topics
+            ],
+            key=lambda d: d["topic_id"],
+        ),
+        "options": sorted(
+            [
+                {
+                    "id": o.id,
+                    "label": o.label,
+                    "description": o.description,
+                    "display_order": o.display_order,
+                    "is_write_in": bool(o.is_write_in),
+                }
+                for o in proposal.options
+            ],
+            key=lambda d: d["display_order"],
+        ),
+        "allow_write_in_options": proposal.allow_write_in_options,
+        "allow_write_ins_during_voting": proposal.allow_write_ins_during_voting,
+        "max_write_ins": proposal.max_write_ins,
+        "allow_pre_voting": proposal.allow_pre_voting,
+        "show_votes_during_deliberation": proposal.show_votes_during_deliberation,
+        "edit_lockout_fraction": proposal.edit_lockout_fraction,
+    }
+
+
+def _diff_revisable_snapshots(before: dict, after: dict) -> list[str]:
+    """Return the list of top-level keys whose values differ between the
+    two snapshots. Empty list = no meaningful change (the PATCH was a
+    no-op for revision purposes)."""
+    return sorted(
+        k for k in set(before) | set(after)
+        if before.get(k) != after.get(k)
+    )
+
+
+@router.get(
+    "/{proposal_id}/revisions",
+    response_model=list[schemas.ProposalRevisionOut],
+)
+def get_proposal_revisions(
+    proposal_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 32 E4 — chronological list of every author-edit revision.
+
+    Visible to any org member (D17 transparency-first). Platform admins
+    bypass the membership check. Global (non-org) proposals are visible
+    to any authenticated user since there's no org-membership concept.
+    """
+    proposal = _proposal_or_404(proposal_id, db)
+
+    if proposal.org_id is not None and not current_user.is_admin:
+        membership = (
+            db.query(models.OrgMembership)
+            .filter(
+                models.OrgMembership.user_id == current_user.id,
+                models.OrgMembership.org_id == proposal.org_id,
+                models.OrgMembership.status == "active",
+            )
+            .first()
+        )
+        if membership is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Not a member of this proposal's organization",
+            )
+
+    revisions = (
+        db.query(models.ProposalRevision)
+        .filter(models.ProposalRevision.proposal_id == proposal.id)
+        .order_by(models.ProposalRevision.edited_at.asc())
+        .all()
+    )
+    return [
+        schemas.ProposalRevisionOut.model_validate(r) for r in revisions
+    ]
+
+
+# ===========================================================================
+# Phase 32 W — write-in options
+# ===========================================================================
+
+
+@router.post(
+    "/{proposal_id}/options",
+    response_model=schemas.OptionOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_write_in_option(
+    proposal_id: str,
+    body: schemas.WriteInOptionCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 32 W2 — add a write-in option to a multi-option proposal.
+
+    Permission ladder:
+      - Authenticated org member.
+      - Proposal must have ``allow_write_in_options`` resolved True
+        (per-proposal override OR org default).
+      - Proposal must be multi-option (approval / ranked_choice).
+      - Proposal must be in deliberation, OR in voting with
+        ``allow_write_ins_during_voting`` resolved True.
+      - Per-proposal cap (W4): existing write-in count < resolved
+        ``max_write_ins`` (default 10).
+
+    Side effect: fires ``proposal.option_added`` notification (W7) to
+    every member who has cast a vote on this proposal, EXCLUDING the
+    adder.
+    """
+    from proposal_engagement_config import (
+        resolve_allow_write_in_options,
+        resolve_allow_write_ins_during_voting,
+        resolve_max_write_ins,
+    )
+
+    proposal = _proposal_or_404(proposal_id, db)
+    org = (
+        db.get(models.Organization, proposal.org_id)
+        if proposal.org_id else None
+    )
+
+    # Org membership gate (org-scoped proposals only — globals are
+    # platform-wide and write-ins aren't supported on them).
+    if proposal.org_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Write-in options are only supported on org-scoped proposals",
+        )
+    if not current_user.is_admin:
+        membership = (
+            db.query(models.OrgMembership)
+            .filter(
+                models.OrgMembership.user_id == current_user.id,
+                models.OrgMembership.org_id == proposal.org_id,
+                models.OrgMembership.status == "active",
+            )
+            .first()
+        )
+        if membership is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Not a member of this proposal's organization",
+            )
+
+    if proposal.voting_method not in ("approval", "ranked_choice"):
+        raise HTTPException(
+            status_code=400,
+            detail="Write-in options are only allowed on multi-option proposals",
+        )
+
+    if not resolve_allow_write_in_options(proposal, org):
+        raise HTTPException(
+            status_code=403,
+            detail="Write-in options are not enabled for this proposal",
+        )
+
+    if proposal.status == "deliberation":
+        pass  # OK
+    elif proposal.status == "voting":
+        if not resolve_allow_write_ins_during_voting(proposal, org):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Write-in options are not allowed during voting "
+                    "for this proposal"
+                ),
+            )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Write-in options can only be added during deliberation "
+                "or voting"
+            ),
+        )
+
+    # Cap check (W4) — count existing write-ins.
+    write_in_count = (
+        db.query(models.ProposalOption)
+        .filter(
+            models.ProposalOption.proposal_id == proposal.id,
+            models.ProposalOption.is_write_in == True,  # noqa: E712
+        )
+        .count()
+    )
+    cap = resolve_max_write_ins(proposal, org)
+    if write_in_count >= cap:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"This proposal has reached the maximum of {cap} "
+                f"write-in options"
+            ),
+        )
+
+    # Duplicate-label check (case-insensitive) against existing options.
+    requested_label = body.label.strip()
+    if not requested_label:
+        raise HTTPException(status_code=400, detail="Label is required")
+    lowered = requested_label.lower()
+    for existing in proposal.options:
+        if existing.label.strip().lower() == lowered:
+            raise HTTPException(
+                status_code=400,
+                detail=f"An option with the label '{existing.label}' already exists",
+            )
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    next_order = (
+        max((o.display_order for o in proposal.options), default=-1) + 1
+    )
+    option = models.ProposalOption(
+        proposal_id=proposal.id,
+        label=requested_label,
+        description=body.description,
+        display_order=next_order,
+        added_by_user_id=current_user.id,
+        added_at=now,
+        is_write_in=True,
+    )
+    db.add(option)
+    db.flush()
+
+    log_audit_event(
+        db,
+        action="proposal.option_added",
+        target_type="proposal_option",
+        target_id=option.id,
+        actor_id=current_user.id,
+        details={
+            "proposal_id": proposal.id,
+            "label": option.label,
+            "is_write_in": True,
+        },
+    )
+
+    # W7 — fire notifications to existing voters (excluding the adder).
+    voter_ids = {
+        row[0] for row in (
+            db.query(models.Vote.user_id)
+            .filter(models.Vote.proposal_id == proposal.id)
+            .all()
+        )
+    }
+    voter_ids.discard(current_user.id)
+    notification_payload = {
+        "proposal_id": proposal.id,
+        "proposal_title": proposal.title,
+        "option_label": option.label,
+        "added_by_username": current_user.username,
+    }
+    for voter_id in voter_ids:
+        emit_notification(
+            db,
+            background_tasks,
+            event_type="proposal.option_added",
+            user_id=voter_id,
+            org_id=proposal.org_id,
+            actor_id=current_user.id,
+            target_type="proposal",
+            target_id=proposal.id,
+            payload=notification_payload,
+        )
+
+    db.commit()
+    db.refresh(option)
+    return schemas.OptionOut.model_validate(option)
+
+
+@router.delete(
+    "/{proposal_id}/options/{option_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_write_in_option(
+    proposal_id: str,
+    option_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 32 W3 — remove a write-in option.
+
+    Permission ladder:
+      - Option must be a write-in (originals can't be removed via this
+        endpoint).
+      - Caller must be the adder OR have ``org.edit_proposal``
+        permission (admin / steward).
+      - Existing approval / RCV ballots that reference this option drop
+        the reference (approval: remove from approvals; RCV: remove
+        from ranking and shift remaining ranks up).
+
+    Hard delete chosen over soft delete: the audit-log entry below
+    captures who-deleted-what-and-when; the per-vote ballot adjustment
+    is reversible only by re-vote, which is the existing user surface.
+    Document choice in closeout.
+    """
+    proposal = _proposal_or_404(proposal_id, db)
+    option = db.get(models.ProposalOption, option_id)
+    if option is None or option.proposal_id != proposal.id:
+        raise HTTPException(status_code=404, detail="Option not found")
+
+    if not option.is_write_in:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only write-in options can be removed via this endpoint; "
+                "original options are edited via the proposal PATCH."
+            ),
+        )
+
+    is_adder = option.added_by_user_id == current_user.id
+    is_admin = current_user.is_admin
+    has_edit_perm = False
+    if proposal.org_id is not None and not (is_adder or is_admin):
+        has_edit_perm = _has_permission(
+            db, current_user.id, proposal.org_id, "org.edit_proposal",
+        )
+    if not (is_adder or is_admin or has_edit_perm):
+        raise HTTPException(
+            status_code=403,
+            detail="Not allowed to remove this write-in option",
+        )
+
+    # Strip the option from existing ballots before deleting the row.
+    votes = (
+        db.query(models.Vote)
+        .filter(models.Vote.proposal_id == proposal.id)
+        .all()
+    )
+    for v in votes:
+        ballot = v.ballot
+        if not isinstance(ballot, dict):
+            continue
+        changed = False
+        if "approvals" in ballot and isinstance(ballot["approvals"], list):
+            if option_id in ballot["approvals"]:
+                ballot["approvals"] = [
+                    oid for oid in ballot["approvals"] if oid != option_id
+                ]
+                changed = True
+        if "ranking" in ballot and isinstance(ballot["ranking"], list):
+            if option_id in ballot["ranking"]:
+                ballot["ranking"] = [
+                    oid for oid in ballot["ranking"] if oid != option_id
+                ]
+                changed = True
+        if changed:
+            # Reassign so SQLAlchemy notices the JSON mutation.
+            v.ballot = dict(ballot)
+
+    log_audit_event(
+        db,
+        action="proposal.option_removed",
+        target_type="proposal_option",
+        target_id=option.id,
+        actor_id=current_user.id,
+        details={
+            "proposal_id": proposal.id,
+            "label": option.label,
+            "added_by_user_id": option.added_by_user_id,
+        },
+    )
+
+    db.delete(option)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def _is_delegate_target_for_proposal(
@@ -1932,6 +2471,13 @@ class TrajectoryResponse(BaseModel):
     voting_end: Optional[datetime] = None
     snapshots: list[TrajectorySnapshotOut]
     srr_annotations: Optional[TrajectorySRRAnnotations] = None
+    # Phase 32 P3 — deliberation_start surfaces when pre-voting visibility
+    # is on so the frontend chart can extend its x-axis to span the
+    # deliberation phase as well. NULL when visibility is off (frontend
+    # uses voting_start as the x-axis lower bound, matching current
+    # behavior).
+    deliberation_start: Optional[datetime] = None
+    show_votes_during_deliberation: bool = False
 
 
 def _binary_support_fraction(snap: models.VoteSnapshot) -> float:
@@ -2207,6 +2753,27 @@ def get_trajectory(
         .all()
     )
 
+    # Phase 32 P2/P3 — when pre-voting visibility is off, hide
+    # deliberation-phase snapshots from the chart. Snapshots are still
+    # captured server-side; this only filters the GET response so the
+    # chart's x-axis stays at voting_start (current behavior). When
+    # ``show_votes_during_deliberation`` is on, all snapshots surface,
+    # and the chart extends back to deliberation_start.
+    from proposal_engagement_config import (
+        resolve_show_votes_during_deliberation,
+    )
+    org_for_vis = (
+        db.get(models.Organization, proposal.org_id)
+        if proposal.org_id else None
+    )
+    show_delib = resolve_show_votes_during_deliberation(proposal, org_for_vis)
+    if not show_delib and proposal.voting_start is not None:
+        rows = [
+            r for r in rows
+            if r.simulated_time is not None
+            and r.simulated_time >= proposal.voting_start
+        ]
+
     # Downsample if needed.
     rows = _downsample_snapshots(rows, proposal)
 
@@ -2231,4 +2798,10 @@ def get_trajectory(
         voting_end=proposal.voting_end,
         snapshots=snapshots_out,
         srr_annotations=srr_annotations,
+        # Phase 32 P3 — surface deliberation_start + visibility flag so
+        # the frontend chart knows whether to extend its x-axis.
+        deliberation_start=(
+            proposal.deliberation_start if show_delib else None
+        ),
+        show_votes_during_deliberation=show_delib,
     )

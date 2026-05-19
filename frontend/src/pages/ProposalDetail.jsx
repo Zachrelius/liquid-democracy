@@ -670,6 +670,116 @@ function VoteGraphLegend({ proposal, voteGraph }) {
 }
 
 /**
+ * Phase 32 W2 — Add an option (write-in) button + inline form.
+ *
+ * Rendered below the options list on multi-option proposal detail
+ * pages. Visible during deliberation OR voting when the proposal
+ * flags allow write-ins. Backend resolves the gate per-proposal-
+ * override-or-org-default; the frontend optimistically renders the
+ * button when the proposal-out has the flag set non-null OR true.
+ *
+ * Posts to ``POST /api/proposals/{id}/options``. On success, reloads
+ * the page to surface the new option in every consumer (vote panel,
+ * results panel, etc.).
+ */
+function WriteInOptionAdder({ proposal, onAdded }) {
+  const [open, setOpen] = useState(false);
+  const [label, setLabel] = useState('');
+  const [description, setDescription] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const status = proposal.status;
+  if (status !== 'deliberation' && status !== 'voting') return null;
+  if (proposal.allow_write_in_options === false) return null;
+  // Conservative: hide if the override is null AND we don't know the
+  // org default. The backend will still reject the POST with a clear
+  // error if write-ins aren't enabled — better to surface the button
+  // tentatively than to hide a feature the org has enabled.
+  if (
+    status === 'voting'
+    && proposal.allow_write_ins_during_voting === false
+  ) {
+    return null;
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!label.trim()) return;
+    setSubmitting(true);
+    try {
+      await api.post(`/api/proposals/${proposal.id}/options`, {
+        label: label.trim(),
+        description: description.trim(),
+      });
+      toast.success(`Added "${label.trim()}" as a write-in option`);
+      setLabel('');
+      setDescription('');
+      setOpen(false);
+      onAdded?.();
+    } catch (err) {
+      toast.error(err?.message || 'Could not add option');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-[var(--brand-accent)] hover:underline"
+      >
+        + Add an option
+      </button>
+    );
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="mt-3 p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2"
+    >
+      <input
+        type="text"
+        value={label}
+        onChange={(e) => setLabel(e.target.value)}
+        placeholder="Option label"
+        maxLength={200}
+        required
+        autoFocus
+        className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:border-[var(--brand-accent)]"
+      />
+      <textarea
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        placeholder="Optional description"
+        maxLength={2000}
+        rows={2}
+        className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:border-[var(--brand-accent)] resize-y"
+      />
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={submitting || !label.trim()}
+          className="px-3 py-1 text-xs font-medium text-white bg-[var(--brand-accent)] rounded hover:opacity-90 disabled:opacity-50"
+        >
+          {submitting ? 'Adding…' : 'Add option'}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setOpen(false); setLabel(''); setDescription(''); }}
+          className="px-3 py-1 text-xs text-gray-600 hover:text-gray-800"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+
+/**
  * Phase 31 B6 — full-width always-visible trajectory chart section.
  *
  * Replaces the Phase 22 F3 collapsed-by-default treatment. Rendered in
@@ -1107,13 +1217,24 @@ export default function ProposalDetail() {
                 {proposal.options.map((opt, idx) => (
                   <div key={opt.id} className="flex items-start gap-3 p-2 bg-gray-50 rounded-lg">
                     <span className="text-xs text-gray-400 mt-0.5">{idx + 1}.</span>
-                    <div>
+                    <div className="flex-1">
                       <span className="text-sm font-medium text-gray-800">{opt.label}</span>
+                      {opt.is_write_in && (
+                        <span className="ml-2 text-[10px] uppercase tracking-wide text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded">
+                          write-in
+                        </span>
+                      )}
                       {opt.description && <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>}
                     </div>
                   </div>
                 ))}
               </div>
+              {/* Phase 32 W2 — Add an option button. Visible during
+                  deliberation OR voting based on proposal flags. */}
+              <WriteInOptionAdder
+                proposal={proposal}
+                onAdded={() => window.location.reload()}
+              />
             </div>
           )}
 

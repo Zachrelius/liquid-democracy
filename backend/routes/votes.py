@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from sqlalchemy import or_
@@ -33,9 +34,34 @@ def _proposal_or_404(proposal_id: str, db: Session) -> models.Proposal:
     return p
 
 
-def _require_voting_open(proposal: models.Proposal) -> None:
-    if proposal.status != "voting":
-        raise HTTPException(status_code=400, detail="Proposal is not in voting phase")
+def _require_voting_open(
+    proposal: models.Proposal, db: Optional["Session"] = None,
+) -> None:
+    """Phase 32 P1 — accept ``deliberation`` status too when the proposal
+    has pre-voting enabled (org default OR per-proposal override).
+
+    Default behavior unchanged for proposals with ``allow_pre_voting``
+    null/False: vote-casting still requires status="voting".
+    """
+    if proposal.status == "voting":
+        return
+    if proposal.status == "deliberation":
+        from proposal_engagement_config import resolve_allow_pre_voting
+        org = None
+        if db is not None and proposal.org_id is not None:
+            org = db.get(models.Organization, proposal.org_id)
+        if resolve_allow_pre_voting(proposal, org):
+            return
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Voting is not open yet — pre-voting during deliberation "
+                "is not enabled for this proposal"
+            ),
+        )
+    raise HTTPException(
+        status_code=400, detail="Proposal is not in voting phase",
+    )
 
 
 def _delegators_for_proposal(
@@ -104,7 +130,7 @@ async def cast_vote(
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
     proposal = _proposal_or_404(proposal_id, db)
-    _require_voting_open(proposal)
+    _require_voting_open(proposal, db)
 
     if not current_user.email_verified:
         raise HTTPException(
@@ -324,7 +350,7 @@ async def retract_vote(
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
     proposal = _proposal_or_404(proposal_id, db)
-    _require_voting_open(proposal)
+    _require_voting_open(proposal, db)
 
     # Phase 10.1: same eligibility gate as cast_vote — a non-eligible user
     # shouldn't be able to retract a vote they shouldn't have been able to

@@ -114,6 +114,16 @@ class Proposal:
     # Phase 23.2 B3 helper: STV proposals need to advertise winner count
     # to the tally engine. RCV/binary/approval all default to 1.
     num_winners: int = 1
+    # Phase 32 — per-proposal overrides for the new deliberation-engagement
+    # features. None = inherit the org-level default (or platform default
+    # if the org doesn't set one). Set explicitly on demo proposals that
+    # should exercise the feature in QA.
+    allow_write_in_options: Optional[bool] = None
+    allow_write_ins_during_voting: Optional[bool] = None
+    max_write_ins: Optional[int] = None
+    allow_pre_voting: Optional[bool] = None
+    show_votes_during_deliberation: Optional[bool] = None
+    edit_lockout_fraction: Optional[float] = None
 
 
 @dataclass

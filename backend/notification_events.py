@@ -149,6 +149,34 @@ EVENT_REGISTRY: list[EventDefinition] = [
         category="Proposals",
         signal_level="critical",
     ),
+    # Phase 32 W7 — fires when any member adds a write-in option to a
+    # multi-option proposal that the recipient has voted on. Recipients
+    # are voters only (avoid blast-fanout). Adder is excluded.
+    EventDefinition(
+        key="proposal.option_added",
+        label="New option added to a proposal you voted on",
+        description=(
+            "Someone added a new option to a proposal you've voted on. "
+            "You may want to review your ballot."
+        ),
+        category="Proposals",
+        signal_level="standard",
+    ),
+    # Phase 32 E5 — fires when a proposal author edits a deliberation-phase
+    # proposal that the recipient has engaged with (commented or voted).
+    # Editor is excluded. Engagement union is comment-or-vote per spec
+    # (no delegation-on-topic check in this pass to keep audience scope
+    # manageable; documented for follow-up).
+    EventDefinition(
+        key="proposal.edited",
+        label="Proposal you engaged with was edited",
+        description=(
+            "A proposal you commented on or voted on was edited by its "
+            "author during deliberation."
+        ),
+        category="Proposals",
+        signal_level="standard",
+    ),
     # ---- Membership -----------------------------------------------------
     EventDefinition(
         key="member.join_request",

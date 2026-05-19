@@ -128,6 +128,9 @@ _EXPECTED_SIGNAL_LEVEL: dict[str, str] = {
     # ambient
     "comment.posted_on_your_proposal": "ambient",
     "polis.created": "ambient",
+    # Phase 32 W7 / E5 — write-in + edit notifications.
+    "proposal.option_added": "standard",
+    "proposal.edited": "standard",
     # always_on
     "invitation.accepted": "always_on",
     "delegate.application_decided": "always_on",

@@ -991,6 +991,15 @@ def seed_org_from_bible(
             voting_end=vote_end,
             pass_threshold=0.50,
             quorum_threshold=bible.quorum_threshold_default,
+            # Phase 32 — per-proposal overrides for the deliberation-
+            # engagement features. Bible entries leave these None unless
+            # the proposal explicitly exercises a feature (D23 demo).
+            allow_write_in_options=bp.allow_write_in_options,
+            allow_write_ins_during_voting=bp.allow_write_ins_during_voting,
+            max_write_ins=bp.max_write_ins,
+            allow_pre_voting=bp.allow_pre_voting,
+            show_votes_during_deliberation=bp.show_votes_during_deliberation,
+            edit_lockout_fraction=bp.edit_lockout_fraction,
         )
         db.add(proposal)
         db.flush()
