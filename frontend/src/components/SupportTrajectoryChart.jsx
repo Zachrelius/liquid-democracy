@@ -58,17 +58,45 @@ const SRR_COLORS = {
   voteEnd: '#9CA3AF',        // gray (admin / generic close)
 };
 
-// Format an ISO timestamp into a compact x-axis tick label. Picks
-// "HH:MM" for windows under a day, "MMM D HH:MM" for multi-day windows.
+// Phase 31 B3: shared y-axis label width — used both by <YAxis width={...}>
+// and by the WinnerOverTimeBar's left padding so the bar aligns under the
+// chart's plot area, not the container's full width.
+const YAXIS_WIDTH = 56;
+
+// Phase 31 B4: x-axis tick label format.
+//   - Multi-day windows (≥ 24h): "M/D" centered at noon each day.
+//   - Sub-day windows (< 24h): "M/D h:mm" (carries enough date context to
+//     disambiguate when the window straddles a day boundary).
 function formatTickLabel(ts, spanMs) {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return '';
   if (spanMs < 24 * 60 * 60 * 1000) {
-    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return `${d.getMonth() + 1}/${d.getDate()} ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
   }
-  return d.toLocaleString([], {
-    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-  });
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+// Phase 31 B4: generate explicit tick positions at noon (local time) for
+// each day spanned by [tMin, tMax]. Returns numeric timestamps. For
+// sub-day windows, returns null so recharts falls back to its auto ticks.
+function buildNoonTicks(tMin, tMax) {
+  if (!Number.isFinite(tMin) || !Number.isFinite(tMax) || tMax <= tMin) {
+    return null;
+  }
+  const span = tMax - tMin;
+  if (span < 24 * 60 * 60 * 1000) return null;
+  const ticks = [];
+  const start = new Date(tMin);
+  const cursor = new Date(
+    start.getFullYear(), start.getMonth(), start.getDate(), 12, 0, 0, 0,
+  );
+  // If the first noon is before tMin, advance one day.
+  if (cursor.getTime() < tMin) cursor.setDate(cursor.getDate() + 1);
+  while (cursor.getTime() <= tMax) {
+    ticks.push(cursor.getTime());
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return ticks.length > 0 ? ticks : null;
 }
 
 function formatFullTimestamp(ts) {
@@ -142,21 +170,23 @@ function BinaryTooltip({ active, payload }) {
 }
 
 // Custom tooltip for the multi-option line chart.
+// Phase 31 B2: <Line> dataKey is now `pct_opt:<id>` (percent of voters at
+// snapshot). The tooltip surfaces both % and raw count.
 function MultiOptionTooltip({ active, payload, optionLabels }) {
   if (!active || !payload || !payload.length) return null;
   const p = payload[0].payload;
-  // Filter to entries that have non-null option keys (recharts passes
-  // every <Line>'s dataKey).
   const rows = payload
-    .filter((row) => row && row.dataKey && row.dataKey.startsWith('opt:'))
+    .filter((row) => row && row.dataKey && row.dataKey.startsWith('pct_opt:'))
     .sort((a, b) => (b.value || 0) - (a.value || 0));
   return (
     <div className="bg-white border border-gray-200 rounded-lg shadow-md p-2 text-xs max-w-xs">
       <div className="font-medium text-gray-700">{formatFullTimestamp(p.captured_at)}</div>
       <ul className="mt-1 space-y-0.5">
         {rows.map((row) => {
-          const id = row.dataKey.slice(4);
+          const id = row.dataKey.slice('pct_opt:'.length);
           const label = optionLabels?.[id] || id;
+          const pct = row.value ?? 0;
+          const rawCount = p[`opt:${id}`] ?? 0;
           return (
             <li key={id} className="flex items-center gap-2">
               <span
@@ -164,7 +194,9 @@ function MultiOptionTooltip({ active, payload, optionLabels }) {
                 style={{ backgroundColor: row.color }}
               />
               <span className="text-gray-700 truncate">{label}</span>
-              <span className="text-gray-500 ml-auto font-medium">{row.value ?? 0}</span>
+              <span className="text-gray-500 ml-auto font-medium tabular-nums">
+                {pct.toFixed(0)}% ({rawCount})
+              </span>
             </li>
           );
         })}
@@ -473,7 +505,10 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
   // Transform snapshots for recharts. Each row has a numeric
   // `timestamp` for the x-axis plus the raw captured_at for tooltips.
   // For multi-option rows, each option's vote count gets its own
-  // `opt:<id>` key.
+  // `opt:<id>` (raw count) AND `pct_opt:<id>` (% of voters at snapshot)
+  // key. Phase 31 B2: the line chart binds to `pct_opt:<id>` so the
+  // Y-axis renders 0–100% rather than raw counts; the tooltip surfaces
+  // both numbers.
   const chartData = useMemo(() => {
     return snapshots.map((s) => {
       const row = {
@@ -483,8 +518,10 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
         support_fraction: s.support_fraction ?? null,
       };
       if (s.option_totals && typeof s.option_totals === 'object') {
+        const denom = s.votes_cast > 0 ? s.votes_cast : 0;
         Object.entries(s.option_totals).forEach(([id, count]) => {
           row[`opt:${id}`] = count;
+          row[`pct_opt:${id}`] = denom > 0 ? (count / denom) * 100 : 0;
         });
       }
       return row;
@@ -533,8 +570,16 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
   const winnerBarHeightDesktop = 24;
   const winnerBarHeightMobile = 16;
 
-  // Recharts chart margins (left has room for y-axis labels)
-  const chartMargin = { top: 24, right: 24, left: 24, bottom: 8 };
+  // Recharts chart margins. Phase 31 B3: left=0 — the YAxis itself
+  // reserves YAXIS_WIDTH, and the WinnerOverTimeBar uses the same value
+  // for its left padding to land directly under the chart's plot area.
+  const chartMargin = { top: 24, right: 24, left: 0, bottom: 8 };
+
+  // Phase 31 B4: explicit ticks at noon for multi-day windows; null
+  // lets recharts auto-pick when the window is sub-day.
+  const tMin = chartData.length > 0 ? chartData[0].timestamp : null;
+  const tMax = chartData.length > 0 ? chartData[chartData.length - 1].timestamp : null;
+  const xTicks = buildNoonTicks(tMin, tMax);
 
   const srr = data.srr_annotations;
   const votingEndTs = data.voting_end ? new Date(data.voting_end).getTime() : null;
@@ -558,11 +603,13 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
           type="number"
           scale="time"
           domain={['dataMin', 'dataMax']}
+          ticks={xTicks || undefined}
           tickFormatter={(v) => formatTickLabel(v, span)}
           tick={{ fontSize: 11, fill: '#6B7280' }}
           stroke="#D1D5DB"
         />
         <YAxis
+          width={YAXIS_WIDTH}
           domain={[0, 1]}
           tickFormatter={(v) => `${Math.round(v * 100)}%`}
           tick={{ fontSize: 11, fill: '#6B7280' }}
@@ -612,6 +659,8 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
   );
 
   // ---- Multi-option chart render ----
+  // Phase 31 B2: Y-axis is 0–100 percent of voters; Lines bind to
+  // `pct_opt:<id>` (% computed per snapshot, raw counts surface in tooltip).
   const renderMultiOptionChart = (height) => (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={chartData} margin={chartMargin}>
@@ -620,14 +669,17 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
           type="number"
           scale="time"
           domain={['dataMin', 'dataMax']}
+          ticks={xTicks || undefined}
           tickFormatter={(v) => formatTickLabel(v, span)}
           tick={{ fontSize: 11, fill: '#6B7280' }}
           stroke="#D1D5DB"
         />
         <YAxis
+          width={YAXIS_WIDTH}
+          domain={[0, 100]}
+          tickFormatter={(v) => `${Math.round(v)}%`}
           tick={{ fontSize: 11, fill: '#6B7280' }}
           stroke="#D1D5DB"
-          allowDecimals={false}
         />
         <Tooltip content={<MultiOptionTooltip optionLabels={optionLabels} />} />
         {displayOptionIds.map((id, idx) => {
@@ -636,7 +688,7 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
             <Line
               key={id}
               type="monotone"
-              dataKey={`opt:${id}`}
+              dataKey={`pct_opt:${id}`}
               name={optionLabels?.[id] || id}
               stroke={colorForOptionId(id, idx, optionsById)}
               strokeWidth={isWinner ? 3 : 2}
@@ -653,7 +705,7 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
             x={votingEndTs}
             y={Math.max(
               0,
-              ...displayOptionIds.map((id) => chartData[chartData.length - 1]?.[`opt:${id}`] ?? 0)
+              ...displayOptionIds.map((id) => chartData[chartData.length - 1]?.[`pct_opt:${id}`] ?? 0)
             )}
             r={6}
             fill={
@@ -708,7 +760,7 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
               optionsById={optionsById}
               optionLabels={optionLabels}
               height={winnerBarHeightDesktop}
-              leftMargin={chartMargin.left}
+              leftMargin={chartMargin.left + YAXIS_WIDTH}
               rightMargin={chartMargin.right}
             />
           </div>
@@ -718,7 +770,7 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
               optionsById={optionsById}
               optionLabels={optionLabels}
               height={winnerBarHeightMobile}
-              leftMargin={chartMargin.left}
+              leftMargin={chartMargin.left + YAXIS_WIDTH}
               rightMargin={chartMargin.right}
             />
           </div>
