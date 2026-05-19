@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
+from sqlalchemy import case
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -577,8 +578,61 @@ def list_proposals(
         q = q.filter(models.Proposal.status == status_filter)
     if topic_id:
         q = q.join(models.ProposalTopic).filter(models.ProposalTopic.topic_id == topic_id)
-    proposals = q.order_by(models.Proposal.created_at.desc()).all()
+    proposals = q.order_by(*_proposal_list_ordering()).all()
     return [_build_proposal_out(p) for p in proposals]
+
+
+def _proposal_list_ordering():
+    """Phase 31 F1 — three-tier status ordering for proposal lists.
+
+    Returns a tuple of ORDER BY expressions for use with ``.order_by(*...)``.
+
+    Primary: status group — voting (0) → deliberation (1) → closed (2) →
+    draft (3). 'closed' covers passed / failed / withdrawn / unresolved.
+
+    Secondary (within each group):
+      - voting: ``voting_end`` ASC (closing soonest first).
+      - deliberation: ``created_at`` DESC (newest first).
+      - closed: ``updated_at`` DESC (most-recently-changed first; serves
+        as the closed-at proxy since the schema has no dedicated
+        ``closed_at`` column — the close action is typically the last
+        write that touches the row).
+      - draft: ``created_at`` DESC (fallback).
+
+    Tertiary: ``created_at`` DESC as a stable tie-breaker.
+    """
+    status_group = case(
+        (models.Proposal.status == "voting", 0),
+        (models.Proposal.status == "deliberation", 1),
+        (models.Proposal.status.in_(
+            ["passed", "failed", "withdrawn", "unresolved"]
+        ), 2),
+        else_=3,  # draft and anything unexpected
+    )
+    voting_secondary = case(
+        (models.Proposal.status == "voting", models.Proposal.voting_end),
+        else_=None,
+    )
+    delib_secondary = case(
+        (models.Proposal.status == "deliberation", models.Proposal.created_at),
+        else_=None,
+    )
+    closed_secondary = case(
+        (
+            models.Proposal.status.in_(
+                ["passed", "failed", "withdrawn", "unresolved"]
+            ),
+            models.Proposal.updated_at,
+        ),
+        else_=None,
+    )
+    return (
+        status_group.asc(),
+        voting_secondary.asc(),
+        delib_secondary.desc(),
+        closed_secondary.desc(),
+        models.Proposal.created_at.desc(),
+    )
 
 
 @router.post("", response_model=schemas.ProposalOut, status_code=status.HTTP_201_CREATED)

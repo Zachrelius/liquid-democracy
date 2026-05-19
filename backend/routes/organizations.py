@@ -1887,7 +1887,9 @@ def list_org_proposals(
         q = q.filter(models.Proposal.status == status_filter)
     if topic_id:
         q = q.join(models.ProposalTopic).filter(models.ProposalTopic.topic_id == topic_id)
-    proposals = q.order_by(models.Proposal.created_at.desc()).all()
+    # Phase 31 F1 — three-tier ordering: voting → deliberation → closed.
+    from routes.proposals import _proposal_list_ordering as _f1_ordering
+    proposals = q.order_by(*_f1_ordering()).all()
 
     # Phase 12 — admin-tier visibility (parent-org admin/steward see all
     # sub-org proposals regardless of membership).
