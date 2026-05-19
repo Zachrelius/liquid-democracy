@@ -3863,3 +3863,66 @@ The semantic shift is real: today's `FollowRelationship` row → "see all of thi
 - `DelegateProfile.is_active` legacy column is still read by `can_see_votes` but always True post-creation; a future pass can drop the column.
 - PG enum downgrade leaves `followers_only` in the type vocabulary (Postgres limitation, standard to accept).
 - Bible `DelegatePage.page_visibility` field is accepted-and-ignored; eventually drop from bibles + schema.
+
+
+## Phase 31 — Demo Polish: Trajectory Chart + List Ordering + Visibility & Notification Defaults (shipped 2026-05-19, master `095ebde`)
+
+Drains Z's post-Phase-30.3 punch list. Nine clusters across the demo's perceived realism plus a couple of default-correctness fixes Phase 30.3's audit didn't catch. The trajectory chart accumulated six distinct issues at once (B1–B6); the rest are smaller.
+
+| Cluster | Description |
+|---|---|
+| **B1** | Root-cause fix for the ~1/3-mark spike on currently-voting Cedar Hollow proposals. `generate_snapshots` accepts `seed_until`; `allocate_filler_votes` accepts `cast_at_cap`. Seed pipeline passes the reset moment for currently-voting proposals so seeded snapshots + filler-vote `cast_at` only cover [voting_start, reset_moment]. The live worker takes over from there with no conflicting future-dated data. |
+| **B2** | Multi-option chart Y-axis converted to 0-100%. `chartData` gets `pct_opt:<id>` keys computed as `option_totals[id] / votes_cast * 100` per snapshot. Lines bind to the pct key with a `[0, 100]` domain; tooltip surfaces both % and raw count. |
+| **B3** | Winner-over-time bar shares parent chart's x-domain. YAxis gets explicit `width={56}` (`YAXIS_WIDTH` constant); the bar's left padding equals `chartMargin.left + YAXIS_WIDTH` so it lands under the plot area, not the container's full width. `chartMargin.left = 0` since the YAxis itself reserves the space. |
+| **B4** | X-axis labels reformatted "M/D" anchored at noon ticks. New `buildNoonTicks` helper generates explicit tick positions at 12:00 local time for each day in `[tMin, tMax]`; XAxis consumes them via `ticks={xTicks || undefined}`. Sub-day windows fall back to "M/D h:mm". |
+| **B5** | Lumpy three-segment cumulative-vote curve via `_lumpy_fraction_voted_at`: ~30% / ~30% / ~40% across the three quarters of the voting window, with per-proposal-seeded sub-segment slope variability. Monotone non-decreasing, bounded [0,1], deterministic per `proposal_id` so reset behaviour is stable. |
+| **B6** | Trajectory chart promoted to full-width always-visible section under Vote Network. The Phase 22 F3 `TrajectoryToggleSection` (collapsed-by-default sidebar widget) is replaced by `TrajectorySection` — always visible, no toggle, full-width chrome matching the adjacent Vote Network panel. Gated on `isVoting \|\| isClosed`. |
+| **F1** | Three-tier proposal list ordering: voting → deliberation → closed primary sort, with secondary sort within each group (voting by `voting_end` asc, deliberation by `created_at` desc, closed by `updated_at` desc as closed_at proxy). New `_proposal_list_ordering()` helper applied to both `/api/proposals` and the org-scoped list endpoint. |
+| **D1** | Frontend `DelegateProfile.jsx` radio default mirrors backend's row default (`'followers_only'`); was `'private'`, inconsistent with what `_get_or_create_delegate_profile` actually writes. Three "Elections" bible topics (HOA/Local-4021/Coalition) promoted from `'private'` to `'followers_only'`. Audit-log stale `"visibility": "private"` corrected to `"followers_only"`. |
+| **N1.a** | New `build_preset_preference_rows(user_id, preset)` helper in `notification_events.py`. `routes/auth.py` register endpoint stamps the "low" preset on every new user: critical events get in_app + email_weekly; standard/ambient stay off until explicit opt-in. |
+| **N1.b** | Demo persona notification stamps. `_stamp_notification_preset` helper in `seed_pipeline.py` drops existing prefs + inserts the preset's rows (idempotent across resets). HOA Don 'low'→'high' per D13. HOA's 15 non-quick-login members get explicit Low/Medium/High spread (5/5/5). Local-4021 Janet 'low'→'high' for cross-org consistency. Coalition Renée + Jay get explicit presets. `FillerMember` dataclass gets `notification_preset` field; filler generator draws via seeded PRNG (~50% low / ~30% medium / ~20% high). |
+| **B-tests** | New `test_phase_31_demo_polish.py` — 16 tests covering B1 seed_until + cast_at_cap, B5 lumpy curve properties (monotone, bounded, deterministic, non-linear), F1 ordering, N1.a register stamps, N1.b seed pipeline stamps. |
+
+**B1 root cause (explicit per dispatch D1):** The seed pipeline pre-populated `VoteSnapshot` rows across the FULL voting window AND distributed filler-vote `cast_at` uniformly across the same window — including timestamps in the future for currently-voting proposals. The live `sustained_majority_worker`'s first post-reset snapshot then counted ALL stored votes regardless of `cast_at`, producing a tally ~3× higher than the adjacent seeded snapshot at the elapsed-hour boundary. The chart drew this discontinuity as a tall vertical spike at the reset-moment x-position (~1/3 of chart width for Cedar Hollow's 30-of-72h and 36-of-96h voting proposals, hence Z's "1/3 mark" report). The next chronological point is the next seed snapshot back on the trajectory's expected ramp, so the spike disappears in one snapshot. Fix at root cause: clamp seed-snapshot emission + filler-vote `cast_at` to the elapsed portion for currently-voting proposals; closed proposals unchanged.
+
+**Commits on branch:**
+
+1. `1fc995a` — Phase 31 B1+B5: snapshot generator + waypoint shape fixes (backend).
+2. `1619204` — Phase 31 B2+B3+B4+B6: trajectory chart redesign and main-view promotion (frontend).
+3. `e7be635` — Phase 31 F1: three-tier proposal list ordering.
+4. `00c50ac` — Phase 31 D1+N1: followers_only default + notification preset stamps.
+5. `00fda22` — Phase 31 B-tests: regression coverage + skip obsolete Phase 23.1 test.
+6. `095ebde` — Merge phase-31 to master.
+
+**Pre-merge gates:**
+
+| Gate | Result |
+|---|---|
+| Backend pytest (full, excl. 3 slow demo-reset suites) | PASS — 1345 passed / 17 skipped / 0 failed (+16 over Phase 30.3 baseline) |
+| Demo-reset suite (run separately) | PASS post-fix — 70 passed / 1 skipped (Phase 23.1 `test_topic_description_is_unprefixed_name` skipped; the assertion was invalidated by Phase 30.1 B5 and only surfaced in the slow-suite-excluded baseline) |
+| PG smoke | Not required (no migration added per D14) |
+| Frontend build | PASS — `index-BFbUaN-L.js` |
+| File-count | 17 files / 994 ins / 119 del |
+
+**Production deploy:**
+
+| Item | Value |
+|---|---|
+| Railway URL | https://www.liquiddemocracy.us |
+| Bundle hash | `index-BFbUaN-L.js` (live) |
+| Backend sanity | `/api/orgs` returns 401 (auth-required, not 502) |
+| Demo reset on prod | 4738 seeded / 6531 wiped across all 3 demo orgs at 2026-05-19 10:38 UTC |
+
+**Notification preset key (N1.a):** `"low"` — maps to `PRESET_STAMP_RULES["low"]` in `notification_events.py`: critical → `in_app + email_weekly`; standard + ambient → all off.
+
+**B5 generator description:** `_lumpy_fraction_voted_at(hour, duration, proposal_id)` seeds an RNG with `sha256("lumpy:{proposal_id}")[:8]`. Per-proposal segment proportions are sampled: `burst ∈ [0.25, 0.35]`, `middle ∈ [0.25, 0.35]`, `surge = 1 - burst - middle`. Each segment splits into 3-4 piecewise-linear sub-segments whose slopes are sampled from `[0.4, 1.6]` and normalized to sum to 1.0 within the segment (sub-RNG seeded by `seed_int ^ 0xA1/B2/C3` per segment). Returns cumulative fraction at given hour — monotone non-decreasing, bounded [0, 1], visibly non-linear.
+
+### Pass-summary
+
+**Phase 31 is the largest pure-polish pass since Phase 25.** Nothing in it is conceptually load-bearing — but the B-cluster accumulated six distinct issues at once on the trajectory chart, and the spike (B1) needed a real diagnostic before the rest could be sequenced. The diagnostic landed on a non-obvious interaction between the seed pipeline's full-window `cast_at` distribution and the live worker's cast_at-blind tally; the proper-fix lives in the seed pipeline because the live worker is platform-core (touching it for a demo-only bug carries more risk than the contained seed-side clamp). B5's lumpy curve isn't redesigned per-bible — the generator-side curve achieves equivalent visual lumpiness with zero bible churn. The notification N1.b cluster reveals the cross-org `notification_preset` consistency requirement (Janet's preset must match across HOA and Local-4021; otherwise the second-seed bible wins silently).
+
+**Tech debt logged (deferred):**
+- No `closed_at` column on Proposal — F1's closed-group secondary sort uses `updated_at` as proxy. Works for demo content but breaks if a closed proposal's metadata gets updated post-close.
+- Uploads-proxy intermittent 502 during Railway warmup — surfaced in poll_deploy smoke once mid-deploy. Not new, but documented.
+- Phase 23.1 `test_topic_description_is_unprefixed_name` was silently passing in the slow-suite-excluded baseline. Consider adding a monthly slow-suite audit step.
+- `notification_preset` field in `Member` schema defaults to `'medium'` — the default is invisible at bible-write time. Consider making it required.
