@@ -36,10 +36,11 @@ DELEGATE_PAGES_PART_2 = [
             TopicVisibility('Public Housing', 'public_accepting'),
             # Phase 23.2 C1 — 'Elections' added so the Coordinating
             # Committee election proposal (P-C-03) has a valid topic
-            # vocabulary entry. Maya is an incumbent up for re-election,
-            # so this fits her surface naturally. Private visibility per
-            # dispatch guidance for election topics.
-            TopicVisibility('Elections', 'private'),
+            # vocabulary entry. Maya is an incumbent up for re-election.
+            # Phase 31 D1 promotes from 'private' to 'followers_only' —
+            # Maya's election positions stay visible to approved
+            # followers but off the public delegate page.
+            TopicVisibility('Elections', 'followers_only'),
         ],
         position_statements=[
             PositionStatement(

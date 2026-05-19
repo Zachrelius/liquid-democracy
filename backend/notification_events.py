@@ -365,6 +365,45 @@ def apply_preset_to_preferences(
     return updated
 
 
+def build_preset_preference_rows(user_id: str, preset: str) -> list:
+    """Phase 31 N1.a — return ``NotificationPreference`` ORM rows that
+    stamp ``preset`` onto a fresh user's preferences. Caller bulk-inserts.
+
+    Only emits rows for channels the preset enables (absent rows are
+    interpreted as ``enabled=False`` per the opt-in default), so the
+    row count stays small (~6-12 per user depending on preset).
+
+    Caller responsibilities:
+      - If the user may already have NotificationPreference rows, delete
+        them first — this function does not upsert. Presets are
+        absolute, not additive.
+      - Wrap in the same transaction as the user creation so a failed
+        commit doesn't leave a half-initialized prefs surface.
+
+    Raises ``ValueError`` on unknown preset name.
+    """
+    import models  # local — notification_events stays model-free at module load
+    if preset not in PRESET_STAMP_RULES:
+        raise ValueError(f"Unknown preset: {preset}")
+    rules = PRESET_STAMP_RULES[preset]
+    rows: list = []
+    for ev in EVENT_REGISTRY:
+        if ev.signal_level == "always_on":
+            continue
+        channels = rules.get(ev.signal_level)
+        if not channels:
+            continue
+        for channel, enabled in channels.items():
+            if enabled:
+                rows.append(models.NotificationPreference(
+                    user_id=user_id,
+                    event_type=ev.key,
+                    channel=channel,
+                    enabled=True,
+                ))
+    return rows
+
+
 def detect_matching_preset(prefs: dict) -> Optional[str]:
     """Return the preset name (``"high"``, ``"medium"``, ``"low"``) whose
     stamped output exactly matches the given prefs, or ``None`` if no

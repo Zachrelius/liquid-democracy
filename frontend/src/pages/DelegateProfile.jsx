@@ -210,7 +210,12 @@ function TopicRow({
   );
   const [busy, setBusy] = useState(false);
 
-  const visibility = topicProfile?.visibility || 'private';
+  // Phase 31 D1: default radio selection mirrors the backend's row default
+  // (Phase 30.3 D2). Was 'private' — that was inconsistent with the row that
+  // ``_get_or_create_delegate_profile`` actually creates on the next PATCH,
+  // and made the new-account default look like 'private' instead of
+  // 'followers_only' until the user explicitly picked something.
+  const visibility = topicProfile?.visibility || 'followers_only';
   const pendingApproval = !!(
     topicProfile?.public_accepting_submitted_at
     && !topicProfile?.public_accepting_approved_at

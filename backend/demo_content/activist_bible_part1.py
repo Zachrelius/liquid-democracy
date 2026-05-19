@@ -75,10 +75,14 @@ MEMBERS = [
     Member(user_id='coalition_will', display_name='Will Sutherland',
            quick_login=True, role='Policy working group (newer member)',
            notification_preset='medium', platform_role='member'),
+    # Phase 31 N1.b — explicit presets so non-quick-login members aren't
+    # silently uniform at the schema's default.
     Member(user_id='coalition_renee', display_name='Renée Castille',
-           quick_login=False, role='Member Defense working group'),
+           quick_login=False, role='Member Defense working group',
+           notification_preset='low'),
     Member(user_id='coalition_jay', display_name='James "Jay" Okonkwo',
-           quick_login=False, role='Member'),
+           quick_login=False, role='Member',
+           notification_preset='medium'),
 ]
 
 

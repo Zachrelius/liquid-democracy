@@ -305,6 +305,15 @@ async def register(
         verification.verified_at = _now()
     db.add(verification)
 
+    # Phase 31 N1.a — stamp the "low" preset on every new user so they
+    # land in a curated minimum-notification posture instead of all-opt-
+    # out. Critical events still surface (in-app + weekly email);
+    # standard/ambient events stay off. New user has no existing rows,
+    # so direct add is safe (no upsert needed).
+    from notification_events import build_preset_preference_rows
+    for pref_row in build_preset_preference_rows(user.id, "low"):
+        db.add(pref_row)
+
     log_audit_event(
         db,
         action="user.registered",
