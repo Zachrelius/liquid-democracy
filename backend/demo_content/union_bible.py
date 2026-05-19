@@ -79,14 +79,21 @@ MEMBERS = [
     Member(user_id='local_walt', display_name='Walter "Walt" Hennessy',
            quick_login=True, role='Retiree member (former DPW Streets)',
            notification_preset='low', platform_role='member'),
+    # Phase 31 N1.b — Janet's notification_preset matches her HOA stamp
+    # ('high') since the seed pipeline resolves cross-org bible IDs to a
+    # single underlying User account; inconsistent presets across orgs
+    # would let the second-seed value silently win.
     Member(user_id='local_janet', display_name='Janet Reilly',
            quick_login=False, is_cross_org=True, role='Parks Department member',
-           notification_preset='low'),
-    # Non-quick-login named members:
+           notification_preset='high'),
+    # Non-quick-login named members. Phase 31 N1.b — explicit presets
+    # for stable distribution across resets.
     Member(user_id='local_marisol', display_name='Marisol Vega',
-           quick_login=False, role='Library worker (VP candidate)'),
+           quick_login=False, role='Library worker (VP candidate)',
+           notification_preset='medium'),
     Member(user_id='local_frank', display_name='Frank Boczek',
-           quick_login=False, role='DPW Water/Sewer steward'),
+           quick_login=False, role='DPW Water/Sewer steward',
+           notification_preset='low'),
 ]
 
 
@@ -112,8 +119,10 @@ DELEGATE_PAGES = [
             TopicVisibility('Grievances', 'public_accepting'),
             # Phase 23.2 C1 — 'Elections' added so VP/Trustee election
             # proposals (P-L-04, P-L-06) have a valid topic vocabulary
-            # entry. Private visibility per dispatch guidance.
-            TopicVisibility('Elections', 'private'),
+            # entry. Phase 31 D1 promotes from 'private' to
+            # 'followers_only' — followers can see this delegate's
+            # position, but it stays off the public delegate page.
+            TopicVisibility('Elections', 'followers_only'),
         ],
         position_statements=[
             PositionStatement(

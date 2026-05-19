@@ -54,6 +54,9 @@ class FillerMember:
     display_name: str
     username: str
     delegates_to: Optional[tuple[str, str]] = None  # (delegate_user_id, topic_name)
+    # Phase 31 N1.b — notification preset stamp. Seeded by the generator
+    # via a PRNG distribution: ~50% 'low', ~30% 'medium', ~20% 'high'.
+    notification_preset: str = "low"
 
 
 # =============================================================================
@@ -137,11 +140,24 @@ def generate_filler_members(
         if delegate_pool and rng.random() < 0.70:
             delegates_to = rng.choice(delegate_pool)
 
+        # Phase 31 N1.b — notification preset distribution: ~50% low,
+        # ~30% medium, ~20% high. Drawn from the same deterministic
+        # generator-PRNG so a given (org, idx) always yields the same
+        # preset across resets.
+        roll = rng.random()
+        if roll < 0.50:
+            notif_preset = "low"
+        elif roll < 0.80:
+            notif_preset = "medium"
+        else:
+            notif_preset = "high"
+
         fillers.append(FillerMember(
             user_id=f"filler_{org_bible.slug}_{idx:03d}",
             display_name=f"{first} {last}",
             username=username,
             delegates_to=delegates_to,
+            notification_preset=notif_preset,
         ))
 
     return fillers
@@ -184,6 +200,7 @@ def allocate_filler_votes(
     voting_start: Optional[datetime] = None,
     voting_end: Optional[datetime] = None,
     cast_by_resolver=None,
+    cast_at_cap: Optional[datetime] = None,
 ) -> list:
     """Allocate filler votes for ``proposal`` to hit trajectory final result.
 
@@ -210,6 +227,19 @@ def allocate_filler_votes(
         Function ``(filler_user_id: str) -> str`` returning the ``User.id``
         for the seeded user. Required for inserting ORM Vote rows whose
         ``user_id`` / ``cast_by_id`` reference real DB IDs.
+    cast_at_cap : datetime | None
+        Phase 31 B1: when set, allocate only the elapsed-fraction of
+        filler votes and clamp every ``cast_at`` to
+        [voting_start, cast_at_cap]. Callers should pass
+        ``cast_at_cap=reset_moment`` for currently-voting proposals so
+        the post-reset tally matches the seeded snapshots at the
+        elapsed-hour boundary. Without this clamp, ALL filler votes have
+        ``cast_at`` uniformly across the full voting window (including
+        future timestamps); the live worker counts them all regardless
+        of ``cast_at`` and the trajectory chart drew a vertical spike at
+        the reset-moment boundary. For closed proposals or when the cap
+        is at/after voting_end, behaviour matches the prior full-window
+        allocation.
 
     Returns
     -------
@@ -237,6 +267,20 @@ def allocate_filler_votes(
     rng = _seeded_rng(f"{trajectory.proposal_id}:votes")
     window_seconds = (voting_end - voting_start).total_seconds()
     method = trajectory.voting_method
+
+    # Phase 31 B1: when cast_at_cap is set, only the elapsed fraction of the
+    # voting window has happened. cap_frac ∈ (0, 1] for an in-progress vote;
+    # ≥ 1 for a closed vote (we clamp). When cap_frac < 1 we both:
+    #  (a) cast only ⌊cap_frac * len(fillers)⌋ filler votes, and
+    #  (b) draw ``cast_at`` from [voting_start, cast_at_cap] uniformly.
+    if cast_at_cap is not None and cast_at_cap > voting_start:
+        cap_seconds = min(
+            window_seconds, (cast_at_cap - voting_start).total_seconds()
+        )
+        cap_frac = max(0.0, min(1.0, cap_seconds / window_seconds))
+    else:
+        cap_seconds = window_seconds
+        cap_frac = 1.0
 
     votes: list = []
 
@@ -269,12 +313,15 @@ def allocate_filler_votes(
         bucket += ["abstain"] * (total_target - len(bucket))
         rng.shuffle(bucket)
 
-        for i, vote_value in enumerate(bucket):
+        # Phase 31 B1: only the elapsed fraction of voters have voted yet.
+        cast_count = int(round(len(bucket) * cap_frac))
+
+        for i, vote_value in enumerate(bucket[:cast_count]):
             user_id = cast_by_resolver(fillers[i].user_id)
             if not user_id:
                 continue
-            # Distribute cast_at across the window with mild front/back loading.
-            t_frac = rng.random()
+            # Distribute cast_at across [voting_start, cast_at_cap or end].
+            t_frac = rng.random() * cap_frac
             cast_at = voting_start + timedelta(seconds=t_frac * window_seconds)
             votes.append(models.Vote(
                 proposal_id=proposal.id,
@@ -298,11 +345,14 @@ def allocate_filler_votes(
     option_labels = [o.label for o in options]
     option_ids_by_label = {o.label: o.id for o in options}
 
-    for i, filler in enumerate(fillers):
+    # Phase 31 B1: only the elapsed fraction of fillers have voted yet.
+    cast_count = int(round(len(fillers) * cap_frac))
+
+    for i, filler in enumerate(fillers[:cast_count]):
         user_id = cast_by_resolver(filler.user_id)
         if not user_id:
             continue
-        t_frac = rng.random()
+        t_frac = rng.random() * cap_frac
         cast_at = voting_start + timedelta(seconds=t_frac * window_seconds)
 
         if method == "approval":

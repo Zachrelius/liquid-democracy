@@ -241,7 +241,7 @@ def _get_or_create_delegate_profile(
             "user_id": user_id,
             "org_id": org_id,
             "topic_id": topic_id,
-            "visibility": "private",
+            "visibility": "followers_only",
             "via": "get_or_create",
         },
     )

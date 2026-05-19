@@ -81,48 +81,66 @@ MEMBERS = [
            notification_preset='medium', platform_role='member'),
     Member(user_id='hoa_don', display_name='Don Iverson',
            quick_login=True, role='Member (former VP)',
-           notification_preset='low', platform_role='member'),
+           notification_preset='high', platform_role='member'),
     Member(user_id='hoa_linda', display_name='Linda Schaefer',
            quick_login=True, role='Treasurer',
            notification_preset='medium', platform_role='moderator'),
     Member(user_id='hoa_tomas', display_name='Tomás Ortega',
            quick_login=True, role='Member',
            notification_preset='low', platform_role='member'),
-    # Non-quick-login named members:
+    # Non-quick-login named members. Phase 31 N1.b — notification_preset
+    # is explicitly set per-member to produce a balanced Low/Medium/High
+    # spread (5/5/5) across the 15 supporting characters. Deterministic
+    # by design — same preset across resets so demo behaviour is stable.
     Member(user_id='hoa_patty', display_name='Patricia "Patty" Voss',
-           quick_login=False, role='Member (President candidate)'),
+           quick_login=False, role='Member (President candidate)',
+           notification_preset='medium'),
     Member(user_id='hoa_ravi', display_name='Ravi Chandrasekaran',
-           quick_login=False, role='Member'),
+           quick_login=False, role='Member',
+           notification_preset='high'),
     # Phase 29 C2 — Cedar Hollow showcase expansion: 13 additional named
     # delegates with public pages. Goal is a dense, varied delegation
     # graph rather than just a handful of council-adjacent personas.
     # All quick_login=False; portraits supplied by Z (see C6).
     Member(user_id='hoa_helen', display_name='Helen Krause',
-           quick_login=False, role='Member (retired teacher)'),
+           quick_login=False, role='Member (retired teacher)',
+           notification_preset='low'),
     Member(user_id='hoa_frank', display_name='Frank Trembath',
-           quick_login=False, role='Member (retired plumber)'),
+           quick_login=False, role='Member (retired plumber)',
+           notification_preset='medium'),
     Member(user_id='hoa_diane', display_name='Diane Petruzzi',
-           quick_login=False, role='Member (insurance adjuster)'),
+           quick_login=False, role='Member (insurance adjuster)',
+           notification_preset='high'),
     Member(user_id='hoa_wally', display_name='Walter "Wally" Bromley',
-           quick_login=False, role='Member (former county clerk)'),
+           quick_login=False, role='Member (former county clerk)',
+           notification_preset='medium'),
     Member(user_id='hoa_karen', display_name='Karen Mihalek',
-           quick_login=False, role='Member (retired RN, Cedar Court)'),
+           quick_login=False, role='Member (retired RN, Cedar Court)',
+           notification_preset='low'),
     Member(user_id='hoa_ron', display_name='Ron Dziedzic',
-           quick_login=False, role='Member (auto shop owner)'),
+           quick_login=False, role='Member (auto shop owner)',
+           notification_preset='high'),
     Member(user_id='hoa_marisol', display_name='Marisol Henneman',
-           quick_login=False, role='Member (elementary school principal)'),
+           quick_login=False, role='Member (elementary school principal)',
+           notification_preset='medium'),
     Member(user_id='hoa_ed', display_name='Edgar "Ed" Pawlowski',
-           quick_login=False, role='Member (retired Navy supply officer)'),
+           quick_login=False, role='Member (retired Navy supply officer)',
+           notification_preset='low'),
     Member(user_id='hoa_bev', display_name='Beverly "Bev" Lindstrom',
-           quick_login=False, role='Member (real estate agent)'),
+           quick_login=False, role='Member (real estate agent)',
+           notification_preset='high'),
     Member(user_id='hoa_carl', display_name='Carl Sundstrom',
-           quick_login=False, role='Member (water utility engineer)'),
+           quick_login=False, role='Member (water utility engineer)',
+           notification_preset='medium'),
     Member(user_id='hoa_yolanda', display_name='Yolanda Beasley',
-           quick_login=False, role='Member (daycare director, Cedar Court)'),
+           quick_login=False, role='Member (daycare director, Cedar Court)',
+           notification_preset='low'),
     Member(user_id='hoa_maureen', display_name='Maureen Czajka',
-           quick_login=False, role='Member (reference librarian)'),
+           quick_login=False, role='Member (reference librarian)',
+           notification_preset='high'),
     Member(user_id='hoa_hank', display_name='Hank Renfro',
-           quick_login=False, role='Member (roofing contractor)'),
+           quick_login=False, role='Member (roofing contractor)',
+           notification_preset='low'),
 ]
 
 
@@ -205,9 +223,11 @@ DELEGATE_PAGES = [
         topics=[
             TopicVisibility('Bylaws & Procedure', 'public_accepting'),
             # Phase 23.2 C1 — 'Elections' added so election proposals
-            # (P-H-07) have a valid topic vocabulary entry. Private
-            # visibility per dispatch guidance for election topics.
-            TopicVisibility('Elections', 'private'),
+            # (P-H-07) have a valid topic vocabulary entry. Phase 31 D1
+            # promotes from 'private' to 'followers_only' — the user has a
+            # position they want to stay scoped to approved followers, not
+            # invisible to everyone including themselves' followers.
+            TopicVisibility('Elections', 'followers_only'),
         ],
         position_statements=[
             PositionStatement(

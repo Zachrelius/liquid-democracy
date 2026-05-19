@@ -347,6 +347,44 @@ def _ensure_user(
     return user
 
 
+def _stamp_notification_preset(
+    db: Session, user_id: str, preset: Optional[str],
+) -> None:
+    """Phase 31 N1.b — stamp a notification preset on a demo user,
+    replacing any existing rows.
+
+    Bible members + fillers may persist across resets (named bible
+    members always do; fillers are wiped + recreated). To keep the
+    bible's preset declaration authoritative on every reset, we drop
+    any existing ``NotificationPreference`` rows for ``user_id`` and
+    insert the preset's stamped row set.
+
+    ``preset`` of None or empty string is a no-op (preserves the
+    user's existing prefs).
+    """
+    if not preset:
+        return
+    import models
+    from notification_events import (
+        PRESET_STAMP_RULES, build_preset_preference_rows,
+    )
+    if preset not in PRESET_STAMP_RULES:
+        log.warning(
+            "_stamp_notification_preset: unknown preset %r for user %s; "
+            "skipping",
+            preset, user_id,
+        )
+        return
+    (
+        db.query(models.NotificationPreference)
+        .filter(models.NotificationPreference.user_id == user_id)
+        .delete(synchronize_session=False)
+    )
+    for row in build_preset_preference_rows(user_id, preset):
+        db.add(row)
+    db.flush()
+
+
 def _member_role_for_org(db: Session, org_id: str) -> Optional[str]:
     """Return the ``member`` role ID for this org, or None if not seeded."""
     import models
@@ -772,6 +810,13 @@ def seed_org_from_bible(
         counts["users_created"] += 1
         counts["members_created"] += 1
 
+        # Phase 31 N1.b — stamp the bible-declared notification preset
+        # onto this member. Idempotent across resets: any existing
+        # NotificationPreference rows for this user are dropped before
+        # the new preset is applied, so a bible edit takes effect on
+        # the next reset without leaving stale rows behind.
+        _stamp_notification_preset(db, user.id, m.notification_preset)
+
     # ---- 3. Personas JSON (D22, Amendment D) -----------------------------
     # Phase 23.1 (C4): description sourced from QUICK_LOGIN_DESCRIPTIONS
     # (Stage 8 §6 verbatim) keyed on bible user_id; falls back to role for
@@ -1139,6 +1184,10 @@ def seed_org_from_bible(
         filler_user_ids[f.user_id] = u.id
         _ensure_membership(db, u.id, org.id, member_role_id)
         counts["fillers_created"] += 1
+
+        # Phase 31 N1.b — stamp the filler's PRNG-derived notification
+        # preset (~50% low / ~30% medium / ~20% high).
+        _stamp_notification_preset(db, u.id, f.notification_preset)
         counts["users_created"] += 1
     # Bulk-flush via SQLAlchemy already done in each _ensure_user above.
 
@@ -1204,6 +1253,13 @@ def seed_org_from_bible(
         if not proposal:
             continue
         trajectory = _trajectory_for_proposal(bp.proposal_id)
+        # Phase 31 B1: for currently-voting proposals, clamp seed snapshot
+        # emission + filler-vote cast_at to the elapsed portion of the
+        # voting window. Closed proposals (passed/failed) seed across the
+        # full window unchanged.
+        is_currently_voting = proposal.status == "voting"
+        seed_cap = now if is_currently_voting else None
+
         # Snapshots: only for proposals in voting / past-voting status
         if (
             trajectory is not None
@@ -1218,6 +1274,7 @@ def seed_org_from_bible(
                 voting_end=proposal.voting_end,
                 cadence_seconds=1800,
                 total_eligible=member_count_for_org,
+                seed_until=seed_cap,
             )
             all_snapshots.extend(snaps)
 
@@ -1250,6 +1307,7 @@ def seed_org_from_bible(
                 voting_start=proposal.voting_start,
                 voting_end=proposal.voting_end,
                 cast_by_resolver=_filler_resolver,
+                cast_at_cap=seed_cap,
             )
             all_filler_votes.extend(filler_votes)
 
