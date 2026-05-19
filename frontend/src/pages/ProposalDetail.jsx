@@ -683,6 +683,7 @@ function VoteGraphLegend({ proposal, voteGraph }) {
  * results panel, etc.).
  */
 function WriteInOptionAdder({ proposal, onAdded }) {
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState('');
   const [description, setDescription] = useState('');
