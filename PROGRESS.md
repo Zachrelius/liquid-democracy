@@ -3926,3 +3926,85 @@ Drains Z's post-Phase-30.3 punch list. Nine clusters across the demo's perceived
 - Uploads-proxy intermittent 502 during Railway warmup — surfaced in poll_deploy smoke once mid-deploy. Not new, but documented.
 - Phase 23.1 `test_topic_description_is_unprefixed_name` was silently passing in the slow-suite-excluded baseline. Consider adding a monthly slow-suite audit step.
 - `notification_preset` field in `Member` schema defaults to `'medium'` — the default is invisible at bible-write time. Consider making it required.
+
+
+## Phase 32 — Deliberation Engagement: Write-Ins + Pre-Voting + Author Edits + Change Log (shipped 2026-05-19, master `22dac68` + hotfix `3359922`)
+
+Three coupled sub-features turning deliberation from passive comment-chamber into generative collective sensemaking. All three org-configurable + per-proposal-overridable, all off by default.
+
+| Cluster | Description |
+|---|---|
+| **M** | Migration `d4f8e2a91c50`: ProposalRevision table + 6 override columns on Proposal + 3 write-in attribution columns on ProposalOption. Idempotent guards in upgrade() so the migration_cycle test pattern walks forward to head without duplicate-column errors. SQLite batch_alter_table quirks (FK + multi-column adds) handled by per-column batches + explicit FK constraint name. |
+| **S** | `proposal_engagement_config.py` resolver — per-proposal override → org settings JSONB → platform default ladder, six resolver functions. |
+| **W** | W2 POST + W3 DELETE write-in endpoints; W4 cap; W7 `proposal.option_added` notification (voters minus adder). W6 delegation handling turned out to be a no-op in code per D7 — the existing engine naturally omits options added after the delegate's last vote, surfacing per D25. |
+| **E** | PATCH proposal endpoint extended to capture `ProposalRevision` rows on every deliberation-phase change. E3 lockout enforced (resolved per-proposal-or-org). E4 GET `/revisions` endpoint. E5 `proposal.edited` notification fires to voters ∪ commenters. |
+| **P** | P1 vote casting during deliberation when `allow_pre_voting=True`. P2 trajectory endpoint filters deliberation-phase snapshots when `show_votes_during_deliberation=False`. P3 backend surfaces `deliberation_start` + visibility flag. |
+| **F** (minimal) | F2 add-option button + violet "write-in" badge on ProposalDetail. F1 / F3 / F4 / F5 deferred to Phase 32.1. |
+| **D** | P-H-13 "Name the New Community Garden" approval proposal exercises W2 end-to-end. |
+| **T** | 19 new tests + 2 migration cycle tests covering S/W/E/P clusters. Phase 21's `_EXPECTED_SIGNAL_LEVEL` test dict extended with the two new event keys. |
+
+**Pre-merge gates:** 1366 passed / 17 skipped / 0 failed (+21 over Phase 31). PG smoke PASS (mode=both, prior=`c7d4e0a91f23`). Frontend bundle: `index-BmEll16e.js`; post-hotfix `index-D2YQ7mJQ.js`.
+
+**Production deploy:** Demo reset 4738 seeded / 6531 wiped at 22:02 UTC. The hotfix `3359922` (one-line `useToast()` import fix in `WriteInOptionAdder`) was correct but its deploy window collided with a Railway edge-routing outage (`www.liquiddemocracy.us` 404'd for ~hour); prod stayed on the pre-hotfix bundle. The hotfix finally landed alongside Phase 32.1.
+
+### Pass-summary
+
+**Phase 32 is the largest pure-feature pass since Phase 27.** Three coupled sub-features that change what deliberation DOES. The backend was big enough that the spec scoped frontend down to a minimal F2 (add-option button + write-in badge), deferring F1 (create form toggles), F3 (settings page), F4 (description polish), F5 (chart deliberation extension), and the W3 delete button + F2.2-F2.4 ProposalDetail surfaces to Phase 32.1. W6 delegation handling — flagged as the "highest-risk change" in the dispatch — turned out to be a no-op in code: the existing relevance-weighted + strict-precedence engine naturally omits options added after the delegate's last vote, surfacing per D25.
+
+**Tech debt logged (deferred):**
+- F2.3 wider editable-fields form (options / topics / timestamps / override flags) — minimal title+body form ships in 32.1; richer form deferred.
+- D-edits + D-spam-remove bible-level seeding — manual QA exercises the surface; bible-level seeding deferred.
+- F1 edit-existing-proposal flow — create form has toggles; edit form does not.
+- Worker tick wait for F5 demo — F5 verification needs at least one worker tick after demo reset.
+
+
+## Phase 32.1 — Deliberation Engagement Frontend + Worker Fix + Demo Content (shipped 2026-05-20, master `d05c5f5` + hotfix `53bce17`)
+
+Drains Phase 32's deferral list. Backend was complete for write-ins + pre-voting + author edits at the end of Phase 32; this pass wires the UI consumers, fixes one missed backend piece (snapshot worker filter for deliberation-phase pre-voting), and exercises pre-voting in the demo via P-H-10.
+
+| Cluster | Description |
+|---|---|
+| **F2.1** | Add-option submit bug fix. Root cause: missing `useToast()` hook in `WriteInOptionAdder` (Phase 32 oversight). Phase 32 hotfix `3359922` was correct but its deploy died in the same Railway outage that hit the site. This pass's merge bundles both fixes. Improvement: `onAdded={fetchData}` replaces `window.location.reload`. |
+| **B1** | `sustained_majority_worker.run_one_tick` now captures snapshots for deliberation-status proposals with both `allow_pre_voting` AND `show_votes_during_deliberation` resolving True. Gated on both flags to avoid storage for visibility-off data. |
+| **B2** | `proposal.edited` audience extended to delegators-on-the-proposal's-topic. Conservative inclusion: any active delegation matching org+topic counts (no strategy resolution per-edit — too expensive, user-side notification toggles are the safety valve). |
+| **F2.2** | Pre-vote UI on proposal detail during deliberation when `allow_pre_voting=True`. Amber sentiment banner: "Pre-vote — you can change this anytime before voting closes." |
+| **F2.3** | Minimal Edit-author button + form (title + body). Gated to author or admin during deliberation, before resolved lockout fraction. Wider editable-fields form deferred. |
+| **F2.4** | Change-log accordion below body. Hidden when no revisions exist. Side-by-side before/after diff per changed field. |
+| **F1** | Proposal create form gains "Deliberation Engagement" group with three subsections (write-ins / pre-voting / editing). Write-ins section hidden for binary voting. |
+| **F3** | OrgSettings page gains "Proposal Defaults — Deliberation Engagement" section, per-section save. |
+| **F4** | EVENT_REGISTRY descriptions polished for the two Phase 32 events per D13. `proposal.edited` description mentions delegator-on-topic audience added by B2. |
+| **F5** | Trajectory chart gets a "Voting opens" phase-transition vertical line when `show_votes_during_deliberation=True` AND chart data extends back into deliberation. |
+| **W3.fe** | Per-option delete button on write-ins. Visible to adder OR admin. Inline confirmation (no modal). |
+| **D** | Cedar Hollow P-H-10 EV Charging gains `allow_pre_voting=True + show_votes_during_deliberation=True`. D-edits + D-spam-remove demo seeding deferred (manual QA exercises the surfaces). |
+| **T** | 5 new tests covering B1 worker filter (both-flags-on captures, either-off skips), B2 delegator-on-topic audience, D-pre-voting bible declarations. |
+
+**Pre-merge gates:** 1371 passed / 17 skipped / 0 failed (+5 over Phase 32). PG smoke not required (D9 — no migration). Frontend bundle: `index-fSeVhhEp.js`.
+
+**Production deploy:** complicated. Two demo resets triggered (10:34 UTC + 11:05 UTC + 11:22 UTC after manual backend redeploy). Direct API verification shows the per-proposal override fields on demo proposals (P-H-13 + P-H-10) return null instead of the bible-declared values. Diagnosis: a manual `railway redeploy --service backend` was needed because Railway's auto-deploy on push appears to have been stuck since the Phase 32 hotfix outage. Even after manual redeploy + reset, P-H-10 still shows null overrides — and a direct POST to `/api/orgs/{slug}/proposals` with explicit `allow_pre_voting=true` confirmed the org-scoped create handler in `routes/organizations.py` was silently dropping the six Phase 32 override fields (Phase 32 added them to ProposalCreate's Pydantic schema + to the global `/api/proposals` handler, but `create_org_proposal` was missed). Hotfix `53bce17` passes them through. Push attempted but Railway returned "Deploys have been paused temporarily" — auto-deploys are currently inhibited. Z to clear via the Railway dashboard.
+
+### F2.1 root cause (explicit)
+
+The Phase 32 `WriteInOptionAdder` component called `toast.success(...)` / `toast.error(...)` without the `useToast()` hook destructured at the top — `toast` was undefined. Every submit threw `ReferenceError: toast is not defined`. The DB write succeeded but the JS exception aborted `setOpen(false)` and `onAdded()`, leaving the form open and stale. Phase 32 hotfix `3359922` added the hook (one-line fix). That fix's deploy collided with the Railway outage; prod stayed on the pre-hotfix bundle until Phase 32.1 shipped.
+
+### QA verification
+
+QA agent ran 18 scenarios via Claude in Chrome MCP. 11 PASS, 0 FAIL, 6 BLOCKED (all blocked by the demo-content override-fields not surfacing — root cause hotfixed in `53bce17` but pending deploy). Headline results:
+- F2.1 add-option submit + violet badge: PASS.
+- W3.fe per-option delete (adder removes; admin removes; no button on originals): PASS.
+- F1 create form (sub-toggle visibility on parent toggle): PARTIAL PASS (write-ins section only visible for multi-option voting, hidden for binary; Cedar Hollow has only binary enabled, so write-ins toggle behaviour was not exercisable on this org).
+- F3 settings section + save: PASS.
+- F4 polished descriptions (including B2's "delegated on the proposal's topic" mention): PASS.
+- D22 existing proposals unaffected: PASS.
+- F2.2/F2.3/F2.4/F5 demo-content scenarios: BLOCKED pending the deploy of `53bce17` + a fresh demo reset.
+
+### Memory update
+
+`reference_demo_auto_login.md` corrected: the "Just exploring? Try the demo →" button shows legacy Quick Login demo accounts (alice/admin/voter*), NOT a one-click Steward-on-Cedar-Hollow login. Direct credentials path: `janet_reilly` / `demo-janet_reilly-noop` (per the seed pipeline's dummy password convention).
+
+### New tech debt found
+
+- **Railway backend auto-deploy is stuck.** Auto-deploy on push to master has been silently failing for the backend service since the Phase 32 hotfix Railway outage. Manual `railway redeploy --service backend --yes` brings it back online but the dashboard reports "Deploys have been paused temporarily" intermittently. Z to clear via Railway dashboard. This is the root reason QA scenarios saw null override fields — the Phase 32 + 32.1 backend code wasn't reaching prod despite git pushes.
+- **`create_org_proposal` was missing Phase 32 override-field pass-through.** Hotfix `53bce17` addresses this; pending deploy. Indicates Phase 32 spec/implementation missed the dual-create-endpoint shape (`/api/proposals` global vs `/api/orgs/{slug}/proposals` org-scoped).
+- **D-cluster bible seeding** for pre-voting / edits / spam-remove still partial — pre-voting flags wired on P-H-10 but seeded pre-votes + revision rows deferred.
+- **F5 worker-tick wait** for chart verification — no operational signal of "fresh deliberation snapshots ready"; QA timing is a coordination dance.
+- **Mobile-screen polish** for new Phase 32+32.1 UI surfaces is unverified.
