@@ -1039,10 +1039,19 @@ def update_proposal(
             },
         )
 
-        # E5 — fire ``proposal.edited`` notification to engaged members
-        # (commented OR voted; editor excluded). Engaged-set derivation
-        # is the union of two queries; documented in closeout as the
-        # first-pass derivation.
+        # E5 — fire ``proposal.edited`` notification to engaged members.
+        # Phase 32.1 B2: engaged set is voters ∪ commenters ∪
+        # delegators-on-the-proposal's-topic. A user who has delegated on
+        # any of the proposal's topics is materially affected by the
+        # edit even if they haven't voted or commented directly —
+        # whichever delegate actually casts will do so on the post-edit
+        # version of the proposal. Conservative inclusion: any active
+        # delegation matching org+topic counts, regardless of whether
+        # the user's strategy would actually route through this delegate
+        # (resolving the graph for every edit is too expensive and
+        # narrow-by-strategy noise isn't worth the audience trim). User-
+        # side notification toggles are the safety valve if the audience
+        # is too broad for any one user's taste.
         engaged_voter_ids = {
             row[0] for row in (
                 db.query(models.Vote.user_id)
@@ -1057,7 +1066,21 @@ def update_proposal(
                 .all()
             )
         }
-        engaged = (engaged_voter_ids | engaged_commenter_ids)
+        engaged_delegator_ids: set[str] = set()
+        topic_ids_for_proposal = [
+            pt.topic_id for pt in proposal.proposal_topics
+        ]
+        if topic_ids_for_proposal and proposal.org_id is not None:
+            delegations_q = db.query(models.Delegation.delegator_id).filter(
+                models.Delegation.org_id == proposal.org_id,
+                models.Delegation.topic_id.in_(topic_ids_for_proposal),
+            )
+            engaged_delegator_ids = {row[0] for row in delegations_q.all()}
+        engaged = (
+            engaged_voter_ids
+            | engaged_commenter_ids
+            | engaged_delegator_ids
+        )
         engaged.discard(current_user.id)
         for uid in engaged:
             emit_notification(

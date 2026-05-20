@@ -1474,11 +1474,18 @@ PROPOSALS = [
     # =========================================================================
 
     Proposal(
+        # Phase 32.1 D-pre-voting demo — P-H-10 exercises the pre-vote
+        # surface end-to-end: members can cast pre-votes during
+        # deliberation, totals are visible, and the trajectory chart
+        # extends back to deliberation start once the worker captures
+        # snapshots (B1).
         proposal_id='P-H-10',
         title='Adopt EV Charging Station Policy for Common Areas',
         proposer_user_id='hoa_marcus',
         voting_method='binary',
         state_at_reset='deliberation, hour 42 of 168',
+        allow_pre_voting=True,
+        show_votes_during_deliberation=True,
         body=(
             "Proposed policy: install two Level-2 EV chargers in the visitor "
             "parking area near the clubhouse, funded by a one-time $180 "
