@@ -737,6 +737,16 @@ def _react_to_destabilization(
 def run_one_tick(db: Session) -> int:
     """Iterate every proposal currently in ``voting`` and evaluate each.
 
+    Phase 32.1 B1: also captures snapshots for proposals in
+    ``deliberation`` status that have BOTH pre-voting AND
+    show-votes-during-deliberation enabled. These proposals don't
+    get SRR / close-trigger evaluation (those only apply to voting),
+    just snapshot capture so the trajectory chart's deliberation-
+    phase extension (F5) has data to render. Capturing snapshots
+    when pre-voting is allowed but visibility is off would waste
+    storage on data we never surface — gating on BOTH flags keeps
+    the storage cost incremental.
+
     Returns the number of proposals processed. Per-proposal errors are
     caught + logged; the loop keeps going so one bad row doesn't block
     the rest.
@@ -761,6 +771,40 @@ def run_one_tick(db: Session) -> int:
             log.exception(
                 f"stable_result: error evaluating proposal {proposal.id}; "
                 f"rolling back this proposal and continuing"
+            )
+            db.rollback()
+
+    # Phase 32.1 B1 — deliberation-phase snapshot capture for proposals
+    # with pre-voting + visibility BOTH on. Resolves per-proposal-
+    # override-or-org-default via the existing settings resolver so
+    # org-level defaults are honored when proposal-level overrides are
+    # null. No SRR / close logic — just snapshot capture.
+    from proposal_engagement_config import (
+        resolve_allow_pre_voting,
+        resolve_show_votes_during_deliberation,
+    )
+    deliberation_proposals = (
+        db.query(models.Proposal)
+        .filter(models.Proposal.status == "deliberation")
+        .all()
+    )
+    for proposal in deliberation_proposals:
+        try:
+            org = (
+                db.get(models.Organization, proposal.org_id)
+                if proposal.org_id else None
+            )
+            if not resolve_allow_pre_voting(proposal, org):
+                continue
+            if not resolve_show_votes_during_deliberation(proposal, org):
+                continue
+            capture_snapshot(db, proposal)
+            db.commit()
+            processed += 1
+        except Exception:  # noqa: BLE001
+            log.exception(
+                f"stable_result: error capturing deliberation snapshot "
+                f"for proposal {proposal.id}; rolling back and continuing"
             )
             db.rollback()
     # Phase 22 B1: operational logging for storage growth audit. One snapshot

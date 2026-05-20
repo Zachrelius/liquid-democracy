@@ -181,6 +181,23 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
   // value lives on `currentOrg.settings`.
   const requirePolis = orgSettings?.require_polis_for_new_proposals === true;
   const [linkedPolisIds, setLinkedPolisIds] = useState([]);
+  // Phase 32.1 F1 — three new deliberation-engagement override toggles.
+  // Each defaults to the org-level default; null payload means "inherit
+  // org default at read time" (Phase 32 S resolver). We track local
+  // form state so the user can override; if the value matches the org
+  // default we omit it from the payload to keep the inherit semantics.
+  const orgWriteInsAllowed = !!orgSettings?.write_ins?.allowed_default;
+  const orgWriteInsDuringVoting = orgSettings?.write_ins?.during_voting_default ?? true;
+  const orgMaxWriteIns = orgSettings?.write_ins?.max_per_proposal ?? 10;
+  const orgPreVotingAllowed = !!orgSettings?.pre_voting?.allowed_default;
+  const orgShowVotesDuringDelib = !!orgSettings?.pre_voting?.show_votes_during_deliberation_default;
+  const orgEditLockoutFrac = orgSettings?.proposal_edits?.lockout_fraction ?? 0.75;
+  const [allowWriteIns, setAllowWriteIns] = useState(orgWriteInsAllowed);
+  const [allowWriteInsDuringVoting, setAllowWriteInsDuringVoting] = useState(orgWriteInsDuringVoting);
+  const [maxWriteIns, setMaxWriteIns] = useState(orgMaxWriteIns);
+  const [allowPreVoting, setAllowPreVoting] = useState(orgPreVotingAllowed);
+  const [showVotesDuringDelib, setShowVotesDuringDelib] = useState(orgShowVotesDuringDelib);
+  const [editLockoutFrac, setEditLockoutFrac] = useState(orgEditLockoutFrac);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -269,6 +286,30 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
       // field rename: sustained_majority_enabled -> stable_result_required.
       if (smOverrideAllowed && smEnabled !== orgSmDefault) {
         payload.stable_result_required = smEnabled;
+      }
+      // Phase 32.1 F1 — per-proposal override fields. Send only when
+      // the value diverges from the org default, so null persists for
+      // unchanged settings (preserves the "inherit org default" path).
+      const isMultiOptionM = votingMethod === 'approval' || votingMethod === 'ranked_choice';
+      if (isMultiOptionM && allowWriteIns !== orgWriteInsAllowed) {
+        payload.allow_write_in_options = allowWriteIns;
+      }
+      if (isMultiOptionM && allowWriteIns
+          && allowWriteInsDuringVoting !== orgWriteInsDuringVoting) {
+        payload.allow_write_ins_during_voting = allowWriteInsDuringVoting;
+      }
+      if (isMultiOptionM && allowWriteIns
+          && Number(maxWriteIns) !== Number(orgMaxWriteIns)) {
+        payload.max_write_ins = Number(maxWriteIns);
+      }
+      if (allowPreVoting !== orgPreVotingAllowed) {
+        payload.allow_pre_voting = allowPreVoting;
+      }
+      if (allowPreVoting && showVotesDuringDelib !== orgShowVotesDuringDelib) {
+        payload.show_votes_during_deliberation = showVotesDuringDelib;
+      }
+      if (Number(editLockoutFrac) !== Number(orgEditLockoutFrac)) {
+        payload.edit_lockout_fraction = Number(editLockoutFrac);
       }
       // Phase 9 — structurally-recorded Polis links (Decision 2). Server
       // rejects this on parent-org-wide proposals (linked_polis_ids only
@@ -580,6 +621,122 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
           required={requirePolis}
         />
       )}
+
+      {/* Phase 32.1 F1 — Deliberation-engagement override sections. */}
+      <div className="bg-[#F4F6F9] border border-gray-200 rounded-lg p-4 space-y-3">
+        <p className="text-sm font-semibold text-gray-700">Deliberation Engagement</p>
+        {/* Write-ins — hidden for binary voting */}
+        {isMultiOption && (
+          <div className="space-y-2 pl-2 border-l-2 border-gray-200">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={allowWriteIns}
+                onChange={e => setAllowWriteIns(e.target.checked)}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <p className="text-sm text-gray-700 font-medium">Allow members to add options</p>
+                <p className="text-xs text-gray-500">
+                  Members can propose write-in options during deliberation
+                  (and optionally voting). Useful for open-ended polls.
+                </p>
+              </div>
+            </label>
+            {allowWriteIns && (
+              <div className="pl-6 space-y-2">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allowWriteInsDuringVoting}
+                    onChange={e => setAllowWriteInsDuringVoting(e.target.checked)}
+                    className="mt-0.5 accent-[var(--brand-accent)]"
+                  />
+                  <span className="text-sm text-gray-700">
+                    Allow during voting period too
+                    <span className="block text-xs text-gray-500">
+                      Members can keep adding options even after voting opens.
+                      Voters with cast ballots are notified.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-center gap-3">
+                  <span className="text-sm text-gray-700 min-w-[140px]">
+                    Maximum write-ins
+                  </span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={maxWriteIns}
+                    onChange={e => setMaxWriteIns(e.target.value)}
+                    className="w-20 px-2 py-1 border border-gray-300 rounded text-sm"
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+        )}
+        {/* Pre-voting */}
+        <div className="space-y-2 pl-2 border-l-2 border-gray-200">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={allowPreVoting}
+              onChange={e => setAllowPreVoting(e.target.checked)}
+              className="mt-0.5 accent-[var(--brand-accent)]"
+            />
+            <div>
+              <p className="text-sm text-gray-700 font-medium">Allow voting during deliberation</p>
+              <p className="text-xs text-gray-500">
+                Members can cast and change their votes before voting officially
+                opens. Pre-votes are changeable until voting closes.
+              </p>
+            </div>
+          </label>
+          {allowPreVoting && (
+            <div className="pl-6">
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showVotesDuringDelib}
+                  onChange={e => setShowVotesDuringDelib(e.target.checked)}
+                  className="mt-0.5 accent-[var(--brand-accent)]"
+                />
+                <span className="text-sm text-gray-700">
+                  Show vote totals during deliberation
+                  <span className="block text-xs text-gray-500">
+                    Off by default to avoid anchoring. When on, the trajectory
+                    chart extends back to deliberation start.
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
+        </div>
+        {/* Editing lockout */}
+        <div className="space-y-2 pl-2 border-l-2 border-gray-200">
+          <label className="flex items-center gap-3">
+            <span className="text-sm text-gray-700 min-w-[200px]">
+              Lock editing in final % of deliberation
+            </span>
+            <input
+              type="number"
+              min={0}
+              max={100}
+              step={5}
+              value={Math.round(Number(editLockoutFrac) * 100)}
+              onChange={e => setEditLockoutFrac(Number(e.target.value) / 100)}
+              className="w-20 px-2 py-1 border border-gray-300 rounded text-sm"
+            />
+            <span className="text-xs text-gray-500">%</span>
+          </label>
+          <p className="text-xs text-gray-500 pl-2">
+            Authors can't edit the proposal once this fraction of deliberation has elapsed.
+            Default {Math.round(orgEditLockoutFrac * 100)}%.
+          </p>
+        </div>
+      </div>
 
       {/* Phase 20 — Stable Result Required toggle (only when org allows override). */}
       {smOverrideAllowed && (

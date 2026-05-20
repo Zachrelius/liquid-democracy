@@ -152,27 +152,32 @@ EVENT_REGISTRY: list[EventDefinition] = [
     # Phase 32 W7 — fires when any member adds a write-in option to a
     # multi-option proposal that the recipient has voted on. Recipients
     # are voters only (avoid blast-fanout). Adder is excluded.
+    # Phase 32.1 F4 — description polished for end-user clarity per D13:
+    # "explain what triggers the notification, not what the system is
+    # doing." Lead with the trigger, follow with why the user might care.
     EventDefinition(
         key="proposal.option_added",
         label="New option added to a proposal you voted on",
         description=(
-            "Someone added a new option to a proposal you've voted on. "
-            "You may want to review your ballot."
+            "Notifies you when another member adds a write-in option to "
+            "a proposal where you've already cast a vote. Useful for "
+            "reviewing your ballot if you want to consider the new "
+            "option."
         ),
         category="Proposals",
         signal_level="standard",
     ),
     # Phase 32 E5 — fires when a proposal author edits a deliberation-phase
-    # proposal that the recipient has engaged with (commented or voted).
-    # Editor is excluded. Engagement union is comment-or-vote per spec
-    # (no delegation-on-topic check in this pass to keep audience scope
-    # manageable; documented for follow-up).
+    # proposal that the recipient has engaged with (commented, voted, or —
+    # post Phase 32.1 B2 — delegated on the proposal's topic). Editor is
+    # excluded.
     EventDefinition(
         key="proposal.edited",
         label="Proposal you engaged with was edited",
         description=(
-            "A proposal you commented on or voted on was edited by its "
-            "author during deliberation."
+            "Notifies you when the author edits a proposal you've voted "
+            "on, commented on, or delegated on the proposal's topic. "
+            "Includes a summary of what changed."
         ),
         category="Proposals",
         signal_level="standard",
