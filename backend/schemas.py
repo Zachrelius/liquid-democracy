@@ -475,6 +475,23 @@ class ProposalOut(BaseModel):
     allow_pre_voting: Optional[bool] = None
     show_votes_during_deliberation: Optional[bool] = None
     edit_lockout_fraction: Optional[float] = None
+    # Phase 32.2 — resolved-effective values from the 4-option resolver.
+    # The frontend uses these (not the raw override columns above) to
+    # decide whether to show the +Add option button, the pre-vote
+    # panel, etc. Each pair includes `_effective` (the resolved
+    # boolean) + `_overridable` (whether the org's mode allows a
+    # per-proposal override). Numeric flags expose the resolved value
+    # directly.
+    effective_allow_write_in_options: bool = False
+    effective_allow_write_ins_during_voting: bool = True
+    write_in_options_overridable: bool = True
+    write_ins_during_voting_overridable: bool = True
+    effective_allow_pre_voting: bool = False
+    effective_show_votes_during_deliberation: bool = False
+    pre_voting_overridable: bool = True
+    show_votes_during_deliberation_overridable: bool = True
+    effective_max_write_ins: int = 10
+    effective_edit_lockout_fraction: float = 0.75
 
     model_config = {"from_attributes": True}
 

@@ -352,6 +352,19 @@ def browse_org_delegates(
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
 
+    # Phase 32.2 B4 — `public_delegates.enabled` org toggle. When False,
+    # the browse endpoint returns an empty list (per spec asymmetry with
+    # the single-page 404: an org's existence is already known to anyone
+    # who reached this route, so the empty-list response is more useful
+    # than 404 here). Data preserved; re-enabling restores results.
+    _org_settings = getattr(org, "settings", None) or {}
+    _pd_settings = _org_settings.get("public_delegates")
+    if (
+        isinstance(_pd_settings, dict)
+        and _pd_settings.get("enabled") is False
+    ):
+        return []
+
     is_member = False
     if current_user is not None:
         is_member = (
@@ -544,6 +557,21 @@ def public_delegate_page(
     ).first()
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
+
+    # Phase 32.2 B4 — `public_delegates.enabled` org toggle. When False,
+    # public delegate pages are hidden but the underlying data is
+    # preserved. 404 matches the existing "not found" UX so toggling
+    # the feature off doesn't leak existence. Re-enabling restores
+    # without re-approval (no data was touched).
+    org_settings = getattr(org, "settings", None) or {}
+    pd_settings = org_settings.get("public_delegates")
+    if (
+        isinstance(pd_settings, dict)
+        and pd_settings.get("enabled") is False
+    ):
+        raise HTTPException(
+            status_code=404, detail="Public delegate pages disabled for this org",
+        )
 
     # Handle takes precedence; fall back to username (D10).
     target = (

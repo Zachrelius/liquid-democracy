@@ -181,16 +181,35 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
   // value lives on `currentOrg.settings`.
   const requirePolis = orgSettings?.require_polis_for_new_proposals === true;
   const [linkedPolisIds, setLinkedPolisIds] = useState([]);
-  // Phase 32.1 F1 — three new deliberation-engagement override toggles.
-  // Each defaults to the org-level default; null payload means "inherit
-  // org default at read time" (Phase 32 S resolver). We track local
-  // form state so the user can override; if the value matches the org
-  // default we omit it from the payload to keep the inherit semantics.
-  const orgWriteInsAllowed = !!orgSettings?.write_ins?.allowed_default;
-  const orgWriteInsDuringVoting = orgSettings?.write_ins?.during_voting_default ?? true;
+  // Phase 32.2 F1 — three new deliberation-engagement override toggles,
+  // now mode-aware. The Phase 32.2 migration replaced the four boolean
+  // default fields with enum modes (`always_off` / `default_off` /
+  // `default_on` / `always_on`). For `default_*` modes the toggle is
+  // visible + editable + pre-filled with the mode's default. For
+  // `always_*` modes the toggle is hidden (org has locked the feature
+  // org-wide); the create form omits the override from the submit
+  // payload so the row keeps the null inherit-from-org marker.
+  function _modeDefault(mode, fallback) {
+    if (mode === 'always_off' || mode === 'default_off') return false;
+    if (mode === 'always_on' || mode === 'default_on') return true;
+    return !!fallback;
+  }
+  function _modeOverridable(mode) {
+    return mode === 'default_off' || mode === 'default_on';
+  }
+  const writeInsAllowedMode = orgSettings?.write_ins?.allowed_mode ?? 'default_off';
+  const writeInsDuringVotingMode = orgSettings?.write_ins?.during_voting_mode ?? 'default_on';
+  const preVotingAllowedMode = orgSettings?.pre_voting?.allowed_mode ?? 'default_off';
+  const visibilityMode = orgSettings?.pre_voting?.visibility_mode ?? 'default_off';
+  const writeInsOverridable = _modeOverridable(writeInsAllowedMode);
+  const writeInsDuringVotingOverridable = _modeOverridable(writeInsDuringVotingMode);
+  const preVotingOverridable = _modeOverridable(preVotingAllowedMode);
+  const visibilityOverridable = _modeOverridable(visibilityMode);
+  const orgWriteInsAllowed = _modeDefault(writeInsAllowedMode, false);
+  const orgWriteInsDuringVoting = _modeDefault(writeInsDuringVotingMode, true);
   const orgMaxWriteIns = orgSettings?.write_ins?.max_per_proposal ?? 10;
-  const orgPreVotingAllowed = !!orgSettings?.pre_voting?.allowed_default;
-  const orgShowVotesDuringDelib = !!orgSettings?.pre_voting?.show_votes_during_deliberation_default;
+  const orgPreVotingAllowed = _modeDefault(preVotingAllowedMode, false);
+  const orgShowVotesDuringDelib = _modeDefault(visibilityMode, false);
   const orgEditLockoutFrac = orgSettings?.proposal_edits?.lockout_fraction ?? 0.75;
   const [allowWriteIns, setAllowWriteIns] = useState(orgWriteInsAllowed);
   const [allowWriteInsDuringVoting, setAllowWriteInsDuringVoting] = useState(orgWriteInsDuringVoting);
@@ -287,14 +306,16 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
       if (smOverrideAllowed && smEnabled !== orgSmDefault) {
         payload.stable_result_required = smEnabled;
       }
-      // Phase 32.1 F1 — per-proposal override fields. Send only when
-      // the value diverges from the org default, so null persists for
-      // unchanged settings (preserves the "inherit org default" path).
+      // Phase 32.2 F1 — per-proposal override fields, mode-aware.
+      // Only include when the org mode is overridable AND the user
+      // diverged from the mode default. For `always_*` modes the
+      // toggle isn't rendered, so we keep the field null to inherit
+      // (the backend resolver will return the always-locked value).
       const isMultiOptionM = votingMethod === 'approval' || votingMethod === 'ranked_choice';
-      if (isMultiOptionM && allowWriteIns !== orgWriteInsAllowed) {
+      if (isMultiOptionM && writeInsOverridable && allowWriteIns !== orgWriteInsAllowed) {
         payload.allow_write_in_options = allowWriteIns;
       }
-      if (isMultiOptionM && allowWriteIns
+      if (isMultiOptionM && allowWriteIns && writeInsDuringVotingOverridable
           && allowWriteInsDuringVoting !== orgWriteInsDuringVoting) {
         payload.allow_write_ins_during_voting = allowWriteInsDuringVoting;
       }
@@ -302,10 +323,11 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
           && Number(maxWriteIns) !== Number(orgMaxWriteIns)) {
         payload.max_write_ins = Number(maxWriteIns);
       }
-      if (allowPreVoting !== orgPreVotingAllowed) {
+      if (preVotingOverridable && allowPreVoting !== orgPreVotingAllowed) {
         payload.allow_pre_voting = allowPreVoting;
       }
-      if (allowPreVoting && showVotesDuringDelib !== orgShowVotesDuringDelib) {
+      if (allowPreVoting && visibilityOverridable
+          && showVotesDuringDelib !== orgShowVotesDuringDelib) {
         payload.show_votes_during_deliberation = showVotesDuringDelib;
       }
       if (Number(editLockoutFrac) !== Number(orgEditLockoutFrac)) {
@@ -622,44 +644,60 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
         />
       )}
 
-      {/* Phase 32.1 F1 — Deliberation-engagement override sections. */}
+      {/* Phase 32.2 F1 — Deliberation-engagement override sections,
+          mode-aware. Toggles render only when the org mode is
+          `default_*` (overridable). When the org mode is `always_*`,
+          we render a small "locked by org settings" note instead of
+          the toggle. */}
       <div className="bg-[#F4F6F9] border border-gray-200 rounded-lg p-4 space-y-3">
         <p className="text-sm font-semibold text-gray-700">Deliberation Engagement</p>
         {/* Write-ins — hidden for binary voting */}
         {isMultiOption && (
           <div className="space-y-2 pl-2 border-l-2 border-gray-200">
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={allowWriteIns}
-                onChange={e => setAllowWriteIns(e.target.checked)}
-                className="mt-0.5 accent-[var(--brand-accent)]"
-              />
-              <div>
-                <p className="text-sm text-gray-700 font-medium">Allow members to add options</p>
-                <p className="text-xs text-gray-500">
-                  Members can propose write-in options during deliberation
-                  (and optionally voting). Useful for open-ended polls.
-                </p>
-              </div>
-            </label>
-            {allowWriteIns && (
+            {writeInsOverridable ? (
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={allowWriteIns}
+                  onChange={e => setAllowWriteIns(e.target.checked)}
+                  className="mt-0.5 accent-[var(--brand-accent)]"
+                />
+                <div>
+                  <p className="text-sm text-gray-700 font-medium">Allow members to add options</p>
+                  <p className="text-xs text-gray-500">
+                    Members can propose write-in options during deliberation
+                    (and optionally voting). Useful for open-ended polls.
+                  </p>
+                </div>
+              </label>
+            ) : (
+              <p className="text-xs text-gray-500 italic">
+                Write-in options: {orgWriteInsAllowed ? 'always on' : 'always off'} (locked by organization settings).
+              </p>
+            )}
+            {writeInsOverridable && allowWriteIns && (
               <div className="pl-6 space-y-2">
-                <label className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={allowWriteInsDuringVoting}
-                    onChange={e => setAllowWriteInsDuringVoting(e.target.checked)}
-                    className="mt-0.5 accent-[var(--brand-accent)]"
-                  />
-                  <span className="text-sm text-gray-700">
-                    Allow during voting period too
-                    <span className="block text-xs text-gray-500">
-                      Members can keep adding options even after voting opens.
-                      Voters with cast ballots are notified.
+                {writeInsDuringVotingOverridable ? (
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={allowWriteInsDuringVoting}
+                      onChange={e => setAllowWriteInsDuringVoting(e.target.checked)}
+                      className="mt-0.5 accent-[var(--brand-accent)]"
+                    />
+                    <span className="text-sm text-gray-700">
+                      Allow during voting period too
+                      <span className="block text-xs text-gray-500">
+                        Members can keep adding options even after voting opens.
+                        Voters with cast ballots are notified.
+                      </span>
                     </span>
-                  </span>
-                </label>
+                  </label>
+                ) : (
+                  <p className="text-xs text-gray-500 italic">
+                    Write-ins during voting: {orgWriteInsDuringVoting ? 'always on' : 'always off'} (locked by organization settings).
+                  </p>
+                )}
                 <label className="flex items-center gap-3">
                   <span className="text-sm text-gray-700 min-w-[140px]">
                     Maximum write-ins
@@ -679,38 +717,50 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
         )}
         {/* Pre-voting */}
         <div className="space-y-2 pl-2 border-l-2 border-gray-200">
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={allowPreVoting}
-              onChange={e => setAllowPreVoting(e.target.checked)}
-              className="mt-0.5 accent-[var(--brand-accent)]"
-            />
-            <div>
-              <p className="text-sm text-gray-700 font-medium">Allow voting during deliberation</p>
-              <p className="text-xs text-gray-500">
-                Members can cast and change their votes before voting officially
-                opens. Pre-votes are changeable until voting closes.
-              </p>
-            </div>
-          </label>
-          {allowPreVoting && (
+          {preVotingOverridable ? (
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={allowPreVoting}
+                onChange={e => setAllowPreVoting(e.target.checked)}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <p className="text-sm text-gray-700 font-medium">Allow voting during deliberation</p>
+                <p className="text-xs text-gray-500">
+                  Members can cast and change their votes before voting officially
+                  opens. Pre-votes are changeable until voting closes.
+                </p>
+              </div>
+            </label>
+          ) : (
+            <p className="text-xs text-gray-500 italic">
+              Voting during deliberation: {orgPreVotingAllowed ? 'always on' : 'always off'} (locked by organization settings).
+            </p>
+          )}
+          {preVotingOverridable && allowPreVoting && (
             <div className="pl-6">
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={showVotesDuringDelib}
-                  onChange={e => setShowVotesDuringDelib(e.target.checked)}
-                  className="mt-0.5 accent-[var(--brand-accent)]"
-                />
-                <span className="text-sm text-gray-700">
-                  Show vote totals during deliberation
-                  <span className="block text-xs text-gray-500">
-                    Off by default to avoid anchoring. When on, the trajectory
-                    chart extends back to deliberation start.
+              {visibilityOverridable ? (
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showVotesDuringDelib}
+                    onChange={e => setShowVotesDuringDelib(e.target.checked)}
+                    className="mt-0.5 accent-[var(--brand-accent)]"
+                  />
+                  <span className="text-sm text-gray-700">
+                    Show vote totals during deliberation
+                    <span className="block text-xs text-gray-500">
+                      Off by default to avoid anchoring. When on, the trajectory
+                      chart extends back to deliberation start.
+                    </span>
                   </span>
-                </span>
-              </label>
+                </label>
+              ) : (
+                <p className="text-xs text-gray-500 italic">
+                  Vote totals during deliberation: {orgShowVotesDuringDelib ? 'always visible' : 'always hidden'} (locked by organization settings).
+                </p>
+              )}
             </div>
           )}
         </div>

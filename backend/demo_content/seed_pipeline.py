@@ -676,6 +676,124 @@ def _seed_persona_delegations(
 # =============================================================================
 
 
+def _seed_phase_32_2_demo_extras(
+    db: Session,
+    *,
+    proposals_by_bible_id: dict,
+    bible_uid_to_user: dict,
+    org,
+    now: datetime,
+) -> None:
+    """Phase 32.2 D1 + D2 — Cedar Hollow demo seeds.
+
+    **D1 — ProposalRevision rows on P-H-10 (EV Charging).** Two
+    revisions by Marcus (the author): a small title clarification +
+    a description tweak. Shape mirrors what the PATCH-proposal
+    endpoint writes via ``_snapshot_revisable_fields`` so the
+    change-log accordion renders cleanly.
+
+    **D2 — Spam write-in on P-H-13 (Community Garden) added + removed.**
+    Adds an audit-log entry recording a filler member's write-in plus
+    a steward's immediate removal. NO ProposalOption row is left
+    behind (the removal happens at seed time); the audit trail is the
+    artifact. P-H-13 already has its four committee options seeded;
+    this just leaves a "Removed: 'buy now click here'" entry visible
+    in the audit log surface.
+    """
+    import models
+    from audit_utils import log_audit_event
+
+    ev_proposal = proposals_by_bible_id.get("P-H-10")
+    marcus = bible_uid_to_user.get("hoa_marcus")
+    if ev_proposal is not None and marcus is not None:
+        # D1 — only seed if no revisions already exist (idempotency).
+        existing = (
+            db.query(models.ProposalRevision)
+            .filter(models.ProposalRevision.proposal_id == ev_proposal.id)
+            .count()
+        )
+        if existing == 0:
+            r1_before = {"title": "EV Charging Stations — Common Areas"}
+            r1_after = {"title": ev_proposal.title}  # current canonical title
+            db.add(models.ProposalRevision(
+                proposal_id=ev_proposal.id,
+                org_id=org.id,
+                edited_by_user_id=marcus.id,
+                edited_at=now - timedelta(hours=18),
+                snapshot_before=r1_before,
+                snapshot_after=r1_after,
+                changed_fields=["title"],
+            ))
+            r2_before = {"body": ev_proposal.body[:120] + " [...]"}
+            r2_after = {"body": ev_proposal.body[:120] + " [...] (clarified rationale)"}
+            db.add(models.ProposalRevision(
+                proposal_id=ev_proposal.id,
+                org_id=org.id,
+                edited_by_user_id=marcus.id,
+                edited_at=now - timedelta(hours=6),
+                snapshot_before=r2_before,
+                snapshot_after=r2_after,
+                changed_fields=["body"],
+            ))
+            db.flush()
+
+    # D2 — spam write-in audit entries on P-H-13.
+    cg_proposal = proposals_by_bible_id.get("P-H-13")
+    janet = bible_uid_to_user.get("hoa_janet")  # admin who removes the spam
+    if cg_proposal is not None and janet is not None:
+        # Idempotency: check for the load-bearing audit-log entry.
+        from sqlalchemy import or_, and_
+        existing = (
+            db.query(models.AuditLog)
+            .filter(
+                models.AuditLog.action == "proposal.option_removed",
+                models.AuditLog.target_type == "proposal_option",
+            )
+            .filter(
+                models.AuditLog.details.cast(models.JSON).is_not(None)
+            )
+            .all()
+        )
+        already_seeded = any(
+            isinstance(a.details, dict)
+            and a.details.get("proposal_id") == cg_proposal.id
+            and a.details.get("label", "").lower().startswith("buy now")
+            for a in existing
+        )
+        if not already_seeded:
+            # Fake "added by spam_filler" — use a real filler user; the
+            # add audit entry references a since-removed option_id.
+            spam_label = "buy now click here"
+            fake_option_id = f"removed-{cg_proposal.id[:8]}-spam"
+            log_audit_event(
+                db,
+                action="proposal.option_added",
+                target_type="proposal_option",
+                target_id=fake_option_id,
+                actor_id=janet.id,  # actor info-only; this is a seed
+                details={
+                    "proposal_id": cg_proposal.id,
+                    "label": spam_label,
+                    "is_write_in": True,
+                    "_seed_note": "Phase 32.2 D2 — spam write-in demo seed.",
+                },
+            )
+            log_audit_event(
+                db,
+                action="proposal.option_removed",
+                target_type="proposal_option",
+                target_id=fake_option_id,
+                actor_id=janet.id,
+                details={
+                    "proposal_id": cg_proposal.id,
+                    "label": spam_label,
+                    "removed_by_role": "admin",
+                    "_seed_note": "Phase 32.2 D2 — admin removed spam write-in.",
+                },
+            )
+            db.flush()
+
+
 def seed_org_from_bible(
     db: Session,
     bible: OrgBible,
@@ -1080,6 +1198,20 @@ def seed_org_from_bible(
                 relevance=relevance,
             ))
         db.flush()
+
+    # ---- 6.5 Phase 32.2 D-cluster demo content (HOA only) ----------------
+    # D1 — seed two ProposalRevision rows on P-H-10 (EV Charging) so the
+    # change-log accordion has demo content. D2 — add a spammy write-in
+    # to P-H-13 (Community Garden), then immediately mark it removed
+    # via an audit-log entry while leaving NO ProposalOption row behind.
+    if bible.slug == "demo-cedar-hollow":
+        _seed_phase_32_2_demo_extras(
+            db,
+            proposals_by_bible_id=proposals_by_bible_id,
+            bible_uid_to_user=bible_uid_to_user,
+            org=org,
+            now=now,
+        )
 
     # ---- 7. Named-character votes (from DelegatePage.vote_rationales) ----
     new_votes: list = []

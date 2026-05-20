@@ -120,7 +120,7 @@ def test_default_grants_counts_match_spec():
     both go to 26; moderator gets it TRUE since durations are logistics
     not governance — Q1; member still absent). New totals: 26/26/9/0.
     """
-    assert len(DEFAULT_GRANTS["steward"]) == 26
-    assert len(DEFAULT_GRANTS["admin"]) == 26
+    assert len(DEFAULT_GRANTS["steward"]) == 27
+    assert len(DEFAULT_GRANTS["admin"]) == 27
     assert len(DEFAULT_GRANTS["moderator"]) == 9
     assert len(DEFAULT_GRANTS["member"]) == 0

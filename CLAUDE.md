@@ -57,6 +57,8 @@ Railway auto-deploys on push to master. The deploy sequence:
 
 Do not mark a pass complete until the prod deploy has been verified. "Merged to master" is not "deployed and working."
 
+**Backend auto-deploy has been unreliable across recent passes (Phase 32 / 32.1 / 32.2 lesson).** Multiple deploys required manual intervention — `railway up`, empty-commit pushes, or manual Redeploy clicks on the Railway dashboard. Frontend service auto-deploys reliably; the backend service does not. Convention: verify deploy success AFTER push by checking BOTH (a) the Railway dashboard / `railway deployment list --service backend` for a deployment row matching the pushed commit AND (b) a backend smoke endpoint returns the expected response — NOT to assume push triggered a successful deploy. If the deploy doesn't appear within ~5 minutes of push, fall back to manual trigger. Manual fallbacks, in order of preference: `railway up --service backend` (uploads current source directly; works even when push-trigger is stuck), empty commit push, or dashboard "Redeploy" button.
+
 ## Database migration convention
 
 When a workstream adds an Alembic migration:
@@ -76,11 +78,15 @@ When no migration is added in a pass, the PG smoke is not required. Mention this
 
 **Browser verification is required for load-bearing user-facing changes.** Routine surface (e.g., a renamed button, a copy tweak) can ship as PASS-by-source — the lead source-reviews and notes "PASS-by-source" in the closeout. Anything a user actually clicks through (registration flows, vote casting, delegation creation, admin actions) gets browser-verified by the QA teammate on prod after deploy.
 
+**Browser verification uses the Claude in Chrome MCP.** The QA teammate runs scenarios via the `mcp__claude-in-chrome__*` tools — DOM-aware navigation, page-text reads, form input, screenshots. Faster and more precise than computer-use pixel clicks, and the standard QA path for this project. Computer-use is the fallback only for native-desktop interactions outside the browser (not relevant for this codebase's surfaces). If the Chrome extension isn't connected at QA time, the lead flags this in the closeout rather than skipping verification or silently falling back to source review. Specs going forward can reference "QA per CLAUDE.md" rather than restating this convention.
+
 **Use SQLite for unit tests, Postgres for migration smoke.** Unit tests run fast on SQLite; migrations need PG smoke before merge because some bugs only surface on Postgres (the Phase 4c JSON mutation bug is the canonical example).
 
 **Test fixtures must mirror production storage shape.** When you mock or stub a model object, use the same field shapes the production code reads — not a convenient adjacent shape. Phase 17's `_resolve_earliest_decisive_vote` ballot-shape bug is the canonical example: the resolver read `getattr(v, "approvals", None)` directly off Vote rows but production stores ballot data in `v.ballot["approvals"]` JSON dict. Unit tests passed because `SimpleNamespace` shims used the wrong shape; the bug would have silently broken one of four advertised methods in production. When tests use shims, include at least one regression test against real model objects with production storage shape.
 
 **Phase 4c multi-tenancy retrofit is closed (Phase 18, 2026-05-10).** Phase 18 retrofitted `org_id` onto the four relationship tables (`Delegation`, `DelegationIntent`, `FollowRelationship`, `FollowRequest`) that the original Phase 4c migration skipped — closing the gap surfaced in `delegation_org_scoping_diagnostic_2026-05.md`. Any future relationship table added to the schema must carry `org_id` from day one (or document a deliberate exemption with rationale, mirroring how `User`, `Topic`-precedence, and `Vote` handle their multi-tenancy concerns). The "treat any cross-org / org-scoped feature as suspect until verified" check applied during diagnostic should now find no instances; if a future audit surfaces a new instance, treat as a regression.
+
+**Verify schema round-trip when adding new model fields (Phase 32.1 lesson).** When a phase adds nullable override columns or any new field at the model layer, the verification matrix MUST include round-trip checks at (a) the create endpoint(s) — both `/api/proposals` and the org-scoped `/api/orgs/{slug}/proposals` for proposal fields; both ends of any other dual-create path for other models, (b) the response builder / serializer (Pydantic schema present + explicit constructor call in `_build_*_out` if the builder lists fields rather than relying on `from_attributes`), (c) any seed pipeline path that writes to the model directly. Phase 32 + 32.1 needed four hotfixes because the override fields propagated through the schema but not through `create_org_proposal`, the response builder, or the seed pipeline simultaneously. Each of these is an independent place a new field can be silently dropped.
 
 ## Bash command style
 

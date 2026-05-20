@@ -851,8 +851,23 @@ def submit_public_accepting(
 
     actor_display = current_user.display_name or current_user.username
     has_approvers = _has_org_approvers(db, membership.org_id)
+    # Phase 32.2 B3 — org.public_delegates.approval_required toggle.
+    # When False: skip the approver gate entirely (members self-promote
+    # to public_accepting immediately). When True (default, preserves
+    # Phase 19 behavior): the existing approver-gate logic applies. The
+    # "no approvers in org" auto-approve fallback continues to trigger
+    # in either case so an org with the gate on but no humans actually
+    # holding the perm doesn't deadlock.
+    org_settings = getattr(org, "settings", None) or {}
+    pd_settings = org_settings.get("public_delegates")
+    approval_required = (
+        True
+        if not isinstance(pd_settings, dict)
+        else bool(pd_settings.get("approval_required", True))
+    )
+    self_promote = (not approval_required) or (not has_approvers)
 
-    if not has_approvers:
+    if self_promote:
         # Auto-approve path per spec §B3 endpoint (4).
         dp.visibility = "public_accepting"
         dp.public_accepting_approved_at = _now()

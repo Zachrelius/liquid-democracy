@@ -104,7 +104,7 @@ def test_steward_sees_all_25_permission_keys(client, test_db):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert "user_permissions" in body
-    assert len(body["user_permissions"]) == 26
+    assert len(body["user_permissions"]) == 27
     # Spot-check one key from each category.
     expected_subset = {
         "proposal.create",
@@ -133,7 +133,7 @@ def test_admin_sees_all_25_permission_keys(client, test_db):
 
     resp = client.get(f"/api/orgs/{org.slug}", headers=_auth(user))
     assert resp.status_code == 200, resp.text
-    assert len(resp.json()["user_permissions"]) == 26
+    assert len(resp.json()["user_permissions"]) == 27
 
 
 def test_moderator_sees_exactly_nine_default_grants(client, test_db):
@@ -260,7 +260,7 @@ def test_repeated_has_permission_calls_via_endpoint_use_cache(client, test_db):
     assert resp.status_code == 200, resp.text
     # Steward returns 25 keys; cache should have absorbed all 25
     # has_permission calls into ONE SELECT (the first call's load).
-    assert len(resp.json()["user_permissions"]) == 26
+    assert len(resp.json()["user_permissions"]) == 27
     assert role_permission_query_count["n"] == 1, (
         f"expected exactly 1 SELECT FROM role_permissions across the 25 "
         f"has_permission calls inside _org_to_out (Stage 1's per-request "

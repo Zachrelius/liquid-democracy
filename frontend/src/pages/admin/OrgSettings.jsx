@@ -101,6 +101,44 @@ function isValidHex(hex) {
 const TIE_RESOLUTION_DEFAULT_APPROVAL = 'broader_approval_base';
 const TIE_RESOLUTION_DEFAULT_RANKED_CHOICE = 'random_seed';
 
+// Phase 32.2 — 4-option mode radio group for the deliberation-
+// engagement settings. Surfaces the four enum-mode states with the
+// canonical labels per spec D7. Used by the Write-ins + Pre-voting
+// subsections under "Proposal Defaults — Deliberation Engagement".
+const MODE_OPTIONS = [
+  { value: 'always_off', label: 'Always off', help: 'Locked off org-wide. Members cannot enable on individual proposals.' },
+  { value: 'default_off', label: 'Default off (members can opt in per proposal)', help: 'Off by default; proposal authors can turn it on at create time.' },
+  { value: 'default_on', label: 'Default on (members can opt out per proposal)', help: 'On by default; proposal authors can turn it off at create time.' },
+  { value: 'always_on', label: 'Always on', help: 'Locked on org-wide. Members cannot disable on individual proposals.' },
+];
+
+function ModeRadioGroup({ label, help, value, onChange }) {
+  return (
+    <fieldset className="space-y-1">
+      <legend className="text-sm text-gray-700 font-medium">{label}</legend>
+      {help && <p className="text-xs text-gray-400 mb-1">{help}</p>}
+      <div className="space-y-1 pl-1">
+        {MODE_OPTIONS.map(opt => (
+          <label key={opt.value} className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name={label}
+              value={opt.value}
+              checked={value === opt.value}
+              onChange={() => onChange(opt.value)}
+              className="mt-0.5 accent-[var(--brand-accent)]"
+            />
+            <span className="text-xs text-gray-700">
+              {opt.label}
+              <span className="block text-[10px] text-gray-400">{opt.help}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
 const TIE_METHODS_APPROVAL = [
   {
     value: 'broader_approval_base',
@@ -176,6 +214,10 @@ export default function OrgSettings() {
   const [savingSr, setSavingSr] = useState(false);
   // Phase 32.1 F3 — Deliberation Engagement section saving state.
   const [savingDelibEng, setSavingDelibEng] = useState(false);
+  // Phase 32.2 F3/P1/P2 — Public Delegates section saving state +
+  // disable-confirmation dialog state.
+  const [savingPublicDelegates, setSavingPublicDelegates] = useState(false);
+  const [pdDisableConfirm, setPdDisableConfirm] = useState(null);  // {count} or null
 
   // Phase 12.7 F4 — Branding section local state.
   //
@@ -471,21 +513,21 @@ export default function OrgSettings() {
   }
 
   async function handleSaveDelibEngagement() {
-    // Phase 32.1 F3 — per-section save for the three deliberation-
-    // engagement groups (write-ins, pre-voting, proposal-edits).
-    // Sends nested JSON; backend's PATCH /api/orgs merges into
-    // Organization.settings JSONB.
+    // Phase 32.2 F3 — per-section save for the three deliberation-
+    // engagement groups (write-ins, pre-voting, proposal-edits). The
+    // four migrated bool fields are now enum-typed mode strings;
+    // the numeric fields keep their shape.
     setSavingDelibEng(true);
     try {
       const payload = {
         write_ins: {
-          allowed_default: !!settings.write_ins?.allowed_default,
-          during_voting_default: settings.write_ins?.during_voting_default !== false,
+          allowed_mode: settings.write_ins?.allowed_mode ?? 'default_off',
+          during_voting_mode: settings.write_ins?.during_voting_mode ?? 'default_on',
           max_per_proposal: Number(settings.write_ins?.max_per_proposal ?? 10),
         },
         pre_voting: {
-          allowed_default: !!settings.pre_voting?.allowed_default,
-          show_votes_during_deliberation_default: !!settings.pre_voting?.show_votes_during_deliberation_default,
+          allowed_mode: settings.pre_voting?.allowed_mode ?? 'default_off',
+          visibility_mode: settings.pre_voting?.visibility_mode ?? 'default_off',
         },
         proposal_edits: {
           lockout_fraction: Number(settings.proposal_edits?.lockout_fraction ?? 0.75),
@@ -498,6 +540,27 @@ export default function OrgSettings() {
       toast.error(err.message || 'Failed to save deliberation engagement settings');
     } finally {
       setSavingDelibEng(false);
+    }
+  }
+
+  async function handleSavePublicDelegates() {
+    // Phase 32.2 F3/P1 — per-section save for the Public Delegates
+    // block (enabled toggle + approval_required toggle).
+    setSavingPublicDelegates(true);
+    try {
+      const payload = {
+        public_delegates: {
+          enabled: settings.public_delegates?.enabled !== false,
+          approval_required: settings.public_delegates?.approval_required !== false,
+        },
+      };
+      await api.patch(`/api/orgs/${currentOrg.slug}`, { settings: payload });
+      await refreshOrgs();
+      toast.success('Public delegate settings saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save public delegate settings');
+    } finally {
+      setSavingPublicDelegates(false);
     }
   }
 
@@ -1333,48 +1396,35 @@ export default function OrgSettings() {
         </div>
       </section>
 
-      {/* Phase 32.1 F3 — Deliberation Engagement defaults. Three
-          subsections: write-ins, pre-voting, editing. */}
+      {/* Phase 32.2 F3 — Deliberation Engagement defaults. The four
+          migrated boolean fields are now enum modes (`always_off` /
+          `default_off` / `default_on` / `always_on`). Each surfaces
+          as a 4-option radio group; numeric settings keep their
+          numeric input. */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Proposal Defaults — Deliberation Engagement</h2>
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
           {/* Write-ins */}
-          <div className="space-y-2 pb-3 border-b border-gray-100">
+          <div className="space-y-3 pb-3 border-b border-gray-100">
             <p className="text-sm font-semibold text-gray-700">Write-ins</p>
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={!!settings.write_ins?.allowed_default}
-                onChange={e => updateSetting('write_ins', {
-                  ...(settings.write_ins || {}),
-                  allowed_default: e.target.checked,
-                })}
-                className="mt-0.5 accent-[var(--brand-accent)]"
-              />
-              <div>
-                <p className="text-sm text-gray-700">Allow write-in options by default</p>
-                <p className="text-xs text-gray-400">
-                  New multi-option proposals default to permitting member-added options.
-                </p>
-              </div>
-            </label>
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={settings.write_ins?.during_voting_default !== false}
-                onChange={e => updateSetting('write_ins', {
-                  ...(settings.write_ins || {}),
-                  during_voting_default: e.target.checked,
-                })}
-                className="mt-0.5 accent-[var(--brand-accent)]"
-              />
-              <div>
-                <p className="text-sm text-gray-700">Allow write-ins during voting by default</p>
-                <p className="text-xs text-gray-400">
-                  When write-ins are on, also allow members to add options after voting opens.
-                </p>
-              </div>
-            </label>
+            <ModeRadioGroup
+              label="Allow write-in options"
+              help="Members can propose write-in options on multi-option proposals."
+              value={settings.write_ins?.allowed_mode ?? 'default_off'}
+              onChange={v => updateSetting('write_ins', {
+                ...(settings.write_ins || {}),
+                allowed_mode: v,
+              })}
+            />
+            <ModeRadioGroup
+              label="Allow write-ins during voting"
+              help="When write-ins are on, also allow members to add options after voting opens."
+              value={settings.write_ins?.during_voting_mode ?? 'default_on'}
+              onChange={v => updateSetting('write_ins', {
+                ...(settings.write_ins || {}),
+                during_voting_mode: v,
+              })}
+            />
             <label className="flex items-center gap-3">
               <span className="text-sm text-gray-700 min-w-[200px]">Default maximum write-ins</span>
               <input
@@ -1391,42 +1441,26 @@ export default function OrgSettings() {
             </label>
           </div>
           {/* Pre-voting */}
-          <div className="space-y-2 pb-3 border-b border-gray-100">
+          <div className="space-y-3 pb-3 border-b border-gray-100">
             <p className="text-sm font-semibold text-gray-700">Pre-voting</p>
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={!!settings.pre_voting?.allowed_default}
-                onChange={e => updateSetting('pre_voting', {
-                  ...(settings.pre_voting || {}),
-                  allowed_default: e.target.checked,
-                })}
-                className="mt-0.5 accent-[var(--brand-accent)]"
-              />
-              <div>
-                <p className="text-sm text-gray-700">Allow voting during deliberation by default</p>
-                <p className="text-xs text-gray-400">
-                  Members can cast and change votes before voting officially opens.
-                </p>
-              </div>
-            </label>
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={!!settings.pre_voting?.show_votes_during_deliberation_default}
-                onChange={e => updateSetting('pre_voting', {
-                  ...(settings.pre_voting || {}),
-                  show_votes_during_deliberation_default: e.target.checked,
-                })}
-                className="mt-0.5 accent-[var(--brand-accent)]"
-              />
-              <div>
-                <p className="text-sm text-gray-700">Show vote totals during deliberation by default</p>
-                <p className="text-xs text-gray-400">
-                  Off avoids anchoring; on enables the trajectory chart to extend back to deliberation start.
-                </p>
-              </div>
-            </label>
+            <ModeRadioGroup
+              label="Allow voting during deliberation"
+              help="Members can cast and change votes before voting officially opens."
+              value={settings.pre_voting?.allowed_mode ?? 'default_off'}
+              onChange={v => updateSetting('pre_voting', {
+                ...(settings.pre_voting || {}),
+                allowed_mode: v,
+              })}
+            />
+            <ModeRadioGroup
+              label="Show vote totals during deliberation"
+              help="Off avoids anchoring; on enables the trajectory chart to extend back to deliberation start."
+              value={settings.pre_voting?.visibility_mode ?? 'default_off'}
+              onChange={v => updateSetting('pre_voting', {
+                ...(settings.pre_voting || {}),
+                visibility_mode: v,
+              })}
+            />
           </div>
           {/* Editing */}
           <div className="space-y-2">
@@ -1487,30 +1521,113 @@ export default function OrgSettings() {
         </div>
       </section>
 
-      {/* Public Delegates */}
+      {/* Public Delegates — Phase 32.2 P1/P2: enabled toggle with disable
+          confirmation dialog + approval_required toggle. */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Public Delegates</h2>
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-          <label className="flex items-center gap-3 cursor-pointer">
+          <label className="flex items-start gap-3 cursor-pointer">
             <input
               type="checkbox"
-              checked={settings.allow_public_delegates ?? true}
-              onChange={e => updateSetting('allow_public_delegates', e.target.checked)}
-              className="accent-[var(--brand-accent)]"
+              checked={settings.public_delegates?.enabled !== false}
+              onChange={async (e) => {
+                const turningOff = !e.target.checked
+                  && settings.public_delegates?.enabled !== false;
+                if (turningOff) {
+                  // P2 — count public/public_accepting topics in this org
+                  // before showing the confirmation dialog.
+                  let count = 0;
+                  try {
+                    const rows = await api.get(`/api/orgs/${currentOrg.slug}/delegates?limit=100`);
+                    count = Array.isArray(rows) ? rows.length : 0;
+                  } catch {/* if the count fails, show generic dialog */}
+                  setPdDisableConfirm({ count });
+                  return;
+                }
+                updateSetting('public_delegates', {
+                  ...(settings.public_delegates || {}),
+                  enabled: e.target.checked,
+                });
+              }}
+              className="mt-0.5 accent-[var(--brand-accent)]"
             />
-            <span className="text-sm text-gray-700">Allow public delegates in this organization</span>
+            <div>
+              <p className="text-sm text-gray-700">Public delegate pages enabled</p>
+              <p className="text-xs text-gray-400">
+                When off, public delegate pages return 404 and the delegate browse returns empty. Data is preserved; re-enable to restore.
+              </p>
+            </div>
           </label>
-          <p className="text-xs text-gray-500 pl-6">
-            Members can promote topics on their delegate page to public-accepting via the Delegate Applications review flow.
-          </p>
-          {/* Phase 30.1 B4 — the public_delegate_policy radio (admin_approval
-              vs. open) was removed. The legacy admin-approval flow it gated
-              is gone; the Phase 19 lifecycle now governs accepting-delegate
-              transitions through the Delegate Applications page (when an
-              approver role exists in the org) or auto-approves when none
-              does. */}
+          {settings.public_delegates?.enabled !== false && (
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.public_delegates?.approval_required !== false}
+                onChange={e => updateSetting('public_delegates', {
+                  ...(settings.public_delegates || {}),
+                  approval_required: e.target.checked,
+                })}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <p className="text-sm text-gray-700">Require approval for delegates to promote topics to publicly visible</p>
+                <p className="text-xs text-gray-400">
+                  {settings.public_delegates?.approval_required !== false
+                    ? 'Approvers must review and approve before a topic becomes publicly visible.'
+                    : 'Members can promote their topics to publicly visible without approval. Approvers do not gate transitions.'}
+                </p>
+              </div>
+            </label>
+          )}
+          <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={handleSavePublicDelegates}
+              disabled={savingPublicDelegates}
+              className="px-5 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+            >
+              {savingPublicDelegates ? 'Saving…' : 'Save public delegate settings'}
+            </button>
+          </div>
         </div>
       </section>
+
+      {/* P2 disable confirmation dialog. */}
+      {pdDisableConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 space-y-4">
+            <h3 className="text-lg font-semibold text-gray-800">Disable public delegate pages?</h3>
+            <p className="text-sm text-gray-700">
+              {pdDisableConfirm.count > 0
+                ? `${pdDisableConfirm.count} delegate page${pdDisableConfirm.count === 1 ? '' : 's'} ${pdDisableConfirm.count === 1 ? 'has' : 'have'} publicly-visible topics. Disabling will hide them from public view.`
+                : 'Public delegate pages will be hidden from public view.'}{' '}
+              All data is preserved and pages will return if you re-enable. Continue?
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setPdDisableConfirm(null)}
+                className="text-sm px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  updateSetting('public_delegates', {
+                    ...(settings.public_delegates || {}),
+                    enabled: false,
+                  });
+                  setPdDisableConfirm(null);
+                }}
+                className="text-sm px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Disable
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Phase 16 F4 — the Save Settings button previously lived here at
           the bottom of the page; it has been moved up to the General

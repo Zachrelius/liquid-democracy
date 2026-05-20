@@ -346,17 +346,19 @@ def test_role_permissions_seeded_per_preset_role():
                     {"org_id": org_id},
                 ).fetchall()
                 counts = {sk: cnt for sk, cnt in rows}
-                assert counts.get("steward") == 26, (
-                    f"org {org_id}: steward should have 26 permissions "
+                assert counts.get("steward") == 27, (
+                    f"org {org_id}: steward should have 27 permissions "
                     f"(Stage 1's 23 + Stage 2's role_permissions.edit + "
                     f"Phase 12.5's proposal.set_thresholds + Phase 16's "
-                    f"proposal.set_durations), got {counts.get('steward')}"
+                    f"proposal.set_durations + Phase 32.2's "
+                    f"org.edit_proposal), got {counts.get('steward')}"
                 )
-                assert counts.get("admin") == 26, (
-                    f"org {org_id}: admin should have 26 permissions "
+                assert counts.get("admin") == 27, (
+                    f"org {org_id}: admin should have 27 permissions "
                     f"(Stage 1's 23 + Stage 2's role_permissions.edit + "
                     f"Phase 12.5's proposal.set_thresholds + Phase 16's "
-                    f"proposal.set_durations), got {counts.get('admin')}"
+                    f"proposal.set_durations + Phase 32.2's "
+                    f"org.edit_proposal), got {counts.get('admin')}"
                 )
                 assert counts.get("moderator") == 11, (
                     f"org {org_id}: moderator should have 11 permissions "

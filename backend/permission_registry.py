@@ -99,6 +99,18 @@ PERMISSION_REGISTRY: list[PermissionDefinition] = [
         "Allow overriding the organization's default deliberation and voting durations when creating or editing a proposal. Without this permission, proposals use the organization defaults.",
         "Proposals",
     ),
+    # Phase 32.2 — gate on editing another member's proposal during
+    # deliberation. Phase 32 D14 specified the gate but the key was
+    # never registered; Phase 32.1 hotfix #4 worked around the gap by
+    # tightening the FE gate to platform-admin only. This pass registers
+    # the key, seeds it to admin/steward by default, restores the
+    # spec'd backend PATCH gate, and reverts the FE workaround.
+    PermissionDefinition(
+        "org.edit_proposal",
+        "Edit any proposal",
+        "Allow editing proposals authored by other members during deliberation (subject to the org's edit lockout setting). Authors can always edit their own proposals.",
+        "Proposals",
+    ),
     # --- Topics (3) ---
     PermissionDefinition(
         "topic.create",
@@ -240,20 +252,12 @@ ALL_PERMISSION_KEYS: set[str] = {p.key for p in PERMISSION_REGISTRY}
 # backend/role_seed.py (Cluster D) imports DEFAULT_GRANTS to populate
 # role_permissions rows when an org is created.
 #
-# Counts (verified by test_permission_registry.py) — Phase 16 totals:
-#   steward   = 26  (every key, including `role_permissions.edit`,
-#                    `proposal.set_thresholds`, and `proposal.set_durations`)
-#   admin     = 26  (every key — admin appears in every Default: line, plus
-#                    `role_permissions.edit` from Stage 2,
-#                    `proposal.set_thresholds` from 12.5, and
-#                    `proposal.set_durations` from Phase 16)
-#   moderator =  9  (the moderator-defaults from the spec table — Stage 2
-#                    does NOT grant `role_permissions.edit`; 12.5 does NOT
-#                    grant `proposal.set_thresholds`; Phase 16 DOES grant
-#                    `proposal.set_durations` per Q1 — durations are
-#                    logistics, not governance)
-#   member    =  0  (members are gated by membership status, not by these
-#                    administrative-action permissions)
+# Counts (verified by test_permission_registry.py) — Phase 32.2 totals:
+#   steward   = 27  (every key; +1 from Phase 16: org.edit_proposal)
+#   admin     = 27  (every key; +1 from Phase 16: org.edit_proposal)
+#   moderator =  9  (no change — org.edit_proposal is governance-adjacent,
+#                    not a moderator's logistics surface)
+#   member    =  0  (no change)
 DEFAULT_GRANTS: dict[str, set[str]] = {
     "steward": set(ALL_PERMISSION_KEYS),
     "admin": set(ALL_PERMISSION_KEYS),
