@@ -4,9 +4,9 @@ import api from '../api';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 // Phase 12.5 F2 — per-control permission gating.
-// Phase 32.1 followup: re-imported for the F2.3 Edit-author button
-// gate (proposal.edit permission), matching the Phase 32 D14 spec.
-import { useHasPermission } from '../hooks/useHasPermission';
+// Phase 17 F2/B6 — useHasPermission was previously consumed by the
+// proposal.resolve_tie gate inside ApprovalResultsPanel; that manual UI
+// is gone in this pass. The import is removed alongside the handler.
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 import VerifyEmailInlineNote from '../components/VerifyEmailInlineNote';
@@ -1405,13 +1405,14 @@ export default function ProposalDetail() {
   // edit; lockout check is server-side authoritative (E3) but the
   // frontend pre-checks to avoid rendering a button that 403s on click.
   const isAuthor = !!user && proposal.author_id === user.id;
-  // Phase 32.1 followup: edit-author button gate uses ORG-level
-  // `proposal.edit` permission (Phase 32 D14 — "author OR
-  // org.edit_proposal"). Platform-admin is also covered because
-  // `user.is_admin` users bypass permission checks server-side. The
-  // useHasPermission helper resolves against currentOrg's user_permissions.
-  const canEditViaPermission = useHasPermission('proposal.edit');
-  const isOrgAdmin = (!!user && !!user.is_admin) || canEditViaPermission;
+  // Phase 32.1 followup: gate matches the backend PATCH endpoint
+  // exactly — author OR platform admin (`is_admin`). Phase 32 D14
+  // specified "author OR org.edit_proposal" but `proposal.edit` was
+  // never registered in PERMISSION_REGISTRY nor enforced by the
+  // backend PATCH handler, so until the permission key + backend
+  // enforcement land in a follow-up, the FE must match the BE's
+  // actual gate to avoid showing a button that 403s on click.
+  const isPlatformAdmin = !!user && !!user.is_admin;
   let editLockoutReached = false;
   if (isDeliberation && proposal.deliberation_start && proposal.deliberation_days) {
     const startMs = new Date(proposal.deliberation_start).getTime();
@@ -1426,7 +1427,7 @@ export default function ProposalDetail() {
       editLockoutReached = elapsedFrac >= lockoutFrac;
     }
   }
-  const canEditProposal = isDeliberation && (isAuthor || isOrgAdmin) && !editLockoutReached;
+  const canEditProposal = isDeliberation && (isAuthor || isPlatformAdmin) && !editLockoutReached;
 
   // ── Phase 8.5 — scope detection (Decisions 7 + 10) ────────────────────────
   // hasSubOrgScope: proposal is sub-org-scoped (sub_org_id is set).
@@ -1525,7 +1526,7 @@ export default function ProposalDetail() {
             )}
             {/* Phase 32.1 F2.3 — lockout tooltip when author/admin but
                 editing closed. */}
-            {isDeliberation && (isAuthor || isOrgAdmin) && editLockoutReached && (
+            {isDeliberation && (isAuthor || isPlatformAdmin) && editLockoutReached && (
               <p className="mt-2 text-xs text-gray-400 italic">
                 Editing is locked for the final phase of deliberation.
               </p>
