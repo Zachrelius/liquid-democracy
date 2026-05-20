@@ -220,7 +220,31 @@ def _build_proposal_out(
     returned as the raw list and `linked_polises` is None — frontend
     can choose to do its own resolution or treat absent as "didn't ask
     for the rich resolution".
+
+    Phase 32.2 — also surface resolved-effective values + overridable
+    flags for the four Phase 32 deliberation-engagement knobs. The
+    frontend gates rendering (e.g., +Add option button, pre-vote panel,
+    create-form toggle visibility) on these so it doesn't need to
+    duplicate the resolver logic client-side.
     """
+    from proposal_engagement_config import (
+        resolve_allow_write_in_options_full,
+        resolve_allow_write_ins_during_voting_full,
+        resolve_allow_pre_voting_full,
+        resolve_show_votes_during_deliberation_full,
+        resolve_max_write_ins,
+        resolve_edit_lockout_fraction,
+    )
+    _org = (
+        db.get(models.Organization, proposal.org_id)
+        if db is not None and proposal.org_id is not None
+        else None
+    )
+    _wi = resolve_allow_write_in_options_full(proposal, _org)
+    _wi_dv = resolve_allow_write_ins_during_voting_full(proposal, _org)
+    _pv = resolve_allow_pre_voting_full(proposal, _org)
+    _svd = resolve_show_votes_during_deliberation_full(proposal, _org)
+
     return schemas.ProposalOut(
         id=proposal.id,
         title=proposal.title,
@@ -259,6 +283,17 @@ def _build_proposal_out(
         allow_pre_voting=getattr(proposal, "allow_pre_voting", None),
         show_votes_during_deliberation=getattr(proposal, "show_votes_during_deliberation", None),
         edit_lockout_fraction=getattr(proposal, "edit_lockout_fraction", None),
+        # Phase 32.2 — resolved-effective values via the 4-option resolver.
+        effective_allow_write_in_options=_wi.effective,
+        write_in_options_overridable=_wi.overridable,
+        effective_allow_write_ins_during_voting=_wi_dv.effective,
+        write_ins_during_voting_overridable=_wi_dv.overridable,
+        effective_allow_pre_voting=_pv.effective,
+        pre_voting_overridable=_pv.overridable,
+        effective_show_votes_during_deliberation=_svd.effective,
+        show_votes_during_deliberation_overridable=_svd.overridable,
+        effective_max_write_ins=resolve_max_write_ins(proposal, _org),
+        effective_edit_lockout_fraction=resolve_edit_lockout_fraction(proposal, _org),
     )
 
 
@@ -816,8 +851,26 @@ def update_proposal(
 
     if proposal.status not in ("draft", "deliberation"):
         raise HTTPException(status_code=400, detail="Only draft or deliberation proposals can be edited")
-    if proposal.author_id != current_user.id and not current_user.is_admin:
-        raise HTTPException(status_code=403, detail="Not the proposal author")
+    # Phase 32.2 B2 — author OR caller has `org.edit_proposal` permission
+    # (Phase 32 D14 spec, now actually wired). Phase 32 shipped checking
+    # `is_admin` only; Phase 32.1 hotfix #4 tightened the FE to match. With
+    # the permission key now registered + seeded to admin/steward by
+    # default, restore the spec'd gate. Platform admin still bypasses
+    # because `has_permission` short-circuits on `User.is_admin`.
+    if not (
+        proposal.author_id == current_user.id
+        or current_user.is_admin
+        or (
+            proposal.org_id is not None
+            and _has_permission(
+                db, current_user.id, proposal.org_id, "org.edit_proposal",
+            )
+        )
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Not authorized to edit this proposal",
+        )
 
     # Phase 32 E3 — edit lockout enforcement. Applies only during the
     # deliberation phase; draft proposals are unaffected (the author is

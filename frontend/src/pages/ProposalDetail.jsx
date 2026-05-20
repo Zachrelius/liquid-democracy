@@ -4,9 +4,13 @@ import api from '../api';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 // Phase 12.5 F2 — per-control permission gating.
-// Phase 17 F2/B6 — useHasPermission was previously consumed by the
-// proposal.resolve_tie gate inside ApprovalResultsPanel; that manual UI
-// is gone in this pass. The import is removed alongside the handler.
+// Phase 32.2 E4 — re-imported for the F2.3 Edit-author button gate.
+// Phase 32.2 M2 registers `org.edit_proposal` in the permission
+// registry and seeds it onto admin + steward by default; B2 restores
+// the spec'd backend gate so the FE check resolves against
+// currentOrg.user_permissions. Hotfix #4's platform-admin-only gate
+// is reverted to match the original Phase 32 D14 intent.
+import { useHasPermission } from '../hooks/useHasPermission';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 import VerifyEmailInlineNote from '../components/VerifyEmailInlineNote';
@@ -689,16 +693,21 @@ function WriteInOptionAdder({ proposal, onAdded }) {
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Phase 32.2 E2 + E3 — gate on resolved-effective values from the
+  // 4-option resolver (now surfaced on ProposalOut). Render only when:
+  //   - status is deliberation OR voting, AND
+  //   - effective_allow_write_in_options is True, AND
+  //   - if voting: effective_allow_write_ins_during_voting is True too.
+  // Previously the gate hid only on explicit `false` per-proposal
+  // override, leaving the button surfaced on proposals where the org
+  // mode disabled write-ins entirely — every click would 403. Resolver-
+  // backed effective values close that gap.
   const status = proposal.status;
   if (status !== 'deliberation' && status !== 'voting') return null;
-  if (proposal.allow_write_in_options === false) return null;
-  // Conservative: hide if the override is null AND we don't know the
-  // org default. The backend will still reject the POST with a clear
-  // error if write-ins aren't enabled — better to surface the button
-  // tentatively than to hide a feature the org has enabled.
+  if (!proposal.effective_allow_write_in_options) return null;
   if (
     status === 'voting'
-    && proposal.allow_write_ins_during_voting === false
+    && !proposal.effective_allow_write_ins_during_voting
   ) {
     return null;
   }
@@ -1405,14 +1414,14 @@ export default function ProposalDetail() {
   // edit; lockout check is server-side authoritative (E3) but the
   // frontend pre-checks to avoid rendering a button that 403s on click.
   const isAuthor = !!user && proposal.author_id === user.id;
-  // Phase 32.1 followup: gate matches the backend PATCH endpoint
-  // exactly — author OR platform admin (`is_admin`). Phase 32 D14
-  // specified "author OR org.edit_proposal" but `proposal.edit` was
-  // never registered in PERMISSION_REGISTRY nor enforced by the
-  // backend PATCH handler, so until the permission key + backend
-  // enforcement land in a follow-up, the FE must match the BE's
-  // actual gate to avoid showing a button that 403s on click.
+  // Phase 32.2 E4 — restored gate: author OR has `org.edit_proposal`
+  // permission. The permission key is now registered (M2) + seeded
+  // to admin + steward in every org, and the backend PATCH endpoint
+  // (B2) enforces it. Platform admin still bypasses via the helper's
+  // is_admin short-circuit.
+  const canEditViaPermission = useHasPermission('org.edit_proposal');
   const isPlatformAdmin = !!user && !!user.is_admin;
+  const canEditAsNonAuthor = isPlatformAdmin || canEditViaPermission;
   let editLockoutReached = false;
   if (isDeliberation && proposal.deliberation_start && proposal.deliberation_days) {
     const startMs = new Date(proposal.deliberation_start).getTime();
@@ -1427,7 +1436,7 @@ export default function ProposalDetail() {
       editLockoutReached = elapsedFrac >= lockoutFrac;
     }
   }
-  const canEditProposal = isDeliberation && (isAuthor || isPlatformAdmin) && !editLockoutReached;
+  const canEditProposal = isDeliberation && (isAuthor || canEditAsNonAuthor) && !editLockoutReached;
 
   // ── Phase 8.5 — scope detection (Decisions 7 + 10) ────────────────────────
   // hasSubOrgScope: proposal is sub-org-scoped (sub_org_id is set).
@@ -1526,7 +1535,7 @@ export default function ProposalDetail() {
             )}
             {/* Phase 32.1 F2.3 — lockout tooltip when author/admin but
                 editing closed. */}
-            {isDeliberation && (isAuthor || isPlatformAdmin) && editLockoutReached && (
+            {isDeliberation && (isAuthor || canEditAsNonAuthor) && editLockoutReached && (
               <p className="mt-2 text-xs text-gray-400 italic">
                 Editing is locked for the final phase of deliberation.
               </p>
@@ -1673,7 +1682,7 @@ export default function ProposalDetail() {
               "Voting opens" phase-transition line renders once
               voting_start falls inside the data range. */}
           {(isVoting || isClosed
-            || (isDeliberation && proposal.show_votes_during_deliberation === true)
+            || (isDeliberation && proposal.effective_show_votes_during_deliberation === true)
           ) && (
             <TrajectorySection
               proposalId={proposal.id}
@@ -1760,8 +1769,13 @@ export default function ProposalDetail() {
           {/* Phase 32.1 F2.2 — vote panel also renders during deliberation
               when the proposal allows pre-voting. Pre-vote UI reuses the
               existing ballot components; a sentiment label clarifies that
-              pre-votes are changeable until voting closes. */}
-          {(isVoting || (isDeliberation && proposal.allow_pre_voting === true))
+              pre-votes are changeable until voting closes.
+              Phase 32.2 — gate on resolved-effective value via the
+              4-option resolver instead of the raw per-proposal column;
+              `effective_allow_pre_voting=True` covers both explicit
+              proposal override AND the org-level `always_on` /
+              `default_on` modes. */}
+          {(isVoting || (isDeliberation && proposal.effective_allow_pre_voting === true))
             && (!hasSubOrgScope || isSubOrgMember) && (
             <div id="vote-panel" className="bg-white border border-gray-200 rounded-xl p-5">
               {isDeliberation && (
@@ -1805,7 +1819,7 @@ export default function ProposalDetail() {
             </div>
           )}
 
-          {proposal.status === 'deliberation' && proposal.allow_pre_voting !== true && (
+          {proposal.status === 'deliberation' && !proposal.effective_allow_pre_voting && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-blue-700 mb-1">Deliberation Period</h3>
               <p className="text-sm text-blue-600">

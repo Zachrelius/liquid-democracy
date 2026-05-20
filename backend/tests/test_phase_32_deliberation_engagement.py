@@ -182,8 +182,8 @@ class TestSettingsResolution:
 
     def test_org_setting_overrides_platform(self, db_session):
         org = _make_org(db_session, settings={
-            "write_ins": {"allowed_default": True, "max_per_proposal": 5},
-            "pre_voting": {"allowed_default": True},
+            "write_ins": {"allowed_mode": "default_on", "max_per_proposal": 5},
+            "pre_voting": {"allowed_mode": "default_on"},
             "proposal_edits": {"lockout_fraction": 0.5},
         })
         author = _make_user(db_session, "auth")
@@ -195,7 +195,7 @@ class TestSettingsResolution:
 
     def test_proposal_override_beats_org(self, db_session):
         org = _make_org(db_session, settings={
-            "write_ins": {"allowed_default": True},
+            "write_ins": {"allowed_mode": "default_on"},
         })
         author = _make_user(db_session, "auth")
         p = _make_proposal(
@@ -213,7 +213,7 @@ class TestSettingsResolution:
 class TestAddWriteInOption:
     def test_add_during_deliberation(self, db_session, client):
         org = _make_org(db_session, settings={
-            "write_ins": {"allowed_default": True},
+            "write_ins": {"allowed_mode": "default_on"},
         })
         author = _make_user(db_session, "author")
         member = _make_user(db_session, "member")
@@ -238,7 +238,7 @@ class TestAddWriteInOption:
     def test_add_during_voting_when_during_voting_allowed(self, db_session, client):
         org = _make_org(db_session, settings={
             "write_ins": {
-                "allowed_default": True, "during_voting_default": True,
+                "allowed_mode": "default_on", "during_voting_mode": "default_on",
             },
         })
         author = _make_user(db_session, "author")
@@ -262,7 +262,7 @@ class TestAddWriteInOption:
     ):
         org = _make_org(db_session, settings={
             "write_ins": {
-                "allowed_default": True, "during_voting_default": False,
+                "allowed_mode": "default_on", "during_voting_mode": "default_off",
             },
         })
         author = _make_user(db_session, "author")
@@ -302,7 +302,7 @@ class TestAddWriteInOption:
     def test_cap_enforced(self, db_session, client):
         org = _make_org(db_session, settings={
             "write_ins": {
-                "allowed_default": True, "max_per_proposal": 2,
+                "allowed_mode": "default_on", "max_per_proposal": 2,
             },
         })
         author = _make_user(db_session, "author")
@@ -332,7 +332,7 @@ class TestAddWriteInOption:
 
     def test_binary_proposals_rejected(self, db_session, client):
         org = _make_org(db_session, settings={
-            "write_ins": {"allowed_default": True},
+            "write_ins": {"allowed_mode": "default_on"},
         })
         author = _make_user(db_session, "author")
         _make_membership(db_session, author, org)
@@ -352,7 +352,7 @@ class TestAddWriteInOption:
 class TestRemoveWriteInOption:
     def test_adder_can_remove_own(self, db_session, client):
         org = _make_org(db_session, settings={
-            "write_ins": {"allowed_default": True},
+            "write_ins": {"allowed_mode": "default_on"},
         })
         author = _make_user(db_session, "author")
         member = _make_user(db_session, "member")
@@ -377,7 +377,7 @@ class TestRemoveWriteInOption:
 
     def test_non_adder_non_admin_cannot_remove(self, db_session, client):
         org = _make_org(db_session, settings={
-            "write_ins": {"allowed_default": True},
+            "write_ins": {"allowed_mode": "default_on"},
         })
         author = _make_user(db_session, "author")
         member = _make_user(db_session, "member")
@@ -406,7 +406,7 @@ class TestRemoveWriteInOption:
         self, db_session, client,
     ):
         org = _make_org(db_session, settings={
-            "write_ins": {"allowed_default": True},
+            "write_ins": {"allowed_mode": "default_on"},
         })
         author = _make_user(db_session, "author")
         _make_membership(db_session, author, org)
@@ -544,7 +544,7 @@ class TestProposalRevisionCapture:
 class TestPreVoting:
     def test_pre_vote_accepted_when_allowed(self, db_session, client):
         org = _make_org(db_session, settings={
-            "pre_voting": {"allowed_default": True},
+            "pre_voting": {"allowed_mode": "default_on"},
         })
         author = _make_user(db_session, "author")
         voter = _make_user(db_session, "voter")
