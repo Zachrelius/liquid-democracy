@@ -246,6 +246,19 @@ def _build_proposal_out(
         sub_org_id=getattr(proposal, "sub_org_id", None),
         linked_polis_ids=proposal.linked_polis_ids,
         linked_polises=_build_linked_polises(db, proposal) if db is not None else None,
+        # Phase 32.1 followup hotfix: per-proposal override fields were
+        # added to the SQLAlchemy model + the Pydantic schema in Phase 32
+        # but this explicit-field response builder didn't surface them.
+        # Result: every proposal API response had these as null in the
+        # JSON body even when the row column was set. The trajectory
+        # endpoint's resolver was reading the column directly (correct);
+        # this builder was the lossy path.
+        allow_write_in_options=getattr(proposal, "allow_write_in_options", None),
+        allow_write_ins_during_voting=getattr(proposal, "allow_write_ins_during_voting", None),
+        max_write_ins=getattr(proposal, "max_write_ins", None),
+        allow_pre_voting=getattr(proposal, "allow_pre_voting", None),
+        show_votes_during_deliberation=getattr(proposal, "show_votes_during_deliberation", None),
+        edit_lockout_fraction=getattr(proposal, "edit_lockout_fraction", None),
     )
 
 
