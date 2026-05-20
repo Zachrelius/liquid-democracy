@@ -1928,7 +1928,7 @@ def list_org_proposals(
         proposals = filtered
 
     from routes.proposals import _build_proposal_out
-    return [_build_proposal_out(p) for p in proposals]
+    return [_build_proposal_out(p, db) for p in proposals]
 
 
 @router.post("/{org_slug}/proposals", response_model=schemas.ProposalOut, status_code=201)
@@ -2406,7 +2406,7 @@ def advance_org_proposal(
             pass
 
     from routes.proposals import _build_proposal_out
-    return _build_proposal_out(proposal)
+    return _build_proposal_out(proposal, db)
 
 
 # ============================================================================
@@ -2533,7 +2533,7 @@ def resolve_escalation(
     db.commit()
     db.refresh(proposal)
     from routes.proposals import _build_proposal_out
-    return _build_proposal_out(proposal)
+    return _build_proposal_out(proposal, db)
 
 
 # ============================================================================

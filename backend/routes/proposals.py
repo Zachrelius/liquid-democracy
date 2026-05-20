@@ -210,18 +210,21 @@ def _build_linked_polises(
 
 
 def _build_proposal_out(
-    proposal: models.Proposal, db: Optional[Session] = None,
+    proposal: models.Proposal, db: Session,
 ) -> schemas.ProposalOut:
     """Build the ProposalOut payload.
 
-    `db` is optional; when provided, `linked_polises` is resolved with
-    title/prompt/participation. When absent (existing call sites that
-    pre-date Phase 9 don't pass it), `linked_polis_ids` is still
-    returned as the raw list and `linked_polises` is None — frontend
-    can choose to do its own resolution or treat absent as "didn't ask
-    for the rich resolution".
+    `db` is required: the Phase 32.2 four-mode resolver reads
+    `org.settings.{write_ins,pre_voting}.*_mode` to surface effective
+    flag values, so it needs the org loaded by FK. (Phase 32.2 hotfix
+    1: previously db was Optional and most call sites passed None,
+    which silently fell back to platform defaults and broke
+    `always_on` / `always_off` modes in the API surface.)
+    `linked_polises` is also resolved via db when available; rich
+    polis resolution is gated on db, but that path always had db
+    in practice.
 
-    Phase 32.2 — also surface resolved-effective values + overridable
+    Phase 32.2 — surfaces resolved-effective values + overridable
     flags for the four Phase 32 deliberation-engagement knobs. The
     frontend gates rendering (e.g., +Add option button, pre-vote panel,
     create-form toggle visibility) on these so it doesn't need to
@@ -237,7 +240,7 @@ def _build_proposal_out(
     )
     _org = (
         db.get(models.Organization, proposal.org_id)
-        if db is not None and proposal.org_id is not None
+        if proposal.org_id is not None
         else None
     )
     _wi = resolve_allow_write_in_options_full(proposal, _org)
@@ -269,7 +272,7 @@ def _build_proposal_out(
         stable_result_required=proposal.stable_result_required,
         sub_org_id=getattr(proposal, "sub_org_id", None),
         linked_polis_ids=proposal.linked_polis_ids,
-        linked_polises=_build_linked_polises(db, proposal) if db is not None else None,
+        linked_polises=_build_linked_polises(db, proposal),
         # Phase 32.1 followup hotfix: per-proposal override fields were
         # added to the SQLAlchemy model + the Pydantic schema in Phase 32
         # but this explicit-field response builder didn't surface them.
@@ -627,7 +630,7 @@ def list_proposals(
     if topic_id:
         q = q.join(models.ProposalTopic).filter(models.ProposalTopic.topic_id == topic_id)
     proposals = q.order_by(*_proposal_list_ordering()).all()
-    return [_build_proposal_out(p) for p in proposals]
+    return [_build_proposal_out(p, db) for p in proposals]
 
 
 def _proposal_list_ordering():
@@ -831,12 +834,12 @@ def create_proposal(
 
     db.commit()
     db.refresh(proposal)
-    return _build_proposal_out(proposal)
+    return _build_proposal_out(proposal, db)
 
 
 @router.get("/{proposal_id}", response_model=schemas.ProposalOut)
 def get_proposal(proposal_id: str, db: Session = Depends(get_db)):
-    return _build_proposal_out(_proposal_or_404(proposal_id, db))
+    return _build_proposal_out(_proposal_or_404(proposal_id, db), db)
 
 
 @router.patch("/{proposal_id}", response_model=schemas.ProposalOut)
@@ -1960,7 +1963,7 @@ def advance_proposal(
         except Exception:  # noqa: BLE001
             pass
 
-    return _build_proposal_out(proposal)
+    return _build_proposal_out(proposal, db)
 
 
 @router.get("/{proposal_id}/results", response_model=schemas.ProposalResults)

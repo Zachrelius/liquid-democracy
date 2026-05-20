@@ -173,6 +173,73 @@ class TestResolverFourModeLogic:
 
 
 # ===========================================================================
+# Hotfix 1 — ProposalOut surfaces org-resolved modes via API
+# ===========================================================================
+
+
+class TestProposalOutResolverThreadsOrg:
+    """Regression: pre-hotfix, four of five call sites for `_build_proposal_out`
+    passed `db=None`, so the resolver couldn't load the org and silently fell
+    back to the platform default. Net effect: org `always_on` /
+    `always_off` modes were invisible in API responses except on the PATCH
+    endpoint. Exercise via the actual route: list + single-GET must reflect
+    the org's persisted mode."""
+
+    def _setup(self, db_session, mode: str):
+        org = _make_org(db_session, settings={
+            "write_ins": {"allowed_mode": mode, "during_voting_mode": "default_on"},
+        })
+        user = _make_user(db_session, "lurker")
+        _make_membership(db_session, user, org, system_key="member")
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        p = models.Proposal(
+            title="T", body="", author_id=user.id, org_id=org.id,
+            status="deliberation", voting_method="binary", num_winners=1,
+            deliberation_start=now,
+            voting_end=now + timedelta(days=3),
+            deliberation_days=14.0, voting_days=7.0,
+            allow_write_in_options=None,
+        )
+        db_session.add(p)
+        db_session.flush()
+        db_session.commit()
+        return user, org, p
+
+    def _login(self, client, username):
+        resp = client.post(
+            "/api/auth/login",
+            data={"username": username, "password": "noop"},
+        )
+        return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+    def test_get_single_proposal_reflects_org_always_on(
+        self, db_session, client,
+    ):
+        user, org, p = self._setup(db_session, "always_on")
+        resp = client.get(
+            f"/api/proposals/{p.id}", headers=self._login(client, "lurker"),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["effective_allow_write_in_options"] is True
+        assert body["write_in_options_overridable"] is False
+
+    def test_list_proposals_reflects_org_always_off(
+        self, db_session, client,
+    ):
+        user, org, p = self._setup(db_session, "always_off")
+        resp = client.get(
+            f"/api/orgs/{org.slug}/proposals",
+            headers=self._login(client, "lurker"),
+        )
+        assert resp.status_code == 200, resp.text
+        arr = resp.json()
+        assert len(arr) == 1
+        assert arr[0]["effective_allow_write_in_options"] is False
+        assert arr[0]["write_in_options_overridable"] is False
+
+
+# ===========================================================================
 # M2 — Permission registry
 # ===========================================================================
 
