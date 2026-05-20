@@ -2145,6 +2145,19 @@ def create_org_proposal(
         voting_days=effective_vote_days,
         stable_result_required=body.stable_result_required,
         linked_polis_ids=linked_ids if linked_ids else None,
+        # Phase 32.1 fixup: the org-scoped create endpoint was missed in
+        # Phase 32 — it silently dropped the six per-proposal override
+        # fields, leaving every proposal created via this path with
+        # null overrides (forcing the F1 create-form toggles to be
+        # ignored end-to-end). Pass them through so per-proposal
+        # overrides survive the create call. The seed_pipeline path
+        # already handles this directly.
+        allow_write_in_options=body.allow_write_in_options,
+        allow_write_ins_during_voting=body.allow_write_ins_during_voting,
+        max_write_ins=body.max_write_ins,
+        allow_pre_voting=body.allow_pre_voting,
+        show_votes_during_deliberation=body.show_votes_during_deliberation,
+        edit_lockout_fraction=body.edit_lockout_fraction,
     )
     db.add(proposal)
     db.flush()
