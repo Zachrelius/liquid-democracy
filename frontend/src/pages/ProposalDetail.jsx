@@ -781,6 +781,344 @@ function WriteInOptionAdder({ proposal, onAdded }) {
 
 
 /**
+ * Phase 32.1 W3.fe — per-option row with conditional delete button.
+ *
+ * Original options (is_write_in=False) render unchanged. Write-ins
+ * gain a small "Remove" button visible to the adder OR users with
+ * admin permission. Click opens an inline confirmation, then calls
+ * the existing DELETE endpoint. On success, parent re-fetches.
+ *
+ * Server-side authoritative on permission (Phase 32 W3); this is the
+ * pre-check render. Users without permission see no button.
+ */
+function OptionRow({ option, index, proposal, currentUser, onDeleted }) {
+  const toast = useToast();
+  const [confirming, setConfirming] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const isWriteIn = !!option.is_write_in;
+  const isAdder = !!currentUser && option.added_by_user_id === currentUser.id;
+  const isAdmin = !!currentUser && !!currentUser.is_admin;
+  const canDelete = isWriteIn && (isAdder || isAdmin);
+
+  async function handleDelete() {
+    setSubmitting(true);
+    try {
+      await api.delete(
+        `/api/proposals/${proposal.id}/options/${option.id}`
+      );
+      toast.success(`Removed "${option.label}"`);
+      setConfirming(false);
+      onDeleted?.();
+    } catch (err) {
+      toast.error(err?.message || 'Could not remove option');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="flex items-start gap-3 p-2 bg-gray-50 rounded-lg">
+      <span className="text-xs text-gray-400 mt-0.5">{index + 1}.</span>
+      <div className="flex-1">
+        <span className="text-sm font-medium text-gray-800">{option.label}</span>
+        {isWriteIn && (
+          <span className="ml-2 text-[10px] uppercase tracking-wide text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded">
+            write-in
+          </span>
+        )}
+        {option.description && (
+          <p className="text-xs text-gray-500 mt-0.5">{option.description}</p>
+        )}
+        {confirming && (
+          <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs">
+            <p className="text-red-700 mb-2">
+              Remove this option? Any votes for it will be adjusted. This
+              cannot be undone.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={submitting}
+                className="px-2 py-1 text-xs font-medium text-white bg-red-600 rounded hover:opacity-90 disabled:opacity-50"
+              >
+                {submitting ? 'Removing…' : 'Remove'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                className="px-2 py-1 text-xs text-gray-600 hover:text-gray-800"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      {canDelete && !confirming && (
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          className="text-xs text-gray-400 hover:text-red-600"
+          title="Remove this write-in option"
+        >
+          ✕
+        </button>
+      )}
+    </div>
+  );
+}
+
+
+/**
+ * Phase 32.1 F2.4 — change-log accordion.
+ *
+ * Fetches GET /api/proposals/{id}/revisions on first expand and renders
+ * a chronological list of edits with a lightweight diff view for title
+ * and body. Structured before/after for options/topics/override flags.
+ *
+ * Hidden entirely when no revisions exist (no empty accordion). Visible
+ * to any org member per Phase 32 E4 transparency-first decision; the
+ * endpoint enforces org-membership gating.
+ */
+function ProposalChangeLog({ proposalId }) {
+  const [open, setOpen] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [revisions, setRevisions] = useState([]);
+  const [count, setCount] = useState(null);
+  const [error, setError] = useState(null);
+
+  // Lightweight first-fetch on mount to know whether to render at all
+  // (revision count drives the "X revisions" pill).
+  useEffect(() => {
+    let cancelled = false;
+    api.get(`/api/proposals/${proposalId}/revisions`)
+      .then((rows) => {
+        if (cancelled) return;
+        setRevisions(rows || []);
+        setCount((rows || []).length);
+      })
+      .catch(() => { /* silent — accordion stays hidden */ });
+    return () => { cancelled = true; };
+  }, [proposalId]);
+
+  async function expand() {
+    setOpen(true);
+    if (loaded) return;
+    try {
+      const rows = await api.get(`/api/proposals/${proposalId}/revisions`);
+      setRevisions(rows || []);
+      setCount((rows || []).length);
+      setLoaded(true);
+    } catch (err) {
+      setError(err?.message || 'Could not load change log');
+    }
+  }
+
+  if (count === null) return null;
+  if (count === 0) return null;
+
+  return (
+    <section className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      <button
+        type="button"
+        onClick={() => (open ? setOpen(false) : expand())}
+        className="w-full flex items-center justify-between px-5 py-3 text-sm font-semibold text-gray-700 uppercase tracking-wide hover:bg-gray-50 transition-colors"
+        aria-expanded={open}
+      >
+        <span>Change log ({count} {count === 1 ? 'revision' : 'revisions'})</span>
+        <span className="text-gray-400 text-xs font-normal">
+          {open ? 'Hide' : 'Show'}
+        </span>
+      </button>
+      {open && (
+        <div className="px-5 pb-4 space-y-4 border-t border-gray-100">
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded text-sm">
+              {error}
+            </div>
+          )}
+          {revisions.map((rev, i) => (
+            <ChangeLogEntry key={rev.id || i} revision={rev} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+
+function ChangeLogEntry({ revision }) {
+  const editor = revision.editor;
+  const editedAt = new Date(revision.edited_at).toLocaleString();
+  const changedFields = Array.isArray(revision.changed_fields)
+    ? revision.changed_fields : [];
+  return (
+    <div className="pt-4 first:pt-2">
+      <div className="text-xs text-gray-500 mb-2">
+        <span className="font-medium text-gray-700">
+          {editor?.display_name || editor?.username || 'Author'}
+        </span>{' '}
+        edited {editedAt}
+      </div>
+      <div className="text-xs text-gray-400 mb-3">
+        Changed: {changedFields.join(', ')}
+      </div>
+      <div className="space-y-3">
+        {changedFields.map((field) => (
+          <FieldDiff
+            key={field}
+            field={field}
+            before={revision.snapshot_before?.[field]}
+            after={revision.snapshot_after?.[field]}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+function FieldDiff({ field, before, after }) {
+  const isTextField = field === 'title' || field === 'body';
+  const beforeStr = before === undefined || before === null
+    ? '(empty)'
+    : (typeof before === 'string' ? before : JSON.stringify(before, null, 2));
+  const afterStr = after === undefined || after === null
+    ? '(empty)'
+    : (typeof after === 'string' ? after : JSON.stringify(after, null, 2));
+  return (
+    <div className="border border-gray-100 rounded-lg overflow-hidden text-xs">
+      <div className="px-3 py-1.5 bg-gray-50 text-gray-600 font-medium uppercase tracking-wide">
+        {field}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-gray-100">
+        <div className="px-3 py-2 bg-red-50/40">
+          <div className="text-[10px] text-red-700 mb-1 uppercase">Before</div>
+          <div className={`whitespace-pre-wrap ${isTextField ? '' : 'font-mono'} text-gray-800`}>
+            {beforeStr}
+          </div>
+        </div>
+        <div className="px-3 py-2 bg-green-50/40">
+          <div className="text-[10px] text-green-700 mb-1 uppercase">After</div>
+          <div className={`whitespace-pre-wrap ${isTextField ? '' : 'font-mono'} text-gray-800`}>
+            {afterStr}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/**
+ * Phase 32.1 F2.3 — Edit proposal button + inline form.
+ *
+ * Visible to the proposal's author OR an org admin while the proposal
+ * is in deliberation AND the edit lockout fraction hasn't been
+ * reached. Server enforces lockout authoritatively via Phase 32 E3;
+ * the frontend pre-checks to avoid rendering a button that 403s.
+ *
+ * Minimum-viable surface: title + body editing. Per the spec D15 the
+ * PATCH endpoint accepts a much wider editable-fields set; this pass
+ * ships the most common case (title + body) and defers the full edit
+ * form (options/topics/timestamps/overrides) to a later polish pass.
+ * Authors can still edit those fields via the existing proposal-
+ * editing surface in admin views; the inline form here is the
+ * deliberation-phase convenience for fast text edits.
+ */
+function EditProposalButton({ proposal, onSaved }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState(proposal.title);
+  const [body, setBody] = useState(proposal.body || '');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setTitle(proposal.title);
+    setBody(proposal.body || '');
+  }, [proposal.title, proposal.body]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!title.trim()) return;
+    setSubmitting(true);
+    try {
+      await api.patch(`/api/proposals/${proposal.id}`, {
+        title: title.trim(),
+        body,
+      });
+      toast.success('Proposal updated');
+      setOpen(false);
+      onSaved?.();
+    } catch (err) {
+      toast.error(err?.message || 'Could not save changes');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-xs px-2.5 py-1 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
+      >
+        Edit proposal
+      </button>
+    );
+  }
+
+  return (
+    <form
+      onSubmit={handleSubmit}
+      className="mt-2 p-3 bg-gray-50 border border-gray-200 rounded-lg space-y-2 max-w-2xl"
+    >
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1">Title</label>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          maxLength={500}
+          required
+          className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:border-[var(--brand-accent)]"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+        <textarea
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          rows={6}
+          maxLength={50000}
+          className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:border-[var(--brand-accent)] resize-y"
+        />
+      </div>
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={submitting || !title.trim()}
+          className="px-3 py-1 text-xs font-medium text-white bg-[var(--brand-accent)] rounded hover:opacity-90 disabled:opacity-50"
+        >
+          {submitting ? 'Saving…' : 'Save changes'}
+        </button>
+        <button
+          type="button"
+          onClick={() => { setOpen(false); setTitle(proposal.title); setBody(proposal.body || ''); }}
+          className="px-3 py-1 text-xs text-gray-600 hover:text-gray-800"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+
+/**
  * Phase 31 B6 — full-width always-visible trajectory chart section.
  *
  * Replaces the Phase 22 F3 collapsed-by-default treatment. Rendered in
@@ -1062,6 +1400,27 @@ export default function ProposalDetail() {
 
   const isVoting = proposal.status === 'voting';
   const isClosed = ['passed', 'failed', 'withdrawn'].includes(proposal.status);
+  const isDeliberation = proposal.status === 'deliberation';
+  // Phase 32.1 F2.3 — edit-author button gating. Author OR admin can
+  // edit; lockout check is server-side authoritative (E3) but the
+  // frontend pre-checks to avoid rendering a button that 403s on click.
+  const isAuthor = !!user && proposal.author_id === user.id;
+  const isOrgAdmin = !!user && !!user.is_admin;
+  let editLockoutReached = false;
+  if (isDeliberation && proposal.deliberation_start && proposal.deliberation_days) {
+    const startMs = new Date(proposal.deliberation_start).getTime();
+    const endMs = startMs + Number(proposal.deliberation_days) * 86400_000;
+    const lockoutFrac = (
+      proposal.edit_lockout_fraction != null
+        ? proposal.edit_lockout_fraction
+        : 0.75
+    );
+    if (endMs > startMs) {
+      const elapsedFrac = (Date.now() - startMs) / (endMs - startMs);
+      editLockoutReached = elapsedFrac >= lockoutFrac;
+    }
+  }
+  const canEditProposal = isDeliberation && (isAuthor || isOrgAdmin) && !editLockoutReached;
 
   // ── Phase 8.5 — scope detection (Decisions 7 + 10) ────────────────────────
   // hasSubOrgScope: proposal is sub-org-scoped (sub_org_id is set).
@@ -1150,7 +1509,26 @@ export default function ProposalDetail() {
               {proposal.voting_end && isVoting && ` · Closes ${new Date(proposal.voting_end).toLocaleDateString()}`}
               {isClosed && proposal.voting_end && ` · Closed ${new Date(proposal.voting_end).toLocaleDateString()}`}
             </p>
+            {/* Phase 32.1 F2.3 — edit-author button. Author or admin
+                during deliberation, before lockout. Server-side
+                authoritative via E3; this is the pre-check render. */}
+            {canEditProposal && (
+              <div className="mt-3">
+                <EditProposalButton proposal={proposal} onSaved={fetchData} />
+              </div>
+            )}
+            {/* Phase 32.1 F2.3 — lockout tooltip when author/admin but
+                editing closed. */}
+            {isDeliberation && (isAuthor || isOrgAdmin) && editLockoutReached && (
+              <p className="mt-2 text-xs text-gray-400 italic">
+                Editing is locked for the final phase of deliberation.
+              </p>
+            )}
           </div>
+
+          {/* Phase 32.1 F2.4 — change-log accordion. Hidden when no
+              revisions exist. Visible to all org members. */}
+          <ProposalChangeLog proposalId={proposal.id} />
 
           {/* Phase 20 F2 — Stable Result Required status panel.
               Renders only when stable-result is active for the proposal.
@@ -1216,25 +1594,25 @@ export default function ProposalDetail() {
               <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Options</h3>
               <div className="space-y-2">
                 {proposal.options.map((opt, idx) => (
-                  <div key={opt.id} className="flex items-start gap-3 p-2 bg-gray-50 rounded-lg">
-                    <span className="text-xs text-gray-400 mt-0.5">{idx + 1}.</span>
-                    <div className="flex-1">
-                      <span className="text-sm font-medium text-gray-800">{opt.label}</span>
-                      {opt.is_write_in && (
-                        <span className="ml-2 text-[10px] uppercase tracking-wide text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded">
-                          write-in
-                        </span>
-                      )}
-                      {opt.description && <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>}
-                    </div>
-                  </div>
+                  <OptionRow
+                    key={opt.id}
+                    option={opt}
+                    index={idx}
+                    proposal={proposal}
+                    currentUser={user}
+                    onDeleted={fetchData}
+                  />
                 ))}
               </div>
               {/* Phase 32 W2 — Add an option button. Visible during
-                  deliberation OR voting based on proposal flags. */}
+                  deliberation OR voting based on proposal flags.
+                  Phase 32.1 F2.1 — onAdded re-fetches via fetchData so
+                  the new option appears without a full page reload
+                  (avoids the prior window.location.reload that was
+                  jarring + lost scroll position). */}
               <WriteInOptionAdder
                 proposal={proposal}
-                onAdded={() => window.location.reload()}
+                onAdded={fetchData}
               />
             </div>
           )}
@@ -1362,8 +1740,18 @@ export default function ProposalDetail() {
 
           {/* Vote panel — only when the viewer can act (parent-scoped, or sub-
               org member). Non-members see the read-only block above instead. */}
-          {isVoting && (!hasSubOrgScope || isSubOrgMember) && (
+          {/* Phase 32.1 F2.2 — vote panel also renders during deliberation
+              when the proposal allows pre-voting. Pre-vote UI reuses the
+              existing ballot components; a sentiment label clarifies that
+              pre-votes are changeable until voting closes. */}
+          {(isVoting || (isDeliberation && proposal.allow_pre_voting === true))
+            && (!hasSubOrgScope || isSubOrgMember) && (
             <div id="vote-panel" className="bg-white border border-gray-200 rounded-xl p-5">
+              {isDeliberation && (
+                <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+                  Pre-vote — you can change this anytime before voting closes.
+                </div>
+              )}
               {proposal.voting_method === 'approval' ? (
                 <ApprovalBallot
                   proposal={proposal}
@@ -1400,7 +1788,7 @@ export default function ProposalDetail() {
             </div>
           )}
 
-          {proposal.status === 'deliberation' && (
+          {proposal.status === 'deliberation' && proposal.allow_pre_voting !== true && (
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-blue-700 mb-1">Deliberation Period</h3>
               <p className="text-sm text-blue-600">

@@ -583,6 +583,20 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
 
   const srr = data.srr_annotations;
   const votingEndTs = data.voting_end ? new Date(data.voting_end).getTime() : null;
+  // Phase 32.1 F5 — when pre-voting visibility is on AND the rendered
+  // data range includes time before voting_start, mark the phase
+  // transition with a subtle vertical reference line. The chart's
+  // x-axis already auto-fits to dataMin (which is now in the
+  // deliberation phase per B1's worker filter extension).
+  const votingStartTs = data.voting_start
+    ? new Date(data.voting_start).getTime()
+    : null;
+  const showPhaseTransition = (
+    data.show_votes_during_deliberation === true
+    && votingStartTs !== null
+    && tMin !== null && tMax !== null
+    && votingStartTs > tMin && votingStartTs < tMax
+  );
 
   // Pass-threshold for binary chart. Fall back to 0.5 if proposal not
   // supplied.
@@ -593,6 +607,22 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
   // Build SRR reference elements (vertical lines). The close marker
   // we render inline via ReferenceDot below since we need y coords.
   const srrLines = srr ? srrReferenceElements(srr) : [];
+  if (showPhaseTransition) {
+    srrLines.push(
+      <ReferenceLine
+        key="phase-voting-opens"
+        x={votingStartTs}
+        stroke="#6B7280"
+        strokeDasharray="2 4"
+        label={{
+          value: 'Voting opens',
+          position: 'top',
+          fontSize: 10,
+          fill: '#6B7280',
+        }}
+      />
+    );
+  }
 
   // ---- Binary chart render ----
   const renderBinaryChart = (height) => (

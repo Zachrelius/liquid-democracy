@@ -174,6 +174,8 @@ export default function OrgSettings() {
   // SR section follows the Phase 16 F4 per-section save pattern rather
   // than relying on the General-section "Save Settings" button.
   const [savingSr, setSavingSr] = useState(false);
+  // Phase 32.1 F3 — Deliberation Engagement section saving state.
+  const [savingDelibEng, setSavingDelibEng] = useState(false);
 
   // Phase 12.7 F4 — Branding section local state.
   //
@@ -465,6 +467,37 @@ export default function OrgSettings() {
       toast.error(err.message || 'Failed to save Stable Result settings');
     } finally {
       setSavingSr(false);
+    }
+  }
+
+  async function handleSaveDelibEngagement() {
+    // Phase 32.1 F3 — per-section save for the three deliberation-
+    // engagement groups (write-ins, pre-voting, proposal-edits).
+    // Sends nested JSON; backend's PATCH /api/orgs merges into
+    // Organization.settings JSONB.
+    setSavingDelibEng(true);
+    try {
+      const payload = {
+        write_ins: {
+          allowed_default: !!settings.write_ins?.allowed_default,
+          during_voting_default: settings.write_ins?.during_voting_default !== false,
+          max_per_proposal: Number(settings.write_ins?.max_per_proposal ?? 10),
+        },
+        pre_voting: {
+          allowed_default: !!settings.pre_voting?.allowed_default,
+          show_votes_during_deliberation_default: !!settings.pre_voting?.show_votes_during_deliberation_default,
+        },
+        proposal_edits: {
+          lockout_fraction: Number(settings.proposal_edits?.lockout_fraction ?? 0.75),
+        },
+      };
+      await api.patch(`/api/orgs/${currentOrg.slug}`, { settings: payload });
+      await refreshOrgs();
+      toast.success('Deliberation engagement settings saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save deliberation engagement settings');
+    } finally {
+      setSavingDelibEng(false);
     }
   }
 
@@ -1295,6 +1328,139 @@ export default function OrgSettings() {
               className="px-5 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
             >
               {savingSr ? 'Saving…' : 'Save Stable Result settings'}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Phase 32.1 F3 — Deliberation Engagement defaults. Three
+          subsections: write-ins, pre-voting, editing. */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Proposal Defaults — Deliberation Engagement</h2>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+          {/* Write-ins */}
+          <div className="space-y-2 pb-3 border-b border-gray-100">
+            <p className="text-sm font-semibold text-gray-700">Write-ins</p>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!settings.write_ins?.allowed_default}
+                onChange={e => updateSetting('write_ins', {
+                  ...(settings.write_ins || {}),
+                  allowed_default: e.target.checked,
+                })}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <p className="text-sm text-gray-700">Allow write-in options by default</p>
+                <p className="text-xs text-gray-400">
+                  New multi-option proposals default to permitting member-added options.
+                </p>
+              </div>
+            </label>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.write_ins?.during_voting_default !== false}
+                onChange={e => updateSetting('write_ins', {
+                  ...(settings.write_ins || {}),
+                  during_voting_default: e.target.checked,
+                })}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <p className="text-sm text-gray-700">Allow write-ins during voting by default</p>
+                <p className="text-xs text-gray-400">
+                  When write-ins are on, also allow members to add options after voting opens.
+                </p>
+              </div>
+            </label>
+            <label className="flex items-center gap-3">
+              <span className="text-sm text-gray-700 min-w-[200px]">Default maximum write-ins</span>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={settings.write_ins?.max_per_proposal ?? 10}
+                onChange={e => updateSetting('write_ins', {
+                  ...(settings.write_ins || {}),
+                  max_per_proposal: parseInt(e.target.value, 10) || 10,
+                })}
+                className="w-20 px-2 py-1 border border-gray-300 rounded text-sm"
+              />
+            </label>
+          </div>
+          {/* Pre-voting */}
+          <div className="space-y-2 pb-3 border-b border-gray-100">
+            <p className="text-sm font-semibold text-gray-700">Pre-voting</p>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!settings.pre_voting?.allowed_default}
+                onChange={e => updateSetting('pre_voting', {
+                  ...(settings.pre_voting || {}),
+                  allowed_default: e.target.checked,
+                })}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <p className="text-sm text-gray-700">Allow voting during deliberation by default</p>
+                <p className="text-xs text-gray-400">
+                  Members can cast and change votes before voting officially opens.
+                </p>
+              </div>
+            </label>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!settings.pre_voting?.show_votes_during_deliberation_default}
+                onChange={e => updateSetting('pre_voting', {
+                  ...(settings.pre_voting || {}),
+                  show_votes_during_deliberation_default: e.target.checked,
+                })}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <p className="text-sm text-gray-700">Show vote totals during deliberation by default</p>
+                <p className="text-xs text-gray-400">
+                  Off avoids anchoring; on enables the trajectory chart to extend back to deliberation start.
+                </p>
+              </div>
+            </label>
+          </div>
+          {/* Editing */}
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-gray-700">Editing</p>
+            <label className="flex items-center gap-3">
+              <span className="text-sm text-gray-700 min-w-[200px]">
+                Default editing lockout
+              </span>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                step={5}
+                value={Math.round(Number(settings.proposal_edits?.lockout_fraction ?? 0.75) * 100)}
+                onChange={e => updateSetting('proposal_edits', {
+                  ...(settings.proposal_edits || {}),
+                  lockout_fraction: Number(e.target.value) / 100,
+                })}
+                className="w-20 px-2 py-1 border border-gray-300 rounded text-sm"
+              />
+              <span className="text-xs text-gray-500">% of deliberation elapsed</span>
+            </label>
+            <p className="text-xs text-gray-400">
+              Authors can't edit a proposal past this fraction of deliberation. Defaults to 75% (edits locked for the final 25%).
+            </p>
+          </div>
+          <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={handleSaveDelibEngagement}
+              disabled={savingDelibEng}
+              className="px-5 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+            >
+              {savingDelibEng ? 'Saving…' : 'Save deliberation engagement settings'}
             </button>
           </div>
         </div>
