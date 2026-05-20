@@ -4,9 +4,9 @@ import api from '../api';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 // Phase 12.5 F2 — per-control permission gating.
-// Phase 17 F2/B6 — useHasPermission was previously consumed by the
-// proposal.resolve_tie gate inside ApprovalResultsPanel; that manual UI
-// is gone in this pass. The import is removed alongside the handler.
+// Phase 32.1 followup: re-imported for the F2.3 Edit-author button
+// gate (proposal.edit permission), matching the Phase 32 D14 spec.
+import { useHasPermission } from '../hooks/useHasPermission';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 import VerifyEmailInlineNote from '../components/VerifyEmailInlineNote';
@@ -1405,7 +1405,13 @@ export default function ProposalDetail() {
   // edit; lockout check is server-side authoritative (E3) but the
   // frontend pre-checks to avoid rendering a button that 403s on click.
   const isAuthor = !!user && proposal.author_id === user.id;
-  const isOrgAdmin = !!user && !!user.is_admin;
+  // Phase 32.1 followup: edit-author button gate uses ORG-level
+  // `proposal.edit` permission (Phase 32 D14 — "author OR
+  // org.edit_proposal"). Platform-admin is also covered because
+  // `user.is_admin` users bypass permission checks server-side. The
+  // useHasPermission helper resolves against currentOrg's user_permissions.
+  const canEditViaPermission = useHasPermission('proposal.edit');
+  const isOrgAdmin = (!!user && !!user.is_admin) || canEditViaPermission;
   let editLockoutReached = false;
   if (isDeliberation && proposal.deliberation_start && proposal.deliberation_days) {
     const startMs = new Date(proposal.deliberation_start).getTime();
@@ -1657,7 +1663,17 @@ export default function ProposalDetail() {
           {/* Phase 31 B6 — Support Trajectory, full-width below Vote
               Network. Always visible for voting + closed proposals
               (deliberation has no trajectory data). */}
-          {(isVoting || isClosed) && (
+          {/* Phase 32.1 F5 — also render the trajectory section during
+              deliberation when the proposal has show_votes_during_
+              deliberation=True (which implies the B1 worker is
+              capturing snapshots during deliberation per Phase 32.1).
+              The chart's x-axis auto-fits to dataMin/dataMax, so it
+              extends back to deliberation_start naturally; the
+              "Voting opens" phase-transition line renders once
+              voting_start falls inside the data range. */}
+          {(isVoting || isClosed
+            || (isDeliberation && proposal.show_votes_during_deliberation === true)
+          ) && (
             <TrajectorySection
               proposalId={proposal.id}
               proposal={proposal}
