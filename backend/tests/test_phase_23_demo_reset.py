@@ -106,8 +106,7 @@ def _make_org(
 ) -> models.Organization:
     org = models.Organization(
         slug=slug,
-        name=name,
-        description=f"{name} description",
+        name=name"{name} description",
         join_policy="open",
         is_demo=is_demo,
     )

@@ -226,7 +226,6 @@ def _get_or_create_delegate_profile(
         topic_id=topic_id,
         org_id=org_id,
         bio="",
-        is_active=True,
         visibility="followers_only",
     )
     db.add(dp)

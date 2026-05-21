@@ -222,7 +222,7 @@ class TestSubOrgCRUD:
         _membership(db, parent, admin, role="admin")
         # Add a topic scoped to the sub.
         topic = models.Topic(
-            name="ScopedTopic", description="", color="#000",
+            name="ScopedTopic", color="#000",
             org_id=parent.id, sub_org_id=sub.id,
         )
         db.add(topic)
@@ -437,11 +437,11 @@ class TestTopicAndProposalScope:
         admin, sub_admin, parent_only, sub_member, parent, sub = self._bootstrap(db)
         # Org-wide topic
         t_open = models.Topic(
-            name="Open", description="", color="#000", org_id=parent.id,
+            name="Open", color="#000", org_id=parent.id,
         )
         # Sub-org-scoped topic
         t_sub = models.Topic(
-            name="Sub", description="", color="#000",
+            name="Sub", color="#000",
             org_id=parent.id, sub_org_id=sub.id,
         )
         db.add_all([t_open, t_sub])
@@ -473,7 +473,7 @@ class TestTopicAndProposalScope:
         admin, sub_admin, parent_only, sub_member, parent, sub = self._bootstrap(db)
         # Need a topic scoped to the sub-org
         topic = models.Topic(
-            name="Eng", description="", color="#000",
+            name="Eng", color="#000",
             org_id=parent.id, sub_org_id=sub.id,
         )
         db.add(topic)
@@ -496,7 +496,7 @@ class TestTopicAndProposalScope:
     def test_parent_proposal_cannot_use_sub_org_topic(self, db, client):
         admin, sub_admin, parent_only, sub_member, parent, sub = self._bootstrap(db)
         topic = models.Topic(
-            name="Eng", description="", color="#000",
+            name="Eng", color="#000",
             org_id=parent.id, sub_org_id=sub.id,
         )
         db.add(topic)
@@ -525,7 +525,7 @@ class TestPromoteTopic:
         sub = _org(db, "sub", parent_org_id=parent.id)
         _membership(db, parent, admin, role="admin")
         topic = models.Topic(
-            name="Eng", description="", color="#000",
+            name="Eng", color="#000",
             org_id=parent.id, sub_org_id=sub.id,
         )
         db.add(topic)
@@ -550,7 +550,7 @@ class TestPromoteTopic:
         sub = _org(db, "sub", parent_org_id=parent.id)
         _membership(db, parent, admin, role="admin")
         topic = models.Topic(
-            name="Eng", description="", color="#000",
+            name="Eng", color="#000",
             org_id=parent.id, sub_org_id=sub.id,
         )
         db.add(topic)
@@ -568,7 +568,7 @@ class TestPromoteTopic:
         parent = _org(db, "parent")
         _membership(db, parent, admin, role="admin")
         topic = models.Topic(
-            name="Open", description="", color="#000",
+            name="Open", color="#000",
             org_id=parent.id, sub_org_id=None,
         )
         db.add(topic)
@@ -677,7 +677,7 @@ class TestVotingMethodOverride:
         })
         _membership(db, parent, admin, role="admin")
         topic = models.Topic(
-            name="Sub Eng", description="", color="#000",
+            name="Sub Eng", color="#000",
             org_id=parent.id, sub_org_id=sub.id,
         )
         db.add(topic)
@@ -812,7 +812,7 @@ class TestAuditEventCoverage:
         # promote, just for clarity.
         sub = db.query(models.Organization).filter_by(slug="scope1").first()
         topic = models.Topic(
-            name="T1", description="", color="#000",
+            name="T1", color="#000",
             org_id=parent.id, sub_org_id=sub.id,
         )
         db.add(topic)
@@ -1115,15 +1115,15 @@ class TestTopicVisibilityDecision3:
 
         # Topics: one parent-wide, one in sub_a, one in sub_b
         t_open = models.Topic(
-            name="P86Open", description="", color="#000",
+            name="P86Open", color="#000",
             org_id=parent.id, sub_org_id=None,
         )
         t_a = models.Topic(
-            name="P86SubA", description="", color="#000",
+            name="P86SubA", color="#000",
             org_id=parent.id, sub_org_id=sub_a.id,
         )
         t_b = models.Topic(
-            name="P86SubB", description="", color="#000",
+            name="P86SubB", color="#000",
             org_id=parent.id, sub_org_id=sub_b.id,
         )
         db.add_all([t_open, t_a, t_b])

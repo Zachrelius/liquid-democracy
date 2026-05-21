@@ -88,7 +88,7 @@ def _user(db: Session, username: str) -> models.User:
 
 
 def _topic(db: Session) -> models.Topic:
-    t = models.Topic(name=f"Topic-{models._uuid()[:8]}", description="", color="#abcabc")
+    t = models.Topic(name=f"Topic-{models._uuid()[:8]}", color="#abcabc")
     db.add(t)
     db.flush()
     return t
@@ -254,7 +254,7 @@ def test_02_approval_graph_visible_and_anonymous_voter_ballots(client, test_db):
     anon = _user(test_db, "anon_voter")
     # Public delegate profile makes public_dlg visible.
     test_db.add(models.DelegateProfile(
-        user_id=public_dlg.id, topic_id=topic.id, bio="", is_active=True,
+        user_id=public_dlg.id, topic_id=topic.id, bio="",
     ))
     p = _approval_proposal(test_db, viewer, topic, labels=["A", "B"])
     oids = _option_ids(test_db, p)
@@ -312,7 +312,7 @@ def test_04_rcv_graph_visible_voter_ballot_ranking_in_order(client, test_db):
     viewer = _user(test_db, "viewer")
     public_dlg = _user(test_db, "public_dlg")
     test_db.add(models.DelegateProfile(
-        user_id=public_dlg.id, topic_id=topic.id, bio="", is_active=True,
+        user_id=public_dlg.id, topic_id=topic.id, bio="",
     ))
     p = _rcv_proposal(test_db, viewer, topic, labels=["A", "B", "C"])
     oids = _option_ids(test_db, p)

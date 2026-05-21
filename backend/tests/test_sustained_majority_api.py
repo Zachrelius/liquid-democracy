@@ -87,7 +87,7 @@ def _membership(db: Session, org, user, role="member"):
 
 
 def _topic(db: Session, org) -> models.Topic:
-    t = models.Topic(name="Climate", description="", color="#0f0", org_id=org.id)
+    t = models.Topic(name="Climate", color="#0f0", org_id=org.id)
     db.add(t)
     db.flush()
     return t

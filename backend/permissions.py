@@ -37,7 +37,6 @@ def can_delegate_to(
         profile = db.query(models.DelegateProfile).filter(
             models.DelegateProfile.user_id == delegate_id,
             models.DelegateProfile.topic_id == topic_id,
-            models.DelegateProfile.is_active.is_(True),
         ).first()
         if profile:
             return True
@@ -45,7 +44,6 @@ def can_delegate_to(
         # Global delegation: any active profile is enough (public delegate on any topic)
         any_profile = db.query(models.DelegateProfile).filter(
             models.DelegateProfile.user_id == delegate_id,
-            models.DelegateProfile.is_active.is_(True),
         ).first()
         if any_profile:
             return True
@@ -113,7 +111,6 @@ def can_see_votes(
     profiles = db.query(models.DelegateProfile).filter(
         models.DelegateProfile.user_id == target_user_id,
         models.DelegateProfile.topic_id.in_(topic_ids),
-        models.DelegateProfile.is_active.is_(True),
     ).all()
 
     # public / public_accepting on ANY topic → permit.
@@ -144,7 +141,6 @@ def public_delegate_topic_ids(db: Session, user_id: str) -> set[str]:
     """Return the set of topic_ids for which user_id has an active delegate profile."""
     rows = db.query(models.DelegateProfile.topic_id).filter(
         models.DelegateProfile.user_id == user_id,
-        models.DelegateProfile.is_active.is_(True),
     ).all()
     return {r.topic_id for r in rows}
 

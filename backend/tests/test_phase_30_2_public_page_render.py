@@ -97,7 +97,7 @@ def _seed_delegate(
     ))
 
     topic = models.Topic(
-        name=topic_name, description=topic_name,
+        name=topic_name,
         color="#000000", org_id=org.id,
     )
     db.add(topic); db.flush()
@@ -195,7 +195,7 @@ class TestPublicDelegatePageOmitsPrivateTopicData:
         )
         # Add a SECOND topic at visibility=private with sensitive text.
         private_topic = models.Topic(
-            name="Bylaws", description="Bylaws",
+            name="Bylaws",
             color="#000000", org_id=org.id,
         )
         db_session.add(private_topic); db_session.flush()

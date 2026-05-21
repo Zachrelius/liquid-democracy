@@ -591,7 +591,7 @@ def _make_org(db: Session, slug: str) -> models.Organization:
 
 
 def _make_topic(db: Session, org: models.Organization, name: str = "T") -> models.Topic:
-    t = models.Topic(name=name, description="", color="#000000", org_id=org.id)
+    t = models.Topic(name=name, color="#000000", org_id=org.id)
     db.add(t)
     db.flush()
     return t
@@ -906,7 +906,6 @@ class TestDelegatePostedRationaleEvent:
             topic_id=topic.id,
             org_id=org.id,
             bio="",
-            is_active=True,
             visibility=visibility,
         )
         if visibility == "public_accepting":
@@ -990,7 +989,7 @@ class TestDelegatePostedRationaleNoFireOnPrivateProfile:
         test_db.flush()
         dp = models.DelegateProfile(
             user_id=owner.id, topic_id=topic.id, org_id=org.id,
-            bio="", is_active=True, visibility="private",
+            bio="", visibility="private",
         )
         test_db.add(dp)
         test_db.flush()

@@ -28,14 +28,12 @@ export default function Topics() {
 
   // Create form state
   const [newName, setNewName] = useState('');
-  const [newDesc, setNewDesc] = useState('');
   const [newColor, setNewColor] = useState('#6366f1');
   // Phase 8.5 — scope selector. '' == parent-org-wide (sub_org_id null).
   const [newScope, setNewScope] = useState('');
 
   // Edit form state
   const [editName, setEditName] = useState('');
-  const [editDesc, setEditDesc] = useState('');
   const [editColor, setEditColor] = useState('#6366f1');
 
   // Phase 8.5 — sub-orgs available for the scope dropdown.
@@ -72,12 +70,11 @@ export default function Topics() {
   async function handleCreate(e) {
     e.preventDefault();
     try {
-      const payload = { name: newName, description: newDesc, color: newColor };
+      const payload = { name: newName, color: newColor };
       if (newScope) payload.sub_org_id = newScope;
       await api.post(`/api/orgs/${slug}/topics`, payload);
       toast.success('Topic created');
       setNewName('');
-      setNewDesc('');
       setNewColor('#6366f1');
       setNewScope('');
       setShowCreate(false);
@@ -105,7 +102,7 @@ export default function Topics() {
 
   async function handleUpdate(topicId) {
     try {
-      await api.patch(`/api/orgs/${slug}/topics/${topicId}`, { name: editName, description: editDesc, color: editColor });
+      await api.patch(`/api/orgs/${slug}/topics/${topicId}`, { name: editName, color: editColor });
       toast.success('Topic updated');
       setEditingId(null);
       load();
@@ -133,7 +130,6 @@ export default function Topics() {
   function startEdit(topic) {
     setEditingId(topic.id);
     setEditName(topic.name);
-    setEditDesc(topic.description || '');
     setEditColor(topic.color);
   }
 
@@ -182,15 +178,6 @@ export default function Topics() {
               onChange={e => setNewName(e.target.value)}
               required
               className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Description</label>
-            <input
-              type="text"
-              value={newDesc}
-              onChange={e => setNewDesc(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
           </div>
           {subOrgs.length > 0 && (
@@ -250,15 +237,6 @@ export default function Topics() {
                       value={editName}
                       onChange={e => setEditName(e.target.value)}
                       className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">Description</label>
-                    <input
-                      type="text"
-                      value={editDesc}
-                      onChange={e => setEditDesc(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
                     />
                   </div>
                   <div>

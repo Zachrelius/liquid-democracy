@@ -2187,7 +2187,6 @@ def get_vote_graph(
     for pt in proposal.proposal_topics:
         profiles = db.query(models.DelegateProfile).filter(
             models.DelegateProfile.topic_id == pt.topic_id,
-            models.DelegateProfile.is_active.is_(True),
         ).all()
         for p in profiles:
             pub_delegate_ids.add(p.user_id)

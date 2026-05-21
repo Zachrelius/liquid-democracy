@@ -361,7 +361,6 @@ class TestPublicDelegateApprovalRequired:
             org_id=org.id,
             topic_id=topic.id,
             bio="",
-            is_active=True,
             visibility="public",
         )
         db_session.add(dp)

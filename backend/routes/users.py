@@ -290,7 +290,6 @@ def search_users(
         # profile for the topic in that same org.
         dp_filters = [
             models.DelegateProfile.topic_id == topic_id,
-            models.DelegateProfile.is_active.is_(True),
         ]
         if org_slug:
             # `org` is bound above when org_slug is truthy.
@@ -304,8 +303,8 @@ def search_users(
 
 
 def _enrich_user_result(db: Session, user: models.User, viewer_id: str):
-    # Active delegate profiles
-    profiles = [p for p in user.delegate_profiles if p.is_active]
+    # Phase 33 D1 — is_active column dropped; all rows behaved as active.
+    profiles = list(user.delegate_profiles)
 
     # Follow relationship
     rel = db.query(models.FollowRelationship).filter(
@@ -398,7 +397,8 @@ def get_user_profile(
         raise HTTPException(status_code=404, detail="User not found")
 
     viewer_id = current_user.id if current_user else None
-    active_profiles = [p for p in user.delegate_profiles if p.is_active]
+    # Phase 33 D1 — is_active column dropped; all rows behaved as active.
+    active_profiles = list(user.delegate_profiles)
     pub_topic_ids = {p.topic_id for p in active_profiles}
 
     # Collect visible votes (only those on public delegate topics, unless viewer = self)
@@ -461,6 +461,23 @@ def get_user_profile(
         delegate_profiles=[schemas.DelegateProfileOut.model_validate(p) for p in active_profiles],
         votes=votes_out,
     )
+
+
+@router.get("/me", response_model=schemas.UserOut)
+def get_me(
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 33 C1 — self-fetch endpoint.
+
+    ``GET /api/users/me`` was returning 404 "User not found" because the
+    request matched the generic ``GET /api/users/{user_id}`` handler with
+    ``user_id="me"``, which then missed the DB lookup. Adding this explicit
+    handler above the generic route makes the URL behave like the natural
+    self-fetch every other app expects. The canonical self-endpoint
+    remains ``GET /api/auth/me`` (auth router) — this is the convenience
+    alias for callers reaching for the ``/users/me`` pattern.
+    """
+    return current_user
 
 
 @router.get("/{user_id}", response_model=schemas.UserOut)
@@ -538,7 +555,6 @@ def delegation_tree(
     public_delegate_user_ids: set[str] = {
         row.user_id
         for row in db.query(models.DelegateProfile.user_id).filter(
-            models.DelegateProfile.is_active.is_(True),
         ).all()
     }
 

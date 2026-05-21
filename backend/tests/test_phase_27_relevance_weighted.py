@@ -528,10 +528,10 @@ class TestServiceBuildContextPopulatesRelevances:
         api_db.flush()
 
         topic_a = models.Topic(
-            org_id=org.id, name="A", description="", color="#000",
+            org_id=org.id, name="A", color="#000",
         )
         topic_b = models.Topic(
-            org_id=org.id, name="B", description="", color="#000",
+            org_id=org.id, name="B", color="#000",
         )
         api_db.add_all([topic_a, topic_b])
         api_db.flush()

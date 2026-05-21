@@ -215,7 +215,7 @@ def _register_delegate(
     if existing:
         return existing
     profile = models.DelegateProfile(
-        user_id=user.id, topic_id=topic.id, bio=bio, is_active=True,
+        user_id=user.id, topic_id=topic.id, bio=bio,
         org_id=org_id,
     )
     db.add(profile)
@@ -256,7 +256,6 @@ def _register_delegate_with_visibility(
         user_id=user.id,
         topic_id=topic.id,
         bio=bio,
-        is_active=True,
         org_id=org_id,
         visibility=visibility,
         position_statement=position_statement,

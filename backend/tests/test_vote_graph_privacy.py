@@ -89,7 +89,7 @@ def _user(db: Session, username: str, display_name: str | None = None) -> models
 
 
 def _topic(db: Session) -> models.Topic:
-    t = models.Topic(name=f"Topic-{models._uuid()[:8]}", description="", color="#abcabc")
+    t = models.Topic(name=f"Topic-{models._uuid()[:8]}", color="#abcabc")
     db.add(t)
     db.flush()
     return t

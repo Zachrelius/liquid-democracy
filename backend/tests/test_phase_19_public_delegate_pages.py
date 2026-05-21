@@ -149,7 +149,7 @@ def _make_topic(
     db: Session, org: models.Organization, name: str = "T",
 ) -> models.Topic:
     t = models.Topic(
-        name=name, description="", color="#000000",
+        name=name, color="#000000",
         org_id=org.id,
     )
     db.add(t)
@@ -222,7 +222,6 @@ def _make_delegate_profile(
         topic_id=topic.id,
         org_id=org.id,
         bio=bio,
-        is_active=True,
         visibility=visibility,
         position_statement=position_statement,
     )
@@ -1402,7 +1401,6 @@ class TestBackwardsCompat:
             topic_id=topic.id,
             org_id=org.id,
             bio="legacy",
-            is_active=True,
         )
         test_db.add(dp)
         test_db.flush()
@@ -1425,7 +1423,6 @@ class TestBackwardsCompat:
             topic_id=topic.id,
             org_id=org.id,
             bio="x" * 60,
-            is_active=True,
             visibility="public_accepting",
         )
         test_db.add(dp)

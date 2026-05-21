@@ -430,7 +430,6 @@ def personal_delegation_network(
 
     # Public delegate IDs
     pub_profiles = db.query(models.DelegateProfile).filter(
-        models.DelegateProfile.is_active.is_(True),
     ).all()
     pub_delegate_ids = {p.user_id for p in pub_profiles}
 

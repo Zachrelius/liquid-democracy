@@ -93,7 +93,7 @@ def _make_org(
 
 
 def _seed_topic(db: Session, org: models.Organization) -> models.Topic:
-    t = models.Topic(name="T", description="", color="#000000", org_id=org.id)
+    t = models.Topic(name="T", color="#000000", org_id=org.id)
     db.add(t)
     db.flush()
     return t
@@ -307,7 +307,7 @@ def test_post_global_proposal_no_org_skips_threshold_gate(client, test_db):
     path (which is rarely used)."""
     user = _make_user(test_db, "global_thresh")
     topic = models.Topic(
-        name="GlobalT", description="", color="#000000",
+        name="GlobalT", color="#000000",
     )
     test_db.add(topic)
     test_db.commit()

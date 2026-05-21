@@ -170,7 +170,7 @@ class TestPersonaDelegationValidationMissingTopicInPrecedence:
         db_session.flush()
 
         topic_budget = models.Topic(
-            name="test-org:Budget", description="Budget", color="#000000",
+            name="test-org:Budget", color="#000000",
             org_id=org.id,
         )
         db_session.add(topic_budget)

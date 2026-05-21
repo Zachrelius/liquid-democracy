@@ -108,12 +108,40 @@ def _org_mode(
     return val if val in ALL_MODES else platform_default
 
 
+def _assert_org_loaded_for(proposal: "models.Proposal", org: Optional["models.Organization"]) -> None:
+    """Phase 33 B1 — loud-failure guard for the recurring Phase 32/32.1/32.2
+    bug pattern.
+
+    The bug was: a response builder accepted ``db: Optional[Session] = None``,
+    callers omitted db, builder couldn't load Organization, resolver received
+    ``org=None``, resolver silently fell back to the platform default —
+    invisible at test time, visible only as "the always_on mode does nothing"
+    in prod. Hotfix #1 made db required at the builder layer. This guard
+    closes the resolver-layer half: when a proposal HAS an org_id but the
+    caller passed ``org=None`` anyway, the resolver raises rather than
+    silently returning the platform default.
+
+    Proposals with ``org_id=None`` (pre-Phase-4c legacy rows) legitimately
+    have no org; the resolver should still fall back to the platform default
+    for them — that path stays valid.
+    """
+    if getattr(proposal, "org_id", None) is not None and org is None:
+        raise ValueError(
+            f"resolve_*: proposal {getattr(proposal, 'id', '?')!r} has "
+            f"org_id={proposal.org_id!r} but org was not loaded. This is "
+            "the recurring Phase 32/32.1/32.2 bug pattern — the response "
+            "builder must load the Organization row and pass it through "
+            "to the resolver. See feedback_response_builder_db_required.md."
+        )
+
+
 # ----- Write-ins ----------------------------------------------------------
 
 def resolve_allow_write_in_options_full(
     proposal: models.Proposal,
     org: Optional[models.Organization],
 ) -> ResolvedFlag:
+    _assert_org_loaded_for(proposal, org)
     return _resolve_mode(
         _org_mode(org, "write_ins", "allowed_mode", PLATFORM_DEFAULT_WRITE_INS_MODE),
         proposal.allow_write_in_options,
@@ -132,6 +160,7 @@ def resolve_allow_write_ins_during_voting_full(
     proposal: models.Proposal,
     org: Optional[models.Organization],
 ) -> ResolvedFlag:
+    _assert_org_loaded_for(proposal, org)
     return _resolve_mode(
         _org_mode(
             org, "write_ins", "during_voting_mode",
@@ -155,6 +184,7 @@ def resolve_max_write_ins(
 ) -> int:
     if proposal.max_write_ins is not None:
         return int(proposal.max_write_ins)
+    _assert_org_loaded_for(proposal, org)
     if org is None:
         return PLATFORM_DEFAULT_MAX_WRITE_INS
     settings = getattr(org, "settings", None) or {}
@@ -174,6 +204,7 @@ def resolve_allow_pre_voting_full(
     proposal: models.Proposal,
     org: Optional[models.Organization],
 ) -> ResolvedFlag:
+    _assert_org_loaded_for(proposal, org)
     return _resolve_mode(
         _org_mode(
             org, "pre_voting", "allowed_mode", PLATFORM_DEFAULT_PRE_VOTING_MODE,
@@ -194,6 +225,7 @@ def resolve_show_votes_during_deliberation_full(
     proposal: models.Proposal,
     org: Optional[models.Organization],
 ) -> ResolvedFlag:
+    _assert_org_loaded_for(proposal, org)
     return _resolve_mode(
         _org_mode(
             org, "pre_voting", "visibility_mode",
@@ -219,6 +251,7 @@ def resolve_edit_lockout_fraction(
 ) -> float:
     if proposal.edit_lockout_fraction is not None:
         return float(proposal.edit_lockout_fraction)
+    _assert_org_loaded_for(proposal, org)
     if org is None:
         return PLATFORM_DEFAULT_EDIT_LOCKOUT_FRACTION
     settings = getattr(org, "settings", None) or {}
