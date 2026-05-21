@@ -202,7 +202,7 @@ def test_search_org_and_topic_compose(client, test_db):
     _join(test_db, a_nondelegate, org_a)
     _join(test_db, b_delegate, org_b)
 
-    topic = models.Topic(name="climate", description="", color="#000000")
+    topic = models.Topic(name="climate", color="#000000")
     test_db.add(topic)
     test_db.flush()
 
@@ -212,7 +212,6 @@ def test_search_org_and_topic_compose(client, test_db):
         topic_id=topic.id,
         org_id=org_a.id,
         bio="",
-        is_active=True,
     ))
     # And b_delegate has a profile in org B for the same topic — should be
     # excluded when org_slug=org-a.
@@ -221,7 +220,6 @@ def test_search_org_and_topic_compose(client, test_db):
         topic_id=topic.id,
         org_id=org_b.id,
         bio="",
-        is_active=True,
     ))
     test_db.commit()
 

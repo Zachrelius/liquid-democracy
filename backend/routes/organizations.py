@@ -1795,7 +1795,7 @@ def create_org_topic(
 
     topic = models.Topic(
         name=body.name,
-        description=body.description,
+        # Phase 33 D2 — Topic.description dropped.
         color=body.color,
         org_id=org.id,
         sub_org_id=target_sub_org_id,
@@ -1827,7 +1827,7 @@ def update_org_topic(
         raise HTTPException(status_code=404, detail="Topic not found in this organization")
 
     topic.name = body.name
-    topic.description = body.description
+    # Phase 33 D2 — Topic.description column dropped.
     topic.color = body.color
     db.commit()
     db.refresh(topic)

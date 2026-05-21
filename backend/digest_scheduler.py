@@ -866,10 +866,37 @@ def run_one_tick(
     # Phase 23 (B2) — demo reset check. Cheap when not due (one PlatformSetting
     # read + a timezone compare). Wrapped so a reset failure doesn't break
     # the rest of the tick (digests, cleanup).
+    #
+    # Phase 33 C2 — added observability. Pre-Phase-33 the reset block ran
+    # silently regardless of outcome (no info log on skip OR on success);
+    # the only signal was the demo_reset_job's own internal "Graph store
+    # refreshed after demo reset" line buried deep in the seed pipeline.
+    # The tick metrics dict didn't surface a `demo_reset` field. Net effect:
+    # in 4-worker prod, you couldn't tell whether scheduled resets were
+    # firing without DB introspection. Now the tick logs the result code
+    # at INFO and counts["demo_reset"] reflects the per-tick outcome.
+    counts["demo_reset"] = "not_attempted"
     try:
         from demo_reset_job import run_demo_reset_if_due
-        run_demo_reset_if_due(db, force=False)
+        result = run_demo_reset_if_due(db, force=False)
+        if result.skipped:
+            counts["demo_reset"] = f"skipped:{result.reason or 'unspecified'}"
+        elif result.success:
+            counts["demo_reset"] = (
+                f"completed orgs={len(result.orgs_reset)} "
+                f"wiped={result.rows_wiped} seeded={result.rows_seeded}"
+            )
+            log.info(
+                "digest tick: demo reset completed: orgs=%s wiped=%d seeded=%d",
+                result.orgs_reset, result.rows_wiped, result.rows_seeded,
+            )
+        else:
+            counts["demo_reset"] = f"failed:{result.error or 'unknown'}"
+            log.error(
+                "digest tick: demo reset failed: %s", result.error,
+            )
     except Exception:  # noqa: BLE001
+        counts["demo_reset"] = "exception"
         log.exception("digest tick: demo reset check failed")
         try:
             db.rollback()

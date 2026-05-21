@@ -219,9 +219,9 @@ def test_delegation_tree_redacts_identities_per_viewer_relationships(
     # Use distinct topics so each delegation from `target` survives — the
     # graph store collapses multiple outgoing edges per (delegator, topic)
     # tuple to the most-recent one.
-    topic_a = models.Topic(name="climate_x", description="", color="#000000")
-    topic_b = models.Topic(name="economy_x", description="", color="#000000")
-    topic_c = models.Topic(name="health_x",  description="", color="#000000")
+    topic_a = models.Topic(name="climate_x", color="#000000")
+    topic_b = models.Topic(name="economy_x", color="#000000")
+    topic_c = models.Topic(name="health_x", color="#000000")
     test_db.add_all([topic_a, topic_b, topic_c])
     test_db.flush()
 
@@ -230,7 +230,6 @@ def test_delegation_tree_redacts_identities_per_viewer_relationships(
         user_id=pub_delegate.id,
         topic_id=topic_a.id,
         bio="",
-        is_active=True,
     ))
     # Viewer follows followed_by_viewer.
     # Phase 18: org_id left None — this test exercises account-level

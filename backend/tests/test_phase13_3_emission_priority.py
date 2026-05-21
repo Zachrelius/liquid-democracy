@@ -118,7 +118,7 @@ def _opt_in(db: Session, user: models.User, event_type: str) -> None:
 
 
 def _make_topic(db: Session, org: models.Organization, name: str) -> models.Topic:
-    t = models.Topic(org_id=org.id, name=f"{org.slug}-{name}", description="")
+    t = models.Topic(org_id=org.id, name=f"{org.slug}-{name}")
     db.add(t)
     db.flush()
     return t

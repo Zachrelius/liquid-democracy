@@ -55,7 +55,8 @@ def _delegation_count(
 
 
 def _build_public_delegate(db: Session, user: models.User) -> schemas.PublicDelegateOut:
-    profiles = [p for p in user.delegate_profiles if p.is_active]
+    # Phase 33 D1 — is_active column dropped; all rows behaved as active anyway.
+    profiles = list(user.delegate_profiles)
     # Phase 18: pass each profile's ``org_id`` through so the per-topic
     # counts honor the profile's org scope. Profiles with ``org_id IS
     # NULL`` (legacy data, pre-Phase-4c) fall through to the no-filter
@@ -121,7 +122,7 @@ def list_public_delegates(
     q = db.query(models.User).join(
         models.DelegateProfile,
         models.DelegateProfile.user_id == models.User.id,
-    ).filter(models.DelegateProfile.is_active.is_(True))
+    )
 
     if org_id:
         q = q.filter(models.DelegateProfile.org_id == org_id)
@@ -150,7 +151,6 @@ def list_public_delegates(
         ).join(
             models.Topic, models.Topic.id == models.DelegateProfile.topic_id,
         ).filter(
-            models.DelegateProfile.is_active.is_(True),
             models.DelegateProfile.user_id.in_([u.id for u in users] or [""]),
         ).all()
 
@@ -185,7 +185,6 @@ def public_delegates_for_topic(
         models.DelegateProfile.user_id == models.User.id,
     ).filter(
         models.DelegateProfile.topic_id == topic_id,
-        models.DelegateProfile.is_active.is_(True),
     ).all()
 
     results = [_build_public_delegate(db, u) for u in users]
@@ -193,75 +192,14 @@ def public_delegates_for_topic(
     return results
 
 
-@router.post("/register", response_model=schemas.DelegateProfileOut, status_code=201)
-def register_as_delegate(
-    body: schemas.DelegateProfileCreate,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth_utils.get_current_user),
-):
-    """Register as a public delegate for a topic (or reactivate if previously deactivated)."""
-    topic = db.get(models.Topic, body.topic_id)
-    if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
-
-    existing = db.query(models.DelegateProfile).filter(
-        models.DelegateProfile.user_id == current_user.id,
-        models.DelegateProfile.topic_id == body.topic_id,
-    ).first()
-
-    if existing:
-        existing.is_active = True
-        existing.bio = body.bio
-        db.flush()
-        log_audit_event(
-            db, action="delegate_profile.created",
-            target_type="delegate_profile", target_id=existing.id,
-            actor_id=current_user.id, details={"topic_id": body.topic_id},
-        )
-        db.commit()
-        db.refresh(existing)
-        return existing
-
-    profile = models.DelegateProfile(
-        user_id=current_user.id,
-        topic_id=body.topic_id,
-        bio=body.bio,
-    )
-    db.add(profile)
-    db.flush()
-    log_audit_event(
-        db, action="delegate_profile.created",
-        target_type="delegate_profile", target_id=profile.id,
-        actor_id=current_user.id, details={"topic_id": body.topic_id},
-    )
-    db.commit()
-    db.refresh(profile)
-    return profile
-
-
-@router.delete("/register/{topic_id}", status_code=204)
-def deactivate_delegate_profile(
-    topic_id: str,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth_utils.get_current_user),
-):
-    """Deactivate public delegate status for a topic. Existing delegations remain."""
-    profile = db.query(models.DelegateProfile).filter(
-        models.DelegateProfile.user_id == current_user.id,
-        models.DelegateProfile.topic_id == topic_id,
-        models.DelegateProfile.is_active.is_(True),
-    ).first()
-    if not profile:
-        raise HTTPException(status_code=404, detail="No active delegate profile for this topic")
-
-    profile.is_active = False
-    db.flush()
-    log_audit_event(
-        db, action="delegate_profile.deactivated",
-        target_type="delegate_profile", target_id=profile.id,
-        actor_id=current_user.id, details={"topic_id": topic_id},
-    )
-    db.commit()
+# ---------------------------------------------------------------------------
+# Phase 33 D1 — legacy POST /api/delegates/register + DELETE /register/{topic_id}
+# removed. Phase 19 introduced the per-org delegate profile lifecycle with
+# the four-state visibility ladder (private / followers_only / public /
+# public_accepting). Phase 30 B1 retired the frontend's caller (Settings.jsx
+# now links to the canonical /{slug}/delegate-profile page); these endpoints
+# carried no real callers, and their sole effect was to toggle the
+# now-vestigial is_active column. The column drops in the Phase 33 migration.
 
 
 # ---------------------------------------------------------------------------
@@ -608,7 +546,6 @@ def public_delegate_page(
         .filter(
             models.DelegateProfile.user_id == target.id,
             models.DelegateProfile.org_id == org.id,
-            models.DelegateProfile.is_active.is_(True),
         )
         .all()
     )

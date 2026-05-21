@@ -107,7 +107,7 @@ def _make_pending_dp(
 ) -> tuple[models.DelegateProfile, models.Topic]:
     """Create a Topic + a pending DelegateProfile owned by user in org."""
     topic = models.Topic(
-        name=topic_name, description=topic_name,
+        name=topic_name,
         color="#000000", org_id=org.id,
     )
     db.add(topic); db.flush()
@@ -318,8 +318,8 @@ class TestTopicNameOrgScopedUniqueness:
                                  description="", join_policy="open")
         db_session.add_all([o1, o2]); db_session.flush()
         db_session.add_all([
-            models.Topic(name="Budget", description="", color="#000000", org_id=o1.id),
-            models.Topic(name="Budget", description="", color="#000000", org_id=o2.id),
+            models.Topic(name="Budget", color="#000000", org_id=o1.id),
+            models.Topic(name="Budget", color="#000000", org_id=o2.id),
         ])
         db_session.commit()
         assert db_session.query(models.Topic).filter_by(name="Budget").count() == 2
@@ -328,10 +328,10 @@ class TestTopicNameOrgScopedUniqueness:
         org = models.Organization(slug="rc3", name="RC3",
                                   description="", join_policy="open")
         db_session.add(org); db_session.flush()
-        db_session.add(models.Topic(name="Budget", description="",
+        db_session.add(models.Topic(name="Budget",
                                     color="#000000", org_id=org.id))
         db_session.commit()
-        db_session.add(models.Topic(name="Budget", description="",
+        db_session.add(models.Topic(name="Budget",
                                     color="#000000", org_id=org.id))
         with pytest.raises(IntegrityError):
             db_session.commit()

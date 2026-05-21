@@ -426,7 +426,11 @@ class Topic(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    description: Mapped[str] = mapped_column(String, nullable=False, default="")
+    # Phase 33 D2 — `description` column dropped. Phase 30.1's root-cause
+    # fix made `Topic.name` the canonical display name (uniquely scoped per-
+    # org via UniqueConstraint("org_id", "name")). The old `description`
+    # column was a same-value clone preserved for back-compat; Phase 33
+    # drops it.
     color: Mapped[str] = mapped_column(String, nullable=False, default="#6366f1")
     org_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("organizations.id"), nullable=True, index=True)
     # Phase 8.5: NULL = parent-org-wide (default); non-NULL = scoped to that sub-org.
@@ -806,7 +810,6 @@ class DelegateProfile(Base):
         String, ForeignKey("organizations.id"), nullable=True, index=True
     )
     bio: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # Phase 19 (D1) — per-topic visibility enum. Replaces the implicit
     # "having a row = publicly accepting delegation" model with three
     # explicit states. ``server_default='public_accepting'`` mirrors the

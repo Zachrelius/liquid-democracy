@@ -223,7 +223,9 @@ class UserSearchResultWithContext(BaseModel):
 
 class TopicCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
-    description: str = Field(default="", max_length=500)
+    # Phase 33 D2 — `description` removed; the field accepted from API requests
+    # is preserved on the request schema as ignored-extra so older clients
+    # don't 422. Pydantic's default behavior allows unknown fields silently.
     color: str = "#6366f1"
     # Phase 8.5: optional sub-org scope. NULL = parent-org-wide (default).
     sub_org_id: Optional[str] = None
@@ -239,7 +241,6 @@ class TopicCreate(BaseModel):
 class TopicOut(BaseModel):
     id: str
     name: str
-    description: str
     color: str
     # Phase 8.5: NULL for parent-org-wide topics. Tests/clients can rely on
     # this to render scope badges; existing single-org clients receive None
@@ -1124,7 +1125,11 @@ class DelegateProfileOut(BaseModel):
     topic_id: str
     topic: "TopicOut"
     bio: str
-    is_active: bool
+    # Phase 33 D1 — `is_active` column dropped from the model. The field was
+    # always True post-creation for current rows. We could remove it from the
+    # schema entirely, but keeping it as a literal True default preserves
+    # back-compat with any external API consumer that reads it.
+    is_active: bool = True
     created_at: datetime
 
     model_config = {"from_attributes": True}

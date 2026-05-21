@@ -153,7 +153,7 @@ def _make_topic(
     sub_org_id: Optional[str] = None,
 ) -> models.Topic:
     t = models.Topic(
-        name=name, description="", color="#000000",
+        name=name, color="#000000",
         org_id=org.id, sub_org_id=sub_org_id,
     )
     db.add(t)

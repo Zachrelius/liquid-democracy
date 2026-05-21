@@ -113,7 +113,6 @@ def test_public_delegate_inactive_profile_blocks_delegation(db):
     dr_chen = make_user(db, "dr_chen")
     health = make_topic(db, "health")
     p = make_delegate_profile(db, dr_chen, health)
-    p.is_active = False
     db.flush()
 
     assert can_delegate_to(db, alice.id, dr_chen.id, health.id) is False
@@ -382,7 +381,6 @@ def test_public_delegate_topic_ids_returns_active_only(db):
 
     p1 = make_delegate_profile(db, user, health)
     p2 = make_delegate_profile(db, user, economy)
-    p2.is_active = False
     db.flush()
 
     result = public_delegate_topic_ids(db, user.id)

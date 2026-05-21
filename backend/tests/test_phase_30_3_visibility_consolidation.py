@@ -103,7 +103,7 @@ def _join(db: Session, user: models.User, org: models.Organization) -> None:
 
 def _make_topic(db: Session, org: models.Organization, name: str) -> models.Topic:
     t = models.Topic(
-        name=name, description=name,
+        name=name,
         color="#000000", org_id=org.id,
     )
     db.add(t); db.flush()

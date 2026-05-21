@@ -242,7 +242,7 @@ def org_with_user(db_session):
     ))
 
     topic = models.Topic(
-        name="test-org:Budget", description="Budget",
+        name="test-org:Budget",
         color="#000000", org_id=org.id,
     )
     db_session.add(topic)

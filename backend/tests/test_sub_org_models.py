@@ -166,7 +166,7 @@ def test_topic_can_be_scoped_to_sub_org(db):
     parent = _make_org(db, "Parent", "parent")
     sub = _make_org(db, "Sub", "sub", parent_org_id=parent.id)
     topic = models.Topic(
-        name="Engineering Practices", description="", color="#000",
+        name="Engineering Practices", color="#000",
         sub_org_id=sub.id,
     )
     db.add(topic)
@@ -189,7 +189,7 @@ def test_delegate_profile_sub_org_id_defaults_null(db):
     user = make_user(db, "alice")
     topic = make_topic(db, "Healthcare")
     profile = models.DelegateProfile(
-        user_id=user.id, topic_id=topic.id, bio="", is_active=True,
+        user_id=user.id, topic_id=topic.id, bio="",
     )
     db.add(profile)
     db.flush()
@@ -211,7 +211,7 @@ def test_single_org_topic_proposal_membership_unaffected(db):
         user_id=user.id, org_id=org.id, role="member", status="active",
     )
     topic = models.Topic(
-        name="Healthcare", description="", color="#000", org_id=org.id,
+        name="Healthcare", color="#000", org_id=org.id,
     )
     db.add(topic)
     db.flush()

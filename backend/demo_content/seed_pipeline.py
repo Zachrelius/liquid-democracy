@@ -974,7 +974,6 @@ def seed_org_from_bible(
         if topic is None:
             topic = models.Topic(
                 name=name,
-                description=name,
                 color=_TOPIC_COLOR_PALETTE[idx % len(_TOPIC_COLOR_PALETTE)],
                 org_id=org.id,
             )
@@ -1031,7 +1030,6 @@ def seed_org_from_bible(
                     bio=dp.intro or "",
                     visibility=tv.state,
                     position_statement=pos_stmt,
-                    is_active=True,
                 )
                 if tv.state == "public_accepting":
                     dp_row.public_accepting_submitted_at = now

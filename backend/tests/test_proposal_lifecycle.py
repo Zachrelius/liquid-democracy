@@ -87,7 +87,7 @@ def _create_membership(db: Session, org, user, role="member"):
 
 
 def _create_topic(db: Session, org) -> models.Topic:
-    t = models.Topic(name="Environment", description="", color="#00ff00", org_id=org.id)
+    t = models.Topic(name="Environment", color="#00ff00", org_id=org.id)
     db.add(t)
     db.flush()
     return t

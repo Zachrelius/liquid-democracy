@@ -98,11 +98,11 @@ def test_public_delegates_filtered_by_sub_org_scope_for_authenticated_viewer(
 
     # Topics: parent-wide (sub_org_id=None) and sub-org-scoped.
     parent_topic = models.Topic(
-        name="parent_topic_pd", description="", color="#000000",
+        name="parent_topic_pd", color="#000000",
         sub_org_id=None,
     )
     sub_topic = models.Topic(
-        name="sub_topic_pd", description="", color="#000000",
+        name="sub_topic_pd", color="#000000",
         sub_org_id=sub_org.id,
     )
     test_db.add_all([parent_topic, sub_topic])
@@ -114,7 +114,6 @@ def test_public_delegates_filtered_by_sub_org_scope_for_authenticated_viewer(
         topic_id=parent_topic.id,
         org_id=parent_org.id,
         bio="",
-        is_active=True,
     ))
     # sub_only_delegate ONLY has a profile on the sub-org topic.
     test_db.add(models.DelegateProfile(
@@ -122,7 +121,6 @@ def test_public_delegates_filtered_by_sub_org_scope_for_authenticated_viewer(
         topic_id=sub_topic.id,
         org_id=parent_org.id,
         bio="",
-        is_active=True,
     ))
     test_db.commit()
 

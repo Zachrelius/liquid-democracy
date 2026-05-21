@@ -85,7 +85,7 @@ def _org(db: Session, slug: str) -> models.Organization:
 
 
 def _topic(db: Session, name: str, org: models.Organization) -> models.Topic:
-    t = models.Topic(name=name, description="", color="#000", org_id=org.id)
+    t = models.Topic(name=name, color="#000", org_id=org.id)
     db.add(t)
     db.flush()
     return t

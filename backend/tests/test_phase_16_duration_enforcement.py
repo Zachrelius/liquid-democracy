@@ -102,7 +102,7 @@ def _make_org(
 
 
 def _seed_topic(db: Session, org: models.Organization) -> models.Topic:
-    t = models.Topic(name="T", description="", color="#000000", org_id=org.id)
+    t = models.Topic(name="T", color="#000000", org_id=org.id)
     db.add(t)
     db.flush()
     return t
@@ -380,7 +380,7 @@ def test_post_global_proposal_no_org_skips_duration_gate(client, test_db):
     value is honored — but floor checks still apply."""
     user = _make_user(test_db, "global_dur")
     topic = models.Topic(
-        name="GlobalT", description="", color="#000000",
+        name="GlobalT", color="#000000",
     )
     test_db.add(topic)
     test_db.commit()
@@ -406,7 +406,7 @@ def test_post_global_proposal_below_floor_returns_400(client, test_db):
     """Floors apply even to global proposals (no permission gate to
     skip — voting_days < 0.05 is always invalid)."""
     user = _make_user(test_db, "global_dur_floor")
-    topic = models.Topic(name="GT2", description="", color="#000000")
+    topic = models.Topic(name="GT2", color="#000000")
     test_db.add(topic)
     test_db.commit()
 

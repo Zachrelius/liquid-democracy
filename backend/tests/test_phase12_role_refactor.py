@@ -261,7 +261,7 @@ def test_create_org_topic_moderator_succeeds_via_default_grant(client, test_db):
 
 
 def _seed_topic(db: Session, org: models.Organization) -> models.Topic:
-    t = models.Topic(name="T", description="", color="#000000", org_id=org.id)
+    t = models.Topic(name="T", color="#000000", org_id=org.id)
     db.add(t)
     db.flush()
     return t

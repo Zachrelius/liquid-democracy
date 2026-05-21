@@ -69,12 +69,10 @@ def _revoke_dependent_delegations(
             profile = db.query(models.DelegateProfile).filter(
                 models.DelegateProfile.user_id == followed_id,
                 models.DelegateProfile.topic_id == d.topic_id,
-                models.DelegateProfile.is_active.is_(True),
             ).first()
         else:
             profile = db.query(models.DelegateProfile).filter(
                 models.DelegateProfile.user_id == followed_id,
-                models.DelegateProfile.is_active.is_(True),
             ).first()
 
         if not profile:

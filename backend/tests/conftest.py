@@ -74,7 +74,7 @@ def make_user(db: Session, username: str, display_name: str | None = None) -> mo
 
 
 def make_topic(db: Session, name: str) -> models.Topic:
-    t = models.Topic(name=name, description="", color="#000000")
+    t = models.Topic(name=name, color="#000000")
     db.add(t)
     db.flush()
     return t
