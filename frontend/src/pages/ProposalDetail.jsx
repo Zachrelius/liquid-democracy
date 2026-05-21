@@ -1621,11 +1621,34 @@ export default function ProposalDetail() {
                 ))}
               </div>
               {/* Phase 32 W2 — Add an option button. Visible during
-                  deliberation OR voting based on proposal flags.
+                  deliberation based on proposal flags.
                   Phase 32.1 F2.1 — onAdded re-fetches via fetchData so
-                  the new option appears without a full page reload
-                  (avoids the prior window.location.reload that was
-                  jarring + lost scroll position). */}
+                  the new option appears without a full page reload.
+                  Voting-phase mount is below (the options-list section
+                  hides during voting to avoid duplicating the ballot UI;
+                  the Adder still needs to surface). */}
+              <WriteInOptionAdder
+                proposal={proposal}
+                onAdded={fetchData}
+              />
+            </div>
+          )}
+
+          {/* Phase 32.2 hotfix #2 — Write-in adder for voting phase.
+              When the options-list section above is hidden (because
+              !isVoting gate, since the ballot shows options instead),
+              the +Add option button was hidden alongside it. Mount the
+              Adder separately during voting so users can still add
+              write-ins when `effective_allow_write_ins_during_voting`
+              is true. The component self-gates on the resolver flags,
+              so this returns null if write-ins-during-voting is off. */}
+          {(proposal.voting_method === 'approval' || proposal.voting_method === 'ranked_choice')
+            && isVoting
+            && proposal.effective_allow_write_in_options
+            && proposal.effective_allow_write_ins_during_voting && (
+            <div className="bg-white border border-gray-200 rounded-xl p-5">
+              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-1">Add a write-in option</h3>
+              <p className="text-xs text-gray-500 mb-2">Write-in options added during voting become available immediately on the ballot.</p>
               <WriteInOptionAdder
                 proposal={proposal}
                 onAdded={fetchData}
