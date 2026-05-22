@@ -79,3 +79,25 @@ def test_instrument_tick_captures_error(monkeypatch, caplog):
     assert payload["audit"] == "tick"
     assert payload["tick_name"] == "failing_tick"
     assert "RuntimeError" in (payload.get("error") or "")
+
+
+# ============================================================================
+# Phase 35.1 — defensive: instrumentation env gate is False by default
+# ============================================================================
+
+
+def test_phase_35_1_env_gate_falsy_default(monkeypatch):
+    """Phase 35.1 defense: the env gate MUST be False when the var is unset,
+    empty, or set to common falsy strings. Catches an accidental
+    `SCALABILITY_AUDIT_INSTRUMENTATION_ENABLED=false` (literal "false")
+    being misread as truthy."""
+    import scalability_instrumentation as si
+    for v in ("", "false", "FALSE", "0", "no", "off", "anything-else"):
+        monkeypatch.setenv("SCALABILITY_AUDIT_INSTRUMENTATION_ENABLED", v)
+        reload(si)
+        assert si.INSTRUMENTATION_ENABLED is False, (
+            f"value {v!r} unexpectedly enabled instrumentation"
+        )
+    monkeypatch.delenv("SCALABILITY_AUDIT_INSTRUMENTATION_ENABLED", raising=False)
+    reload(si)
+    assert si.INSTRUMENTATION_ENABLED is False
