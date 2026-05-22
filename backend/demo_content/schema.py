@@ -191,13 +191,59 @@ class PersonaDelegationSpec:
 
 
 @dataclass
+class SubOrg:
+    """Phase 34 — structured sub-org definition for the seed pipeline.
+
+    A sub-org is a child Organization row under the parent (e.g., Cedar
+    Court Condos under Cedar Hollow HOA). It has its own members (a
+    subset of parent-org members), topics (declared by `topic_names`,
+    seeded as Topic rows with sub_org_id pointing to this sub-org),
+    proposals, optional admin (a member who gets 'admin' platform role
+    on the sub-org), and optional persona delegations on sub-org topics.
+
+    Sub-org members must also be parent-org members; the seed pipeline
+    creates a separate OrgMembership for each declared member with
+    org_id = sub-org. Quick-login persona delegations on sub-org topics
+    are seeded with the parent persona's bible user_id and
+    sub_org_id = this sub-org's id.
+
+    Topics with `topic_names` are scoped to the sub-org (Topic.org_id =
+    parent_org.id; Topic.sub_org_id = sub_org.id per the Phase 8.5
+    model). Proposals declared here are scoped via Proposal.org_id =
+    parent_org.id; Proposal.sub_org_id = sub_org.id.
+    """
+    slug: str
+    name: str
+    governance_type: str = ''
+    description: str = ''
+    member_user_ids: list[str] = field(default_factory=list)
+    admin_user_id: Optional[str] = None
+    topic_names: list[str] = field(default_factory=list)
+    proposals: list['Proposal'] = field(default_factory=list)
+    # Sub-org-scoped delegate-page topic visibilities. The seeded
+    # DelegateProfile carries sub_org_id = this sub-org for these topics.
+    # Format mirrors DelegatePage but only for sub-org topics.
+    delegate_topic_visibilities: list[tuple[str, str, str]] = field(default_factory=list)
+    # (member_user_id, topic_name, visibility_state)
+    # Sub-org-scoped persona delegations. Each entry: (delegator_user_id,
+    # delegate_user_id, topic_name). Topic must be in topic_names.
+    delegations: list[tuple[str, str, str]] = field(default_factory=list)
+
+
+@dataclass
 class OrgBible:
     slug: str
     display_name: str
     charter: str
     tone_notes: str
     recent_history: str
+    # Phase 23-era: list[str] of sub-org name strings (informational only;
+    # never wired). Phase 34 — sub_orgs_structured holds the seedable
+    # SubOrg dataclasses. Both retained: keeping `sub_orgs` lets existing
+    # bibles compile unchanged; only Cedar Hollow populates the new field
+    # in Phase 34.
     sub_orgs: list[str] = field(default_factory=list)
+    sub_orgs_structured: list[SubOrg] = field(default_factory=list)
     voting_methods_used: list[str] = field(default_factory=list)
     approval_tie_resolution: str = ''
     rcv_tie_resolution: str = ''
@@ -305,6 +351,7 @@ __all__ = [
     'FollowSeed',
     'PrivateDelegationSeed',
     'PersonaDelegationSpec',
+    'SubOrg',
     'OrgBible',
     # Trajectory dataclasses
     'Waypoint',
