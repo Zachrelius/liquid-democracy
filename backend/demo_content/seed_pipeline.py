@@ -875,7 +875,24 @@ def _seed_sub_org(
             ).first()
         )
 
-    # ---- SubOrgMembership rows ----
+    # ---- SubOrgMembership AND OrgMembership rows ----
+    # The existing sub-org infrastructure (Phase 8.5 era) wired
+    # SubOrgMembership for permission/role resolution but the standard
+    # /api/orgs surface (org switcher, require_org_membership middleware,
+    # OrgMembership-backed routes) only inspects OrgMembership. Real users
+    # creating a sub-org via the UI got a SubOrgMembership but not an
+    # OrgMembership, so they couldn't access /api/orgs/{sub_slug}/topics
+    # etc. — the FE worked around this with the dedicated
+    # /api/orgs/{parent}/sub-orgs/{sub}/* URL pattern.
+    #
+    # Phase 34 seeds BOTH SubOrgMembership (so the parent's Role matrix
+    # applies to sub-org permission checks via effective_role_on_sub_org)
+    # AND OrgMembership on the sub-org Organization itself (so /api/orgs
+    # surfaces the sub-org in the user's org list and require_org_membership
+    # passes for sub-org-prefixed routes). The seed-pipeline-side
+    # duplication is intentional — it lets the demo exercise the full
+    # sub-org UX without requiring a backend refactor of the existing
+    # middleware patterns.
     for uid in sub_bible.member_user_ids:
         user = bible_uid_to_user.get(uid)
         if user is None:
@@ -888,19 +905,24 @@ def _seed_sub_org(
             parent_admin_role.id if uid == sub_bible.admin_user_id
             else parent_member_role.id
         )
-        existing = db.query(models.SubOrgMembership).filter(
+        # SubOrgMembership (for sub-org-aware permission resolution)
+        existing_sub = db.query(models.SubOrgMembership).filter(
             models.SubOrgMembership.user_id == user.id,
             models.SubOrgMembership.sub_org_id == sub_org.id,
         ).first()
-        if existing is None:
+        if existing_sub is None:
             db.add(models.SubOrgMembership(
                 user_id=user.id,
                 sub_org_id=sub_org.id,
                 role_id=role_id,
                 status="active",
             ))
-        elif existing.role_id != role_id:
-            existing.role_id = role_id
+        elif existing_sub.role_id != role_id:
+            existing_sub.role_id = role_id
+        # OrgMembership on the sub-org Organization (for /api/orgs +
+        # require_org_membership). _ensure_membership upserts; safe to
+        # re-call on re-seed.
+        _ensure_membership(db, user.id, sub_org.id, role_id)
     db.flush()
 
     # ---- Topics (scoped to parent_org_id + sub_org_id) ----
