@@ -28,6 +28,7 @@ from .schema import (
     FollowSeed,
     PrivateDelegationSeed,
     PersonaDelegationSpec,
+    SubOrg,
     OrgBible,
 )
 
@@ -272,27 +273,14 @@ DELEGATE_PAGES = [
             "Long-Term Planning — the board workload is enough that I'd rather "
             "you vote your own conscience there."
         ),
+        # Phase 34 B3 — "Cedar Court Issues" relocated to Cedar Court Condos
+        # sub-org as "General Issues" (see HOA_BIBLE.sub_orgs_structured).
+        # Marcus's main-org page keeps Long-Term Planning visibility; his
+        # General Issues visibility lives at sub-org scope.
         topics=[
-            TopicVisibility('Cedar Court Issues', 'public_accepting'),
             TopicVisibility('Long-Term Planning', 'public'),
         ],
         position_statements=[
-            PositionStatement(
-                topic='Cedar Court Issues',
-                text=(
-                    "Cedar Court joined Cedar Hollow in 1991. Some of the "
-                    "structural questions from that period still aren't fully "
-                    "resolved — the dues differential being the most discussed.\n\n"
-                    "My approach: advocate for Cedar Court positions without "
-                    "framing every disagreement as Cedar Court vs. SFH. Most "
-                    "issues that look factional aren't. Issues that are genuinely "
-                    "structural deserve to be raised explicitly; the rest should "
-                    "be resolved on their merits.\n\n"
-                    "If you delegate here, expect me to support Cedar Court "
-                    "interests on questions where they're materially affected and "
-                    "to vote with the broader membership otherwise."
-                ),
-            ),
             PositionStatement(
                 topic='Long-Term Planning',
                 text=(
@@ -648,35 +636,19 @@ DELEGATE_PAGES = [
             "sharper edge on the dues question specifically. I will not "
             "pretend it's resolved when it isn't."
         ),
+        # Phase 34 B3 — "Cedar Court Issues" relocated to Cedar Court Condos
+        # sub-org as "General Issues" (see HOA_BIBLE.sub_orgs_structured).
+        # Karen's sub-org visibility for General Issues lives there.
         topics=[
-            TopicVisibility('Cedar Court Issues', 'public_accepting'),
             TopicVisibility('Budget', 'public'),
         ],
         position_statements=[
             PositionStatement(
-                topic='Cedar Court Issues',
-                text=(
-                    "Cedar Court was annexed in 1991 with a dues differential "
-                    "that was explained at the time as transitional. It is now "
-                    "thirty-four years old and structural rather than "
-                    "transitional. We pay the same dues as single-family "
-                    "households for unit values that are 30-40% lower. The "
-                    "math on that has been wrong since the Clinton "
-                    "administration.\n\n"
-                    "I'll vote for the dues-differential study, for "
-                    "infrastructure spending that addresses Cedar Court items "
-                    "(the fence, the lot resurfacing), and against framing "
-                    "this as Cedar Court vs. SFH when the underlying question "
-                    "is whether the bylaws were ever consistent with their own "
-                    "stated intent."
-                ),
-            ),
-            PositionStatement(
                 topic='Budget',
                 text=(
                     "Public, not accepting. Linda is the right Budget delegate. "
-                    "I keep my voice on Cedar Court Issues so the dues "
-                    "question stays visible."
+                    "I keep my voice on the Cedar Court Condos sub-org so the "
+                    "dues question stays visible."
                 ),
             ),
         ],
@@ -868,9 +840,11 @@ DELEGATE_PAGES = [
             "Millbrook-area HOA market and could move either direction over "
             "the next decade. The Long-Term Planning choices matter for that."
         ),
+        # Phase 34 B3 — "Cedar Court Issues" relocated to the Cedar Court
+        # Condos sub-org as "General Issues" (Karen + Marcus carry the
+        # main delegate roles there now).
         topics=[
             TopicVisibility('Long-Term Planning', 'public_accepting'),
-            TopicVisibility('Cedar Court Issues', 'public'),
         ],
         position_statements=[
             PositionStatement(
@@ -887,15 +861,6 @@ DELEGATE_PAGES = [
                     "the maintenance picture and against decisions that make "
                     "Cedar Hollow look like an HOA that doesn't know its own "
                     "balance sheet."
-                ),
-            ),
-            PositionStatement(
-                topic='Cedar Court Issues',
-                text=(
-                    "Public, not accepting. Cedar Court issues are material to "
-                    "long-term planning — the dues differential affects how "
-                    "the entire HOA is read in the local market — but Karen "
-                    "and Marcus are the right delegates for the topic itself."
                 ),
             ),
         ],
@@ -977,25 +942,13 @@ DELEGATE_PAGES = [
             "with Karen on most votes; sharper edge on access-and-affordability "
             "specifically."
         ),
+        # Phase 34 B3 — Yolanda's "Cedar Court Issues" page visibility moved
+        # to the Cedar Court Condos sub-org as "General Issues" (see
+        # HOA_BIBLE.sub_orgs_structured).
         topics=[
-            TopicVisibility('Cedar Court Issues', 'public_accepting'),
             TopicVisibility('Pool & Recreation', 'public'),
         ],
         position_statements=[
-            PositionStatement(
-                topic='Cedar Court Issues',
-                text=(
-                    "Cedar Court households are disproportionately working "
-                    "families. The dues differential and the deferred-"
-                    "maintenance pattern both land hardest on the households "
-                    "with the tightest margins, which are the households "
-                    "least able to push back through board representation. "
-                    "That pattern needs explicit voice.\n\n"
-                    "I'll vote for infrastructure spending that addresses "
-                    "Cedar Court items, against assessments that widen the "
-                    "differential, and for the dues study Tomás proposed."
-                ),
-            ),
             PositionStatement(
                 topic='Pool & Recreation',
                 text=(
@@ -1228,7 +1181,7 @@ PROPOSALS = [
             'Tennis court resurfacing ($12K) — cosmetic',
             'Clubhouse landscaping upgrade ($4K) — aesthetic',
         ],
-        topics=['Budget', 'Long-Term Planning', 'Cedar Court Issues'],
+        topics=['Budget', 'Long-Term Planning'],
     ),
 
     Proposal(
@@ -1315,7 +1268,7 @@ PROPOSALS = [
             "amendment. It's information that lets the membership decide "
             "whether to raise an amendment proposal at all."
         ),
-        topics=['Cedar Court Issues', 'Bylaws & Procedure', 'Budget'],
+        topics=['Bylaws & Procedure', 'Budget'],
     ),
 
     Proposal(
@@ -1828,7 +1781,8 @@ PRIVATE_DELEGATIONS = [
     PrivateDelegationSeed('hoa_ravi', 'hoa_linda', 'Budget'),
     PrivateDelegationSeed('hoa_patty', 'hoa_don', 'Budget'),
     PrivateDelegationSeed('hoa_helen', 'hoa_marisol', 'Pool & Recreation'),
-    PrivateDelegationSeed('hoa_yolanda', 'hoa_karen', 'Cedar Court Issues'),
+    # Phase 34 B3 — Yolanda → Karen on Cedar Court Issues relocated to the
+    # Cedar Court Condos sub-org delegations list (General Issues).
     PrivateDelegationSeed('hoa_diane', 'hoa_linda', 'Budget'),
     PrivateDelegationSeed('hoa_hank', 'hoa_frank', 'Long-Term Planning'),
 ]
@@ -1856,15 +1810,16 @@ PERSONA_DELEGATIONS = [
         ],
         topic_precedence=['Bylaws & Procedure', 'Long-Term Planning'],
     ),
-    # Brenda (Secretary, moderator) — light delegator, relevance_weighted
+    # Brenda (Secretary, moderator) — light delegator, relevance_weighted.
+    # Phase 34 B3 — Brenda's Cedar Court Issues delegation to Marcus moved
+    # to the Cedar Court Condos sub-org (General Issues).
     PersonaDelegationSpec(
         delegator_user_id='hoa_brenda',
         delegation_strategy='relevance_weighted',
         delegations=[
-            ('Cedar Court Issues', 'hoa_marcus'),
             ('Pool & Recreation', 'hoa_helen'),
         ],
-        topic_precedence=['Cedar Court Issues', 'Pool & Recreation'],
+        topic_precedence=['Pool & Recreation'],
     ),
     # Marcus (Member-at-Large) — heavy delegator, relevance_weighted
     PersonaDelegationSpec(
@@ -1892,18 +1847,18 @@ PERSONA_DELEGATIONS = [
         delegations=[],
         topic_precedence=[],
     ),
-    # Linda (Treasurer, moderator) — heavy delegator, strict_precedence
+    # Linda (Treasurer, moderator) — heavy delegator, strict_precedence.
+    # Phase 34 B3 — Linda's Cedar Court Issues delegation to Marcus moved
+    # to the Cedar Court Condos sub-org (General Issues).
     PersonaDelegationSpec(
         delegator_user_id='hoa_linda',
         delegation_strategy='strict_precedence',
         delegations=[
-            ('Cedar Court Issues', 'hoa_marcus'),
             ('Long-Term Planning', 'hoa_marcus'),
             ('Pool & Recreation', 'hoa_carl'),
             ('Elections', 'hoa_maureen'),
         ],
         topic_precedence=[
-            'Cedar Court Issues',
             'Long-Term Planning',
             'Pool & Recreation',
             'Elections',
@@ -1923,6 +1878,131 @@ PERSONA_DELEGATIONS = [
 
 
 # -----------------------------------------------------------------------------
+# Phase 34 — Cedar Court Condos sub-org
+# -----------------------------------------------------------------------------
+# The condo cluster declared in CHARTER ("28-unit condo cluster ('Cedar
+# Court'), added in a 1991 expansion") as a structural sub-org. ~18 of the
+# 21 named members carry sub-org membership; Marcus, Linda, Brenda do (per
+# spec D13); Janet, Don, Tomás don't.
+#
+# Topic "Cedar Court Issues" (formerly main-org) relocates here as
+# "General Issues" — Linda + Brenda's existing delegations to Marcus on
+# the old topic re-declare here with sub_org_id set, which exercises
+# Phase 18's sub_org_id retrofit on the relationship tables.
+#
+# Sub-org admin: Karen Mihalek. Rationale: retired RN with 32yr healthcare
+# career = pragmatic, time available, Cedar Court resident already
+# flagged in her Member role; the right kind of persona for "condo board
+# chair." Documented in closeout.
+
+CEDAR_COURT_CONDOS = SubOrg(
+    slug='cedar-court-condos',
+    name='Cedar Court Condos',
+    governance_type='Condominium Association',
+    description=(
+        '28-unit condo cluster within Cedar Hollow HOA. Annexed in 1991. '
+        'The Condo Association handles condo-specific governance — '
+        'building maintenance, common-area assessments, condo-internal '
+        'bylaws — alongside the parent HOA.'
+    ),
+    member_user_ids=[
+        # Quick-login personas (per spec D13)
+        'hoa_marcus',
+        'hoa_linda',
+        'hoa_brenda',
+        # Other named members who are Cedar Court residents per their bible roles
+        'hoa_karen',     # retired RN, Cedar Court — sub-org admin
+        'hoa_yolanda',   # daycare director, Cedar Court
+        # Other named members rounded into the condo block (selected for
+        # diversity of preset + role; not all Cedar Court residents in
+        # bible flavor text but the seed needs ~20 sub-org members per spec
+        # D12).
+        'hoa_patty',
+        'hoa_ravi',
+        'hoa_helen',
+        'hoa_frank',
+        'hoa_diane',
+        'hoa_wally',
+        'hoa_ron',
+        'hoa_marisol',
+        'hoa_ed',
+        'hoa_bev',
+        'hoa_carl',
+        'hoa_maureen',
+        'hoa_hank',
+    ],
+    admin_user_id='hoa_karen',
+    topic_names=[
+        'General Issues',
+        'Building Maintenance',
+        'Special Assessments',
+    ],
+    # Marcus carries the same Cedar Court delegate role he had on the old
+    # main-org topic. Karen — sub-org admin — also surfaces a public-
+    # accepting page on General Issues, mirroring her main-org rationale.
+    delegate_topic_visibilities=[
+        ('hoa_marcus', 'General Issues', 'public_accepting'),
+        ('hoa_karen', 'General Issues', 'public_accepting'),
+        ('hoa_yolanda', 'General Issues', 'public'),
+    ],
+    # Linda + Brenda's persona delegations on Cedar Court Issues → Marcus
+    # land in the sub-org. Yolanda → Karen on General Issues relocated from
+    # the PRIVATE_DELEGATIONS list (was Cedar Court Issues at main org).
+    delegations=[
+        ('hoa_linda', 'hoa_marcus', 'General Issues'),
+        ('hoa_brenda', 'hoa_marcus', 'General Issues'),
+        ('hoa_yolanda', 'hoa_karen', 'General Issues'),
+    ],
+    proposals=[
+        # Active voting proposal — binary.
+        Proposal(
+            proposal_id='P-CC-01',
+            title='Approve $1,200 per-unit special assessment for parking lot resealing',
+            proposer_user_id='hoa_karen',
+            voting_method='binary',
+            state_at_reset='voting, day 3 of 7',
+            body=(
+                'The Cedar Court private parking lot was last sealed in '
+                'spring 2019. The Condo Association received three bids; '
+                'lowest-responsible is $33,600 from Northshore Asphalt '
+                '(roughly $1,200 per unit). Reserves cover ~$8,000; the '
+                'shortfall is the special assessment.\n\n'
+                'Recommendation: approve. The lot is past replacement '
+                'window already; another year of deferral will likely '
+                'mean full repaving at 4-5x the cost.'
+            ),
+            topics=['Special Assessments'],
+        ),
+        # Active deliberation proposal — approval (multi-option).
+        Proposal(
+            proposal_id='P-CC-02',
+            title='Select common-area maintenance vendor (3-year contract)',
+            proposer_user_id='hoa_karen',
+            voting_method='approval',
+            state_at_reset='deliberation, day 5 of 14',
+            body=(
+                'Our existing maintenance vendor exits the market at year-'
+                'end. The Condo Association solicited three bids from '
+                'qualified vendors. Each option below is a 3-year fixed-'
+                'price contract for the same scope of work (hallway + '
+                'lobby cleaning, exterior groundskeeping, monthly '
+                'preventive maintenance walk-throughs).\n\n'
+                'Approval-vote so members can support multiple acceptable '
+                'options; the board will pick the winning vendor from '
+                'options that clear the approval threshold.'
+            ),
+            options=[
+                'Northshore Building Services ($18,400/yr)',
+                'Millbrook Property Partners ($16,800/yr)',
+                'CedarCare Local LLC ($19,200/yr)',
+            ],
+            topics=['Building Maintenance'],
+        ),
+    ],
+)
+
+
+# -----------------------------------------------------------------------------
 # OrgBible assembly
 # -----------------------------------------------------------------------------
 
@@ -1933,6 +2013,7 @@ HOA_BIBLE = OrgBible(
     tone_notes=TONE_NOTES,
     recent_history=RECENT_HISTORY,
     sub_orgs=[],
+    sub_orgs_structured=[CEDAR_COURT_CONDOS],
     voting_methods_used=['binary', 'approval', 'rcv'],
     approval_tie_resolution='broader_approval_base',
     rcv_tie_resolution='earliest_decisive_vote',

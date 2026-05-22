@@ -99,7 +99,10 @@ function OrgSwitcher() {
           <img
             src={logoUrl}
             alt={`${brandedOrgForLogo.name} logo`}
-            className="h-6 w-auto max-w-[100px] object-contain"
+            // Phase 34 F2 — render at full nav height (bar is h-14 = 56px,
+            // logo gets h-10 = 40px with 8px breathing room top/bottom).
+            // max-w accommodates wider aspect ratios without distortion.
+            className="h-10 w-auto max-w-[200px] object-contain"
           />
         )}
         {labelNode}

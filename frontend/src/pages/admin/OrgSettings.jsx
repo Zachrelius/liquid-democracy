@@ -218,6 +218,11 @@ export default function OrgSettings() {
   // disable-confirmation dialog state.
   const [savingPublicDelegates, setSavingPublicDelegates] = useState(false);
   const [pdDisableConfirm, setPdDisableConfirm] = useState(null);  // {count} or null
+  // Phase 34 F1 — per-section saving state for Voting Defaults, Default
+  // Approval Thresholds, Voting Methods.
+  const [savingVotingDefaults, setSavingVotingDefaults] = useState(false);
+  const [savingThresholds, setSavingThresholds] = useState(false);
+  const [savingVotingMethods, setSavingVotingMethods] = useState(false);
 
   // Phase 12.7 F4 — Branding section local state.
   //
@@ -564,6 +569,59 @@ export default function OrgSettings() {
     }
   }
 
+  // Phase 34 F1 — per-section saves for Voting Defaults, Default Approval
+  // Thresholds, Voting Methods. Each sends only that section's keys; PATCH
+  // /api/orgs/{slug} merges the settings JSON so untouched fields stay put.
+  async function handleSaveVotingDefaults() {
+    setSavingVotingDefaults(true);
+    try {
+      const payload = {
+        default_deliberation_days: settings.default_deliberation_days ?? 14,
+        default_voting_days: settings.default_voting_days ?? 7,
+      };
+      await api.patch(`/api/orgs/${currentOrg.slug}`, { settings: payload });
+      await refreshOrgs();
+      toast.success('Voting defaults saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save voting defaults');
+    } finally {
+      setSavingVotingDefaults(false);
+    }
+  }
+
+  async function handleSaveThresholds() {
+    setSavingThresholds(true);
+    try {
+      const payload = {
+        default_pass_threshold: settings.default_pass_threshold ?? 0.5,
+        default_quorum_threshold: settings.default_quorum_threshold ?? 0.4,
+      };
+      await api.patch(`/api/orgs/${currentOrg.slug}`, { settings: payload });
+      await refreshOrgs();
+      toast.success('Default thresholds saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save default thresholds');
+    } finally {
+      setSavingThresholds(false);
+    }
+  }
+
+  async function handleSaveVotingMethods() {
+    setSavingVotingMethods(true);
+    try {
+      const payload = {
+        allowed_voting_methods: settings.allowed_voting_methods || ['binary'],
+      };
+      await api.patch(`/api/orgs/${currentOrg.slug}`, { settings: payload });
+      await refreshOrgs();
+      toast.success('Voting methods saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save voting methods');
+    } finally {
+      setSavingVotingMethods(false);
+    }
+  }
+
   async function handleSaveTieResolution() {
     // Phase 17 F1 — PATCH /api/orgs/{slug} with the per-section
     // settings.tie_resolution payload. The backend B5 validator rejects
@@ -698,14 +756,19 @@ export default function OrgSettings() {
           </div>
         </div>
         {/* Phase 16 F4 — Save button repositioned from page bottom to here
-            so the general-settings save action is adjacent to its fields. */}
+            so the general-settings save action is adjacent to its fields.
+            Phase 34 F1 — renamed to "Save All Settings" since per-section
+            saves now exist for the other sections; this button still PATCHes
+            the entire settings payload (the everything-button). A mirror of
+            this button is rendered at the page bottom for users editing
+            lower sections. */}
         <div className="flex items-center gap-3">
           <button
             onClick={handleSave}
             disabled={saving}
             className="px-6 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
           >
-            {saving ? 'Saving...' : 'Save Settings'}
+            {saving ? 'Saving...' : 'Save All Settings'}
           </button>
           {msg && (
             <span className={`text-sm ${msg === 'Settings saved' ? 'text-green-600' : 'text-red-600'}`}>{msg}</span>
@@ -997,6 +1060,14 @@ export default function OrgSettings() {
               />
             </div>
           </div>
+          {/* Phase 34 F1 — per-section save button. */}
+          <button
+            onClick={handleSaveVotingDefaults}
+            disabled={savingVotingDefaults}
+            className="px-4 py-1.5 bg-[var(--brand-primary)] text-white text-xs rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+          >
+            {savingVotingDefaults ? 'Saving…' : 'Save voting defaults'}
+          </button>
         </div>
       </section>
 
@@ -1059,6 +1130,14 @@ export default function OrgSettings() {
                 <p className="text-xs text-gray-400 mt-1">0.0 to 1.0 (e.g. 0.4 = 40%)</p>
               </div>
             </div>
+            {/* Phase 34 F1 — per-section save button. */}
+            <button
+              onClick={handleSaveThresholds}
+              disabled={savingThresholds}
+              className="px-4 py-1.5 bg-[var(--brand-primary)] text-white text-xs rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+            >
+              {savingThresholds ? 'Saving…' : 'Save default thresholds'}
+            </button>
           </div>
         </section>
       )}
@@ -1110,6 +1189,14 @@ export default function OrgSettings() {
               <p className="text-xs text-gray-400">Voters rank options in preference order. 1 winner = IRV; multiple winners = STV.</p>
             </div>
           </label>
+          {/* Phase 34 F1 — per-section save button. */}
+          <button
+            onClick={handleSaveVotingMethods}
+            disabled={savingVotingMethods}
+            className="px-4 py-1.5 bg-[var(--brand-primary)] text-white text-xs rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+          >
+            {savingVotingMethods ? 'Saving…' : 'Save voting methods'}
+          </button>
         </div>
       </section>
 
@@ -1629,13 +1716,25 @@ export default function OrgSettings() {
         </div>
       )}
 
-      {/* Phase 16 F4 — the Save Settings button previously lived here at
-          the bottom of the page; it has been moved up to the General
-          section so users editing org name/description/join-policy see
-          a section-adjacent save action. The same button still PATCHes
-          the entire settings payload (general + voting defaults + voting
-          methods + deliberation + public delegates),
-          so this position change is JSX-only. */}
+      {/* Phase 34 F1 — bottom-of-page "Save All Settings" button so users
+          editing the lower sections (Branding / Deliberation Engagement /
+          Public Delegates / etc.) don't have to scroll back to the top
+          General section. Same handler as the top button; PATCHes the
+          entire settings payload. */}
+      <section className="space-y-3">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-6 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+          >
+            {saving ? 'Saving...' : 'Save All Settings'}
+          </button>
+          {msg && (
+            <span className={`text-sm ${msg === 'Settings saved' ? 'text-green-600' : 'text-red-600'}`}>{msg}</span>
+          )}
+        </div>
+      </section>
 
       {/* Danger Zone — Phase 12 Stage 2 F7 D4 UI hiding (see isSteward
           derivation comment at the top of this file). */}

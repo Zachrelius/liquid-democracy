@@ -794,6 +794,257 @@ def _seed_phase_32_2_demo_extras(
             db.flush()
 
 
+def _seed_sub_org(
+    db: Session,
+    *,
+    parent_org,
+    sub_bible,
+    bible_uid_to_user: dict,
+    counts: dict,
+    now: datetime,
+) -> None:
+    """Phase 34 B2/B3 — seed one sub-org from a bible SubOrg dataclass.
+
+    Idempotent: re-runs find existing sub-org by slug + parent_org_id and
+    refresh-update rather than create.
+
+    Creates:
+    - Organization with parent_org_id pointing at parent
+    - SubOrgMembership rows for each declared member (FK uses parent's
+      Role rows — Phase 15 Cluster S pattern; sub-orgs inherit the
+      parent's matrix wholesale)
+    - Sub-org admin gets the parent's 'admin' Role; others 'member'
+    - Topic rows scoped via Topic.org_id=parent + Topic.sub_org_id=sub_org
+    - DelegateProfile rows for visibilities, with sub_org_id set
+    - Delegation rows for declared delegations, with sub_org_id set
+      (exercises Phase 18's sub_org_id retrofit on relationship tables)
+    - Proposal rows scoped via Proposal.org_id=parent + sub_org_id=sub_org
+    """
+    import models
+    from role_seed import seed_default_roles_for_org
+
+    # ---- Sub-org Organization row ----
+    sub_org = db.query(models.Organization).filter(
+        models.Organization.slug == sub_bible.slug,
+        models.Organization.parent_org_id == parent_org.id,
+    ).first()
+    if sub_org is None:
+        sub_org = models.Organization(
+            slug=sub_bible.slug,
+            name=sub_bible.name,
+            description=sub_bible.description,
+            join_policy="open",
+            is_demo=True,
+            parent_org_id=parent_org.id,
+            governance_type=sub_bible.governance_type or None,
+        )
+        db.add(sub_org)
+        db.flush()
+    else:
+        sub_org.name = sub_bible.name
+        sub_org.description = sub_bible.description
+        sub_org.governance_type = sub_bible.governance_type or sub_org.governance_type
+        sub_org.is_demo = True
+
+    # Sub-orgs use the PARENT org's Role table (Phase 15 Cluster S).
+    parent_member_role = (
+        db.query(models.Role).filter(
+            models.Role.org_id == parent_org.id,
+            models.Role.system_key == "member",
+        ).first()
+    )
+    parent_admin_role = (
+        db.query(models.Role).filter(
+            models.Role.org_id == parent_org.id,
+            models.Role.system_key == "admin",
+        ).first()
+    )
+    if parent_member_role is None or parent_admin_role is None:
+        # Defensive: parent roles should exist by this point.
+        seed_default_roles_for_org(db, parent_org.id)
+        parent_member_role = (
+            db.query(models.Role).filter(
+                models.Role.org_id == parent_org.id,
+                models.Role.system_key == "member",
+            ).first()
+        )
+        parent_admin_role = (
+            db.query(models.Role).filter(
+                models.Role.org_id == parent_org.id,
+                models.Role.system_key == "admin",
+            ).first()
+        )
+
+    # ---- SubOrgMembership rows ----
+    for uid in sub_bible.member_user_ids:
+        user = bible_uid_to_user.get(uid)
+        if user is None:
+            log.warning(
+                "sub-org seed: unknown bible user_id %r in sub_org %r",
+                uid, sub_bible.slug,
+            )
+            continue
+        role_id = (
+            parent_admin_role.id if uid == sub_bible.admin_user_id
+            else parent_member_role.id
+        )
+        existing = db.query(models.SubOrgMembership).filter(
+            models.SubOrgMembership.user_id == user.id,
+            models.SubOrgMembership.sub_org_id == sub_org.id,
+        ).first()
+        if existing is None:
+            db.add(models.SubOrgMembership(
+                user_id=user.id,
+                sub_org_id=sub_org.id,
+                role_id=role_id,
+                status="active",
+            ))
+        elif existing.role_id != role_id:
+            existing.role_id = role_id
+    db.flush()
+
+    # ---- Topics (scoped to parent_org_id + sub_org_id) ----
+    sub_topics_by_name: dict[str, "models.Topic"] = {}
+    for idx, name in enumerate(sub_bible.topic_names):
+        topic = db.query(models.Topic).filter(
+            models.Topic.name == name,
+            models.Topic.org_id == parent_org.id,
+            models.Topic.sub_org_id == sub_org.id,
+        ).first()
+        if topic is None:
+            topic = models.Topic(
+                name=name,
+                color=_TOPIC_COLOR_PALETTE[idx % len(_TOPIC_COLOR_PALETTE)],
+                org_id=parent_org.id,
+                sub_org_id=sub_org.id,
+            )
+            db.add(topic)
+            db.flush()
+            counts["topics_created"] += 1
+        sub_topics_by_name[name] = topic
+
+    # ---- DelegateProfile per (member, topic) with sub_org_id ----
+    for (uid, topic_name, vis_state) in sub_bible.delegate_topic_visibilities:
+        user = bible_uid_to_user.get(uid)
+        topic = sub_topics_by_name.get(topic_name)
+        if user is None or topic is None:
+            log.warning(
+                "sub-org seed: skipping delegate visibility (uid=%r topic=%r)",
+                uid, topic_name,
+            )
+            continue
+        dp_row = db.query(models.DelegateProfile).filter(
+            models.DelegateProfile.user_id == user.id,
+            models.DelegateProfile.topic_id == topic.id,
+        ).first()
+        if dp_row is None:
+            dp_row = models.DelegateProfile(
+                user_id=user.id,
+                topic_id=topic.id,
+                org_id=parent_org.id,
+                sub_org_id=sub_org.id,
+                bio="",
+                visibility=vis_state,
+            )
+            if vis_state == "public_accepting":
+                dp_row.public_accepting_submitted_at = now
+                dp_row.public_accepting_approved_at = now
+            db.add(dp_row)
+            db.flush()
+
+    # ---- Delegations with sub_org_id (Phase 18 retrofit verification) ----
+    for (delegator_uid, delegate_uid, topic_name) in sub_bible.delegations:
+        delegator = bible_uid_to_user.get(delegator_uid)
+        delegate = bible_uid_to_user.get(delegate_uid)
+        topic = sub_topics_by_name.get(topic_name)
+        if delegator is None or delegate is None or topic is None:
+            log.warning(
+                "sub-org seed: skipping delegation (%r → %r on %r)",
+                delegator_uid, delegate_uid, topic_name,
+            )
+            continue
+        existing_d = db.query(models.Delegation).filter(
+            models.Delegation.delegator_id == delegator.id,
+            models.Delegation.delegate_id == delegate.id,
+            models.Delegation.org_id == parent_org.id,
+            models.Delegation.sub_org_id == sub_org.id,
+            models.Delegation.topic_id == topic.id,
+        ).first()
+        if existing_d is None:
+            db.add(models.Delegation(
+                delegator_id=delegator.id,
+                delegate_id=delegate.id,
+                org_id=parent_org.id,
+                sub_org_id=sub_org.id,
+                topic_id=topic.id,
+            ))
+            db.flush()
+
+    # ---- Sub-org Proposals ----
+    for sp in (sub_bible.proposals or []):
+        author = bible_uid_to_user.get(sp.proposer_user_id)
+        if author is None:
+            log.warning(
+                "sub-org seed: proposal %r references unknown user %r",
+                sp.proposal_id, sp.proposer_user_id,
+            )
+            continue
+        status, delib_start, vote_start, vote_end = (
+            _resolve_proposal_status_and_times(sp.state_at_reset, sp.voting_method, now)
+        )
+        bible_method = sp.voting_method
+        db_voting_method = (
+            "ranked_choice" if bible_method in ("rcv", "stv") else bible_method
+        )
+        existing_p = db.query(models.Proposal).filter(
+            models.Proposal.org_id == parent_org.id,
+            models.Proposal.sub_org_id == sub_org.id,
+            models.Proposal.title == sp.title,
+        ).first()
+        if existing_p is not None:
+            continue
+        proposal = models.Proposal(
+            title=sp.title,
+            body=sp.body,
+            author_id=author.id,
+            org_id=parent_org.id,
+            sub_org_id=sub_org.id,
+            status=status,
+            voting_method=db_voting_method,
+            num_winners=sp.num_winners,
+            deliberation_start=delib_start,
+            voting_start=vote_start,
+            voting_end=vote_end,
+            pass_threshold=0.50,
+            quorum_threshold=0.35,
+        )
+        db.add(proposal)
+        db.flush()
+        counts["proposals_created"] += 1
+
+        if sp.options:
+            for idx, label in enumerate(sp.options):
+                db.add(models.ProposalOption(
+                    proposal_id=proposal.id,
+                    label=label,
+                    display_order=idx,
+                ))
+            db.flush()
+
+        # ProposalTopic associations
+        for idx, topic_name in enumerate(sp.topics or []):
+            topic = sub_topics_by_name.get(topic_name)
+            if topic is None:
+                continue
+            relevance = 1.0 if idx == 0 else max(0.1, 1.0 - 0.2 * idx)
+            db.add(models.ProposalTopic(
+                proposal_id=proposal.id,
+                topic_id=topic.id,
+                relevance=relevance,
+            ))
+        db.flush()
+
+
 def seed_org_from_bible(
     db: Session,
     bible: OrgBible,
@@ -873,6 +1124,22 @@ def seed_org_from_bible(
         if logo_path:
             branding["logo_url"] = logo_path
         settings["branding"] = branding
+
+    # Phase 34 B1 — surface bible's voting_methods_used into the canonical
+    # `allowed_voting_methods` setting that proposal creation consults. The
+    # bible uses 'rcv'/'stv' aliases; the runtime expects 'ranked_choice'
+    # (Phase 23.2 B3 alias mapping). 'stv' has no runtime equivalent today
+    # so it's dropped here (the demo seed pipeline already maps stv→
+    # ranked_choice for proposal voting_method per Phase 23.2 B3).
+    _vm_alias = {"rcv": "ranked_choice", "stv": "ranked_choice"}
+    bible_methods = getattr(bible, "voting_methods_used", None) or []
+    if bible_methods:
+        normalized = []
+        for m in bible_methods:
+            mapped = _vm_alias.get(m, m)
+            if mapped not in normalized:
+                normalized.append(mapped)
+        settings["allowed_voting_methods"] = normalized
 
     org.settings = settings
 
@@ -1208,6 +1475,22 @@ def seed_org_from_bible(
             proposals_by_bible_id=proposals_by_bible_id,
             bible_uid_to_user=bible_uid_to_user,
             org=org,
+            now=now,
+        )
+
+    # ---- 6.6 Phase 34 B2/B3 — sub-org content (HOA only as of Phase 34) ----
+    # Walk bible.sub_orgs_structured and seed each child Organization with
+    # its members (SubOrgMembership rows), topics (Topic with sub_org_id),
+    # delegate-profile visibilities (DelegateProfile with sub_org_id),
+    # delegations (Delegation with sub_org_id — exercises Phase 18 retrofit),
+    # and proposals (Proposal with sub_org_id).
+    for sub_bible in getattr(bible, "sub_orgs_structured", []) or []:
+        _seed_sub_org(
+            db,
+            parent_org=org,
+            sub_bible=sub_bible,
+            bible_uid_to_user=bible_uid_to_user,
+            counts=counts,
             now=now,
         )
 

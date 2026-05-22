@@ -969,6 +969,11 @@ def get_demo_directory(
     orgs = (
         db.query(models.Organization)
         .filter(models.Organization.is_demo.is_(True))
+        # Phase 34 — filter out sub-orgs (parent_org_id IS NOT NULL) so the
+        # public demo directory shows top-level orgs only. Cedar Court
+        # Condos sub-org seeds with is_demo=True (so the wipe boundary
+        # covers it) but it shouldn't surface as a standalone tile.
+        .filter(models.Organization.parent_org_id.is_(None))
         .order_by(
             # NULLS LAST on display_order so any future demo org seeded
             # without an explicit order falls to the bottom rather than
