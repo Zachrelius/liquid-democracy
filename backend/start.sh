@@ -55,4 +55,17 @@ if [ "${SUSTAINED_MAJORITY_WORKER_DISABLE}" != "true" ]; then
 fi
 
 echo "Starting application…"
-exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS:-4}
+# Phase 35 D17 — Memory is the primary cost axis (97% of May 2026 usage).
+# Each uvicorn worker is a full Python process loading FastAPI + models +
+# SQLAlchemy engine + the digest_loop asyncio task. At Cedar Hollow scale
+# (76 members, single-instance friend pilot) 4 workers is massive
+# overprovisioning: each worker ~100-150MB RSS, so 4 workers ≈ 500MB
+# steady-state just to serve the same idle traffic 1 worker would.
+# Phase 33 also flagged the multi-worker scheduler race (Item 70) — 4
+# parallel digest ticks competing for the same demo-reset lock.
+#
+# Defaulting to 1 worker. WORKERS env var can override at the Railway
+# dashboard if real traffic ever demands concurrency. Single-worker is
+# more than enough for friend-pilot scale; adding workers when traffic
+# grows is a flip-the-env-var change, not a code change.
+exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS:-1}

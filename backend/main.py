@@ -162,6 +162,16 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # We want: SecurityHeaders → RequestLogging → CORS → route handler
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
+# Phase 35 A1 — scalability audit instrumentation. No-op when env gate is
+# off (default); when SCALABILITY_AUDIT_INSTRUMENTATION_ENABLED=true emits
+# JSON-per-line with per-request query count + duration + RSS to stdout.
+from scalability_instrumentation import (
+    RequestQueryInstrumentationMiddleware,
+    register_sqlalchemy_event_listeners,
+)
+from database import engine as _engine
+register_sqlalchemy_event_listeners(_engine)
+app.add_middleware(RequestQueryInstrumentationMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

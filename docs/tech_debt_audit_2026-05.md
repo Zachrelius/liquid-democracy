@@ -2,9 +2,18 @@
 
 Audit date: 2026-05-04 (Phase 12.8). Scope: PROGRESS.md from Phase 9 forward, codebase TODO/FIXME/HACK/XXX/BUG/NOTE comment grep (backend + frontend), `future_improvements_roadmap.md` Known Issues. Per spec §A1.5, items are classified into three lanes (TECH_DEBT / Z_ACTION_PENDING / MANUAL_VERIFICATION_GAP) before tier-assignment.
 
-**Most recent refresh:** 2026-05-21 (Phase 33 — tech-debt audit refresh + bundled Tier-1 fixes). Net change: 5 items resolved, 4 items deferred-with-rationale, 3 new items logged. See "Phase 33 closeout" entry below for the load-bearing changes (B-cluster response-builder structural fix + D1/D2 column drops + C1 /api/users/me fix + C2 demo-reset observability).
+**Most recent refresh:** 2026-05-22 (Phase 35 — Scalability Audit). Net change: 1 item resolved (Item 70 multi-worker race), 3 new items logged (Items 81 instrumentation env-gate, 82 synthetic load deferred, 83 SCHEDULER_WORKER_ID gate when workers>1). See "Phase 35 closeout" entry below for the audit findings + bundled fixes.
 
 **Edit history:**
+
+- 2026-05-22 (Phase 35 closeout — Scalability Audit):
+  - **Item 70 (multi-worker reset race) RESOLVED.** Phase 35 Fix 1 reduced uvicorn default workers from 4 to 1; only one digest_loop instance now runs the demo-reset check + halfway-deadline check + digest aggregation. The race on `is_demo_resetting` is structurally impossible at the new default. `WORKERS=N>1` env override re-introduces the race, captured as Item 83 below.
+  - **NEW Item 81 (Tier 2):** `SCALABILITY_AUDIT_INSTRUMENTATION_ENABLED` env var controls Phase 35's per-request and per-tick logging (`backend/scalability_instrumentation.py`). Default False — zero overhead when off. Flip to True on prod for ongoing performance monitoring; plan for the modest log-volume increase.
+  - **NEW Item 82 (Tier 2):** Phase 35 synthetic 5x load test deferred to Phase 35.1. Audit infrastructure ready (`scripts/phase35_synthetic_5x_bible.py` + `scripts/phase35_locustfile.py`); actual measurement needs a Z-coordinated temporary Railway service. See `docs/scalability_audit_2026-05.md` §8.
+  - **NEW Item 83 (Tier 3):** If/when `WORKERS=2+` ever becomes default, `digest_loop()` needs to gate on `SCHEDULER_WORKER_ID=0` (or equivalent) so only one worker process runs the tick. Phase 35 Fix 1's "only-one-worker → no race" is structurally band-aid relative to the proper "gate the loop to a single worker regardless of how many uvicorn processes are running."
+  - **Bundled Fix 1 (`start.sh`):** uvicorn workers default 4 → 1. Projected ~75% backend RSS reduction.
+  - **Bundled Fix 2 (`database.py`):** explicit SA pool config (`pool_size=2, max_overflow=3, pool_recycle=1800, pool_pre_ping=True`). Was implicit default 15 connections per worker (60 total potential pre-Fix-1).
+  - **Bundled Fix 3 (implicit):** Item 70 resolution as a side-effect of Fix 1.
 
 - 2026-05-21 (Phase 33 closeout — Tech Debt Audit Refresh):
   - **Item 67 (Phase 32.2 closeout, response-builder pattern) RESOLVED** via Phase 33 B-cluster. Three-passes-in-a-row bug pattern closed structurally: org-aware resolvers in `proposal_engagement_config.py` now raise `ValueError` when `proposal.org_id` is set but `org=None` (loud failure surfaces at test time, not in prod). All response builders that read org settings (only `_build_proposal_out`) already require `db: Session` after Phase 32.2 hotfix #1; verified no other builders need the treatment. CLAUDE.md convention paragraph added under existing schema-round-trip section.

@@ -947,7 +947,13 @@ async def digest_loop() -> None:
             try:
                 db = SessionLocal()
                 try:
-                    counts = run_one_tick(db)
+                    # Phase 35 A2 — wrap tick in instrument_tick so the
+                    # audit log captures duration + peak RSS + work units
+                    # when SCALABILITY_AUDIT_INSTRUMENTATION_ENABLED=true.
+                    from scalability_instrumentation import instrument_tick
+                    with instrument_tick("digest_scheduler") as _ctx:
+                        counts = run_one_tick(db)
+                        _ctx["work_units"] = counts
                     log.info("digest_loop: tick complete %s", counts)
                 finally:
                     db.close()
