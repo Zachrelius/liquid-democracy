@@ -1,6 +1,24 @@
-# Scalability Audit — 2026-05 (Phase 35)
+# Scalability Audit — 2026-05 (Phase 35 + 35.1)
 
-**Audit date:** 2026-05-22.
+**Audit date:** 2026-05-22 (Phase 35); refreshed 2026-05-22 with Phase
+35.1 status update.
+
+**Phase 35.1 status (2026-05-22):** the B + C clusters from Phase 35
+(temporary Railway service + 1x/5x synthetic load tests) were attempted
+in Phase 35.1 and **deferred to a Z-coordinated session** — the
+`RAILWAY_TOKEN` in the project `.env` is project-scoped to
+`keen-learning` and cannot provision a new Railway project autonomously.
+Phase 35.1 D11 explicitly forbids prod-load-testing fallback, so the
+spec's gate set could not be satisfied autonomously. The Phase 35.1
+deliverables shipped this pass:
+
+1. **Runbook for Z-coordinated execution** at `docs/scalability_audit_phase35_1_runbook.md`. Step-by-step from temp project provisioning through teardown; ~90 min Z time, ~$3-8 audit cost.
+2. **Defensive test** in `tests/test_phase_35_instrumentation.py` confirming the env gate stays default-False (defense in depth against an accidental prod enable that would push log volume up).
+3. **Refined projections** in §3-5 below, calibrated against Phase 35's three bundled fixes (workers, pool, scheduler race side-effect). Until the load test runs, these remain code-review-derived — but they're the best estimate we have grounded in the post-fix baseline.
+
+The load-test sections (§4-§6) remain in their Phase 35 code-review-derived state. When Z runs the runbook, those sections get updated with measured numbers in place of estimates.
+
+---
 **Methodology:** Measurement-first audit per Phase 35 spec. This pass combines
 (1) instrumentation infrastructure shipped for future load testing, (2) a
 code-review-driven memory profile of the current backend service, (3)
