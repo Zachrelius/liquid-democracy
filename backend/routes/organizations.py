@@ -194,6 +194,7 @@ def _org_to_out(
         description=org.description or "",
         join_policy=org.join_policy,
         settings=org.settings or {},
+        parent_org_id=org.parent_org_id,
         created_at=org.created_at,
         member_count=member_count,
         user_role=user_role,

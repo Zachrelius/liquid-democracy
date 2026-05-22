@@ -1457,6 +1457,10 @@ class OrgOut(BaseModel):
     description: str
     join_policy: str
     settings: dict = {}
+    # Phase 34 — parent_org_id needs to surface so the FE can distinguish
+    # sub-orgs from top-level orgs in the org switcher / Nav.jsx
+    # parentOrgs filter. None for top-level orgs.
+    parent_org_id: Optional[str] = None
     created_at: datetime
     member_count: Optional[int] = None
     user_role: Optional[str] = None
