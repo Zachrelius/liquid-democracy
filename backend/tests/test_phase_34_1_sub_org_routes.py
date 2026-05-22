@@ -245,3 +245,27 @@ class TestE5BrandingInheritsFromParent:
         assert resp.status_code == 200
         body = resp.json()
         assert body["branding"]["primary_color"] == "#3B5A3B"
+
+    def test_nested_sub_org_route_also_inherits_branding(self, db_session, client):
+        """Phase 34.1 hotfix #1 — the FE consumes
+        /api/orgs/{parent}/sub-orgs/{sub} for sub-org admin pages, which
+        goes through _sub_org_to_out (different serializer than
+        _org_to_out). QA caught that the original E5 fix only patched
+        _org_to_out; this regression covers the nested route."""
+        parent, sub, user = _setup_parent_and_sub(
+            db_session,
+            parent_branding={
+                "primary_color": "#3B5A3B",
+                "logo_url": "/demo_assets/parent-logo.jpg",
+            },
+            sub_branding=None,
+        )
+        headers = _login(client, "subuser")
+        resp = client.get(
+            f"/api/orgs/{parent.slug}/sub-orgs/{sub.slug}", headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        branding = body.get("branding", {})
+        assert branding.get("primary_color") == "#3B5A3B"
+        assert branding.get("logo_url") == "/demo_assets/parent-logo.jpg"

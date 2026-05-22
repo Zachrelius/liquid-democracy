@@ -212,6 +212,31 @@ def _sub_org_to_out(
                 if allowed:
                     user_permissions.append(perm_def.key)
 
+    # Phase 34.1 hotfix #1 — branding inheritance parallel to _org_to_out.
+    # Sub-org's branding fields fall through to parent's when null.
+    branding_dict = (sub_org.settings or {}).get("branding") or {}
+    parent_branding_dict: dict = {}
+    if sub_org.parent_org_id is not None:
+        parent = db.get(models.Organization, sub_org.parent_org_id)
+        if parent is not None:
+            parent_branding_dict = (parent.settings or {}).get("branding") or {}
+
+    def _inherit(key: str):
+        v = branding_dict.get(key)
+        if v is not None and v != "":
+            return v
+        pv = parent_branding_dict.get(key)
+        if pv is not None and pv != "":
+            return pv
+        return None
+
+    branding_out = schemas.BrandingOut(
+        logo_url=_inherit("logo_url"),
+        primary_color=_inherit("primary_color"),
+        accent_color=_inherit("accent_color"),
+        accent_auto_derived=bool(branding_dict.get("accent_auto_derived", False)),
+    )
+
     return schemas.SubOrgOut(
         id=sub_org.id,
         name=sub_org.name,
@@ -222,6 +247,7 @@ def _sub_org_to_out(
         member_count=member_count,
         user_role=user_role,
         user_permissions=user_permissions,
+        branding=branding_out,
         created_at=sub_org.created_at,
     )
 

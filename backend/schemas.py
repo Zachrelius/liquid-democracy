@@ -1587,6 +1587,10 @@ class SubOrgOut(BaseModel):
     # sub-org admin nav and in-page control gating, parallel to Phase
     # 12.5 B4's addition to OrgOut.
     user_permissions: list[str] = []
+    # Phase 34.1 hotfix #1 — branding surfaces on sub-org responses with
+    # parent-org fallback (same _inherit logic as OrgOut). FE consumes
+    # this when rendering sub-org admin pages.
+    branding: BrandingOut = BrandingOut()
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
