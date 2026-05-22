@@ -301,12 +301,15 @@ class TestResetJobReseedsFromBible:
         result = _run_full_reset(test_db)
         assert result.success
 
-        # All three demo orgs seeded
+        # All three demo orgs seeded (plus Phase 34 Cedar Court Condos
+        # sub-org under demo-cedar-hollow — also is_demo=True so the wipe
+        # boundary covers it).
         slugs = {o.slug for o in test_db.query(models.Organization).filter(
             models.Organization.is_demo == True,  # noqa: E712
         ).all()}
         assert slugs == {
             "demo-cedar-hollow", "demo-local-4021", "demo-westgate-coalition",
+            "cedar-court-condos",
         }
 
         # Cross-org users
@@ -316,11 +319,15 @@ class TestResetJobReseedsFromBible:
             ).first()
             assert u is not None, f"missing cross-org user {username!r}"
 
-        # Each org has proposals
+        # Each top-level org has proposals. Phase 34 sub-org Cedar Court
+        # Condos stores its proposals via org_id=parent + sub_org_id=sub,
+        # so it'd be counted under the parent — skip it here.
         for slug in slugs:
             org = test_db.query(models.Organization).filter(
                 models.Organization.slug == slug,
             ).one()
+            if org.parent_org_id is not None:
+                continue
             n_props = test_db.query(models.Proposal).filter(
                 models.Proposal.org_id == org.id,
             ).count()
