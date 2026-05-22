@@ -4,10 +4,26 @@ from typing import Generator
 
 from settings import settings
 
-engine = create_engine(
-    settings.database_url,
-    connect_args={"check_same_thread": False} if "sqlite" in settings.database_url else {},
-)
+# Phase 35 D17 — explicit SQLAlchemy pool config (was implicit SA default
+# pool_size=5 + max_overflow=10 = 15 connections per worker process).
+# At Cedar Hollow's single-instance friend-pilot scale, 15 connections per
+# worker is wasteful overprovisioning. Each idle connection holds a small
+# server-side allocation in PG + a client-side socket + ~5-10MB of
+# SA per-connection state. Reducing to pool_size=2 + max_overflow=3 gives
+# 5 connections per worker (more than sufficient for the single-worker
+# default in start.sh) and frees memory for application work.
+#
+# SQLite-on-test path: use SA's default (the connect_args check below).
+_engine_kwargs: dict = {
+    "connect_args": {"check_same_thread": False} if "sqlite" in settings.database_url else {},
+}
+if "sqlite" not in settings.database_url:
+    _engine_kwargs["pool_size"] = int(__import__("os").environ.get("DB_POOL_SIZE", "2"))
+    _engine_kwargs["max_overflow"] = int(__import__("os").environ.get("DB_MAX_OVERFLOW", "3"))
+    _engine_kwargs["pool_recycle"] = 1800  # 30 min — drop idle connections to free memory
+    _engine_kwargs["pool_pre_ping"] = True  # tolerate Railway's idle connection drops
+
+engine = create_engine(settings.database_url, **_engine_kwargs)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
