@@ -70,10 +70,14 @@ function OrgSwitcher() {
   function pickOrg(org) {
     setOpen(false);
     if (org.parent_org_id) {
-      // Sub-org pick: per spec line 194, land at the sub-org's settings.
+      // Sub-org pick. Phase 34.1 E1: land at the sub-org's proposals
+      // page (was settings — admin-gated, non-admin sub-org members
+      // hit a permission-gated view). admin-sub-org-proposals is
+      // the natural member-facing default; matches the parent-org
+      // pattern of landing on /proposals.
       const parent = userOrgs.find(o => o.id === org.parent_org_id);
       const pSlug = parent?.slug || parentSlug;
-      navigate(urlFor(pSlug, 'admin-sub-org-settings', org.slug));
+      navigate(urlFor(pSlug, 'admin-sub-org-proposals', org.slug));
     } else {
       navigate(urlFor(org, 'proposals'));
     }

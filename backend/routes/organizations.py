@@ -179,11 +179,32 @@ def _org_to_out(
     # branding-application logic doesn't have to handle "key missing"
     # vs. "value None" separately. accent_auto_derived defaults to False
     # for type consistency when no branding is configured.
+    #
+    # Phase 34.1 E5 — sub-org branding fields fall through to parent's
+    # values when null. logo_url + primary_color + accent_color each
+    # resolve via: sub-org value → parent value → None (platform
+    # default applied client-side). Implementation walks parent_org_id
+    # once (no deep recursion — sub-org nesting is single-level only).
     branding_dict = (org.settings or {}).get("branding") or {}
+    parent_branding_dict: dict = {}
+    if org.parent_org_id is not None:
+        parent = db.get(models.Organization, org.parent_org_id)
+        if parent is not None:
+            parent_branding_dict = (parent.settings or {}).get("branding") or {}
+
+    def _inherit(key: str):
+        v = branding_dict.get(key)
+        if v is not None and v != "":
+            return v
+        pv = parent_branding_dict.get(key)
+        if pv is not None and pv != "":
+            return pv
+        return None
+
     branding_out = schemas.BrandingOut(
-        logo_url=branding_dict.get("logo_url"),
-        primary_color=branding_dict.get("primary_color"),
-        accent_color=branding_dict.get("accent_color"),
+        logo_url=_inherit("logo_url"),
+        primary_color=_inherit("primary_color"),
+        accent_color=_inherit("accent_color"),
         accent_auto_derived=bool(branding_dict.get("accent_auto_derived", False)),
     )
 
@@ -1717,9 +1738,19 @@ def list_org_topics(
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
-    all_topics = db.query(models.Topic).filter(
-        models.Topic.org_id == org.id,
-    ).order_by(models.Topic.name).all()
+    # Phase 34.1 E3-sibling — when org_slug resolves to a sub-org, topics
+    # are stored with org_id=parent + sub_org_id=this-sub. Filter
+    # accordingly so /api/orgs/<sub_slug>/topics returns the sub-org's
+    # topics (was empty list pre-fix).
+    if org.parent_org_id is not None:
+        all_topics = db.query(models.Topic).filter(
+            models.Topic.org_id == org.parent_org_id,
+            models.Topic.sub_org_id == org.id,
+        ).order_by(models.Topic.name).all()
+    else:
+        all_topics = db.query(models.Topic).filter(
+            models.Topic.org_id == org.id,
+        ).order_by(models.Topic.name).all()
 
     # Phase 12 — admin-tier visibility (parent-org admin/steward see every
     # sub-org topic regardless of membership).
@@ -1888,7 +1919,17 @@ def list_org_proposals(
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
-    q = db.query(models.Proposal).filter(models.Proposal.org_id == org.id)
+    # Phase 34.1 E3 — when org_slug resolves to a sub-org, proposals are
+    # stored with org_id=parent + sub_org_id=this-sub. Filter accordingly
+    # so navigating to /api/orgs/<sub_slug>/proposals returns the sub-org's
+    # proposals (was empty list pre-fix).
+    if org.parent_org_id is not None:
+        q = db.query(models.Proposal).filter(
+            models.Proposal.org_id == org.parent_org_id,
+            models.Proposal.sub_org_id == org.id,
+        )
+    else:
+        q = db.query(models.Proposal).filter(models.Proposal.org_id == org.id)
     if status_filter:
         q = q.filter(models.Proposal.status == status_filter)
     if topic_id:
