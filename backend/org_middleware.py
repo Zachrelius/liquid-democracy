@@ -59,7 +59,21 @@ async def require_org_membership(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Verify current user is an active member of the org."""
+    """Verify current user is an active member of the org.
+
+    Phase 34.1 E4 — when ``org`` is a sub-org (has ``parent_org_id``), the
+    membership check also accepts SubOrgMembership on the sub-org OR
+    OrgMembership on the parent (Phase 18 retrofit pattern: a parent-org
+    member can navigate into the sub-org's read-only public surface; a
+    sub-org member without parent membership has SubOrgMembership only).
+    Without this, sub-orgs whose members were seeded only via
+    SubOrgMembership (the standard pattern — Phase 8.5's create_sub_org
+    route never created OrgMembership on the sub-org Organization row,
+    only SubOrgMembership) get 403 'Not a member' on every sub-org URL.
+    Phase 34 worked around this for Cedar Court Condos by ALSO creating
+    OrgMembership rows; Gloomhaven (friend pilot, created via the UI)
+    didn't get that workaround and 403'd every sub-org URL Z tried.
+    """
     if not org:
         raise HTTPException(status_code=400, detail="Organization context required")
     membership = db.query(OrgMembership).filter(
@@ -67,9 +81,31 @@ async def require_org_membership(
         OrgMembership.org_id == org.id,
         OrgMembership.status == "active",
     ).first()
-    if not membership:
-        raise HTTPException(status_code=403, detail="Not a member of this organization")
-    return membership
+    if membership:
+        return membership
+
+    # Phase 34.1 E4 — sub-org fallback. If org is a sub-org, accept either
+    # SubOrgMembership on this sub-org OR OrgMembership on the parent
+    # (parent-org admins implicitly see sub-org surfaces).
+    if org.parent_org_id is not None:
+        sub_mem = db.query(models.SubOrgMembership).filter(
+            models.SubOrgMembership.user_id == current_user.id,
+            models.SubOrgMembership.sub_org_id == org.id,
+            models.SubOrgMembership.status == "active",
+        ).first()
+        if sub_mem:
+            # Return the SubOrgMembership-equivalent shape — callers use
+            # ``membership.role`` for role-system-key checks; SubOrgMembership
+            # also has a ``role`` relationship to the parent's Role table.
+            return sub_mem
+        parent_mem = db.query(OrgMembership).filter(
+            OrgMembership.user_id == current_user.id,
+            OrgMembership.org_id == org.parent_org_id,
+            OrgMembership.status == "active",
+        ).first()
+        if parent_mem:
+            return parent_mem
+    raise HTTPException(status_code=403, detail="Not a member of this organization")
 
 
 async def require_org_moderator_or_admin(
