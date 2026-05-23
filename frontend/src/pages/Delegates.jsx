@@ -120,7 +120,15 @@ export default function Delegates() {
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
 
-  const slug = org_slug || currentOrg?.slug || null;
+  // Phase 34.3 G1 — prefer currentOrg.slug over the URL's org_slug param.
+  // Under the Phase 34.2 nested URL pattern (`/:org_slug/sub-orgs/:sub_slug/
+  // delegates`), useParams().org_slug is the PARENT slug, not the sub-org's.
+  // OrgContext correctly resolves currentOrg to the sub-org when sub_slug is
+  // in the URL, so currentOrg.slug is the right value for the API target.
+  // Pre-fix the slug fell through to org_slug (parent), causing the sub-org
+  // Delegates page to render the parent's 14-delegate list instead of the
+  // sub-org's 2-delegate list.
+  const slug = currentOrg?.slug || org_slug || null;
 
   const load = useCallback(async () => {
     if (!slug) return;
