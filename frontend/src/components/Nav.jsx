@@ -70,14 +70,14 @@ function OrgSwitcher() {
   function pickOrg(org) {
     setOpen(false);
     if (org.parent_org_id) {
-      // Sub-org pick. Phase 34.1 E1: land at the sub-org's proposals
-      // page (was settings — admin-gated, non-admin sub-org members
-      // hit a permission-gated view). admin-sub-org-proposals is
-      // the natural member-facing default; matches the parent-org
-      // pattern of landing on /proposals.
+      // Sub-org pick. Phase 34.2 E3: land at the NON-admin sub-org
+      // proposals page (was admin-sub-org-proposals — admin-gated,
+      // non-admin sub-org members hit a permission-gated view).
+      // Per locked decision 10: admins also land here; admin nav is
+      // reachable via the sidebar from this page.
       const parent = userOrgs.find(o => o.id === org.parent_org_id);
       const pSlug = parent?.slug || parentSlug;
-      navigate(urlFor(pSlug, 'admin-sub-org-proposals', org.slug));
+      navigate(urlFor(pSlug, 'sub-org-proposals', org.slug));
     } else {
       navigate(urlFor(org, 'proposals'));
     }
@@ -339,8 +339,23 @@ export default function Nav() {
               regardless. */}
           {navOrg && (
             <div className="hidden md:flex items-center gap-6">
+              {/* Phase 34.2 E1 — when navOrg is a sub-org, emit nested
+                  /{parent}/sub-orgs/{sub}/{resource} URLs so OrgContext
+                  resolves parent + sub correctly. The flat /{sub}/{resource}
+                  shape pre-fix hit the top-level org resolver in
+                  OrgContext, which couldn't find sub-org slugs in
+                  userOrgs unless the sub-org had a duplicated
+                  OrgMembership row (Phase 34 hotfix #1 added that for
+                  Cedar Court Condos; user-created sub-orgs like
+                  Gloomhaven didn't get it). The nested URL resolves via
+                  parent-org membership + fetchSubOrgsFor, which works
+                  for all sub-orgs regardless of OrgMembership shape. */}
               <NavLink
-                to={urlFor(navOrg, 'proposals')}
+                to={
+                  navOrg.parent_org_id && parentSlugForLinks
+                    ? urlFor(parentSlugForLinks, 'sub-org-proposals', navOrg.slug)
+                    : urlFor(navOrg, 'proposals')
+                }
                 end
                 className={({ isActive }) =>
                   `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
@@ -349,7 +364,11 @@ export default function Nav() {
                 Proposals
               </NavLink>
               <NavLink
-                to={urlFor(navOrg, 'delegations')}
+                to={
+                  navOrg.parent_org_id && parentSlugForLinks
+                    ? urlFor(parentSlugForLinks, 'sub-org-delegations', navOrg.slug)
+                    : urlFor(navOrg, 'delegations')
+                }
                 className={({ isActive }) =>
                   `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
                 }
@@ -358,7 +377,11 @@ export default function Nav() {
               </NavLink>
               {/* Phase 19 — public delegate browse for all members. */}
               <NavLink
-                to={urlFor(navOrg, 'delegates')}
+                to={
+                  navOrg.parent_org_id && parentSlugForLinks
+                    ? urlFor(parentSlugForLinks, 'sub-org-delegates', navOrg.slug)
+                    : urlFor(navOrg, 'delegates')
+                }
                 className={({ isActive }) =>
                   `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
                 }
