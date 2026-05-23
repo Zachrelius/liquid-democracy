@@ -325,13 +325,30 @@ def browse_org_delegates(
 
     # ----- Find candidate user IDs: users with at least one
     # public_accepting topic in this org. -----
-    base_q = (
-        db.query(models.DelegateProfile.user_id)
-        .filter(
-            models.DelegateProfile.org_id == org.id,
-            models.DelegateProfile.visibility == "public_accepting",
+    # Phase 34.2 F3 — when org_slug resolves to a sub-org, DelegateProfile
+    # rows are stored with org_id=parent + sub_org_id=this-sub (same
+    # pattern as Phase 34.1 E3 for proposals + topics). Without this
+    # branch the sub-org Delegates page came back empty even when
+    # public_accepting profiles existed (Karen + Marcus on General
+    # Issues in Cedar Court Condos).
+    if org.parent_org_id is not None:
+        base_q = (
+            db.query(models.DelegateProfile.user_id)
+            .filter(
+                models.DelegateProfile.org_id == org.parent_org_id,
+                models.DelegateProfile.sub_org_id == org.id,
+                models.DelegateProfile.visibility == "public_accepting",
+            )
         )
-    )
+    else:
+        base_q = (
+            db.query(models.DelegateProfile.user_id)
+            .filter(
+                models.DelegateProfile.org_id == org.id,
+                models.DelegateProfile.sub_org_id.is_(None),
+                models.DelegateProfile.visibility == "public_accepting",
+            )
+        )
     if topic_id is not None:
         base_q = base_q.filter(models.DelegateProfile.topic_id == topic_id)
     candidate_user_ids = {row[0] for row in base_q.distinct().all()}

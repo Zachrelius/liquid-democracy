@@ -115,6 +115,37 @@ export function urlFor(org, kind, ...args) {
       return `/${slug}/admin/sub-orgs/${subSlug}/polises/${polisId}`;
     }
 
+    // Phase 34.2 E1 — non-admin sub-org routes. URL shape:
+    //   /{parent_slug}/sub-orgs/{sub_slug}/{resource}
+    // Pre-34.2 the Nav top-bar emitted flat /{sub_slug}/{resource} which
+    // hit the top-level resolver in OrgContext — `userOrgs.find(o => o.slug
+    // === sub_slug)` finds the sub-org only if it has an OrgMembership row
+    // (Phase 34 hotfix #1 added this for Cedar Court Condos; user-created
+    // sub-orgs like Gloomhaven don't have one). The nested URL pattern
+    // resolves the PARENT via userOrgs + the sub via fetchSubOrgsFor, so
+    // it works for ALL sub-orgs regardless of OrgMembership shape.
+    // `slug` here is the PARENT org's slug; `args[0]` is the sub-org slug.
+    case 'sub-org-proposals': {
+      const [subSlug] = args;
+      return `/${slug}/sub-orgs/${subSlug}/proposals`;
+    }
+    case 'sub-org-proposal-detail': {
+      const [subSlug, id] = args;
+      return `/${slug}/sub-orgs/${subSlug}/proposals/${id}`;
+    }
+    case 'sub-org-delegations': {
+      const [subSlug] = args;
+      return `/${slug}/sub-orgs/${subSlug}/delegations`;
+    }
+    case 'sub-org-delegates': {
+      const [subSlug] = args;
+      return `/${slug}/sub-orgs/${subSlug}/delegates`;
+    }
+    case 'sub-org-delegate-public': {
+      const [subSlug, handle] = args;
+      return `/${slug}/sub-orgs/${subSlug}/delegates/${handle}`;
+    }
+
     default:
       throw new Error(`urlFor: unknown route kind '${kind}'`);
   }

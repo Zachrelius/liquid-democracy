@@ -258,7 +258,7 @@ export default function Proposals() {
   // Phase 8.5 — UI-only scope filter. 'all' (default) keeps the existing
   // server payload as-is; 'current' narrows to proposals whose sub_org_id
   // matches currentOrg when currentOrg is itself a sub-org.
-  const [scopeFilter, setScopeFilter] = useState('all');
+  // Phase 34.2 F1 — scopeFilter state removed alongside the dead UI toggle.
   const [subOrgsById, setSubOrgsById] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -402,33 +402,13 @@ export default function Proposals() {
           </select>
         )}
 
-        {/* Phase 8.5 — scope filter. Only meaningful when currentOrg is a
-            sub-org (server already returns the right payload; this is a
-            UI narrow). */}
-        {currentOrg?.parent_org_id && (
-          <div className="flex bg-white border border-gray-200 rounded-lg overflow-hidden">
-            <button
-              onClick={() => setScopeFilter('all')}
-              className={`px-3 py-1.5 text-sm transition-colors ${
-                scopeFilter === 'all'
-                  ? 'bg-[var(--brand-primary)] text-white'
-                  : 'text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              Everything I&apos;m eligible for
-            </button>
-            <button
-              onClick={() => setScopeFilter('current')}
-              className={`px-3 py-1.5 text-sm transition-colors ${
-                scopeFilter === 'current'
-                  ? 'bg-[var(--brand-primary)] text-white'
-                  : 'text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              {currentOrg.name} only
-            </button>
-          </div>
-        )}
+        {/* Phase 34.2 F1 — sub-org scope filter removed. The toggle didn't
+            filter anything meaningfully (server payload was already scoped
+            for sub-org URL routes) and the dead UI confused users. A
+            functional context-aware filter ("this sub-org" vs "this
+            sub-org + main-org topics I'm eligible for" vs "everything
+            across orgs") is logged as a Followup; if product demand
+            surfaces, build it as a separate design pass. */}
       </div>
 
       {/* Content */}
@@ -461,12 +441,6 @@ export default function Proposals() {
       ) : (
         <div className="space-y-4">
           {proposals
-            .filter(p => {
-              if (scopeFilter !== 'current') return true;
-              // 'current' narrows to the current sub-org. Only meaningful when
-              // currentOrg is a sub-org; the toggle isn't shown otherwise.
-              return p.sub_org_id === currentOrg?.id;
-            })
             .map(p => {
               const subOrg = p.sub_org_id ? subOrgsById[p.sub_org_id] : null;
               // Decision 7 — non-member viewers see read-only treatment. The

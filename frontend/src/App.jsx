@@ -400,6 +400,62 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        {/* Phase 34.2 E1 — non-admin sub-org routes. Mount the same Org-
+            scoped components but at the /<parent>/sub-orgs/<sub>/<resource>
+            URL pattern so OrgContext can resolve parent + sub from URL
+            params (params.org_slug + params.sub_slug). This is the route
+            shape Nav.jsx now emits when navigating inside a sub-org
+            context. */}
+        <Route
+          path="/:org_slug/sub-orgs/:sub_slug/proposals"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><Proposals /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/sub-orgs/:sub_slug/proposals/:id"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><ProposalDetail /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/sub-orgs/:sub_slug/delegations"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><Delegations /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/sub-orgs/:sub_slug/delegates"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><Delegates /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/sub-orgs/:sub_slug/delegates/:handle_or_username"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><DelegatePublic /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
         {/* Phase 11 D3 — voter-facing Polis page. Was /orgs/:slug/polises/...
             pre-refactor; drops the /orgs/ prefix to match D1. */}
         <Route

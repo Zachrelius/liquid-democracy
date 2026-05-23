@@ -28,9 +28,33 @@ const CHAIN_OPTIONS = [
 // Draggable. It receives a `priorityNumber` (1-indexed) and a
 // `dragHandleProps` set; the parent `Draggable` passes the row's
 // `innerRef` + `draggableProps` via the `dragProvided` arg.
+// Phase 34.2 F2.2 — topic-scope badge. Two states: "Org-wide topic"
+// when topic.sub_org_id is null, "Sub-org topic · <name>" when scoped to
+// a specific sub-org. Applies on both main-org and sub-org Delegations
+// pages so labeling is consistent. Returns null for null/undefined topics
+// (global default rows render their own "Global default" label).
+function TopicScopeBadge({ topic, subOrgsById }) {
+  if (!topic) return null;
+  if (!topic.sub_org_id) {
+    return (
+      <span className="ml-2 inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-gray-100 text-gray-600">
+        Org-wide topic
+      </span>
+    );
+  }
+  const subName = subOrgsById?.[topic.sub_org_id]?.name;
+  return (
+    <span className="ml-2 inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-amber-50 text-amber-700 border border-amber-200">
+      Sub-org topic{subName ? ` · ${subName}` : ''}
+    </span>
+  );
+}
+
+
 function DelegationRow({
   delegation,
   topic,
+  subOrgsById,
   onChainChange,
   onChangeDelegate,
   onRemove,
@@ -86,11 +110,12 @@ function DelegationRow({
         ) : null}
       </td>
       <td className="py-3 px-4">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {priorityNumber != null && (
             <span className="text-xs text-gray-400 w-5 text-right select-none">{priorityNumber}.</span>
           )}
           {topic ? <TopicBadge topic={topic} /> : <span className="text-xs italic text-gray-500">Global default</span>}
+          <TopicScopeBadge topic={topic} subOrgsById={subOrgsById} />
         </div>
       </td>
       <td className="py-3 px-4">
@@ -124,6 +149,7 @@ function DelegationRow({
 function DelegationCard({
   delegation,
   topic,
+  subOrgsById,
   onChainChange,
   onChangeDelegate,
   onRemove,
@@ -179,6 +205,7 @@ function DelegationCard({
             <span className="text-xs text-gray-400 select-none">{priorityNumber}.</span>
           )}
           {topic ? <TopicBadge topic={topic} /> : <span className="text-xs italic text-gray-500">Global default</span>}
+          <TopicScopeBadge topic={topic} subOrgsById={subOrgsById} />
         </div>
         <div className="flex gap-3">
           <button onClick={() => onChangeDelegate(delegation)} disabled={unverified} className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline">Change</button>
@@ -213,7 +240,7 @@ export default function Delegations() {
   // Phase 18 F1 — page is now per-org. currentOrg is URL-derived
   // (OrgScopedLayout wraps this route, so loading/accessDenied is handled
   // upstream). The parent slug drives the org-scoped API URL.
-  const { currentOrg, userOrgs } = useOrg();
+  const { currentOrg, userOrgs, subOrgsByParent, fetchSubOrgsFor } = useOrg();
   const navigate = useNavigate();
   const toast = useToast();
   const confirm = useConfirm();
@@ -230,6 +257,19 @@ export default function Delegations() {
     return currentOrg;
   }, [currentOrg, userOrgs]);
   const parentSlug = parentOrg?.slug || null;
+
+  // Phase 34.2 F2.2 — load parent's sub-orgs so the topic-scope badge
+  // can render the sub-org name when a delegation is on a sub-org-scoped
+  // topic.
+  useEffect(() => {
+    if (parentSlug) {
+      fetchSubOrgsFor(parentSlug);
+    }
+  }, [parentSlug, fetchSubOrgsFor]);
+  const subOrgsById = useMemo(() => {
+    const subs = (parentSlug && subOrgsByParent[parentSlug]) || [];
+    return Object.fromEntries(subs.map(s => [s.id, s]));
+  }, [parentSlug, subOrgsByParent]);
 
   // Filter the org switcher to parent-org members the user belongs to.
   // The Nav.jsx OrgSwitcher pattern lives in the global header; this
@@ -294,9 +334,25 @@ export default function Delegations() {
 
   const topicMap = Object.fromEntries(topics.map(t => [t.id, t]));
 
+  // Phase 34.2 F2.1 — when viewing in a sub-org context (currentOrg has
+  // parent_org_id), filter delegations to only those whose topic is
+  // scoped to THIS sub-org OR is org-wide (topic.sub_org_id IS NULL).
+  // Excludes delegations on topics scoped to OTHER sub-orgs.
+  const inSubOrgContext = Boolean(currentOrg?.parent_org_id);
+  const filteredDelegations = useMemo(() => {
+    if (!inSubOrgContext) return delegations;
+    return delegations.filter(d => {
+      if (d.topic_id == null) return true; // global delegation — always show
+      const t = topicMap[d.topic_id];
+      if (!t) return true; // unknown topic — show defensively
+      // Sub-org topic: must match current sub-org. Org-wide topic: show.
+      return t.sub_org_id == null || t.sub_org_id === currentOrg.id;
+    });
+  }, [delegations, topicMap, inSubOrgContext, currentOrg]);
+
   // Separate global vs topic-specific delegations
-  const globalDel = delegations.find(d => d.topic_id == null);
-  const topicDels = delegations.filter(d => d.topic_id != null);
+  const globalDel = filteredDelegations.find(d => d.topic_id == null);
+  const topicDels = filteredDelegations.filter(d => d.topic_id != null);
 
   // Topics that don't have a delegation yet
   const undelegatedTopics = topics.filter(t =>
@@ -562,6 +618,7 @@ export default function Delegations() {
                           <DelegationRow
                             delegation={d}
                             topic={topicMap[d.topic_id]}
+                            subOrgsById={subOrgsById}
                             onChainChange={load}
                             onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.name, existingDelegation: del })}
                             onRemove={handleRemove}
@@ -620,6 +677,7 @@ export default function Delegations() {
                         <DelegationCard
                           delegation={d}
                           topic={topicMap[d.topic_id]}
+                          subOrgsById={subOrgsById}
                           onChainChange={load}
                           onChangeDelegate={del => setModal({ topicId: del.topic_id, topicName: topicMap[del.topic_id]?.name, existingDelegation: del })}
                           onRemove={handleRemove}

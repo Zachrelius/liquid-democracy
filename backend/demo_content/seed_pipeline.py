@@ -279,6 +279,23 @@ _TOPIC_COLOR_PALETTE = [
     "#06b6d4", "#84cc16", "#ec4899", "#0ea5e9", "#f97316",
 ]
 
+# Phase 34.2 D1 — distinct palette for sub-org topics so visitors can
+# visually distinguish them from main-org topics in shared listing views
+# (e.g., the main-org proposals page that surfaces sub-org proposals too).
+# Same hue family but darker/saturated variants of the main palette,
+# rotated so the first sub-org topic doesn't collide with the first
+# main-org topic.
+_SUB_ORG_TOPIC_COLOR_PALETTE = [
+    "#7c3aed",  # purple
+    "#0891b2",  # cyan/teal
+    "#b45309",  # amber/brown
+    "#be185d",  # pink/magenta
+    "#15803d",  # darker green
+    "#9333ea",  # violet
+    "#0e7490",  # dark cyan
+    "#a16207",  # ochre
+]
+
 
 def _collect_topic_names_from_bible(bible: OrgBible) -> list[str]:
     """Walk the bible to collect every topic name referenced.
@@ -936,7 +953,10 @@ def _seed_sub_org(
         if topic is None:
             topic = models.Topic(
                 name=name,
-                color=_TOPIC_COLOR_PALETTE[idx % len(_TOPIC_COLOR_PALETTE)],
+                # Phase 34.2 D1 — sub-org topics use the dedicated sub-org
+                # palette so they visually differentiate from the main org's
+                # topics in shared listing surfaces.
+                color=_SUB_ORG_TOPIC_COLOR_PALETTE[idx % len(_SUB_ORG_TOPIC_COLOR_PALETTE)],
                 org_id=parent_org.id,
                 sub_org_id=sub_org.id,
             )
