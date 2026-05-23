@@ -945,6 +945,11 @@ def _seed_sub_org(
     # ---- Topics (scoped to parent_org_id + sub_org_id) ----
     sub_topics_by_name: dict[str, "models.Topic"] = {}
     for idx, name in enumerate(sub_bible.topic_names):
+        # Phase 34.2 D1 — sub-org topics use the dedicated sub-org palette so
+        # they visually differentiate from the main org's topics in shared
+        # listing surfaces. Color refreshed on re-seed (was a no-op on
+        # update path which made the palette change invisible on re-runs).
+        sub_color = _SUB_ORG_TOPIC_COLOR_PALETTE[idx % len(_SUB_ORG_TOPIC_COLOR_PALETTE)]
         topic = db.query(models.Topic).filter(
             models.Topic.name == name,
             models.Topic.org_id == parent_org.id,
@@ -953,16 +958,16 @@ def _seed_sub_org(
         if topic is None:
             topic = models.Topic(
                 name=name,
-                # Phase 34.2 D1 — sub-org topics use the dedicated sub-org
-                # palette so they visually differentiate from the main org's
-                # topics in shared listing surfaces.
-                color=_SUB_ORG_TOPIC_COLOR_PALETTE[idx % len(_SUB_ORG_TOPIC_COLOR_PALETTE)],
+                color=sub_color,
                 org_id=parent_org.id,
                 sub_org_id=sub_org.id,
             )
             db.add(topic)
             db.flush()
             counts["topics_created"] += 1
+        else:
+            topic.color = sub_color
+            db.flush()
         sub_topics_by_name[name] = topic
 
     # ---- DelegateProfile per (member, topic) with sub_org_id ----
