@@ -28,24 +28,31 @@ const CHAIN_OPTIONS = [
 // Draggable. It receives a `priorityNumber` (1-indexed) and a
 // `dragHandleProps` set; the parent `Draggable` passes the row's
 // `innerRef` + `draggableProps` via the `dragProvided` arg.
-// Phase 34.2 F2.2 — topic-scope badge. Two states: "Org-wide topic"
-// when topic.sub_org_id is null, "Sub-org topic · <name>" when scoped to
-// a specific sub-org. Applies on both main-org and sub-org Delegations
-// pages so labeling is consistent. Returns null for null/undefined topics
-// (global default rows render their own "Global default" label).
-function TopicScopeBadge({ topic, subOrgsById }) {
+// Phase 34.2 F2.2 + Phase 34.3 G4 — topic-scope badge. Two states:
+//   - Org-wide topic → quiet "Org-wide" label, gray. Renders only when
+//     the variant prop says "show org-wide labels too"; defaults to
+//     omitted so the absence of a badge reads as "org-wide" by visual
+//     context on the main-org page.
+//   - Sub-org-scoped → sub-org NAME alone (e.g. "Cedar Court Condos"),
+//     amber. No "Sub-org topic ·" prefix per G4 — keeps the row on a
+//     single line. Color differentiation preserved (Z confirmed liking
+//     the amber vs gray distinction in 34.2 review).
+// Returns null for null/undefined topics (global default rows render
+// their own "Global default" label).
+function TopicScopeBadge({ topic, subOrgsById, showOrgWide = false }) {
   if (!topic) return null;
   if (!topic.sub_org_id) {
+    if (!showOrgWide) return null;
     return (
       <span className="ml-2 inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-gray-100 text-gray-600">
-        Org-wide topic
+        Org-wide
       </span>
     );
   }
   const subName = subOrgsById?.[topic.sub_org_id]?.name;
   return (
     <span className="ml-2 inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-amber-50 text-amber-700 border border-amber-200">
-      Sub-org topic{subName ? ` · ${subName}` : ''}
+      {subName || 'Sub-org topic'}
     </span>
   );
 }
@@ -334,19 +341,22 @@ export default function Delegations() {
 
   const topicMap = Object.fromEntries(topics.map(t => [t.id, t]));
 
-  // Phase 34.2 F2.1 — when viewing in a sub-org context (currentOrg has
-  // parent_org_id), filter delegations to only those whose topic is
-  // scoped to THIS sub-org OR is org-wide (topic.sub_org_id IS NULL).
+  // Phase 34.3 G3 — when viewing in a sub-org context (currentOrg has
+  // parent_org_id), filter delegations to ONLY those whose topic is
+  // scoped to THIS sub-org. Tightens Phase 34.2 F2.1 which also included
+  // org-wide topics — that bled main-org content into the sub-org view.
+  // Org-wide topics remain visible on the main-org variant (which is
+  // unchanged). Global delegations (topic_id null) are NOT shown in
+  // sub-org context either; they live conceptually at the org-wide level.
   // Excludes delegations on topics scoped to OTHER sub-orgs.
   const inSubOrgContext = Boolean(currentOrg?.parent_org_id);
   const filteredDelegations = useMemo(() => {
     if (!inSubOrgContext) return delegations;
     return delegations.filter(d => {
-      if (d.topic_id == null) return true; // global delegation — always show
+      if (d.topic_id == null) return false; // global belongs to main-org
       const t = topicMap[d.topic_id];
-      if (!t) return true; // unknown topic — show defensively
-      // Sub-org topic: must match current sub-org. Org-wide topic: show.
-      return t.sub_org_id == null || t.sub_org_id === currentOrg.id;
+      if (!t) return false; // unknown topic — defensively hide in sub-org
+      return t.sub_org_id === currentOrg.id;
     });
   }, [delegations, topicMap, inSubOrgContext, currentOrg]);
 
@@ -354,10 +364,16 @@ export default function Delegations() {
   const globalDel = filteredDelegations.find(d => d.topic_id == null);
   const topicDels = filteredDelegations.filter(d => d.topic_id != null);
 
-  // Topics that don't have a delegation yet
-  const undelegatedTopics = topics.filter(t =>
-    !delegations.some(d => d.topic_id === t.id)
-  );
+  // Topics that don't have a delegation yet. Phase 34.3 G3 — in sub-org
+  // context, scope the topic universe to THIS sub-org's topics so the
+  // undelegated-topic list (rendered as "Set Delegate" rows) doesn't
+  // surface main-org or other-sub-org topics that aren't actionable
+  // here. Main-org context unchanged (includes all topics the user can
+  // delegate on across the org + its sub-orgs).
+  const undelegatedTopics = topics.filter(t => {
+    if (inSubOrgContext && t.sub_org_id !== currentOrg.id) return false;
+    return !delegations.some(d => d.topic_id === t.id);
+  });
 
   // Phase 28 F1 — order topic delegations by precedence so the table
   // doubles as the user's priority list. Post-B3 backfill, every
@@ -643,7 +659,15 @@ export default function Delegations() {
               {undelegatedTopics.map(t => (
                 <tr key={t.id} className="border-b border-gray-100 last:border-0">
                   <td className="w-8" />
-                  <td className="py-3 px-4"><TopicBadge topic={t} /></td>
+                  <td className="py-3 px-4">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <TopicBadge topic={t} />
+                      {/* Phase 34.3 G2 — extend topic-scope badge to
+                          non-delegated rows so the row labeling is
+                          consistent with delegated rows. */}
+                      <TopicScopeBadge topic={t} subOrgsById={subOrgsById} />
+                    </div>
+                  </td>
                   <td className="py-3 px-4 text-sm text-gray-400 italic">Not delegated</td>
                   <td className="py-3 px-4">—</td>
                   <td className="py-3 px-4 text-right">
@@ -697,7 +721,11 @@ export default function Delegations() {
           </DragDropContext>
           {undelegatedTopics.map(t => (
             <div key={t.id} className="bg-white border border-gray-200 rounded-xl p-4 flex items-center justify-between">
-              <TopicBadge topic={t} />
+              <div className="flex items-center gap-2 flex-wrap">
+                <TopicBadge topic={t} />
+                {/* Phase 34.3 G2 — badge on non-delegated rows. */}
+                <TopicScopeBadge topic={t} subOrgsById={subOrgsById} />
+              </div>
               <button
                 onClick={() => setModal({ topicId: t.id, topicName: t.name, existingDelegation: null })}
                 disabled={unverified}
