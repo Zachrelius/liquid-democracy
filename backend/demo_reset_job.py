@@ -352,6 +352,24 @@ def _wipe_demo_orgs(db: Session, demo_orgs: list[models.Organization]) -> int:
     )
     rows_wiped += n_memb or 0
 
+    # Phase 34.4 hotfix #1: SubOrgMembership rows are scoped by sub_org_id,
+    # not org_id — so the OrgMembership wipe above doesn't touch them. Sub-org
+    # Organization rows persist across resets (they're in demo_orgs because
+    # is_demo=True), and seed_pipeline.seed_sub_orgs upserts new rows but
+    # never deletes stale ones. Without this wipe, a bible change that drops
+    # a member from sub_orgs_structured leaves their SubOrgMembership row
+    # alive across the reset — the next /api/orgs/{slug}/sub-orgs Decision-7
+    # filter check finds the stale active row and incorrectly returns the
+    # private sub-org to the dropped user. Surfaced by Phase 34.4 D2 (Linda +
+    # Brenda dropped from Cedar Court Condos but still saw it in the
+    # switcher post-reset).
+    n_sub_memb = (
+        db.query(models.SubOrgMembership)
+        .filter(models.SubOrgMembership.sub_org_id.in_(org_ids))
+        .delete(synchronize_session=False)
+    )
+    rows_wiped += n_sub_memb or 0
+
     # Filler User rows — identified by username prefix from filler_generator.
     # We *don't* delete by display_name or membership join; we explicitly
     # delete any User whose username matches our filler convention. Named

@@ -250,6 +250,64 @@ class TestResetJobWipesAllScopedData:
         assert proposal_count_second > 0
 
 
+class TestResetJobWipesStaleSubOrgMembership:
+    """Phase 34.4 hotfix #1 — SubOrgMembership rows are scoped by
+    sub_org_id, not org_id. The OrgMembership wipe doesn't touch them.
+    Sub-org Organization rows persist across resets (they have
+    is_demo=True). Before the fix, seed_sub_orgs upserted new
+    SubOrgMembership rows but never deleted stale ones — so a bible
+    change that drops a member left their SubOrgMembership row alive
+    across the reset, and the Decision-7 visibility filter in
+    /api/orgs/{slug}/sub-orgs returned the private sub-org to the
+    dropped user.
+
+    Regression scenario: seed → inject a stale SubOrgMembership for a
+    user not in the bible → reset again → stale row gone.
+    """
+
+    def test_stale_sub_org_membership_wiped(self, test_db):
+        # First seed populates demo orgs incl. Cedar Court Condos sub-org.
+        result_seed = _run_full_reset(test_db)
+        assert result_seed.success
+        sub = test_db.query(models.Organization).filter(
+            models.Organization.slug == "cedar-court-condos",
+        ).first()
+        assert sub is not None, "cedar-court-condos must be seeded"
+
+        # Inject a stale SubOrgMembership row for a fake user not in
+        # the bible — simulates the post-D2 state where Linda/Brenda's
+        # rows survived the 2026-05-22 → 2026-05-24 reset cycle.
+        stale_user = _make_user(test_db, "stale_ghost")
+        # Reuse parent org's member role for FK validity.
+        parent = test_db.query(models.Organization).filter(
+            models.Organization.id == sub.parent_org_id,
+        ).one()
+        member_role = test_db.query(models.Role).filter(
+            models.Role.org_id == parent.id,
+            models.Role.system_key == "member",
+        ).first()
+        stale_membership = models.SubOrgMembership(
+            user_id=stale_user.id,
+            sub_org_id=sub.id,
+            role_id=member_role.id,
+            status="active",
+        )
+        test_db.add(stale_membership)
+        test_db.commit()
+        stale_id = stale_membership.id
+        # Confirm the stale row is present pre-reset.
+        assert test_db.query(models.SubOrgMembership).filter(
+            models.SubOrgMembership.id == stale_id,
+        ).first() is not None
+
+        # Run reset again — wipe phase should remove the stale row.
+        result = _run_full_reset(test_db)
+        assert result.success
+        assert test_db.query(models.SubOrgMembership).filter(
+            models.SubOrgMembership.id == stale_id,
+        ).first() is None
+
+
 class TestResetJobPreservesRealUserAccounts:
     """Real user accounts persist across reset; demo memberships wiped."""
 
