@@ -1905,11 +1905,20 @@ CEDAR_COURT_CONDOS = SubOrg(
         'building maintenance, common-area assessments, condo-internal '
         'bylaws — alongside the parent HOA.'
     ),
+    # Phase 34.4 D1 — default to members-only visibility. Condo / unit-
+    # cluster sub-orgs in real HOAs typically aren't open to the broader
+    # membership; this default gives demo viewers the realistic
+    # impression. Parent-org admins still see the sub-org per Decision 7.
+    private=True,
     member_user_ids=[
-        # Quick-login personas (per spec D13)
-        'hoa_marcus',
-        'hoa_linda',
-        'hoa_brenda',
+        # Phase 34.4 D2 — quick-login personas realigned to match landing
+        # page persona descriptions. Marcus + Tomás are the two
+        # quick-login characters explicitly described as Cedar Court
+        # residents on the demo landing. Linda + Brenda dropped (their
+        # bibles describe Treasurer / Secretary roles, not condo
+        # residency).
+        'hoa_marcus',    # city planner, Cedar Court resident
+        'hoa_tomas',     # PE teacher, newer Cedar Court resident
         # Other named members who are Cedar Court residents per their bible roles
         'hoa_karen',     # retired RN, Cedar Court — sub-org admin
         'hoa_yolanda',   # daycare director, Cedar Court
@@ -1945,12 +1954,13 @@ CEDAR_COURT_CONDOS = SubOrg(
         ('hoa_karen', 'General Issues', 'public_accepting'),
         ('hoa_yolanda', 'General Issues', 'public'),
     ],
-    # Linda + Brenda's persona delegations on Cedar Court Issues → Marcus
-    # land in the sub-org. Yolanda → Karen on General Issues relocated from
-    # the PRIVATE_DELEGATIONS list (was Cedar Court Issues at main org).
+    # Phase 34.4 D2 — Linda + Brenda's General Issues delegations dropped
+    # alongside their sub-org membership (their bibles describe Treasurer
+    # / Secretary identities, not condo-resident identities, so the
+    # delegations didn't fit either). Yolanda → Karen on General Issues
+    # preserved (Yolanda is a long-standing Cedar Court resident per her
+    # delegate-page bio).
     delegations=[
-        ('hoa_linda', 'hoa_marcus', 'General Issues'),
-        ('hoa_brenda', 'hoa_marcus', 'General Issues'),
         ('hoa_yolanda', 'hoa_karen', 'General Issues'),
     ],
     proposals=[

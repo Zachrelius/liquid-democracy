@@ -863,6 +863,15 @@ def _seed_sub_org(
         sub_org.governance_type = sub_bible.governance_type or sub_org.governance_type
         sub_org.is_demo = True
 
+    # Phase 34.4 D1 — propagate sub-org's `private` bible field into
+    # Organization.settings['private']. When True, Decision 7 visibility
+    # filter (routes/sub_organizations.py:393) hides the sub-org from
+    # non-members. Re-applied on every seed so the bible is the source
+    # of truth (flipping `private` in the bible + reset reflects on prod).
+    sub_settings = dict(sub_org.settings or {})
+    sub_settings["private"] = bool(getattr(sub_bible, "private", False))
+    sub_org.settings = sub_settings
+
     # Sub-orgs use the PARENT org's Role table (Phase 15 Cluster S).
     parent_member_role = (
         db.query(models.Role).filter(

@@ -228,6 +228,11 @@ class SubOrg:
     # Sub-org-scoped persona delegations. Each entry: (delegator_user_id,
     # delegate_user_id, topic_name). Topic must be in topic_names.
     delegations: list[tuple[str, str, str]] = field(default_factory=list)
+    # Phase 34.4 D1 — when True, sub-org content is hidden from non-members
+    # (Decision 7 in routes/sub_organizations.py). Parent-org admins can
+    # still see private sub-orgs. Writes Organization.settings['private']
+    # = True at seed time.
+    private: bool = False
 
 
 @dataclass

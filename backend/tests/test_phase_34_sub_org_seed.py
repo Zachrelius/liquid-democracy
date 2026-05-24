@@ -90,14 +90,29 @@ def test_b2_sub_org_organization_row(seeded_session):
     assert sub.is_demo is True
 
 
-def test_b2_sub_org_18_memberships(seeded_session):
+def test_b2_sub_org_17_memberships(seeded_session):
+    # Phase 34.4 D2 — was 18; Linda + Brenda dropped, Tomás added → 17.
     sub = seeded_session.query(models.Organization).filter(
         models.Organization.slug == "cedar-court-condos",
     ).first()
     memberships = seeded_session.query(models.SubOrgMembership).filter(
         models.SubOrgMembership.sub_org_id == sub.id,
     ).all()
-    assert len(memberships) == 18
+    assert len(memberships) == 17
+    # Tomás is in; Linda + Brenda are out.
+    user_ids = {m.user_id for m in memberships}
+    tomas = seeded_session.query(models.User).filter(
+        models.User.username == "hoa_tomas",
+    ).first()
+    linda = seeded_session.query(models.User).filter(
+        models.User.username == "hoa_linda",
+    ).first()
+    brenda = seeded_session.query(models.User).filter(
+        models.User.username == "hoa_brenda",
+    ).first()
+    assert tomas.id in user_ids
+    assert linda.id not in user_ids
+    assert brenda.id not in user_ids
 
 
 def test_b2_karen_is_sub_org_admin(seeded_session):
@@ -165,17 +180,31 @@ def test_b2_sub_org_delegate_profiles(seeded_session):
 
 
 def test_b3_delegations_carry_sub_org_id(seeded_session):
+    # Phase 34.4 D2 — was 3 (Linda → Marcus, Brenda → Marcus, Yolanda → Karen);
+    # Linda + Brenda's General Issues delegations dropped alongside their
+    # sub-org membership → 1 (Yolanda → Karen).
     sub = seeded_session.query(models.Organization).filter(
         models.Organization.slug == "cedar-court-condos",
     ).first()
     delegations = seeded_session.query(models.Delegation).filter(
         models.Delegation.sub_org_id == sub.id,
     ).all()
-    assert len(delegations) == 3
+    assert len(delegations) == 1
     for d in delegations:
         topic = seeded_session.get(models.Topic, d.topic_id)
         assert topic.name == "General Issues"
         assert topic.sub_org_id == sub.id
+
+
+def test_phase_34_4_d1_sub_org_private_default(seeded_session):
+    """Phase 34.4 D1 — Cedar Court Condos defaults to private=True
+    (members-only visibility). Non-members + non-parent-admins are
+    blocked by the Decision 7 visibility filter."""
+    sub = seeded_session.query(models.Organization).filter(
+        models.Organization.slug == "cedar-court-condos",
+    ).first()
+    assert sub is not None
+    assert (sub.settings or {}).get("private") is True
 
 
 def test_b3_cedar_court_issues_removed_from_main_org(seeded_session):
