@@ -320,8 +320,22 @@ export default function Nav() {
     <nav className="bg-[var(--brand-primary)] text-white">
       <div className="max-w-6xl mx-auto px-4 flex items-center justify-between h-14">
         <div className="flex items-center gap-6">
+          {/* Phase 34.4 B1 — brand link nested URL emission. When navOrg
+              is a sub-org, the link emits the proper-nested
+              /{parent}/sub-orgs/{sub}/proposals URL instead of the flat
+              /{sub}/proposals shape (same fix shape as Phase 34.2 E1 on
+              the nav links). Brand link preserves the current org/sub-
+              org context per locked decision 4. */}
           <Link
-            to={navOrg ? urlFor(navOrg, 'proposals') : '/orgs'}
+            to={
+              navOrg
+                ? (
+                    navOrg.parent_org_id && parentSlugForLinks
+                      ? urlFor(parentSlugForLinks, 'sub-org-proposals', navOrg.slug)
+                      : urlFor(navOrg, 'proposals')
+                  )
+                : '/orgs'
+            }
             className="font-semibold text-sm tracking-wide hover:text-blue-100 transition-colors"
           >
             Liquid Democracy
