@@ -1288,21 +1288,28 @@ class TestCrossOrgUserSingleAccount:
         result = _run_full_reset(test_db)
         assert result.success
 
-        # Marcus Pham — HOA + Coalition
+        # Marcus Pham — HOA parent + Coalition parent + Cedar Court Condos sub-org.
+        # Phase 34 hotfix #1 (commit a105689) gives sub-org members an
+        # OrgMembership on the sub-org Organization too, so Marcus ends up
+        # with 3 rows: the two cross-org parent memberships + the sub-org.
         marcus = test_db.query(models.User).filter(
             models.User.username == "marcus_pham",
         ).one()
         marcus_memberships = test_db.query(models.OrgMembership).filter(
             models.OrgMembership.user_id == marcus.id,
         ).all()
-        assert len(marcus_memberships) == 2, (
-            f"marcus_pham has {len(marcus_memberships)} memberships, expected 2"
+        assert len(marcus_memberships) == 3, (
+            f"marcus_pham has {len(marcus_memberships)} memberships, expected 3"
         )
         marcus_slugs = {
             test_db.get(models.Organization, m.org_id).slug
             for m in marcus_memberships
         }
-        assert marcus_slugs == {"demo-cedar-hollow", "demo-westgate-coalition"}
+        assert marcus_slugs == {
+            "demo-cedar-hollow",
+            "demo-westgate-coalition",
+            "cedar-court-condos",
+        }
 
         # Dana Whitfield — Local + Coalition
         dana = test_db.query(models.User).filter(
