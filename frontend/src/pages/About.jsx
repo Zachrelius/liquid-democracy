@@ -195,6 +195,12 @@ export default function About() {
           </p>
           <p className="flex flex-wrap items-center gap-3 pt-2">
             <a
+              href="mailto:z@liquiddemocracy.us"
+              className="inline-flex items-center px-5 py-2.5 bg-white text-[var(--brand-primary)] text-sm font-medium rounded-lg border border-gray-300 hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors"
+            >
+              z@liquiddemocracy.us
+            </a>
+            <a
               href="https://github.com/Zachrelius/liquid-democracy"
               target="_blank"
               rel="noopener noreferrer"

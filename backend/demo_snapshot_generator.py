@@ -186,6 +186,7 @@ def generate_snapshots(
     total_eligible: int = 60,
     option_id_resolver: Optional[Callable[[str], str]] = None,
     seed_until: Optional[datetime] = None,
+    terminal_tally: Optional[dict] = None,
 ) -> list:
     """Emit ``VoteSnapshot`` ORM instances per the trajectory.
 
@@ -203,7 +204,8 @@ def generate_snapshots(
         Spacing between snapshots; default 1800 (30 min) per D6 update.
     total_eligible : int
         Roster size for the org; used in reverse-engineering counts.
-        Caller passes the actual org member count.
+        Caller passes the actual org member count. Overridden by
+        ``terminal_tally["total_eligible"]`` when provided.
     option_id_resolver : callable | None
         Function ``(option_label: str) -> option_id`` for approval/RCV/STV
         proposals. When None, multi-option snapshots use labels directly
@@ -217,6 +219,33 @@ def generate_snapshots(
         snapshot (which counts ALL stored votes regardless of
         ``cast_at``) collides with the seed's already-emitted future
         snapshots and draws a vertical boundary spike.
+    terminal_tally : dict | None
+        Phase 36 B1: when set, the snapshot generator rebases every
+        emitted snapshot's vote counts to interpolate toward the actual
+        terminal tally produced by ``delegation_engine.compute_tally``
+        against the just-inserted filler ``Vote`` rows. This anchors
+        the trajectory chart's terminal point to the same number the
+        ``/results`` and ``/vote-graph`` panels show for the same
+        proposal. The last emitted snapshot is overwritten with the
+        terminal values exactly, so any waypoint/tally disagreement at
+        the end is absorbed silently into the final point. Waypoint
+        ``support_pct`` shape is preserved on intermediate snapshots
+        (D2). When None, falls back to the legacy
+        ``total_eligible × _lumpy_fraction_voted_at × support_pct``
+        computation.
+
+        Expected shape (binary)::
+
+            {"method": "binary", "yes": int, "no": int, "abstain": int,
+             "total_cast": int, "not_cast": int, "total_eligible": int}
+
+        Expected shape (approval / ranked_choice)::
+
+            {"method": "approval" | "ranked_choice",
+             "option_totals": {option_id: int, ...},
+             "winners": [option_id, ...],
+             "total_cast": int, "total_abstain": int,
+             "not_cast": int, "total_eligible": int}
 
     Returns
     -------
@@ -242,30 +271,65 @@ def generate_snapshots(
     method = trajectory.voting_method
     snapshots: list = []
 
+    # Phase 36 B1: terminal-tally override of total_eligible / final shape.
+    use_terminal = terminal_tally is not None
+    if use_terminal:
+        eligible_for_snap = int(
+            terminal_tally.get("total_eligible", total_eligible) or total_eligible
+        )
+    else:
+        eligible_for_snap = total_eligible
+
     # Pre-compute final result counts for multi-option proposals so each
     # snapshot can interpolate toward them.
     final_winners: list[str] = []
     final_option_totals: dict[str, int] = {}
+    final_total_cast: int = 0
+    final_total_abstain: int = 0
     if method != "binary":
-        # Per spec D6: pragmatic fallback when per-method shape is ambiguous.
-        # Derive final_winners from proposal.options (first num_winners), and
-        # spread option_totals proportionally based on display_order.
-        opts = list(getattr(proposal, "options", []) or [])
-        num_winners = getattr(proposal, "num_winners", 1) or 1
-        if opts:
-            # Sort by display_order so winners are stable.
-            sorted_opts = sorted(
-                opts, key=lambda o: getattr(o, "display_order", 0),
+        if use_terminal:
+            # Phase 36 B1: terminal-tally drives shape directly.
+            final_winners = list(terminal_tally.get("winners", []) or [])
+            final_option_totals = {
+                str(oid): int(count or 0)
+                for oid, count in (
+                    terminal_tally.get("option_totals", {}) or {}
+                ).items()
+            }
+            final_total_cast = int(terminal_tally.get("total_cast", 0) or 0)
+            final_total_abstain = int(
+                terminal_tally.get("total_abstain", 0) or 0
             )
-            final_winners = [o.id for o in sorted_opts[:num_winners]]
-            # Approximate final tally: heavier weight on earlier options.
-            n_opts = len(sorted_opts)
-            for idx, opt in enumerate(sorted_opts):
-                # Weight decays linearly; first option gets ~highest support.
-                weight = max(1, n_opts - idx)
-                final_option_totals[opt.id] = int(
-                    round(total_eligible * 0.6 * weight / sum(range(1, n_opts + 1)))
+        else:
+            # Legacy D6 fallback: derive final_winners from proposal.options
+            # (first num_winners by display_order) and spread option_totals
+            # proportionally based on display_order.
+            opts = list(getattr(proposal, "options", []) or [])
+            num_winners = getattr(proposal, "num_winners", 1) or 1
+            if opts:
+                sorted_opts = sorted(
+                    opts, key=lambda o: getattr(o, "display_order", 0),
                 )
+                final_winners = [o.id for o in sorted_opts[:num_winners]]
+                n_opts = len(sorted_opts)
+                for idx, opt in enumerate(sorted_opts):
+                    weight = max(1, n_opts - idx)
+                    final_option_totals[opt.id] = int(
+                        round(
+                            eligible_for_snap * 0.6 * weight
+                            / sum(range(1, n_opts + 1))
+                        )
+                    )
+
+    # Binary terminal-tally pre-extraction.
+    final_yes = int(terminal_tally.get("yes", 0) or 0) if use_terminal else 0
+    final_no = int(terminal_tally.get("no", 0) or 0) if use_terminal else 0
+    final_abstain = int(
+        terminal_tally.get("abstain", 0) or 0
+    ) if use_terminal else 0
+    final_total_cast_binary = int(
+        terminal_tally.get("total_cast", 0) or 0
+    ) if use_terminal else 0
 
     proposal_id_for_seed = str(getattr(proposal, "id", "") or "")
 
@@ -290,13 +354,31 @@ def generate_snapshots(
         fraction_voted = _lumpy_fraction_voted_at(
             hour, duration, proposal_id_for_seed,
         )
-        ballots_so_far = max(0, int(round(fraction_voted * total_eligible)))
 
         if method == "binary":
-            yes_count = int(round((support_pct / 100.0) * ballots_so_far))
-            no_count = max(0, ballots_so_far - yes_count)
-            abstain_count = 0
-            not_cast = max(0, total_eligible - ballots_so_far)
+            if use_terminal:
+                # ballots_so_far = total cast (yes + no + abstain) at this
+                # fraction of the voting window. Abstain pool is interpolated
+                # linearly toward its terminal count; non-abstain pool absorbs
+                # the rest and gets split yes/no by the waypoint support_pct.
+                ballots_so_far = max(
+                    0, int(round(fraction_voted * final_total_cast_binary))
+                )
+                abstain_count = max(
+                    0, int(round(fraction_voted * final_abstain))
+                )
+                non_abstain = max(0, ballots_so_far - abstain_count)
+                yes_count = int(round((support_pct / 100.0) * non_abstain))
+                no_count = max(0, non_abstain - yes_count)
+                not_cast = max(0, eligible_for_snap - ballots_so_far)
+            else:
+                ballots_so_far = max(
+                    0, int(round(fraction_voted * eligible_for_snap))
+                )
+                yes_count = int(round((support_pct / 100.0) * ballots_so_far))
+                no_count = max(0, ballots_so_far - yes_count)
+                abstain_count = 0
+                not_cast = max(0, eligible_for_snap - ballots_so_far)
             snapshots.append(models.VoteSnapshot(
                 proposal_id=proposal.id,
                 simulated_time=simulated_time,
@@ -304,30 +386,79 @@ def generate_snapshots(
                 no_count=no_count,
                 abstain_count=abstain_count,
                 not_cast_count=not_cast,
-                total_eligible=total_eligible,
+                total_eligible=eligible_for_snap,
                 multi_option_winners=None,
             ))
         else:
-            # Multi-option: scale final_option_totals by fraction_voted so
-            # the chart's per-option lines ramp up over the voting window.
-            scaled_totals = {
-                oid: int(round(count * fraction_voted))
-                for oid, count in final_option_totals.items()
-            }
+            if use_terminal:
+                ballots_so_far = max(
+                    0, int(round(fraction_voted * final_total_cast))
+                )
+                scaled_totals = {
+                    oid: int(round(count * fraction_voted))
+                    for oid, count in final_option_totals.items()
+                }
+                abstain_count = max(
+                    0, int(round(fraction_voted * final_total_abstain))
+                )
+                not_cast = max(
+                    0,
+                    eligible_for_snap - ballots_so_far - abstain_count,
+                )
+            else:
+                ballots_so_far = max(
+                    0, int(round(fraction_voted * eligible_for_snap))
+                )
+                scaled_totals = {
+                    oid: int(round(count * fraction_voted))
+                    for oid, count in final_option_totals.items()
+                }
+                abstain_count = 0
+                not_cast = max(0, eligible_for_snap - ballots_so_far)
             snapshots.append(models.VoteSnapshot(
                 proposal_id=proposal.id,
                 simulated_time=simulated_time,
                 yes_count=0,
                 no_count=0,
-                abstain_count=0,
-                not_cast_count=max(0, total_eligible - ballots_so_far),
-                total_eligible=total_eligible,
+                abstain_count=abstain_count,
+                not_cast_count=not_cast,
+                total_eligible=eligible_for_snap,
                 multi_option_winners={
                     "winners": list(final_winners),
                     "total_ballots_cast": ballots_so_far,
                     "option_totals": scaled_totals,
                 },
             ))
+
+    # Phase 36 B1 last-snapshot rebase guard: when terminal_tally is provided,
+    # overwrite the FINAL emitted snapshot's counts with terminal values
+    # exactly. This ensures the trajectory's terminal point matches the
+    # /results panel even when the waypoint's final support_pct disagrees
+    # with the real filler-derived support.
+    if use_terminal and snapshots:
+        last = snapshots[-1]
+        if method == "binary":
+            last.yes_count = final_yes
+            last.no_count = final_no
+            last.abstain_count = final_abstain
+            last.not_cast_count = max(
+                0,
+                eligible_for_snap - final_yes - final_no - final_abstain,
+            )
+            last.total_eligible = eligible_for_snap
+        else:
+            last.abstain_count = final_total_abstain
+            last.not_cast_count = max(
+                0,
+                eligible_for_snap - final_total_cast - final_total_abstain,
+            )
+            last.total_eligible = eligible_for_snap
+            last.multi_option_winners = {
+                "winners": list(final_winners),
+                "total_ballots_cast": final_total_cast,
+                "option_totals": dict(final_option_totals),
+            }
+
     return snapshots
 
 

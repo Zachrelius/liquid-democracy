@@ -330,6 +330,75 @@ def _trajectory_for_proposal(proposal_id: str):
     return getattr(tw, attr, None)
 
 
+def _tally_to_dict(tally, fallback_total_eligible: int) -> Optional[dict]:
+    """Phase 36 B2: convert a ProposalTally / ApprovalTally / RCVTally
+    into the ``terminal_tally`` dict shape consumed by
+    ``demo_snapshot_generator.generate_snapshots(terminal_tally=...)``.
+
+    Returns None for tally shapes we don't recognise.
+    """
+    from delegation_engine import ApprovalTally, ProposalTally, RCVTally
+
+    eligible = int(
+        getattr(tally, "total_eligible", 0) or fallback_total_eligible or 0
+    )
+
+    if isinstance(tally, ProposalTally):
+        yes = int(tally.yes or 0)
+        no = int(tally.no or 0)
+        abstain = int(tally.abstain or 0)
+        total_cast = yes + no + abstain
+        return {
+            "method": "binary",
+            "yes": yes,
+            "no": no,
+            "abstain": abstain,
+            "total_cast": total_cast,
+            "not_cast": max(0, eligible - total_cast - abstain),
+            "total_eligible": eligible,
+        }
+
+    if isinstance(tally, ApprovalTally):
+        option_totals = {
+            str(oid): int(count or 0)
+            for oid, count in (tally.option_approvals or {}).items()
+        }
+        return {
+            "method": "approval",
+            "option_totals": option_totals,
+            "winners": list(tally.winners or []),
+            "total_cast": int(tally.total_ballots_cast or 0),
+            "total_abstain": int(tally.total_abstain or 0),
+            "not_cast": int(tally.not_cast or 0),
+            "total_eligible": eligible,
+        }
+
+    if isinstance(tally, RCVTally):
+        # Use first-round per-option counts as the "option_totals" for the
+        # trajectory chart — that's the raw vote count for each option,
+        # which is what the per-option line should grow toward.
+        option_totals: dict = {}
+        if tally.rounds:
+            first_round = tally.rounds[0]
+            option_totals = {
+                str(oid): int(count or 0)
+                for oid, count in (
+                    getattr(first_round, "counts", {}) or {}
+                ).items()
+            }
+        return {
+            "method": "ranked_choice",
+            "option_totals": option_totals,
+            "winners": list(tally.winners or []),
+            "total_cast": int(tally.total_ballots_cast or 0),
+            "total_abstain": int(tally.total_abstain or 0),
+            "not_cast": int(tally.not_cast or 0),
+            "total_eligible": eligible,
+        }
+
+    return None
+
+
 # =============================================================================
 # User + role helpers
 # =============================================================================
@@ -1726,53 +1795,34 @@ def seed_org_from_bible(
     def _filler_resolver(filler_uid: str) -> Optional[str]:
         return filler_user_ids.get(filler_uid)
 
+    # Phase 36 B2: two-pass restructure. The trajectory chart now rebases
+    # to the actual computed tally (D1), so filler votes MUST be inserted
+    # and flushed before snapshot generation — compute_tally needs to see
+    # the just-inserted Vote rows. Per-proposal seed_cap (Phase 31 B1) is
+    # cached on the proposal record for re-use in pass 2.
+    seed_caps_by_pid: dict = {}
+
+    # ---- Pass 1: allocate filler votes for every proposal ----------------
     for bp in proposal_records:
         proposal = proposals_by_bible_id.get(bp.proposal_id)
         if not proposal:
             continue
         trajectory = _trajectory_for_proposal(bp.proposal_id)
-        # Phase 31 B1: for currently-voting proposals, clamp seed snapshot
-        # emission + filler-vote cast_at to the elapsed portion of the
-        # voting window. Closed proposals (passed/failed) seed across the
-        # full window unchanged.
         is_currently_voting = proposal.status == "voting"
         seed_cap = now if is_currently_voting else None
+        seed_caps_by_pid[proposal.id] = seed_cap
 
-        # Snapshots: only for proposals in voting / past-voting status
-        if (
-            trajectory is not None
-            and proposal.voting_start is not None
-            and proposal.voting_end is not None
-            and trajectory.waypoints
-        ):
-            snaps = generate_snapshots(
-                proposal=proposal,
-                trajectory=trajectory,
-                voting_start=proposal.voting_start,
-                voting_end=proposal.voting_end,
-                cadence_seconds=1800,
-                total_eligible=member_count_for_org,
-                seed_until=seed_cap,
-            )
-            all_snapshots.extend(snaps)
-
-        # Filler votes (binary only — multi-option fallback in allocator)
         if (
             trajectory is not None
             and proposal.voting_start is not None
             and proposal.voting_end is not None
             and proposal.status in ("voting", "passed", "failed")
         ):
-            # Determine participation: ~50% of fillers vote on this
-            # proposal. Phase 23.1 B3a: filter out fillers with any
-            # delegation so their delegate's vote is what shows in the
-            # tally (defect C1).
             base_pool = fillers[: max(1, len(fillers) // 2)]
             participating = [
                 f for f in base_pool
                 if f.user_id not in fillers_with_delegations
             ]
-            # Named-voter summary (yes/no/abstain counts already in new_votes)
             named_summary: dict = {"yes": 0, "no": 0, "abstain": 0}
             for v in new_votes:
                 if v.proposal_id == proposal.id and v.vote_value in named_summary:
@@ -1789,13 +1839,61 @@ def seed_org_from_bible(
             )
             all_filler_votes.extend(filler_votes)
 
-    if all_snapshots:
-        db.bulk_save_objects(all_snapshots)
-        counts["snapshots_created"] += len(all_snapshots)
-        db.flush()
+    # Flush filler votes before snapshot pass so compute_tally sees them.
     if all_filler_votes:
         db.bulk_save_objects(all_filler_votes)
         counts["votes_created"] += len(all_filler_votes)
+        db.flush()
+
+    # ---- Pass 2: compute terminal tally + generate snapshots ----------
+    from delegation_engine import engine as delegation_engine_singleton
+
+    for bp in proposal_records:
+        proposal = proposals_by_bible_id.get(bp.proposal_id)
+        if not proposal:
+            continue
+        trajectory = _trajectory_for_proposal(bp.proposal_id)
+        if (
+            trajectory is None
+            or proposal.voting_start is None
+            or proposal.voting_end is None
+            or not trajectory.waypoints
+        ):
+            continue
+
+        seed_cap = seed_caps_by_pid.get(proposal.id)
+        # Phase 36 B2: compute terminal tally against the just-inserted
+        # filler vote rows. compute_tally chains delegation, so named-
+        # character + filler delegations resolve correctly. Defensive
+        # try/except: fall back to legacy waypoint-only generation if
+        # tally computation fails for any reason.
+        terminal_tally: Optional[dict] = None
+        try:
+            tally = delegation_engine_singleton.compute_tally(proposal, db)
+            terminal_tally = _tally_to_dict(tally, member_count_for_org)
+        except Exception as e:  # pragma: no cover - defensive
+            log.warning(
+                "seed_pipeline: compute_tally failed for proposal=%s; "
+                "falling back to legacy snapshot shape (err=%r)",
+                proposal.id, e,
+            )
+            terminal_tally = None
+
+        snaps = generate_snapshots(
+            proposal=proposal,
+            trajectory=trajectory,
+            voting_start=proposal.voting_start,
+            voting_end=proposal.voting_end,
+            cadence_seconds=1800,
+            total_eligible=member_count_for_org,
+            seed_until=seed_cap,
+            terminal_tally=terminal_tally,
+        )
+        all_snapshots.extend(snaps)
+
+    if all_snapshots:
+        db.bulk_save_objects(all_snapshots)
+        counts["snapshots_created"] += len(all_snapshots)
         db.flush()
 
     # ---- 11. Comments ----------------------------------------------------
