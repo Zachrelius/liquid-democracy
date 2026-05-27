@@ -443,10 +443,21 @@ def _acquire_lock(db: Session) -> list[models.Organization]:
 
     If any demo org has ``is_demo_resetting=True`` already, raise to
     prevent concurrent resets (D20).
+
+    Phase 40 B1 (2026-05-27): switched from Python-side advisory check to
+    Postgres row-level lock via ``with_for_update()``. Pre-fix, two
+    triggers entering ``_acquire_lock`` concurrently could both pass the
+    ``any(...)`` check before either's ``flush`` landed; under READ
+    COMMITTED on Postgres the second one likely deadlocked rather than
+    failing cleanly. Post-fix, the second trigger blocks on the row lock
+    until the first commits or rolls back, then either sees
+    ``is_demo_resetting=True`` (and raises cleanly) or proceeds normally.
+    SQLite is a no-op for ``with_for_update`` (single-writer anyway).
     """
     demo_orgs = (
         db.query(models.Organization)
         .filter(models.Organization.is_demo == True)  # noqa: E712
+        .with_for_update()
         .all()
     )
     if any(o.is_demo_resetting for o in demo_orgs):

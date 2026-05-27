@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     # tunable via the DEMO_RESET_TIME_PACIFIC env var without code change.
     demo_reset_time_pacific: str = "00:00"
 
+    # Phase 40 B5 (2026-05-27) — controlled bypass for slowapi rate limiters.
+    # Defaults False. When True (and is_public_demo is False), each request's
+    # rate-limit key becomes a unique-per-request UUID, so the limiter never
+    # fires. Lets ops + QA exercise login lockout / forgot-password timing /
+    # other attempt-based flows from a single IP without disabling the
+    # primitive globally. Compound gate (also in `bypass_or_remote_address`
+    # key_func) + startup assert in main.py both prevent this from silently
+    # activating on the public-demo prod env. See SECURITY_REVIEW.md.
+    rate_limit_bypass: bool = False
+
     # Phase 9 — pol.is integration. The hosted pol.is API uses JWT-based auth
     # rather than an API key (see `phase9_polis_api_findings.md`); this is the
     # Bearer JWT obtained from a pol.is admin session that polis_service.py

@@ -10,11 +10,13 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
+from slowapi.util import get_remote_address  # noqa: F401  (kept for tests that may import)
+from rate_limit_utils import bypass_or_remote_address
 from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from database import create_tables, get_db, SessionLocal
+from sqlalchemy.orm import Session
 from delegation_engine import graph_store
 from settings import settings
 from websocket import manager as ws_manager
@@ -142,7 +144,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # Rate limiter (slowapi)
 # ---------------------------------------------------------------------------
 
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(key_func=bypass_or_remote_address)
 
 # ---------------------------------------------------------------------------
 # App
@@ -369,6 +371,33 @@ async def startup() -> None:
                 "Set SECRET_KEY env var to a long random value before starting."
             )
 
+        # Phase 40 B3 (2026-05-27): refuse to start with WORKERS > 1.
+        # graph_store cycle detection is process-local; running multiple
+        # uvicorn workers makes concurrent cycle-creating delegations both
+        # pass their own local cycle check, breaking the cycle-prevention
+        # invariant. Until graph_store is rearchitected (option (a) — DB
+        # level CTE), single-worker is load-bearing. The env var read here
+        # (WORKERS) matches start.sh's `--workers ${WORKERS:-1}`.
+        import os
+        workers = int(os.environ.get("WORKERS", "1"))
+        if workers > 1:
+            raise RuntimeError(
+                f"WORKERS={workers}. Phase 40 B3: multi-worker is not safe "
+                "until graph_store is rearchitected (cycle detection is "
+                "process-local). Set WORKERS=1 or run with settings.debug=True."
+            )
+
+        # Phase 40 B5 D17 (2026-05-27): refuse to start with rate-limit
+        # bypass on a public-demo env. The compound gate at the slowapi
+        # key_func layer also enforces this, but failing fast at boot is
+        # better than discovering it at request time.
+        if settings.is_public_demo and settings.rate_limit_bypass:
+            raise RuntimeError(
+                "RATE_LIMIT_BYPASS=true is incompatible with "
+                "IS_PUBLIC_DEMO=true. The bypass is dev/ops-only and must "
+                "never be set in any prod environment."
+            )
+
     log.info("Creating database tables…")
     create_tables()
 
@@ -466,3 +495,45 @@ def health_ready():
             status_code=503,
             content={"status": "error", "database": "disconnected"},
         )
+
+
+@app.get("/api/health/scheduler")
+def health_scheduler(db: Session = Depends(get_db)):
+    """Phase 40 B4 — health probe for the two background workers.
+
+    Returns ``last_successful_tick_at`` (ISO 8601 UTC) and
+    ``ticks_since_last_success`` for both the in-process ``digest_loop``
+    (read from module-level state) and the out-of-process
+    ``sustained_majority_worker`` (read from the
+    ``sm_worker_heartbeat`` PlatformSetting row written at the end of
+    each worker tick). Public, no auth — matches /api/health/ready
+    posture; Railway probes shouldn't require auth.
+
+    A worker that has never completed a tick (e.g., just-restarted
+    process) reports ``last_successful_tick_at: null``. A worker that's
+    been failing reports an increasing ``ticks_since_last_success``.
+    """
+    import models
+    from digest_scheduler import get_scheduler_state as _digest_state
+
+    sm_state = {"last_successful_tick_at": None, "ticks_since_last_success": 0}
+    try:
+        row = db.query(models.PlatformSetting).filter(
+            models.PlatformSetting.key == "sm_worker_heartbeat",
+        ).first()
+        if row is not None and isinstance(row.value, dict):
+            sm_state = {
+                "last_successful_tick_at": row.value.get("last_successful_tick_at"),
+                "ticks_since_last_success": int(
+                    row.value.get("ticks_since_last_success", 0)
+                ),
+            }
+    except Exception:  # noqa: BLE001
+        log.exception("health_scheduler: failed to read SM worker heartbeat")
+        # Fall through with the default empty sm_state — the endpoint
+        # itself shouldn't 5xx just because the heartbeat row is unreadable.
+
+    return {
+        "digest_scheduler": _digest_state(),
+        "sustained_majority_worker": sm_state,
+    }

@@ -291,18 +291,40 @@ def org_scoped_delegation_graph(
 @router.get("/users", response_model=list[schemas.UserOut])
 def list_users(
     request: Request,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_admin),
 ):
-    """System-wide user list for the admin panel. Access is audited."""
-    users = db.query(models.User).order_by(models.User.username).all()
+    """System-wide user list for the admin panel. Access is audited.
+
+    Phase 40 B6.3 (2026-05-27) — added pagination via ``limit`` / ``offset``
+    query params matching the ``/api/admin/audit`` shape. Default 50,
+    max 500. Pre-fix this endpoint returned ALL users in one response —
+    fine at v1 scale but unbounded. Total user count goes to the audit
+    log (and an `X-Total-Count` response header would be a future
+    addition if the admin UI needs it for "showing N of M" UX).
+    """
+    total = db.query(models.User).count()
+    users = (
+        db.query(models.User)
+        .order_by(models.User.username)
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     log_audit_event(
         db,
         action="admin.user_list_viewed",
         target_type="system",
         target_id="system_user_list",
         actor_id=current_user.id,
-        details={"user_count": len(users)},
+        details={
+            "user_count": len(users),
+            "total_user_count": total,
+            "limit": limit,
+            "offset": offset,
+        },
         ip_address=request.client.host if request.client else None,
     )
     db.commit()
@@ -312,13 +334,31 @@ def list_users(
 @router.patch("/users/{user_id}/make-admin", response_model=schemas.UserOut)
 def make_admin(
     user_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_admin),
 ):
     user = db.get(models.User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    was_admin = user.is_admin
     user.is_admin = True
+    # Phase 40 B6.2 (2026-05-27) — audit-log the promotion. Pre-fix this
+    # endpoint mutated a high-privilege flag with no record. Matches the
+    # patch_user_org_creation_limit pattern below.
+    log_audit_event(
+        db,
+        action="user.made_admin",
+        target_type="user",
+        target_id=user.id,
+        actor_id=current_user.id,
+        details={
+            "username": user.username,
+            "promoted_by": current_user.username,
+            "was_already_admin": was_admin,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
     db.commit()
     db.refresh(user)
     return user

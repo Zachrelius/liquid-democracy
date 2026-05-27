@@ -625,3 +625,58 @@ Open-redirect risk: bounded. The validator restricts `next` to relative paths st
 - Org-level invite-link generation (a single URL anyone can use to auto-join, separate from per-email invitations). Different feature; would need its own threat model around link sharing and revocation.
 - Sub-org public landing pages. Sub-orgs are not exposed via the public endpoint; only top-level orgs have splash pages. Future Phase 13.5 / 14.x candidate work would need a sub-org-level public-page design with its own permission gates.
 - Custom CSS / HTML in the intro field. Markdown-only by design; HTML escape hatches would expand the XSS surface significantly without clear product benefit.
+
+
+## Phase 40 (2026-05-27) — Ops + Hygiene
+
+### Rate Limit Bypass (`RATE_LIMIT_BYPASS`)
+
+`backend/settings.py::rate_limit_bypass` defaults to `False`. When `True`
+AND `IS_PUBLIC_DEMO=False`, slowapi rate limiters become effectively
+disabled — `bypass_or_remote_address` (the shared `key_func` in
+`backend/rate_limit_utils.py`) returns a unique-per-request UUID, so
+each request looks like a new IP and no per-IP bucket ever fills.
+
+**Used for ops + QA work that needs to exercise auth-attempt-based
+flows from a single IP** — login lockout, forgot-password timing,
+demo-login per-IP throttling, etc. Phase 38 introduced the limiters
+and Phase 39 verification surfaced the friction.
+
+**Never set this in any prod environment.** Two layers of defense:
+
+1. **Compound gate at the request layer.** `bypass_or_remote_address`
+   only returns the bypass key when `settings.debug=True` OR
+   (`settings.rate_limit_bypass=True` AND `settings.is_public_demo=False`).
+   A misconfigured prod deploy with `RATE_LIMIT_BYPASS=true` still
+   doesn't bypass for any caller, because `IS_PUBLIC_DEMO=true` on the
+   public-demo prod env blocks the second clause.
+
+2. **Startup assert.** `main.py` startup raises `RuntimeError` if
+   `is_public_demo AND rate_limit_bypass` simultaneously. The platform
+   fails to boot in the misconfigured combination — fail-fast at deploy
+   time rather than discovering at request time.
+
+`settings.debug=True` (the local dev default) implicitly enables the
+same bypass behavior, so local dev has no rate-limit-test friction.
+The env flag is only needed in non-debug environments (e.g., a staging
+deploy that mirrors prod settings except for this flag).
+
+### Phase 40 B3 — `WORKERS=1` startup assert
+
+`backend/main.py` startup raises `RuntimeError` if `os.environ.get("WORKERS", "1")`
+resolves to >1 when `not settings.debug`. The platform's delegation
+cycle-detection lives in a process-local `graph_store` — running multiple
+uvicorn workers would let two concurrent cycle-creating delegations each
+pass their own local check and break the cycle-prevention invariant.
+Single-worker is load-bearing until `graph_store` is rearchitected to
+DB-level CTE (option (a) from the 2026-05-27 external review §3.1).
+
+### Phase 40 B2 — Pillow decompression-bomb defense
+
+`backend/routes/avatars.py` and `backend/routes/org_logos.py` both set
+`Image.MAX_IMAGE_PIXELS = 25_000_000` at import and catch
+`Image.DecompressionBombError` in the upload handler, returning 400
+with a user-readable message. Defends against a malicious upload whose
+metadata declares dimensions far exceeding the byte size (a 6MB JPEG
+can decode to hundreds of MP without this defense, consuming gigabytes
+of RAM in the Pillow decode path).

@@ -30,7 +30,8 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slowapi import Limiter
-from slowapi.util import get_remote_address
+from slowapi.util import get_remote_address  # noqa: F401
+from rate_limit_utils import bypass_or_remote_address
 from sqlalchemy.orm import Session
 
 import models
@@ -44,7 +45,7 @@ router = APIRouter(prefix="/api/invitations", tags=["invitations"])
 # ``app.state.limiter`` registered in ``main.py`` is what enables the
 # ``@limiter.limit(...)`` decorator to actually take effect — slowapi looks
 # up the request's ``app.state.limiter`` to apply the rule.
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(key_func=bypass_or_remote_address)
 
 
 def _now() -> datetime:

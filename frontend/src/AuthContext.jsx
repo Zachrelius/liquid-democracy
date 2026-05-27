@@ -51,11 +51,13 @@ export function AuthProvider({ children }) {
   }, [applyTokens]);
 
   // Listen for 401 events from the API module
+  // Phase 40 B6.1 (2026-05-27) — empty dep array so the listener registers
+  // once at mount instead of every render. `logout` is stable across renders.
   useEffect(() => {
     const handler = () => logout();
     window.addEventListener('auth:unauthorized', handler);
     return () => window.removeEventListener('auth:unauthorized', handler);
-  });
+  }, []);
 
   async function login(username, password) {
     const data = await api.login(username, password);
