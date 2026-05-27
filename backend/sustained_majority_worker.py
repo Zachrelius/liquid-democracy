@@ -818,6 +818,56 @@ def run_one_tick(db: Session) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Phase 40 B4 — health endpoint state (cross-process via PlatformSetting)
+# ---------------------------------------------------------------------------
+# This worker runs as a separate Python process (start.sh launches it via
+# `python -m sustained_majority_worker &`), so module-level state isn't
+# visible to the uvicorn process that serves /api/health/scheduler. Use
+# PlatformSetting (key="sm_worker_heartbeat") as the cross-process channel.
+# Writes happen in a separate short-lived session to avoid coupling the
+# heartbeat to the tick transaction (a successful tick that fails to write
+# the heartbeat shouldn't roll back the snapshot/audit work).
+SM_WORKER_HEARTBEAT_KEY = "sm_worker_heartbeat"
+
+
+def _record_heartbeat(success: bool) -> None:
+    """Write the sm_worker_heartbeat PlatformSetting row. Best-effort —
+    failures here are logged but do not crash the worker."""
+    try:
+        db = SessionLocal()
+        try:
+            row = db.query(models.PlatformSetting).filter(
+                models.PlatformSetting.key == SM_WORKER_HEARTBEAT_KEY,
+            ).first()
+            now_iso = datetime.now(timezone.utc).isoformat()
+            if success:
+                new_value = {
+                    "last_successful_tick_at": now_iso,
+                    "ticks_since_last_success": 0,
+                }
+            else:
+                prev = row.value if (row and isinstance(row.value, dict)) else {}
+                new_value = {
+                    "last_successful_tick_at": prev.get("last_successful_tick_at"),
+                    "ticks_since_last_success": int(
+                        prev.get("ticks_since_last_success", 0)
+                    ) + 1,
+                }
+            if row is None:
+                db.add(models.PlatformSetting(
+                    key=SM_WORKER_HEARTBEAT_KEY,
+                    value=new_value,
+                ))
+            else:
+                row.value = new_value
+            db.commit()
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001
+        log.exception("sm_worker: heartbeat write failed (continuing)")
+
+
+# ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
 
@@ -863,9 +913,11 @@ def main(once: bool = False) -> int:
 
     while not _Stop.flag:
         db = SessionLocal()
+        tick_succeeded = False
         try:
             count = run_one_tick(db)
             log.debug(f"tick processed {count} proposals")
+            tick_succeeded = True
         except Exception:  # noqa: BLE001
             log.exception("Worker tick failed; sleeping and retrying")
             try:
@@ -874,6 +926,9 @@ def main(once: bool = False) -> int:
                 pass
         finally:
             db.close()
+        # Phase 40 B4 — heartbeat is best-effort and writes via a fresh
+        # session so it can't interfere with the tick transaction above.
+        _record_heartbeat(tick_succeeded)
 
         if once:
             break

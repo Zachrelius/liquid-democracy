@@ -930,12 +930,36 @@ def _user_local_now(user: models.User, now_utc: datetime) -> datetime:
 # Async loop entry point
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Phase 40 B4 — health endpoint state
+# ---------------------------------------------------------------------------
+# In-process module-level state. Safe because the digest_loop runs in the
+# uvicorn asyncio loop (same process as the /api/health/scheduler handler).
+_LAST_SUCCESSFUL_TICK_AT: Optional[datetime] = None
+_TICKS_SINCE_LAST_SUCCESS: int = 0
+
+
+def get_scheduler_state() -> dict:
+    """Phase 40 B4 — current digest-loop health state for the
+    /api/health/scheduler endpoint. No DB roundtrip; no lock with the
+    worker loop, so the read works even when a tick is mid-execution or
+    stuck."""
+    return {
+        "last_successful_tick_at": (
+            _LAST_SUCCESSFUL_TICK_AT.isoformat()
+            if _LAST_SUCCESSFUL_TICK_AT else None
+        ),
+        "ticks_since_last_success": _TICKS_SINCE_LAST_SUCCESS,
+    }
+
+
 async def digest_loop() -> None:
     """The long-running asyncio task.
 
     Wakes hourly. Skips work if ``is_disabled()`` returns True (so ops
     can flip the kill switch with an env var + restart).
     """
+    global _LAST_SUCCESSFUL_TICK_AT, _TICKS_SINCE_LAST_SUCCESS
     log.info(
         "digest_loop: starting (DISABLE_DIGEST_SCHEDULER=%s)",
         os.environ.get("DISABLE_DIGEST_SCHEDULER", ""),
@@ -955,10 +979,14 @@ async def digest_loop() -> None:
                         counts = run_one_tick(db)
                         _ctx["work_units"] = counts
                     log.info("digest_loop: tick complete %s", counts)
+                    # Phase 40 B4 — record successful tick.
+                    _LAST_SUCCESSFUL_TICK_AT = datetime.now(timezone.utc)
+                    _TICKS_SINCE_LAST_SUCCESS = 0
                 finally:
                     db.close()
             except Exception:  # noqa: BLE001
                 log.exception("digest_loop: tick crashed; continuing")
+                _TICKS_SINCE_LAST_SUCCESS += 1
         try:
             await asyncio.sleep(TICK_SECONDS)
         except asyncio.CancelledError:

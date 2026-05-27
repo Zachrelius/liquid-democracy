@@ -6,7 +6,8 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from slowapi import Limiter
-from slowapi.util import get_remote_address
+from slowapi.util import get_remote_address  # noqa: F401
+from rate_limit_utils import bypass_or_remote_address
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -60,7 +61,7 @@ def _resolve_org_role_id(
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(key_func=bypass_or_remote_address)
 
 # Phase 39 B4 — soft-lockout thresholds. Per-username counter; complements
 # the per-IP slowapi rate limit on /login (Phase 38 B3). To succeed at

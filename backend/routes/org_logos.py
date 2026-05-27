@@ -50,6 +50,8 @@ from fastapi import (
     status,
 )
 from PIL import Image
+# Phase 40 B2 D4 (2026-05-27) — same decompression-bomb cap as avatars.py.
+Image.MAX_IMAGE_PIXELS = 25_000_000
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -243,6 +245,15 @@ async def upload_org_logo(
     try:
         img = Image.open(io.BytesIO(raw))
         img.load()
+    except Image.DecompressionBombError:
+        # Phase 40 B2 D5 (2026-05-27) — image dimensions exceed MAX_IMAGE_PIXELS.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Image dimensions exceed the supported limit "
+                "(25 megapixels). Resize before uploading."
+            ),
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

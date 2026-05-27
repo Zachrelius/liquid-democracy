@@ -31,6 +31,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from PIL import Image
+# Phase 40 B2 D4 (2026-05-27) — defense against decompression bombs. Pillow's
+# default MAX_IMAGE_PIXELS (~178 MP) allows a small JPEG to decode to GB of
+# RAM. 25 MP is generous for a phone camera (~6000×4000) and tight enough to
+# make decompression bombs unprofitable. Combines with the existing 6 MB
+# pre-resize byte cap below.
+Image.MAX_IMAGE_PIXELS = 25_000_000
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -189,6 +195,15 @@ async def upload_avatar(
     try:
         img = Image.open(io.BytesIO(raw))
         img.load()
+    except Image.DecompressionBombError:
+        # Phase 40 B2 D5 (2026-05-27) — image dimensions exceed MAX_IMAGE_PIXELS.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Image dimensions exceed the supported limit "
+                "(25 megapixels). Resize before uploading."
+            ),
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
