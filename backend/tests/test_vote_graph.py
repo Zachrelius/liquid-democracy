@@ -253,8 +253,12 @@ def test_02_approval_graph_visible_and_anonymous_voter_ballots(client, test_db):
     public_dlg = _user(test_db, "public_dlg")
     anon = _user(test_db, "anon_voter")
     # Public delegate profile makes public_dlg visible.
+    # Phase 37 B3 (2026-05-27): explicit visibility="public" — the model
+    # default is "followers_only" which no longer passes the visibility
+    # filter on the vote-graph endpoint's pub_delegate_ids builder.
     test_db.add(models.DelegateProfile(
         user_id=public_dlg.id, topic_id=topic.id, bio="",
+        visibility="public",
     ))
     p = _approval_proposal(test_db, viewer, topic, labels=["A", "B"])
     oids = _option_ids(test_db, p)
@@ -311,8 +315,10 @@ def test_04_rcv_graph_visible_voter_ballot_ranking_in_order(client, test_db):
     topic = _topic(test_db)
     viewer = _user(test_db, "viewer")
     public_dlg = _user(test_db, "public_dlg")
+    # Phase 37 B3: explicit visibility="public" (see test_02 above).
     test_db.add(models.DelegateProfile(
         user_id=public_dlg.id, topic_id=topic.id, bio="",
+        visibility="public",
     ))
     p = _rcv_proposal(test_db, viewer, topic, labels=["A", "B", "C"])
     oids = _option_ids(test_db, p)

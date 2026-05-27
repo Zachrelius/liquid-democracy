@@ -89,13 +89,19 @@ def _auth(user) -> dict:
 # ---------------------------------------------------------------------------
 
 def test_seed_endpoint_403_when_debug_off(client, test_db, monkeypatch):
-    """Phase 10.2 audit: Class A, POST /api/admin/seed — debug gate. With
-    settings.debug=False the route returns 403 regardless of caller."""
+    """Phase 10.2 audit (updated Phase 37 B4): POST /api/admin/seed — debug
+    gate. With settings.debug=False the route returns 403 for an admin
+    caller. Phase 37 added admin-auth as an upstream gate, so this test now
+    passes admin headers; unauthenticated requests get 401 (see
+    test_phase_37_security_hotfix.py)."""
     monkeypatch.setattr(settings, "debug", False)
+    admin = _make_user(test_db, "seed_off_admin", is_admin=True)
+    test_db.commit()
 
     resp = client.post(
         "/api/admin/seed",
         json={"scenario": "default"},
+        headers=_auth(admin),
     )
     assert resp.status_code == 403, resp.text
     assert "debug mode" in resp.json()["detail"].lower()
