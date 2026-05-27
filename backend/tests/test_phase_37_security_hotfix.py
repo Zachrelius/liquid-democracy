@@ -174,11 +174,15 @@ def test_b3_delegation_tree_redacts_private_delegate_profile_holders(
         visibility="private",
     ))
     # Target delegates to private_dlg so the node appears in the neighborhood.
+    # Phase 39 B3 — org_id is now NOT NULL on Delegation; reuse the
+    # conftest default test org.
+    from tests.conftest import _default_test_org_id
     test_db.add(models.Delegation(
         delegator_id=target.id,
         delegate_id=private_dlg.id,
         topic_id=topic.id,
         chain_behavior="accept_sub",
+        org_id=_default_test_org_id(test_db),
     ))
     test_db.commit()
 

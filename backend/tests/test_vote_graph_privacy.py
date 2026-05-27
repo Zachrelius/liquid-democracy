@@ -230,10 +230,12 @@ def test_followed_voter_full_visibility(client, test_db):
     # line ~1411). Leaving org_id=None matches the production lookup
     # shape — the privacy decision is account-level even though
     # delegation row data has been org-scoped.
+    from tests.conftest import _default_test_org_id
     test_db.add(models.FollowRelationship(
         follower_id=viewer.id,
         followed_id=followed.id,
         permission_level="view_only",
+        org_id=_default_test_org_id(test_db),
     ))
     p = _approval_proposal(test_db, viewer, topic, labels=["A", "B"])
     oids = _option_ids(test_db, p)

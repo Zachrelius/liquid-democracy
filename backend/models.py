@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -281,6 +282,31 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String, nullable=False)
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Phase 39 B1 — soft-revocation lever. False = account is disabled;
+    # ``_get_user_from_token`` and ``refresh_token`` both filter on
+    # ``is_active == True`` so a flipped-to-False account can't refresh or
+    # use existing access tokens. The migration backfills existing rows
+    # to True via ``server_default``; the ORM default mirrors it so
+    # freshly-constructed ``User()`` instances pick up True pre-flush.
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true"),
+    )
+    # Phase 39 B4 — per-username soft-lockout counter. Incremented on
+    # every bad-password attempt for an existing user; reset to 0 on
+    # successful login + on password-reset success. When the counter
+    # crosses LOCKOUT_THRESHOLD (10) the login route sets ``locked_until``
+    # to ``now + LOCKOUT_WINDOW_SECONDS`` (15 minutes).
+    failed_login_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"),
+    )
+    # Phase 39 B4 — soft-lockout window. NULL = never locked. When set in
+    # the future, login returns 401 with ``detail={"reason":
+    # "account_locked", "locked_until": <isoformat>}``. Locked attempts
+    # still increment ``failed_login_count`` so an attacker can't pause
+    # for 15min and resume from where they left off.
+    locked_until: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=False), nullable=True,
+    )
     user_type: Mapped[str] = mapped_column(
         Enum("human", "ai_agent", name="user_type"),
         nullable=False,
@@ -677,9 +703,12 @@ class Delegation(Base):
     delegator_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     delegate_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     # Phase 18: nullable in 18a (backfill running), flipped to NOT NULL in
-    # 18b once the backfill has been verified.
-    org_id: Mapped[Optional[str]] = mapped_column(
-        String, ForeignKey("organizations.id"), nullable=True, index=True,
+    # 18b once the backfill has been verified. Phase 39 B3 — ORM declaration
+    # synced to the post-18b DB shape (the DB has been NOT NULL since
+    # migration e9419ee5906f; the model was still declaring nullable=True,
+    # producing divergent schemas on the fresh-DB vs upgraded-DB branches).
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=False, index=True,
     )
     # Phase 18 (D4): sub-org scope is optional and stays nullable post-18b.
     sub_org_id: Mapped[Optional[str]] = mapped_column(
@@ -967,9 +996,10 @@ class FollowRequest(Base):
     target_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
     # Phase 18 (D2): follow requests are now org-scoped to prevent
     # delegation_allowed approvals leaking cross-org. Nullable in 18a;
-    # NOT NULL in 18b once backfill is verified.
-    org_id: Mapped[Optional[str]] = mapped_column(
-        String, ForeignKey("organizations.id"), nullable=True, index=True,
+    # NOT NULL in 18b once backfill is verified. Phase 39 B3 — ORM
+    # declaration synced to the post-18b DB shape.
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=False, index=True,
     )
     status: Mapped[str] = mapped_column(
         Enum("pending", "approved", "denied", name="follow_request_status"),
@@ -1020,8 +1050,9 @@ class FollowRelationship(Base):
     # account-level follow per pair" shape is preserved during backfill;
     # the next pass that exercises per-org follows on the write side will
     # need to revisit the constraint shape (e.g., add org_id to it).
-    org_id: Mapped[Optional[str]] = mapped_column(
-        String, ForeignKey("organizations.id"), nullable=True, index=True,
+    # Phase 39 B3 — ORM declaration synced to the post-18b DB shape.
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=False, index=True,
     )
     permission_level: Mapped[str] = mapped_column(
         Enum("view_only", "delegation_allowed", name="follow_permission_level"),
@@ -1123,8 +1154,9 @@ class DelegationIntent(Base):
         String, ForeignKey("users.id"), nullable=False, index=True
     )
     # Phase 18: nullable in 18a (backfill running), NOT NULL in 18b.
-    org_id: Mapped[Optional[str]] = mapped_column(
-        String, ForeignKey("organizations.id"), nullable=True, index=True,
+    # Phase 39 B3 — ORM declaration synced to the post-18b DB shape.
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=False, index=True,
     )
     sub_org_id: Mapped[Optional[str]] = mapped_column(
         String, ForeignKey("organizations.id"), nullable=True, index=True,

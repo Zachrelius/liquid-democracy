@@ -64,6 +64,9 @@ def make_follow_relationship(
     *,
     org_id: str | None = None,
 ) -> models.FollowRelationship:
+    if org_id is None:
+        from tests.conftest import _default_test_org_id
+        org_id = _default_test_org_id(db)
     r = models.FollowRelationship(
         follower_id=follower.id,
         followed_id=followed.id,
@@ -83,6 +86,9 @@ def make_follow_request(
     *,
     org_id: str | None = None,
 ) -> models.FollowRequest:
+    if org_id is None:
+        from tests.conftest import _default_test_org_id
+        org_id = _default_test_org_id(db)
     req = models.FollowRequest(
         requester_id=requester.id,
         target_id=target.id,
@@ -175,10 +181,12 @@ def test_follow_request_approval_creates_relationship(db):
     req.status = "approved"
     req.permission_level = "delegation_allowed"
     req.responded_at = datetime.now(timezone.utc)
+    from tests.conftest import _default_test_org_id
     rel = models.FollowRelationship(
         follower_id=alice.id,
         followed_id=bob.id,
         permission_level="delegation_allowed",
+        org_id=_default_test_org_id(db),
     )
     db.add(rel)
     db.flush()
