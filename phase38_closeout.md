@@ -1,8 +1,8 @@
 # Phase 38 — Authorization Audit Closeout
 
-**Status:** [pending: tests in flight, deploy pending] — drafted 2026-05-27
+**Status:** SHIPPED 2026-05-27. All six clusters merged, deployed, and verified.
 **Spec:** `phase38_authorization_audit_spec.md`
-**Branch:** `phase-38/authorization-audit` (from master `e3b4551`)
+**Branch:** `phase-38/authorization-audit` (from master `e3b4551`) — merged via `--no-ff` to master as commit `14777dc`. One ride-along follow-up commit on master (`e101d8b`) added uvicorn `--proxy-headers --forwarded-allow-ips '*'` after prod verify surfaced a pre-existing slowapi infra gap.
 
 ---
 
@@ -55,11 +55,38 @@ backend/websocket.py                              |   8 +-
 
 ## Branch + commits
 
-[PENDING — commit + merge after sweep clears]
+- `6cbfd5a` — Phase 38: Authorization audit bundle (B1+B2+B3+B4+B5+B7) (17 files, +1850/-223)
+- `14777dc` — Merge phase-38/authorization-audit: Phase 38 (Authorization Audit Bundle) (no-ff)
+- `e101d8b` — Phase 38 followup: trust Railway-edge forwarded headers (1 file, +8/-1) — direct commit on master after the merge, post-deploy verify surfaced the slowapi infra gap (see deviation #5 below).
+
+Master now at `e101d8b`.
 
 ## Production deploy
 
-[PENDING]
+- Railway backend deploy `fe072516` (Phase 38 main commit): BUILDING → DEPLOYING → SUCCESS, ~7 min build + warmup. Verified: `GET /api/health` returned `{"status":"ok","version":"0.1.0"}`.
+- Railway backend deploy `b722c7a5` (start.sh follow-up commit): BUILDING → DEPLOYING → SUCCESS.
+- Demo reset post-deploy: `python scripts/trigger_demo_reset.py` → 3 orgs reset, 6607 rows wiped, 4750 rows seeded. `skipped: false, success: true`.
+- Frontend bundle: unchanged at `index-Dp3YmSzh.js` (backend-only pass).
+- Railway URL: https://www.liquiddemocracy.us
+
+### API verify quartet results
+
+- **B1 anonymous-blocked:** `GET /api/proposals`, `GET /api/proposals/{id}`, `GET /api/proposals/{id}/results` all returned `HTTP 401 {"detail":"Not authenticated"}` without an Authorization header. ✅
+- **B1 authenticated + filtered:** janet_reilly (steward on demo-cedar-hollow) → `GET /api/proposals` returned 28 proposals from 1 distinct org_id. dana_whitfield (westgate-coalition) → 24 proposals from 1 distinct org_id (different org). Cross-org leak closed. ✅
+- **B3 rate-limit (after the follow-up commit):** 12 bad-credential POSTs to `/api/auth/login` from one client IP → 401 on attempts 1-10, **429 on attempts 11-12**. ✅. Pre-follow-up (before `e101d8b`) the same test returned 401 on all 12 because the slowapi key was per-edge-IP — see deviation #5.
+- **B7 demo-login org_slug-required:** POST `/api/auth/demo-login {"username":"alice"}` (no org_slug) → `HTTP 400 {"detail":"org_slug is required"}`. POST with valid `(username, org_slug)` pair → `HTTP 200` + access_token + refresh_token. ✅
+
+### Browser QA via Chrome MCP
+
+QA sub-agent run, persona `janet_reilly` on `demo-cedar-hollow`:
+- Demo-login button at `/demo` cleared. Tokens landed in sessionStorage (`token` + `refreshToken`), redirected to `/orgs`.
+- `/demo-cedar-hollow/proposals` rendered 17 proposals across all statuses (voting / deliberation / passed / failed / decided / draft) without 401 / error banner. Per-proposal vote-state badges accurate.
+- Clicked a voting proposal — detail page rendered: full body, Vote Network panel showing 16 Yes / 7 No / 0 Abstain / 53 Not Cast (Janet visible in Yes column), Support Trajectory chart (63 data points), Your Vote block with Change/Retract controls.
+- Results tally: 16 Yes (69.6%), 7 No (30.4%), 0 Abstain, 23/76 (30.3%) cast.
+
+**Headline:** auth gate + per-proposal eligibility filter haven't locked out the legitimate steward persona; full end-to-end demo flow holds.
+
+B2 live-tally WebSocket flow was **not** browser-verified because (per the FE-grep finding) the current FE doesn't consume `/ws/proposals/{id}` — tally updates happen via HTTP refetch. B4 transferability=off path was not exercised on prod because demo orgs all default to transferability ON (per Phase 34); the unit tests cover transferability=off explicitly.
 
 ## Locked-decision confirmation
 
@@ -75,6 +102,7 @@ backend/websocket.py                              |   8 +-
 2. **B3 D12 — `AuditLog.target_id` is NOT NULL.** The spec's reference shape used `target_id=user.id if user else None`, but the column is `nullable=False`. Used `form_data.username` as the fallback when `user is None` — preserves insertability and is more forensically useful (lets ops grep which usernames are being probed). Recorded as a deliberate deviation in the audit-event details payload (`user_exists: bool`).
 3. **B5.1 visibility-filter ride-along — broke one passing test.** The Phase 37 B3 visibility filter was carried into `can_delegate_to` per spec B5.1. The `test_delegation_intents.py::test_public_delegate_bypasses_intent` test was riding on the unfiltered-visibility bug (the test helper created profiles without setting visibility, leaving the column at its Phase-30.3 default of `followers_only`). Per spec D22, the test was asserting incorrect behavior; updated the helper to set `visibility="public_accepting"` explicitly. Same root cause as the spec's call-out about "test fixtures may need updating."
 4. **B2 D10 frontend coordination not required.** Grep of `frontend/src` for WebSocket usage returned zero hits. The FE refetches `/results` via HTTP — the WS endpoint is plumbed in nginx + vite but no UI component connects to it. Bundle hash unchanged. If a future FE pass wires WS, the handshake-send is a 5-line addition.
+5. **Pre-existing rate-limiter infra gap discovered during prod verify; fixed in a small follow-up commit.** The B3 prod verify (12 bad-credential POSTs to `/api/auth/login` from one client IP) returned `401` on all 12 instead of `429` on the 11th+. Root cause: `backend/start.sh` ran `uvicorn` without `--proxy-headers --forwarded-allow-ips '*'`. Uvicorn's `--forwarded-allow-ips` defaults to `127.0.0.1`, so the Railway-edge IP became `request.client.host` and every slowapi limiter in the codebase was effectively keyed per-edge-IP instead of per-client-IP. Same applied to the pre-existing `/forgot-password` `3/hour` limiter — verified by hitting it 4× without triggering. Fixed in commit `e101d8b` (post-merge follow-up on master) by adding the proxy-header flags. Also closes the Phase 37 closeout's Tier-2 "audit-log IP forensics" tech debt — `AuditLog.ip_address` now records the actual client IP. Re-verified post-redeploy that B3 rate limit fires at the 11th attempt from one client IP.
 
 ## New tech debt found
 
