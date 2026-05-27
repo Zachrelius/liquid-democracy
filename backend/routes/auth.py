@@ -62,17 +62,6 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 limiter = Limiter(key_func=get_remote_address)
 
-DEMO_USERNAMES = ["alice", "dr_chen", "carol", "dave", "frank",
-                  # Phase 8.5: voter02 is the canonical Decision-7 / Decision-8
-                  # cross-scope persona (parent-org member, NOT in Engineering
-                  # Team). Without quick-login, the sub-org demo flow is
-                  # awkward to exercise from the public landing.
-                  # Phase 37 D1 (2026-05-27): removed "admin" — the seeded
-                  # platform-admin user has is_admin=True, and the legacy
-                  # demo-login branch (org_slug=None) had no admin filter, so
-                  # POST {"username":"admin"} returned real admin tokens. See
-                  # external_review_2026-05-27.md §2.4 + phase37 spec.
-                  "voter02"]
 DEMO_ORG_SLUG = "demo"
 
 
@@ -362,6 +351,7 @@ async def register(
 # ---------------------------------------------------------------------------
 
 @router.post("/login", response_model=schemas.TokenResponse)
+@limiter.limit("10/minute")
 def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -370,6 +360,21 @@ def login(
 ):
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
     if not user or not auth_utils.verify_password(form_data.password, user.password_hash):
+        # Phase 38 B3 D12 — failed-attempt audit before the 401. AuditLog.target_id
+        # is NOT NULL, so the unknown-username case falls back to form_data.username
+        # rather than None — keeps the row insertable and is more forensically
+        # useful (lets ops grep which usernames are being probed). Commit
+        # explicitly so the audit row persists across the exception unwind.
+        log_audit_event(
+            db,
+            action="user.login_failed",
+            target_type="user",
+            target_id=user.id if user else form_data.username,
+            actor_id=None,
+            details={"username": form_data.username, "user_exists": user is not None},
+            ip_address=request.client.host if request.client else None,
+        )
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
@@ -672,13 +677,24 @@ def reset_password(
 
 @router.get("/demo-users")
 def demo_users(db: Session = Depends(get_db)):
-    """Return a list of demo users for quick-switch login.
+    """Return a list of demo users for quick-switch login on /login.
     Available when either debug or is_public_demo is enabled.
+
+    Phase 38 B7: the module-level DEMO_USERNAMES constant was removed with
+    the legacy demo-login branch. This endpoint still serves the /login
+    quick-switch grid, so the persona list is inlined here. The new
+    canonical per-org demo flow runs through Demo.jsx + /api/auth/demo-login
+    with an explicit org_slug; this endpoint is the legacy `demo` org
+    quick-login surface and predates that.
     """
     if not (settings.debug or settings.is_public_demo):
         raise HTTPException(status_code=404, detail="Not found")
+    quick_switch_usernames = [
+        "alice", "dr_chen", "carol", "dave", "frank", "voter02",
+    ]
     users = db.query(models.User).filter(
-        models.User.username.in_(DEMO_USERNAMES)
+        models.User.username.in_(quick_switch_usernames),
+        models.User.is_admin.is_(False),
     ).all()
     return [
         {"username": u.username, "display_name": u.display_name}
@@ -687,6 +703,7 @@ def demo_users(db: Session = Depends(get_db)):
 
 
 @router.post("/demo-login", response_model=schemas.TokenResponse)
+@limiter.limit("10/minute")
 def demo_login(
     body: schemas.DemoLoginRequest,
     request: Request,
@@ -696,116 +713,60 @@ def demo_login(
 
     Available when either ``debug`` or ``is_public_demo`` is enabled.
 
-    Phase 23 B7 — two paths based on ``body.org_slug``:
+    Per-org allowlist path (Phase 23 B7, Phase 38 B7): looks up the named
+    demo org by ``body.org_slug``, validates the persona against its
+    ``Organization.personas`` JSONB allowlist (seeded from each org's
+    bible), and verifies the user has an active ``OrgMembership`` in that
+    org. All failure modes return 404 so a probe can't distinguish
+    persona/org/membership mismatch.
 
-    1. **Legacy (org_slug=None):** validates against the hardcoded
-       ``DEMO_USERNAMES`` constant + the single ``demo`` org slug.
-       Kept during the transition window so any existing Phase-23-
-       pre-deploy frontend or saved bookmark still works. Removed
-       in a later cleanup pass once the three demo orgs are seeded
-       and the frontend always sends ``org_slug``.
+    If ``personas`` is empty/NULL on a demo org (e.g., between deploy and
+    the first scheduled seed), the path returns 404 cleanly — that's the
+    expected pre-seed behavior.
 
-    2. **Per-org (org_slug provided):** looks up the named demo org,
-       validates the persona against its ``Organization.personas``
-       JSONB allowlist (seeded from each org's bible), and verifies
-       the user has an active ``OrgMembership`` in that org. All
-       failure modes return 404 (matching the legacy posture: don't
-       reveal whether persona, org, or membership was the mismatch).
-
-    If ``personas`` is empty/NULL on a demo org (e.g., between deploy
-    and the first scheduled seed), the new path returns 404 cleanly —
-    that's the expected pre-seed behavior.
+    Phase 38 B7 removed the legacy ``org_slug=None`` branch + the
+    hardcoded ``DEMO_USERNAMES`` constant; ``org_slug`` is now required
+    and a missing value returns 400 rather than silently falling through.
     """
     if not (settings.debug or settings.is_public_demo):
         raise HTTPException(status_code=404, detail="Not found")
 
-    # ---- Phase 23 B7 path: per-org allowlist via Organization.personas ----
-    if body.org_slug is not None:
-        org = db.query(models.Organization).filter(
-            models.Organization.slug == body.org_slug,
-        ).first()
-        # 404 if org doesn't exist OR isn't a demo org — same response
-        # so a probe can't distinguish "no such slug" from "real org,
-        # not a demo target".
-        if org is None or not org.is_demo:
-            raise HTTPException(status_code=404, detail="Not found")
-
-        # personas is JSONB list of {username, display_name, role,
-        # description}. Empty/NULL during the pre-seed window → 404,
-        # which is the cleanest failure mode (the frontend's
-        # is_demo_resetting overlay handles in-flight reset; outside
-        # that window an empty personas list means seed hasn't run).
-        allowlist_entries = org.personas or []
-        allowed_usernames = {
-            entry.get("username")
-            for entry in allowlist_entries
-            if isinstance(entry, dict) and entry.get("username")
-        }
-        if body.username not in allowed_usernames:
-            raise HTTPException(status_code=404, detail="Not found")
-
-        user = db.query(models.User).filter(
-            models.User.username == body.username,
-        ).first()
-        if user is None:
-            raise HTTPException(status_code=404, detail="Not found")
-
-        # Defense-in-depth: verify the persona has an active
-        # OrgMembership in this org. The seed mechanism creates both
-        # the User row and the OrgMembership row together, so this
-        # check should never fire under normal operation — but if a
-        # persona is somehow listed in personas without a matching
-        # membership (manual DB tinkering, partial seed failure), we
-        # refuse rather than issue tokens for an effectively-orphaned
-        # demo identity.
-        membership = db.query(models.OrgMembership).filter(
-            models.OrgMembership.user_id == user.id,
-            models.OrgMembership.org_id == org.id,
-            models.OrgMembership.status == "active",
-        ).first()
-        if membership is None:
-            raise HTTPException(status_code=404, detail="Not found")
-
-        log_audit_event(
-            db,
-            action="user.demo_login",
-            target_type="user",
-            target_id=user.id,
-            actor_id=user.id,
-            details={
-                "username": user.username,
-                "org_slug": org.slug,
-                "org_id": org.id,
-            },
-            ip_address=request.client.host if request.client else None,
+    if body.org_slug is None:
+        raise HTTPException(
+            status_code=400,
+            detail="org_slug is required",
         )
 
-        access_token = auth_utils.create_access_token(user.id)
-        refresh_token = _create_refresh_token(db, user.id)
-
-        db.commit()
-
-        return {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-        }
-
-    # ---- Legacy path: hardcoded DEMO_USERNAMES + DEMO_ORG_SLUG ----
-    # 404 (not 403) so the endpoint reveals nothing about the allowlist when
-    # the flag is off — and an unknown username gets the same response as a
-    # real-but-not-allowlisted one.
-    if body.username not in DEMO_USERNAMES:
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == body.org_slug,
+    ).first()
+    # 404 if org doesn't exist OR isn't a demo org — same response so a
+    # probe can't distinguish "no such slug" from "real org, not a demo
+    # target".
+    if org is None or not org.is_demo:
         raise HTTPException(status_code=404, detail="Not found")
 
-    # Phase 37 D1 (2026-05-27): defense-in-depth — even if a future contributor
-    # re-adds an admin-flagged username to DEMO_USERNAMES, the User lookup
-    # refuses to return platform-admin accounts. The allowlist removal above is
-    # the primary safety property; this is insurance.
+    allowlist_entries = org.personas or []
+    allowed_usernames = {
+        entry.get("username")
+        for entry in allowlist_entries
+        if isinstance(entry, dict) and entry.get("username")
+    }
+    if body.username not in allowed_usernames:
+        raise HTTPException(status_code=404, detail="Not found")
+
     user = db.query(models.User).filter(
         models.User.username == body.username,
-        models.User.is_admin.is_(False),
     ).first()
     if user is None:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    membership = db.query(models.OrgMembership).filter(
+        models.OrgMembership.user_id == user.id,
+        models.OrgMembership.org_id == org.id,
+        models.OrgMembership.status == "active",
+    ).first()
+    if membership is None:
         raise HTTPException(status_code=404, detail="Not found")
 
     log_audit_event(
@@ -814,7 +775,11 @@ def demo_login(
         target_type="user",
         target_id=user.id,
         actor_id=user.id,
-        details={"username": user.username},
+        details={
+            "username": user.username,
+            "org_slug": org.slug,
+            "org_id": org.id,
+        },
         ip_address=request.client.host if request.client else None,
     )
 

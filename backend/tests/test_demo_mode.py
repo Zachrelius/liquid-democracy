@@ -20,6 +20,7 @@ import auth as auth_utils
 import models
 from database import Base, get_db
 from main import app
+from role_seed import seed_default_roles_for_org
 from settings import settings
 
 
@@ -78,15 +79,23 @@ def public_demo(monkeypatch):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _create_demo_org(db) -> models.Organization:
+def _create_demo_org(
+    db,
+    *,
+    is_demo: bool = False,
+    personas: list | None = None,
+) -> models.Organization:
     org = models.Organization(
         name="Demo Organization",
         slug="demo",
         description="Test demo org",
         join_policy="open",
+        is_demo=is_demo,
+        personas=personas,
     )
     db.add(org)
     db.flush()
+    seed_default_roles_for_org(db, org.id)
     return org
 
 
@@ -103,6 +112,39 @@ def _create_user(db, username: str, email_verified: bool = True) -> models.User:
     return u
 
 
+def _seed_per_org_demo(db, usernames: list[str]):
+    """Seed a demo org + personas + memberships for the per-org demo-login path.
+
+    Phase 38 B7 made org_slug required on /api/auth/demo-login; the per-org
+    allowlist path now validates persona + active membership + ``is_demo``.
+    Returns (org, {username: user}).
+    """
+    org = _create_demo_org(
+        db,
+        is_demo=True,
+        personas=[
+            {"username": u, "display_name": u.title(), "role": "member"}
+            for u in usernames
+        ],
+    )
+    member_role = db.query(models.Role).filter(
+        models.Role.org_id == org.id,
+        models.Role.system_key == "member",
+    ).first()
+    users: dict[str, models.User] = {}
+    for username in usernames:
+        u = _create_user(db, username)
+        users[username] = u
+        db.add(models.OrgMembership(
+            user_id=u.id,
+            org_id=org.id,
+            role_id=member_role.id,
+            status="active",
+        ))
+    db.flush()
+    return org, users
+
+
 # ---------------------------------------------------------------------------
 # GET /api/auth/demo-users
 # ---------------------------------------------------------------------------
@@ -115,8 +157,9 @@ def test_demo_users_endpoint_returns_404_when_flag_off(client, flags_off):
 def test_demo_users_endpoint_returns_list_when_is_public_demo_true(
     client, test_db, public_demo
 ):
-    # Phase 37 D1 (2026-05-27): "admin" removed from DEMO_USERNAMES; this
-    # assertion now uses three other allowlisted personas.
+    # Phase 38 B7 removed DEMO_USERNAMES; the demo_users endpoint now sources
+    # the quick-switch persona list from an inline literal and filters out
+    # is_admin accounts. Assertion uses three of those personas.
     _create_user(test_db, "alice")
     _create_user(test_db, "dr_chen")
     _create_user(test_db, "carol")
@@ -138,31 +181,57 @@ def test_demo_users_endpoint_returns_list_when_is_public_demo_true(
 # ---------------------------------------------------------------------------
 
 def test_demo_login_404_when_flag_off(client, test_db, flags_off):
+    _seed_per_org_demo(test_db, ["alice"])
+    test_db.commit()
+
+    resp = client.post(
+        "/api/auth/demo-login",
+        json={"username": "alice", "org_slug": "demo"},
+    )
+    assert resp.status_code == 404
+
+
+def test_demo_login_400_when_org_slug_missing(client, test_db, public_demo):
+    """Phase 38 B7: org_slug is now required on /api/auth/demo-login. Missing
+    value returns 400 explicitly rather than silently falling through to the
+    deleted legacy DEMO_USERNAMES branch."""
     _create_user(test_db, "alice")
     test_db.commit()
 
     resp = client.post("/api/auth/demo-login", json={"username": "alice"})
-    assert resp.status_code == 404
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "org_slug is required"
 
 
 def test_demo_login_404_for_non_allowlisted_username(client, test_db, public_demo):
-    # A real user that is NOT on the persona allowlist.
+    # Demo org seeded with the alice persona; mallory is not in the allowlist.
+    _seed_per_org_demo(test_db, ["alice"])
     _create_user(test_db, "mallory")
     test_db.commit()
 
-    resp = client.post("/api/auth/demo-login", json={"username": "mallory"})
+    resp = client.post(
+        "/api/auth/demo-login",
+        json={"username": "mallory", "org_slug": "demo"},
+    )
     assert resp.status_code == 404
 
     # And a username that doesn't exist at all.
-    resp = client.post("/api/auth/demo-login", json={"username": "notauser"})
+    resp = client.post(
+        "/api/auth/demo-login",
+        json={"username": "notauser", "org_slug": "demo"},
+    )
     assert resp.status_code == 404
 
 
 def test_demo_login_issues_tokens_for_allowlisted_user(client, test_db, public_demo):
-    alice = _create_user(test_db, "alice")
+    org, users = _seed_per_org_demo(test_db, ["alice"])
+    alice = users["alice"]
     test_db.commit()
 
-    resp = client.post("/api/auth/demo-login", json={"username": "alice"})
+    resp = client.post(
+        "/api/auth/demo-login",
+        json={"username": "alice", "org_slug": "demo"},
+    )
     assert resp.status_code == 200
     body = resp.json()
     assert "access_token" in body
@@ -187,10 +256,14 @@ def test_demo_login_issues_tokens_for_allowlisted_user(client, test_db, public_d
 
 
 def test_demo_login_writes_audit_log_entry(client, test_db, public_demo):
-    alice = _create_user(test_db, "alice")
+    org, users = _seed_per_org_demo(test_db, ["alice"])
+    alice = users["alice"]
     test_db.commit()
 
-    resp = client.post("/api/auth/demo-login", json={"username": "alice"})
+    resp = client.post(
+        "/api/auth/demo-login",
+        json={"username": "alice", "org_slug": "demo"},
+    )
     assert resp.status_code == 200
 
     entry = test_db.query(models.AuditLog).filter(
@@ -201,6 +274,7 @@ def test_demo_login_writes_audit_log_entry(client, test_db, public_demo):
     assert entry.actor_id == alice.id
     assert entry.target_type == "user"
     assert entry.details.get("username") == "alice"
+    assert entry.details.get("org_slug") == "demo"
 
 
 # ---------------------------------------------------------------------------

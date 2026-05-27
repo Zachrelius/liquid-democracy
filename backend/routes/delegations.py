@@ -141,7 +141,9 @@ def upsert_delegation(
     _validate_topic_for_org(db, org_id, body.topic_id)
     sub_org_id = _validate_sub_org_for_org(db, org_id, body.sub_org_id)
 
-    if not can_delegate_to(db, current_user.id, body.delegate_id, body.topic_id):
+    if not can_delegate_to(
+        db, current_user.id, body.delegate_id, body.topic_id, org_id=org_id,
+    ):
         raise HTTPException(
             status_code=403,
             detail=delegation_denied_message(body.topic_id),
@@ -788,7 +790,9 @@ def request_delegation(
     sub_org_id = _validate_sub_org_for_org(db, org_id, body.sub_org_id)
 
     # ── Has permission already? Create directly ──────────────────────────
-    if can_delegate_to(db, current_user.id, body.delegate_id, body.topic_id):
+    if can_delegate_to(
+        db, current_user.id, body.delegate_id, body.topic_id, org_id=org_id,
+    ):
         if graph_store.would_create_cycle(
             current_user.id, body.delegate_id, body.topic_id, org_id=org_id,
         ):

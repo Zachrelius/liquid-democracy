@@ -318,7 +318,9 @@ class TestResultsStableResultBlock:
         db.flush()
         db.commit()
 
-        resp = client.get(f"/api/proposals/{proposal.id}/results")
+        resp = client.get(
+            f"/api/proposals/{proposal.id}/results", headers=_auth(admin),
+        )
         assert resp.status_code == 200
         sm = resp.json()["sustained_majority"]
         assert sm["active"] is False
@@ -347,7 +349,9 @@ class TestResultsStableResultBlock:
         db.flush()
         db.commit()
 
-        resp = client.get(f"/api/proposals/{proposal.id}/results")
+        resp = client.get(
+            f"/api/proposals/{proposal.id}/results", headers=_auth(admin),
+        )
         assert resp.status_code == 200
         sm = resp.json()["sustained_majority"]
         assert sm["active"] is True

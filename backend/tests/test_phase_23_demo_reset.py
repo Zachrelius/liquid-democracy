@@ -1136,27 +1136,18 @@ class TestDemoLoginPerOrgAllowlist:
         assert resp.status_code == 404
 
 
-class TestDemoLoginLegacyPath:
-    """{username} only (no org_slug) falls back to legacy DEMO_USERNAMES."""
+class TestDemoLoginOrgSlugRequired:
+    """Phase 38 B7: org_slug is required on /api/auth/demo-login. The legacy
+    ``org_slug=None`` branch + DEMO_USERNAMES constant were removed."""
 
-    def test_legacy_path(self, test_db, client, public_demo):
-        # Create an alice user (in legacy DEMO_USERNAMES)
+    def test_missing_org_slug_returns_400(self, test_db, client, public_demo):
         _make_user(test_db, "alice")
         test_db.commit()
         resp = client.post(
             "/api/auth/demo-login", json={"username": "alice"},
         )
-        assert resp.status_code == 200
-        body = resp.json()
-        assert "access_token" in body
-
-    def test_legacy_rejects_non_allowlisted(self, test_db, client, public_demo):
-        _make_user(test_db, "mallory")
-        test_db.commit()
-        resp = client.post(
-            "/api/auth/demo-login", json={"username": "mallory"},
-        )
-        assert resp.status_code == 404
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "org_slug is required"
 
 
 # ===========================================================================

@@ -76,12 +76,13 @@ class InvitationMetaOut(BaseModel):
 class DemoLoginRequest(BaseModel):
     """Passwordless login for whitelisted demo personas (Phase 6.5).
 
-    Phase 23 (D25, B7) — extended with optional ``org_slug``. When
-    provided, the handler validates the persona against the per-org
-    allowlist stored in ``Organization.personas`` JSONB rather than
-    the legacy global ``DEMO_USERNAMES`` constant. The legacy path
-    (org_slug=None) is preserved during the transition window until
-    the legacy single-org ``demo`` slug retires.
+    The handler validates the persona against the per-org allowlist
+    stored in ``Organization.personas`` JSONB. ``org_slug`` was extended
+    as Optional for the Phase 23 transition window; Phase 38 B7 removed
+    the legacy ``org_slug=None`` branch from the handler so a missing
+    value now returns 400 explicitly. The field remains Optional here so
+    request-validation errors stay loud at the route layer rather than
+    being swallowed as a 422 schema rejection.
     """
     username: str = Field(min_length=1, max_length=50)
     org_slug: Optional[str] = Field(default=None, max_length=100)

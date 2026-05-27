@@ -1,9 +1,11 @@
 """Phase 37 — Security hotfix bundle regression tests.
 
 Covers:
-  - B1: demo-login admin priv-esc. Removing "admin" from DEMO_USERNAMES is
-    the primary fix; the is_admin=False filter on the legacy User lookup is
-    defense-in-depth. Tests both layers.
+  - B1: demo-login admin priv-esc. (Phase 38 B7 deleted the legacy
+    ``org_slug=None`` branch + ``DEMO_USERNAMES`` constant the original
+    priv-esc rode on; the legacy-branch-specific tests have been removed
+    here. The Phase 38 suite covers the per-org-allowlist replacement
+    surface.)
   - B2: startup assert when SECRET_KEY is the placeholder default in
     non-debug mode.
   - B3: delegation_tree DelegateProfile visibility filter — private profiles
@@ -24,7 +26,6 @@ import auth as auth_utils
 import models
 from database import Base, get_db
 from main import app
-from routes import auth as auth_routes
 from settings import settings
 
 
@@ -91,59 +92,12 @@ def _auth(user) -> dict:
 # ===========================================================================
 # B1 — demo-login admin priv-esc
 # ===========================================================================
-
-
-def test_b1_demo_login_admin_username_rejected(client, test_db, public_demo):
-    """The seeded platform-admin user with username='admin' is no longer in
-    DEMO_USERNAMES, so demo-login POST {"username":"admin"} returns 404 —
-    closing the priv-esc surfaced by external_review_2026-05-27 §2.4."""
-    _make_user(test_db, "admin", is_admin=True)
-    test_db.commit()
-
-    resp = client.post("/api/auth/demo-login", json={"username": "admin"})
-    assert resp.status_code == 404, resp.text
-    # Make sure we didn't accidentally issue tokens.
-    assert "access_token" not in resp.text
-
-
-def test_b1_demo_login_admin_user_rejected_even_if_in_allowlist(
-    client, test_db, public_demo, monkeypatch,
-):
-    """Defense-in-depth: even if a future contributor re-adds 'admin' to
-    DEMO_USERNAMES, the legacy User lookup's is_admin=False filter still
-    rejects admin accounts.
-
-    Locks the second layer of Phase 37 D1 into place.
-    """
-    _make_user(test_db, "admin", is_admin=True)
-    test_db.commit()
-
-    # Simulate the regression — patch the allowlist to include "admin".
-    monkeypatch.setattr(
-        auth_routes,
-        "DEMO_USERNAMES",
-        list(auth_routes.DEMO_USERNAMES) + ["admin"],
-    )
-
-    resp = client.post("/api/auth/demo-login", json={"username": "admin"})
-    assert resp.status_code == 404, resp.text
-    assert "access_token" not in resp.text
-
-
-def test_b1_demo_login_non_admin_personas_still_work(
-    client, test_db, public_demo,
-):
-    """Phase 37 D2: the legacy demo-login path remains operational for
-    non-admin personas (alice / dave / voter02 / etc.). Verifies the
-    allowlist removal didn't break legitimate demo-login usage."""
-    _make_user(test_db, "alice", is_admin=False)
-    test_db.commit()
-
-    resp = client.post("/api/auth/demo-login", json={"username": "alice"})
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert "access_token" in body
-    assert body["access_token"]
+#
+# Phase 38 B7 removed the legacy ``org_slug=None`` branch + the
+# ``DEMO_USERNAMES`` constant entirely, so the original Phase 37 priv-esc
+# surface no longer exists. The "admin username rejected" property is now
+# checked at the per-org persona-allowlist layer (Phase 38 tests cover the
+# new path); the legacy-branch-specific tests have been removed.
 
 
 # ===========================================================================
