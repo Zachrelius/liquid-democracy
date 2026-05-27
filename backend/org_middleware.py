@@ -108,7 +108,53 @@ async def require_org_membership(
     raise HTTPException(status_code=403, detail="Not a member of this organization")
 
 
+def _check_sub_org_transferability(
+    membership,
+    org: Organization,
+) -> None:
+    """Phase 38 B4 — raise 403 when ``membership`` is a parent-org
+    OrgMembership returned via the Phase 34.1 E4 fallback for a sub-org
+    URL and the parent's role doesn't transfer to sub-orgs.
+
+    No-op when:
+      - ``org`` is not a sub-org (``parent_org_id`` is None).
+      - ``membership`` is a SubOrgMembership (direct sub-org member;
+        transferability is a parent-fallback policy and doesn't gate
+        direct membership).
+      - ``membership.org_id == org.id`` (direct OrgMembership on the
+        sub-org itself, not via parent fallback).
+      - The role's transferability flag is True (the default for
+        steward/admin/moderator; the locked-on case for steward).
+
+    Steward transferability is locked-on at the
+    ``role_transfers_to_sub_orgs`` helper level (Phase 15 §S1) even if
+    the settings JSON stores ``False``, so the steward gate behaves
+    identically before/after this check.
+    """
+    if org.parent_org_id is None:
+        return
+    if isinstance(membership, models.SubOrgMembership):
+        return
+    if membership.org_id == org.id:
+        return  # direct OrgMembership on the sub-org itself
+    if membership.org_id != org.parent_org_id:
+        return  # defensive — shouldn't happen given require_org_membership's logic
+    role_system_key = membership_role_system_key(membership)
+    if role_system_key is None:
+        return
+    from role_permissions import role_transfers_to_sub_orgs
+    parent_org = membership.organization
+    if parent_org is None:
+        return  # defensive
+    if not role_transfers_to_sub_orgs(parent_org, role_system_key):
+        raise HTTPException(
+            status_code=403,
+            detail="Your role does not transfer to sub-organizations.",
+        )
+
+
 async def require_org_moderator_or_admin(
+    org: Organization = Depends(get_org_context),
     membership: OrgMembership = Depends(require_org_membership),
 ):
     """Verify current user is in the moderator-or-better tier (moderator,
@@ -117,32 +163,47 @@ async def require_org_moderator_or_admin(
     Phase 12 — coarse tier check; per-action permissions are checked at
     call sites via ``has_permission``. Kept as a Depends() so existing
     routes that gate on "membership tier" don't need a wholesale rewrite.
+
+    Phase 38 B4 — when ``require_org_membership`` resolves a sub-org URL
+    via the Phase 34.1 E4 parent-OrgMembership fallback, the tier gate
+    now also consults ``role_transfers_to_sub_orgs`` so a parent admin
+    whose transferability is disabled is denied at the tier rather than
+    silently retaining moderator+ access on the sub-org.
     """
     if membership_role_system_key(membership) not in _MODERATOR_TIER_SYSTEM_KEYS:
         raise HTTPException(
             status_code=403,
             detail="You do not have permission to perform this action in this organization.",
         )
+    if org is not None:
+        _check_sub_org_transferability(membership, org)
     return membership
 
 
 async def require_org_admin(
+    org: Organization = Depends(get_org_context),
     membership: OrgMembership = Depends(require_org_membership),
 ):
     """Verify current user is in the admin-or-better tier (admin, steward).
 
     Phase 12 — coarse tier check; per-action permissions are checked at
     call sites via ``has_permission``.
+
+    Phase 38 B4 — same transferability tightening as
+    ``require_org_moderator_or_admin``.
     """
     if membership_role_system_key(membership) not in _ADMIN_TIER_SYSTEM_KEYS:
         raise HTTPException(
             status_code=403,
             detail="You do not have permission to perform this action in this organization.",
         )
+    if org is not None:
+        _check_sub_org_transferability(membership, org)
     return membership
 
 
 async def require_org_owner(
+    org: Organization = Depends(get_org_context),
     membership: OrgMembership = Depends(require_org_membership),
 ):
     """Verify current user is the Steward of the org (Phase 12 — renamed
@@ -150,10 +211,17 @@ async def require_org_owner(
 
     Used by ``org.delete`` and ``org.transfer_stewardship`` — D4 hardcoded
     gates that bypass the configurable permission system.
+
+    Phase 38 B4 — transferability check runs here too. Steward transfer
+    is locked-on at the helper level so this is effectively a no-op for
+    legitimate Stewards, but the helper call is left in for symmetry +
+    audit clarity.
     """
     if membership_role_system_key(membership) != _STEWARD_SYSTEM_KEY:
         raise HTTPException(
             status_code=403,
             detail="You do not have permission to perform this action in this organization.",
         )
+    if org is not None:
+        _check_sub_org_transferability(membership, org)
     return membership

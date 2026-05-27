@@ -27,6 +27,39 @@ from delegation_engine import (
     ProposalContext,
 )
 
+
+# ---------------------------------------------------------------------------
+# Phase 38 B3 — slowapi limiter reset between tests
+# ---------------------------------------------------------------------------
+#
+# Phase 38 B3 added ``@limiter.limit("10/minute")`` to /api/auth/login and
+# /api/auth/demo-login. The slowapi limiter holds in-memory state across
+# tests within the same process — without an explicit reset, tests that
+# hit /api/auth/login in their setup (e.g. ``_auth_headers`` helpers
+# scattered across the suite) exhaust the 10/minute quota and get 429
+# from the 11th call onwards, cascading failures into unrelated tests.
+#
+# The reset clears both the route-local ``routes/auth.py::limiter`` and
+# the app-level ``main.py::limiter`` (slowapi attaches state to both).
+# Autouse + function-scope ensures every test starts with a clean
+# rate-limiter counter.
+
+@pytest.fixture(autouse=True)
+def _reset_slowapi_limiter():
+    from routes import auth as _auth_routes
+    from main import limiter as _main_limiter
+    try:
+        _auth_routes.limiter.reset()
+        _main_limiter.reset()
+    except Exception:
+        pass  # defensive — never let limiter wiring break test collection
+    yield
+    try:
+        _auth_routes.limiter.reset()
+        _main_limiter.reset()
+    except Exception:
+        pass
+
 # A valid bcrypt hash for "test" — avoids bcrypt backend issues in tests
 _DUMMY_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewrwKJuRxm5pJmJi"
 

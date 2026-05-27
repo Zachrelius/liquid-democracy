@@ -63,7 +63,17 @@ def _make_intent(db, delegator, delegate, topic, freq, **kwargs):
 
 
 def _make_delegate_profile(db, user, topic):
-    p = models.DelegateProfile(user_id=user.id, topic_id=topic.id, bio="test")
+    # Phase 38 B5 + Phase 30.3: post-Phase-30.3 the column default visibility
+    # shifted to followers_only; the "public delegate" intent-bypass
+    # semantic this helper supports requires an explicit public_accepting
+    # value so `can_delegate_to` (visibility-filtered post-Phase-38) finds
+    # the row.
+    p = models.DelegateProfile(
+        user_id=user.id,
+        topic_id=topic.id,
+        bio="test",
+        visibility="public_accepting",
+    )
     db.add(p)
     db.flush()
     return p

@@ -4,7 +4,7 @@ import sys
 import time
 import uuid
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -267,8 +267,82 @@ app.mount("/uploads", StaticFiles(directory=str(_UPLOADS_BASE_DIR)), name="uploa
 # ---------------------------------------------------------------------------
 
 @app.websocket("/ws/proposals/{proposal_id}")
-async def proposal_websocket(websocket: WebSocket, proposal_id: str):
-    await ws_manager.connect(proposal_id, websocket)
+async def proposal_websocket(
+    websocket: WebSocket,
+    proposal_id: str,
+    db=Depends(get_db),
+):
+    """Phase 38 B2 — auth-gated subscribe to live tally_update broadcasts.
+
+    Flow:
+      1. Resolve the proposal up-front. If it doesn't exist, close 4404
+         BEFORE accepting the socket — leaks no timing signal about
+         which proposal IDs are valid.
+      2. Accept the socket and wait up to 5s for the first message:
+         ``{"auth": "<access_token>"}``. Timeout/malformed/missing
+         token closes 4401.
+      3. Decode the token via ``auth_utils._get_user_from_token``.
+         Decode failure closes 4401.
+      4. Run the proposal-eligibility check (same
+         ``_eligible_viewers_for_proposal`` set used by B1). Platform
+         admins bypass. Failure closes 4403.
+      5. On auth success, register with the manager and run the
+         passive receive loop until WebSocketDisconnect.
+
+    Uses ``Depends(get_db)`` so TestClient fixtures that override
+    ``get_db`` (per-test in-memory SQLite) see the same session the
+    route operates on — without the dep, SessionLocal() opened a
+    separate session that didn't see test-fixture writes.
+    """
+    import asyncio
+    import json as _json
+
+    import auth as auth_utils
+    import models
+    from routes.comments import _eligible_viewers_for_proposal
+
+    proposal = db.query(models.Proposal).filter(
+        models.Proposal.id == proposal_id,
+    ).first()
+    if proposal is None:
+        await websocket.close(code=4404, reason="proposal not found")
+        return
+
+    await websocket.accept()
+
+    try:
+        handshake_raw = await asyncio.wait_for(
+            websocket.receive_text(), timeout=5.0,
+        )
+    except asyncio.TimeoutError:
+        await websocket.close(code=4401, reason="auth timeout")
+        return
+    except WebSocketDisconnect:
+        return
+
+    try:
+        handshake = _json.loads(handshake_raw)
+    except (_json.JSONDecodeError, TypeError):
+        await websocket.close(code=4401, reason="malformed handshake")
+        return
+
+    token = handshake.get("auth") if isinstance(handshake, dict) else None
+    if not token or not isinstance(token, str):
+        await websocket.close(code=4401, reason="missing token")
+        return
+
+    try:
+        user = auth_utils._get_user_from_token(token, db)
+    except Exception:
+        await websocket.close(code=4401, reason="invalid token")
+        return
+
+    if not user.is_admin:
+        if user.id not in _eligible_viewers_for_proposal(db, proposal):
+            await websocket.close(code=4403, reason="not eligible")
+            return
+
+    ws_manager.register(proposal_id, websocket)
     try:
         while True:
             await websocket.receive_text()

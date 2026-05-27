@@ -28,6 +28,7 @@ from org_config import (
 from permissions import can_see_votes
 from polis_engine import eligible_viewers_for_polis
 from role_permissions import has_permission as _has_permission
+from routes.comments import _eligible_viewers_for_proposal
 
 
 log = logging.getLogger(__name__)
@@ -621,7 +622,15 @@ def list_proposals(
     topic_id: Optional[str] = Query(None),
     org_id: Optional[str] = Query(None),
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
 ):
+    """Phase 38 B1 — unscoped list endpoint now requires auth and filters
+    each candidate proposal through ``_eligible_viewers_for_proposal``.
+    Platform admins bypass the filter (D4). The Phase 14 public-org
+    landing surface uses ``/api/orgs/{slug}/proposals`` instead, so
+    requiring auth here doesn't break anonymous browsing of public-org
+    splash pages.
+    """
     q = db.query(models.Proposal)
     if org_id:
         q = q.filter(models.Proposal.org_id == org_id)
@@ -630,6 +639,13 @@ def list_proposals(
     if topic_id:
         q = q.join(models.ProposalTopic).filter(models.ProposalTopic.topic_id == topic_id)
     proposals = q.order_by(*_proposal_list_ordering()).all()
+
+    if not current_user.is_admin:
+        proposals = [
+            p for p in proposals
+            if current_user.id in _eligible_viewers_for_proposal(db, p)
+        ]
+
     return [_build_proposal_out(p, db) for p in proposals]
 
 
@@ -838,8 +854,19 @@ def create_proposal(
 
 
 @router.get("/{proposal_id}", response_model=schemas.ProposalOut)
-def get_proposal(proposal_id: str, db: Session = Depends(get_db)):
-    return _build_proposal_out(_proposal_or_404(proposal_id, db), db)
+def get_proposal(
+    proposal_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 38 B1 — requires auth and eligibility. 404 on eligibility
+    failure so the endpoint reveals nothing about non-eligible proposals
+    (matches the Phase 19 / Phase 22 trajectory-endpoint posture)."""
+    proposal = _proposal_or_404(proposal_id, db)
+    if not current_user.is_admin:
+        if current_user.id not in _eligible_viewers_for_proposal(db, proposal):
+            raise HTTPException(status_code=404, detail="Proposal not found")
+    return _build_proposal_out(proposal, db)
 
 
 @router.patch("/{proposal_id}", response_model=schemas.ProposalOut)
@@ -1967,8 +1994,18 @@ def advance_proposal(
 
 
 @router.get("/{proposal_id}/results", response_model=schemas.ProposalResults)
-def get_results(proposal_id: str, db: Session = Depends(get_db)):
+def get_results(
+    proposal_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 38 B1 — requires auth and eligibility. 404 on eligibility
+    failure to avoid leaking live-tally state for in-progress votes in
+    private sub-orgs."""
     proposal = _proposal_or_404(proposal_id, db)
+    if not current_user.is_admin:
+        if current_user.id not in _eligible_viewers_for_proposal(db, proposal):
+            raise HTTPException(status_code=404, detail="Proposal not found")
     tally = delegation_engine.compute_tally(proposal, db)
     org = (
         db.get(models.Organization, proposal.org_id)

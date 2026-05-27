@@ -26,8 +26,12 @@ class ConnectionManager:
         # proposal_id -> list of active WebSocket connections
         self._connections: dict[str, list[WebSocket]] = defaultdict(list)
 
-    async def connect(self, proposal_id: str, websocket: WebSocket) -> None:
-        await websocket.accept()
+    def register(self, proposal_id: str, websocket: WebSocket) -> None:
+        """Phase 38 B2 — register an already-accepted socket. The route
+        handler accepts + auth-handshakes before calling this; the
+        manager no longer accepts the socket itself so the gate runs
+        before any tally_update messages can flow.
+        """
         self._connections[proposal_id].append(websocket)
         log.debug("WS connected: proposal=%s total=%d", proposal_id, len(self._connections[proposal_id]))
 

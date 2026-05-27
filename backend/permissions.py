@@ -21,6 +21,7 @@ def can_delegate_to(
     delegator_id: str,
     delegate_id: str,
     topic_id: Optional[str],
+    org_id: Optional[str] = None,
 ) -> bool:
     """
     Return True if delegator_id is permitted to delegate to delegate_id
@@ -31,30 +32,57 @@ def can_delegate_to(
       2. follow_relationship with delegation_allowed → allowed.
       3. For global (topic_id=None): either a delegation_allowed follow OR
          the delegate has at least one active profile (any topic).
+
+    Phase 38 B5 (D20-D22) — when ``org_id`` is provided, DelegateProfile
+    and FollowRelationship lookups are scoped to that org. Without the
+    filter, a user with a public DelegateProfile in org A would qualify
+    as "delegateable" in org B even though the delegation itself lives
+    in org B. Existing test-fixture callers may omit ``org_id`` for
+    backward-compat; production route callers in ``routes/delegations.py``
+    thread the URL-context ``org_id`` through. The Phase 37 B3 visibility
+    filter (``visibility in ("public", "public_accepting")``) is bundled
+    in here so all three DelegateProfile consumers (this helper plus
+    Phase 37's ``delegation_tree`` and ``vote-graph``) share the same
+    visibility predicate.
     """
+    visible_levels = ("public", "public_accepting")
+
     if topic_id is not None:
         # Rule 1: active delegate_profile for this specific topic
-        profile = db.query(models.DelegateProfile).filter(
+        profile_q = db.query(models.DelegateProfile).filter(
             models.DelegateProfile.user_id == delegate_id,
             models.DelegateProfile.topic_id == topic_id,
-        ).first()
-        if profile:
+            models.DelegateProfile.visibility.in_(visible_levels),
+        )
+        if org_id is not None:
+            profile_q = profile_q.filter(
+                models.DelegateProfile.org_id == org_id,
+            )
+        if profile_q.first():
             return True
     else:
         # Global delegation: any active profile is enough (public delegate on any topic)
-        any_profile = db.query(models.DelegateProfile).filter(
+        any_profile_q = db.query(models.DelegateProfile).filter(
             models.DelegateProfile.user_id == delegate_id,
-        ).first()
-        if any_profile:
+            models.DelegateProfile.visibility.in_(visible_levels),
+        )
+        if org_id is not None:
+            any_profile_q = any_profile_q.filter(
+                models.DelegateProfile.org_id == org_id,
+            )
+        if any_profile_q.first():
             return True
 
-    # Rule 2: follow relationship with delegation_allowed
-    rel = db.query(models.FollowRelationship).filter(
+    # Rule 2: follow relationship with delegation_allowed (org-scoped per
+    # Phase 18 D2 on the FollowRelationship side post-retrofit).
+    rel_q = db.query(models.FollowRelationship).filter(
         models.FollowRelationship.follower_id == delegator_id,
         models.FollowRelationship.followed_id == delegate_id,
         models.FollowRelationship.permission_level == "delegation_allowed",
-    ).first()
-    return rel is not None
+    )
+    if org_id is not None:
+        rel_q = rel_q.filter(models.FollowRelationship.org_id == org_id)
+    return rel_q.first() is not None
 
 
 def delegation_denied_message(topic_id: Optional[str]) -> str:
