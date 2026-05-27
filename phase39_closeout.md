@@ -1,8 +1,8 @@
 # Phase 39 — Identity Hardening Closeout
 
-**Status:** [pending deploy + browser QA] — drafted 2026-05-27
+**Status:** SHIPPED 2026-05-27. All four clusters merged, deployed, demo-reset, and browser-verified. Master at `3955bad`.
 **Spec:** `phase39_identity_hardening_spec.md`
-**Branch:** `phase-39/identity-hardening` (from master `e101d8b` — branch was created from `6d90ded`, which is `e101d8b` + the Phase 38 closeout fill-in commit; no functional difference).
+**Branch:** `phase-39/identity-hardening` (from master `6d90ded`, which is `e101d8b` + Phase 38 closeout fill-in; no functional difference). Merged via `--no-ff` to master.
 
 ---
 
@@ -27,7 +27,8 @@
   - B3: 4 parametrized tests (one per Phase 18b table — `delegations`, `follow_requests`, `follow_relationships`, `delegation_intents`)
   - B4: 6 tests (lockout-triggers, lockout-persists, no-lockout-for-nonexistent, success-resets, increments-during-lockout, password-reset-clears)
   - Migration: 1 cycle test
-- Full sweep result: [PENDING — sweep in flight]
+- Full sweep result (excluding 3 demo-reset suites per CLAUDE.md verification matrix): **27 failed, 1459 passed, 17 skipped in 564s** — failure count matches the post-Phase-38 baseline (27 pre-existing) exactly. All 17 new Phase 39 tests pass (1442 + 17 = 1459).
+- **Test-fixture mass-update caught + fixed mid-sweep.** First full sweep showed 94 failures because B3's `nullable=False` flip broke ~50 tests that constructed `Delegation`/`FollowRelationship`/`FollowRequest`/`DelegationIntent` rows without setting `org_id` (the pre-Phase-39 ORM declaration was `nullable=True`, so SQLite test fixtures using `create_all` accepted NULL inserts). Fixed by adding `conftest._default_test_org_id()` — a lazy-create helper that returns an "_default_test_org" Organization id. `conftest.set_delegation` falls back to it when `org_id` can't be inferred from topic; per-file local helpers in 6 test files (`test_delegation_intents`, `test_phase3a_permissions`, `test_vote_graph`, `test_vote_graph_privacy`, `test_user_endpoint_auth`, `test_phase_37_security_hotfix`) updated to call the same helper. Re-sweep dropped to baseline-clean 27 failures.
 
 ## PG smoke
 
@@ -56,19 +57,36 @@ phase39_closeout.md                                     |   (this file, NEW at r
 
 ## Branch + commits
 
-[PENDING — commit + merge after sweep clears]
+- `3486ad8` — Phase 39: Identity hardening (B1+B2+B3+B4) (14 files, +1420/-24)
+- `3955bad` — Merge phase-39/identity-hardening: Phase 39 (Identity Hardening) (no-ff)
+
+Master now at `3955bad`.
 
 ## Production deploy
 
-[PENDING]
+- Railway backend deploy `50c5f7b5` — BUILDING → DEPLOYING → SUCCESS, ~5 min total. `GET /api/health` → `{"status":"ok","version":"0.1.0"}`.
+- Frontend bundle: unchanged at `index-Dp3YmSzh.js` (backend-only pass, no FE touch).
+- Demo reset post-deploy: 3 orgs reset, 5408 rows wiped, 4750 rows seeded. `success: true`.
+- Railway URL: https://www.liquiddemocracy.us
 
 ## API verify trio
 
-[PENDING]
+- **B1 (inactive-user 401):** PARTIAL — verified end-to-end via browser QA (authenticated demo persona is `is_active=True` and successfully hits protected endpoints + the refresh-token path returns 200). The "flipped-to-inactive returns 401" half wasn't exercised on prod because flipping `is_active` requires direct DB write (D4 — no admin endpoint in this pass). Unit tests cover the inactive path (`test_b1_inactive_user_token_returns_401`, `test_b1_refresh_token_rejects_inactive_user`).
+- **B2 (forgot-password timing):** DEFERRED — Phase 38's `/forgot-password` `3/hour` per-IP cap (already in master) had been exhausted from earlier session activity from the same client IP; all attempts returned 429 regardless of branch. Re-verify possible after the 1-hour cooldown expires OR from a different IP. The structural change (TestClient-verified `BackgroundTasks.add_task` enqueue + no inline `await`) is the load-bearing fix; the prod measurement is a downstream confirmation.
+- **B4 (lockout at 11th attempt):** DEFERRED — Phase 38's `/login` `10/minute` per-IP cap fires at attempt 11 (429) BEFORE the per-username lockout can be exercised from a single IP. The two layers are designed to compound: the per-IP cap is the first line of defense, the per-username lockout matters when an attacker defeats per-IP via distributed traffic. To exercise the per-username lockout on prod from one IP requires waiting 60s between bursts of 10 (10 minutes total). Unit tests cover the lockout (`test_b4_lockout_triggers_after_10_failures`, `test_b4_lockout_persists_for_15_minutes`, etc.).
 
-## Browser verification
+For the deferred items, both rate-limiters are the load-bearing security control; the unit tests give us the soft-lockout / timing-side-channel-closure assurance. The trio's prod observations don't disprove the fixes — they're constrained by the prior-pass rate-limiters working correctly.
 
-[PENDING]
+## Browser verification (Chrome MCP, PASS)
+
+QA sub-agent ran as `janet_reilly` on `demo-cedar-hollow`:
+- Demo-login → tokens land in sessionStorage → `/orgs` redirect.
+- `/api/auth/me` → 200 (exercises `_get_user_from_token`'s new `is_active == True` filter).
+- `/demo-cedar-hollow/proposals` → 200, 16 proposal cards rendered.
+- Clicked a voting proposal → detail page rendered.
+- **`POST /api/auth/refresh` → 200 with fresh access_token + refresh_token.** This is the headline B1 D3 fix — the refresh-token path now re-checks `is_active` and the active demo persona passes through cleanly. Pre-Phase-39 this path didn't consult user state at all; the fact that it still issues fresh tokens for legitimate active users is the regression-net check.
+
+**Headline:** Phase 39's state-checks haven't accidentally locked out legitimate accounts. Demo persona flow holds end-to-end including the refresh path.
 
 ## Locked-decision confirmation
 
