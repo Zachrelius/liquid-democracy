@@ -47,7 +47,16 @@ def _get_user_from_token(token: str, db: Session) -> models.User:
     except JWTError:
         raise credentials_exc
 
-    user = db.get(models.User, user_id)
+    # Phase 39 B1 D2 — re-check ``is_active`` on every token use.
+    # ``db.get`` is a primary-key lookup that bypasses filters, so use an
+    # explicit query with the state predicate baked in. Returns None for
+    # inactive users → falls through to the existing 401 path (mirrors
+    # the "Could not validate credentials" posture so account-state
+    # leakage stays bounded).
+    user = db.query(models.User).filter(
+        models.User.id == user_id,
+        models.User.is_active == True,  # noqa: E712 — SQLAlchemy filter expr
+    ).first()
     if user is None:
         raise credentials_exc
     return user

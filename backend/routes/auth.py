@@ -62,6 +62,14 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 limiter = Limiter(key_func=get_remote_address)
 
+# Phase 39 B4 — soft-lockout thresholds. Per-username counter; complements
+# the per-IP slowapi rate limit on /login (Phase 38 B3). To succeed at
+# brute-forcing, an attacker must defeat BOTH the per-IP and per-username
+# gates — pushing them into a slow-and-broad attack shape rather than a
+# cheap-and-focused one.
+LOCKOUT_THRESHOLD = 10        # Phase 39 B4 D14
+LOCKOUT_WINDOW_SECONDS = 900  # Phase 39 B4 D13 — 15 minutes
+
 DEMO_ORG_SLUG = "demo"
 
 
@@ -359,6 +367,38 @@ def login(
     db: Session = Depends(get_db),
 ):
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
+    now = _now()
+
+    # Phase 39 B4 D12 — lockout check fires BEFORE password-check. A locked
+    # account returns 401 without revealing whether the supplied password
+    # would have matched; the counter still increments so an attacker
+    # can't pause for 15min and resume from where they left off (the
+    # locked-while-attacked window stays open as long as attempts continue).
+    if user is not None and user.locked_until is not None and user.locked_until > now:
+        user.failed_login_count += 1
+        log_audit_event(
+            db,
+            action="user.login_failed",
+            target_type="user",
+            target_id=user.id,
+            actor_id=None,
+            details={
+                "username": form_data.username,
+                "user_exists": True,
+                "reason": "account_locked",
+                "locked_until": user.locked_until.isoformat(),
+            },
+            ip_address=request.client.host if request.client else None,
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "reason": "account_locked",
+                "locked_until": user.locked_until.isoformat(),
+            },
+        )
+
     if not user or not auth_utils.verify_password(form_data.password, user.password_hash):
         # Phase 38 B3 D12 — failed-attempt audit before the 401. AuditLog.target_id
         # is NOT NULL, so the unknown-username case falls back to form_data.username
@@ -374,11 +414,23 @@ def login(
             details={"username": form_data.username, "user_exists": user is not None},
             ip_address=request.client.host if request.client else None,
         )
+        # Phase 39 B4 D12 — bump per-username counter; trip the lockout at
+        # the threshold. D16: only when ``user is not None`` — phantom
+        # "locked" entries for nonexistent usernames aren't created.
+        if user is not None:
+            user.failed_login_count += 1
+            if user.failed_login_count >= LOCKOUT_THRESHOLD:
+                user.locked_until = now + timedelta(seconds=LOCKOUT_WINDOW_SECONDS)
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
+
+    # Phase 39 B4 D15 — successful authenticate resets state. The
+    # legitimate user's good login wipes whatever failure history accrued.
+    user.failed_login_count = 0
+    user.locked_until = None
 
     log_audit_event(
         db,
@@ -440,6 +492,22 @@ def refresh_token(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",
+        )
+
+    # Phase 39 B1 D3 — re-check User state before issuing a fresh access
+    # token. Pre-Phase-39 the refresh path returned new tokens without
+    # consulting User.is_active, so an account flipped to inactive would
+    # keep receiving valid access tokens until its refresh-token expired
+    # naturally (~30 days). Now an inactive user fails refresh + redirects
+    # to login on the next 401.
+    user = db.query(models.User).filter(
+        models.User.id == rt.user_id,
+        models.User.is_active == True,  # noqa: E712 — SQLAlchemy filter expr
+    ).first()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
         )
 
     # Rotate: revoke old, issue new
@@ -596,6 +664,7 @@ async def resend_verification(
 async def forgot_password(
     body: schemas.ForgotPasswordRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     # Always return the same message to prevent account enumeration
@@ -625,7 +694,16 @@ async def forgot_password(
 
     db.commit()
 
-    await send_password_reset_email(user.email, token, settings.base_url)
+    # Phase 39 B2 D6 — email send moved into BackgroundTasks so the
+    # response returns before the SMTP/Resend call completes. The known-
+    # email branch was previously ~100-500ms slower than the unknown-email
+    # branch (which returned immediately at line 606), giving an attacker a
+    # timing side-channel to enumerate registered emails. Commit above
+    # ensures the reset-token row exists when the background task fires
+    # (same pattern as register's verification-email send).
+    background_tasks.add_task(
+        send_password_reset_email, user.email, token, settings.base_url,
+    )
 
     return success_msg
 
@@ -653,6 +731,14 @@ def reset_password(
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")
 
     user.password_hash = auth_utils.hash_password(body.new_password)
+
+    # Phase 39 B4 D17 — successful password reset clears any pre-reset
+    # lockout state. The legitimate user's path back to their account
+    # isn't blocked by the per-username counter — they completed the
+    # email-token round-trip, so the lockout's purpose (block brute-force
+    # against this username) is moot.
+    user.failed_login_count = 0
+    user.locked_until = None
 
     # Invalidate all refresh tokens
     _revoke_all_refresh_tokens(db, user.id)

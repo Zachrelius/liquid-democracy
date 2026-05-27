@@ -434,17 +434,20 @@ def test_08_privacy_private_delegator_to_me_has_visible_ballot(client, test_db):
     # an org filter). Leaving org_id=None keeps the test exercising the
     # legacy lookup shape; the production query is org-scoped via the
     # delegation row, not the follow row.
+    from tests.conftest import _default_test_org_id
+    _default_org = _default_test_org_id(test_db)
     test_db.add(models.FollowRelationship(
         follower_id=follower.id,
         followed_id=viewer.id,
         permission_level="delegation_allowed",
+        org_id=_default_org,
     ))
     # And actually delegates to viewer (private delegation, no public profile).
     # Match the proposal's org so _build_context picks up the chain.
     test_db.add(models.Delegation(
         delegator_id=follower.id,
         delegate_id=viewer.id,
-        org_id=getattr(topic, "org_id", None),
+        org_id=getattr(topic, "org_id", None) or _default_org,
         topic_id=None,
         chain_behavior="accept_sub",
     ))

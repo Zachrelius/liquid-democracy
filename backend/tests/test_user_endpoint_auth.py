@@ -98,11 +98,16 @@ def _add_delegation(
     db, delegator: models.User, delegate: models.User, topic_id=None,
     *, org_id=None,
 ) -> models.Delegation:
-    """Phase 18: optional org_id (inferred from topic when absent)."""
+    """Phase 18: optional org_id (inferred from topic when absent).
+    Phase 39 B3 — falls back to the conftest default test org if no
+    org_id can be inferred (now-NOT-NULL post-Phase-18b)."""
     if org_id is None and topic_id is not None:
         topic = db.get(models.Topic, topic_id)
         if topic is not None:
             org_id = topic.org_id
+    if org_id is None:
+        from tests.conftest import _default_test_org_id
+        org_id = _default_test_org_id(db)
     d = models.Delegation(
         delegator_id=delegator.id,
         delegate_id=delegate.id,
@@ -237,14 +242,16 @@ def test_delegation_tree_redacts_identities_per_viewer_relationships(
     ))
     # Viewer follows followed_by_viewer.
     # Phase 18: org_id left None — this test exercises account-level
-    # privacy semantics, not org-scoping. The 18a backfill window
-    # allows NULL org_id; 18b will require revisit if/when this test
-    # runs against a NOT NULL constraint (the test fixture spins up
-    # a fresh schema, so flipping requires updating this row too).
+    # privacy semantics, not org-scoping. Phase 39 B3 — synced the
+    # ORM declaration to NOT NULL so the fixture now uses the
+    # default test org id (the privacy semantics being tested are
+    # unaffected by which org the FollowRelationship belongs to).
+    from tests.conftest import _default_test_org_id
     test_db.add(models.FollowRelationship(
         follower_id=viewer.id,
         followed_id=followed_by_viewer.id,
         permission_level="view_only",
+        org_id=_default_test_org_id(test_db),
     ))
     # Build the target's delegation tree: target delegates to all three on
     # different topics so the graph store keeps all three edges.

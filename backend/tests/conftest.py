@@ -257,6 +257,40 @@ def cast_direct_vote(
     return v
 
 
+_DEFAULT_TEST_ORG_SLUG = "_default_test_org"
+
+
+def _default_test_org_id(db: Session) -> str:
+    """Phase 39 B3 — return (lazy-create) a default test Organization id.
+
+    Phase 39 B3 synced ``Delegation.org_id`` / ``FollowRelationship.org_id``
+    / ``FollowRequest.org_id`` / ``DelegationIntent.org_id`` to NOT NULL
+    in the ORM declaration (the DB has been NOT NULL since the Phase 18b
+    migration; only the model was lagging). Existing test fixtures
+    created relationship rows without setting ``org_id`` because the
+    pre-Phase-39 declaration said it was nullable. To avoid touching
+    ~50 test files, helpers fall back to this default test org for
+    rows that don't have a meaningful org context. Real org-scoped
+    tests (Phase 18+ retrofit suites) pass an explicit ``org_id`` and
+    aren't affected.
+    """
+    existing = db.query(models.Organization).filter(
+        models.Organization.slug == _DEFAULT_TEST_ORG_SLUG,
+    ).first()
+    if existing is not None:
+        return existing.id
+    org = models.Organization(
+        slug=_DEFAULT_TEST_ORG_SLUG,
+        name="Default Test Org",
+        description="",
+        join_policy="open",
+        settings={},
+    )
+    db.add(org)
+    db.flush()
+    return org.id
+
+
 def set_delegation(
     db: Session,
     store: DelegationGraphStore,
@@ -268,15 +302,16 @@ def set_delegation(
     org_id: str | None = None,
 ) -> models.Delegation:
     """Phase 18: optional ``org_id`` parameter so newer tests can thread
-    org context. When ``org_id`` is None (legacy callers in the 18a
-    transitional window) the row lands with ``org_id IS NULL`` — that's
-    OK until B1b flips the NOT NULL constraint. ``org_id`` is also
-    inferred from the topic when topic is provided and ``org_id`` is
-    not explicitly set.
+    org context. ``org_id`` is inferred in this order: explicit kwarg →
+    topic's ``org_id`` (if topic is provided) → lazy-created default test
+    org (Phase 39 B3 fallback so pre-Phase-39 tests that didn't set
+    org_id keep working under the now-NOT-NULL constraint).
     """
     inferred = org_id
     if inferred is None and topic is not None:
         inferred = getattr(topic, "org_id", None)
+    if inferred is None:
+        inferred = _default_test_org_id(db)
     d = models.Delegation(
         delegator_id=delegator.id,
         delegate_id=delegate.id,

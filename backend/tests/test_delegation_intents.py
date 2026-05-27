@@ -26,6 +26,12 @@ def _now():
 
 
 def _make_follow_request(db, requester, target, status="pending", *, org_id=None):
+    # Phase 39 B3 — relationship-table org_id is NOT NULL post-Phase-18b;
+    # fall back to the conftest default test org when no explicit value
+    # is provided so the existing test surface continues to work.
+    if org_id is None:
+        from tests.conftest import _default_test_org_id
+        org_id = _default_test_org_id(db)
     freq = models.FollowRequest(
         requester_id=requester.id, target_id=target.id, status=status,
         org_id=org_id,
@@ -36,6 +42,9 @@ def _make_follow_request(db, requester, target, status="pending", *, org_id=None
 
 
 def _make_follow_rel(db, follower, followed, perm="delegation_allowed", *, org_id=None):
+    if org_id is None:
+        from tests.conftest import _default_test_org_id
+        org_id = _default_test_org_id(db)
     rel = models.FollowRelationship(
         follower_id=follower.id, followed_id=followed.id,
         permission_level=perm, org_id=org_id,
@@ -46,11 +55,15 @@ def _make_follow_rel(db, follower, followed, perm="delegation_allowed", *, org_i
 
 
 def _make_intent(db, delegator, delegate, topic, freq, **kwargs):
+    org_id = kwargs.get("org_id")
+    if org_id is None:
+        from tests.conftest import _default_test_org_id
+        org_id = _default_test_org_id(db)
     intent = models.DelegationIntent(
         delegator_id=delegator.id,
         delegate_id=delegate.id,
         topic_id=topic.id if topic else None,
-        org_id=kwargs.get("org_id"),
+        org_id=org_id,
         sub_org_id=kwargs.get("sub_org_id"),
         chain_behavior=kwargs.get("chain_behavior", "accept_sub"),
         follow_request_id=freq.id,
