@@ -68,4 +68,11 @@ echo "Starting application…"
 # dashboard if real traffic ever demands concurrency. Single-worker is
 # more than enough for friend-pilot scale; adding workers when traffic
 # grows is a flip-the-env-var change, not a code change.
-exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS:-1}
+# Phase 38 ride-along — trust Railway-edge forwarded headers so the actual
+# client IP (X-Forwarded-For) propagates into request.client.host. Without
+# this flag, uvicorn defaults --forwarded-allow-ips to 127.0.0.1 only, so
+# the Railway-edge IP becomes request.client.host and every slowapi rate
+# limiter is effectively keyed per-edge-IP instead of per-client-IP. Also
+# fixes audit-log IP fidelity (Tier-2 tech debt from the Phase 37 closeout).
+exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS:-1} \
+    --proxy-headers --forwarded-allow-ips '*'
