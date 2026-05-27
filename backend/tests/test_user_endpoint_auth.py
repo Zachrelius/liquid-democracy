@@ -226,10 +226,14 @@ def test_delegation_tree_redacts_identities_per_viewer_relationships(
     test_db.flush()
 
     # Public delegate profile for pub_delegate.
+    # Phase 37 B3 (2026-05-27): explicit visibility="public" — the model
+    # default is "followers_only" which no longer counts as public-delegate
+    # for the redaction check (correct per privacy semantics).
     test_db.add(models.DelegateProfile(
         user_id=pub_delegate.id,
         topic_id=topic_a.id,
         bio="",
+        visibility="public",
     ))
     # Viewer follows followed_by_viewer.
     # Phase 18: org_id left None — this test exercises account-level

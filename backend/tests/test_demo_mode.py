@@ -115,8 +115,10 @@ def test_demo_users_endpoint_returns_404_when_flag_off(client, flags_off):
 def test_demo_users_endpoint_returns_list_when_is_public_demo_true(
     client, test_db, public_demo
 ):
+    # Phase 37 D1 (2026-05-27): "admin" removed from DEMO_USERNAMES; this
+    # assertion now uses three other allowlisted personas.
     _create_user(test_db, "alice")
-    _create_user(test_db, "admin")
+    _create_user(test_db, "dr_chen")
     _create_user(test_db, "carol")
     test_db.commit()
 
@@ -125,7 +127,7 @@ def test_demo_users_endpoint_returns_list_when_is_public_demo_true(
     data = resp.json()
     assert isinstance(data, list)
     usernames = {u["username"] for u in data}
-    assert {"alice", "admin", "carol"}.issubset(usernames)
+    assert {"alice", "dr_chen", "carol"}.issubset(usernames)
     # Shape check: each entry has username + display_name only.
     for entry in data:
         assert set(entry.keys()) == {"username", "display_name"}

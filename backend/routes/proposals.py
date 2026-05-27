@@ -2183,10 +2183,15 @@ def get_vote_graph(
     proposal_topic_ids = [pt.topic_id for pt in proposal.proposal_topics]
 
     # Identify public delegates for this proposal's topics
+    # Phase 37 B3 (2026-05-27): visibility filter was missing — every
+    # DelegateProfile row (including visibility='private') was treated as a
+    # public-delegate marker for the can_see_edge decision below, leaking
+    # private-profile holders' identities through the vote-graph endpoint.
     pub_delegate_ids: set[str] = set()
     for pt in proposal.proposal_topics:
         profiles = db.query(models.DelegateProfile).filter(
             models.DelegateProfile.topic_id == pt.topic_id,
+            models.DelegateProfile.visibility.in_(("public", "public_accepting")),
         ).all()
         for p in profiles:
             pub_delegate_ids.add(p.user_id)

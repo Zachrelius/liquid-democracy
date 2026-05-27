@@ -282,6 +282,19 @@ async def proposal_websocket(websocket: WebSocket, proposal_id: str):
 
 @app.on_event("startup")
 async def startup() -> None:
+    # Phase 37 B2 (2026-05-27): refuse to start in non-debug mode with the
+    # placeholder SECRET_KEY. The platform trusts JWTs minted with this key,
+    # so a placeholder value would let anyone with read access to the public
+    # repo forge tokens. Defense-in-depth against env-injection failures —
+    # primary safety property is that Railway env always sets SECRET_KEY.
+    if not settings.debug:
+        placeholder_key = "change-me-in-production-use-a-long-random-string"
+        if settings.secret_key == placeholder_key:
+            raise RuntimeError(
+                "SECRET_KEY is the placeholder default in non-debug mode. "
+                "Set SECRET_KEY env var to a long random value before starting."
+            )
+
     log.info("Creating database tables…")
     create_tables()
 

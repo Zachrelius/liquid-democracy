@@ -62,11 +62,16 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 limiter = Limiter(key_func=get_remote_address)
 
-DEMO_USERNAMES = ["alice", "admin", "dr_chen", "carol", "dave", "frank",
+DEMO_USERNAMES = ["alice", "dr_chen", "carol", "dave", "frank",
                   # Phase 8.5: voter02 is the canonical Decision-7 / Decision-8
                   # cross-scope persona (parent-org member, NOT in Engineering
                   # Team). Without quick-login, the sub-org demo flow is
                   # awkward to exercise from the public landing.
+                  # Phase 37 D1 (2026-05-27): removed "admin" — the seeded
+                  # platform-admin user has is_admin=True, and the legacy
+                  # demo-login branch (org_slug=None) had no admin filter, so
+                  # POST {"username":"admin"} returned real admin tokens. See
+                  # external_review_2026-05-27.md §2.4 + phase37 spec.
                   "voter02"]
 DEMO_ORG_SLUG = "demo"
 
@@ -792,7 +797,14 @@ def demo_login(
     if body.username not in DEMO_USERNAMES:
         raise HTTPException(status_code=404, detail="Not found")
 
-    user = db.query(models.User).filter(models.User.username == body.username).first()
+    # Phase 37 D1 (2026-05-27): defense-in-depth — even if a future contributor
+    # re-adds an admin-flagged username to DEMO_USERNAMES, the User lookup
+    # refuses to return platform-admin accounts. The allowlist removal above is
+    # the primary safety property; this is insurance.
+    user = db.query(models.User).filter(
+        models.User.username == body.username,
+        models.User.is_admin.is_(False),
+    ).first()
     if user is None:
         raise HTTPException(status_code=404, detail="Not found")
 

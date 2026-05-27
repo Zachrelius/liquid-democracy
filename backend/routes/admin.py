@@ -87,8 +87,16 @@ def _redact_audit_entry(entry: models.AuditLog) -> Optional[dict[str, Any]]:
 def seed_demo(
     body: schemas.SeedRequest,
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_admin),
 ):
-    """Public endpoint — seeds demo data. Only available in debug mode."""
+    """Admin-only endpoint — seeds demo data. Only available in debug mode.
+
+    Phase 37 B4 (2026-05-27): added Depends(get_current_admin) to match the
+    /time-simulation pattern. Prior to this, only `settings.debug` gated the
+    endpoint, so in any environment where DEBUG=true (including staging
+    misconfig) an unauthenticated caller could trigger arbitrary seed
+    scenarios that wipe or massively alter DB state.
+    """
     if not settings.debug:
         raise HTTPException(
             status_code=403,

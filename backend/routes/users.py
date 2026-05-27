@@ -552,9 +552,15 @@ def delegation_tree(
             models.FollowRelationship.follower_id == current_user.id,
         ).all()
     }
+    # Phase 37 B3 (2026-05-27): visibility filter was an empty .filter() — every
+    # user with ANY DelegateProfile row (including visibility='private') was
+    # treated as a public delegate for the _viewer_may_see redaction check
+    # below, which silently broke identity redaction for any user with a
+    # prepared private profile.
     public_delegate_user_ids: set[str] = {
         row.user_id
         for row in db.query(models.DelegateProfile.user_id).filter(
+            models.DelegateProfile.visibility.in_(("public", "public_accepting")),
         ).all()
     }
 
