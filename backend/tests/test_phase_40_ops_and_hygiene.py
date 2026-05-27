@@ -124,6 +124,33 @@ def test_b2_org_logos_max_image_pixels_set():
     assert Image.MAX_IMAGE_PIXELS == 25_000_000
 
 
+def test_b2_oversized_image_pre_load_check_returns_400(client, test_db):
+    """An actual 30 MP image (over the 25 MP cap, under Pillow's 2× trigger)
+    returns 400 via the explicit pre-load size check. This is the real-world
+    case — Pillow's MAX_IMAGE_PIXELS alone fires at 2× the configured value,
+    so a 30 MP image would silently load through to img.load() without the
+    explicit check.
+    """
+    user = _make_user(test_db, "big_uploader")
+    test_db.commit()
+
+    # 6000×5000 = 30 MP. Solid-color PNG compresses tiny so request body
+    # stays well under the 6 MB limit.
+    buf = io.BytesIO()
+    Image.new("RGB", (6000, 5000), color=(255, 0, 0)).save(
+        buf, format="PNG", compress_level=9,
+    )
+    buf.seek(0)
+
+    resp = client.post(
+        "/api/users/me/avatar",
+        files={"file": ("big.png", buf, "image/png")},
+        headers=_auth(user),
+    )
+    assert resp.status_code == 400, resp.text
+    assert "25 megapixels" in resp.json().get("detail", "")
+
+
 def test_b2_decompression_bomb_upload_returns_400(client, test_db, monkeypatch):
     """Upload an image that Pillow would decode beyond MAX_IMAGE_PIXELS.
     The handler should return 400, not crash with OOM/500.

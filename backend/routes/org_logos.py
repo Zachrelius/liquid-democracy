@@ -242,11 +242,22 @@ async def upload_org_logo(
 
     # Decode + validate via Pillow. Catch broadly because corrupt bytes
     # should hit a 400, not a 500.
+    # Phase 40 B2 (2026-05-27) — explicit pre-load size check; see avatars.py
+    # for the rationale (Pillow's MAX_IMAGE_PIXELS triggers at 2×).
     try:
         img = Image.open(io.BytesIO(raw))
+        if img.size[0] * img.size[1] > 25_000_000:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Image dimensions exceed the supported limit "
+                    "(25 megapixels). Resize before uploading."
+                ),
+            )
         img.load()
+    except HTTPException:
+        raise
     except Image.DecompressionBombError:
-        # Phase 40 B2 D5 (2026-05-27) — image dimensions exceed MAX_IMAGE_PIXELS.
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(

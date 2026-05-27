@@ -192,11 +192,25 @@ async def upload_avatar(
 
     # Decode + resize via Pillow. Catch broad exceptions because corrupt
     # uploads should hit a 400, not a 500.
+    # Phase 40 B2 (2026-05-27) — explicit pre-load size check. Pillow's
+    # MAX_IMAGE_PIXELS only triggers DecompressionBombError at 2× the
+    # configured value; an explicit width*height check before .load() makes
+    # the user-facing 25 MP message accurate at the actual threshold and
+    # avoids loading any pixels into memory when the image is over the cap.
     try:
         img = Image.open(io.BytesIO(raw))
+        if img.size[0] * img.size[1] > 25_000_000:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Image dimensions exceed the supported limit "
+                    "(25 megapixels). Resize before uploading."
+                ),
+            )
         img.load()
+    except HTTPException:
+        raise
     except Image.DecompressionBombError:
-        # Phase 40 B2 D5 (2026-05-27) — image dimensions exceed MAX_IMAGE_PIXELS.
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
