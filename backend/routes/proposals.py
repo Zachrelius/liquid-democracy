@@ -25,10 +25,10 @@ from org_config import (
     get_default_proposal_thresholds,
     get_org_config,
 )
+from eligibility import eligible_viewers_for_proposal as _eligible_viewers_for_proposal
 from permissions import can_see_votes
 from polis_engine import eligible_viewers_for_polis
 from role_permissions import has_permission as _has_permission
-from routes.comments import _eligible_viewers_for_proposal
 
 
 log = logging.getLogger(__name__)

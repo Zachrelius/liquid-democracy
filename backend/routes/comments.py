@@ -76,10 +76,6 @@ proposal_router = APIRouter(prefix="/api/proposals", tags=["comments"])
 comment_router = APIRouter(prefix="/api/comments", tags=["comments"])
 
 
-# Phase 12 — Role.system_key set used for the SQL-bulk parent-org admin
-# join in eligible-viewer computation. Replaces the legacy string-column
-# ('admin', 'owner') tuple.
-_ADMIN_TIER_SYSTEM_KEYS = ("admin", "steward")
 EDIT_WINDOW = timedelta(minutes=15)
 
 
@@ -87,79 +83,12 @@ EDIT_WINDOW = timedelta(minutes=15)
 # Eligibility helpers (Phase 10 — first proposal-scoped viewer set)
 # ---------------------------------------------------------------------------
 
-def _eligible_viewers_for_proposal(
-    db: Session, proposal: models.Proposal,
-) -> set[str]:
-    """Return the set of user IDs who can VIEW a proposal (and its comments).
-
-    Mirrors ``polis_engine.eligible_viewers_for_polis`` for the Proposal
-    artifact. Phase 8.5 Decisions 3, 6, 7 apply identically:
-
-      * Org-wide proposal (``sub_org_id`` IS NULL with non-null ``org_id``):
-        all active OrgMembership members of ``proposal.org_id``.
-      * Sub-org-scoped proposal (``sub_org_id`` IS NOT NULL):
-        - active SubOrgMembership of ``proposal.sub_org_id``;
-        - PLUS active OrgMembership admins/owners of the parent org
-          (Decision 6 — implicit power);
-        - PLUS, when the sub-org's ``settings.private`` is False, all active
-          parent-org members (Decision 7 — default visibility).
-      * No org context (``org_id`` IS NULL): defensive fallback to "all
-        users" so legacy / unit-test fixtures with no org keep working —
-        same shape as ``delegation_engine.eligible_voter_ids_for_proposal``.
-    """
-    sub_org_id = getattr(proposal, "sub_org_id", None)
-    org_id = getattr(proposal, "org_id", None)
-
-    if sub_org_id is None and org_id is None:
-        # Defensive: pre-multi-tenancy / unit-test fixture path.
-        rows = db.query(models.User.id).all()
-        return {r.id for r in rows}
-
-    if sub_org_id is None:
-        # Org-wide proposal — all active parent-org members.
-        rows = db.query(models.OrgMembership.user_id).filter(
-            models.OrgMembership.org_id == org_id,
-            models.OrgMembership.status == "active",
-        ).all()
-        return {r.user_id for r in rows}
-
-    # Sub-org-scoped.
-    visible: set[str] = set()
-
-    sub_rows = db.query(models.SubOrgMembership.user_id).filter(
-        models.SubOrgMembership.sub_org_id == sub_org_id,
-        models.SubOrgMembership.status == "active",
-    ).all()
-    visible.update(r.user_id for r in sub_rows)
-
-    if org_id is not None:
-        # Phase 12 — join through the Role table to get parent-org admin/
-        # Steward members; the legacy string column is gone.
-        parent_admins = (
-            db.query(models.OrgMembership.user_id)
-            .join(models.Role, models.Role.id == models.OrgMembership.role_id)
-            .filter(
-                models.OrgMembership.org_id == org_id,
-                models.OrgMembership.status == "active",
-                models.Role.system_key.in_(_ADMIN_TIER_SYSTEM_KEYS),
-            )
-            .all()
-        )
-        visible.update(r.user_id for r in parent_admins)
-
-    sub_org = db.get(models.Organization, sub_org_id)
-    is_private = False
-    if sub_org is not None:
-        settings = sub_org.settings or {}
-        is_private = bool(settings.get("private", False))
-    if not is_private and org_id is not None:
-        parent_members = db.query(models.OrgMembership.user_id).filter(
-            models.OrgMembership.org_id == org_id,
-            models.OrgMembership.status == "active",
-        ).all()
-        visible.update(r.user_id for r in parent_members)
-
-    return visible
+# Phase 41 (2026-05-28) — canonical implementation lives in `eligibility`.
+# This re-export keeps the legacy `_eligible_viewers_for_proposal` name
+# available for any external tooling that grepped the routes/comments
+# source pre-Phase-41. New callers should import from `eligibility`
+# directly: `from eligibility import eligible_viewers_for_proposal`.
+from eligibility import eligible_viewers_for_proposal as _eligible_viewers_for_proposal  # noqa: E402, F401
 
 
 # ---------------------------------------------------------------------------
