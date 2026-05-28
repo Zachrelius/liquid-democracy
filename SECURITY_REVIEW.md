@@ -680,3 +680,53 @@ with a user-readable message. Defends against a malicious upload whose
 metadata declares dimensions far exceeding the byte size (a 6MB JPEG
 can decode to hundreds of MP without this defense, consuming gigabytes
 of RAM in the Pillow decode path).
+
+
+## Phase 41 (2026-05-28) — Documented v1 design decisions
+
+### `AuditLog.target_id` is not a referential-integrity-enforced FK
+
+`audit_log.target_id` (and `audit_log.actor_id`) are plain `String(36)`
+columns, not FKs to the referenced entity table. This is intentional:
+the audit log records WHAT HAPPENED, including events whose target
+entity may be subsequently deleted. Enforcing FK integrity would
+either prevent legitimate deletion of orgs/users/proposals/etc. (the
+audit log would refuse to keep referring to them) or require a
+cascading-null story that breaks the audit log's read invariants
+("I know an action happened, but the row no longer says what it
+acted on").
+
+Tradeoff accepted: rows referencing deleted entities may have
+"orphan" target_ids that don't join to anything. Forensic queries
+(e.g., the Phase 37 `user.demo_login` grep) work by reading
+`details` JSONB rather than joining on `target_id` for exactly this
+reason.
+
+Future change consideration: if a real ops scenario surfaces where
+"can't tell what this audit row was about" becomes a practical
+problem, the answer is enriching `details` JSONB at emit time
+(e.g., storing `target_username` alongside `target_id`), not
+adding FK constraints. Phase 38's `user.login_failed` audit
+(which records `form_data.username` as fallback when no User row
+matches) is the established pattern.
+
+### `Organization.name` is intentionally not unique
+
+`organizations.name` is `String NOT NULL` but has no unique
+constraint. `organizations.slug` IS unique (used for URL routing
+and per-org lookups). Two orgs CAN share a display name — common
+real-world case where two "Pool Committee" orgs on different
+neighborhood platforms coexist.
+
+If two real users (or admin tools) need to disambiguate orgs
+sharing a name, the slug + the org's display_order in their list
+of memberships disambiguates. The Org Selector UI shows slug as a
+subtitle for exactly this reason.
+
+Future change consideration: if a real product signal surfaces
+where shared names cause confusion at v1 scale (e.g., a
+moderator misidentifies which "Pool Committee" they're admining),
+the answer is UI disambiguation (show slug everywhere, or add a
+parent-org indicator to the display), not a uniqueness constraint
+(which would require admin tooling to resolve collisions on
+existing orgs and would break the realistic-naming property).
