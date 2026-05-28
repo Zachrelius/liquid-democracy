@@ -74,5 +74,46 @@ echo "Starting application…"
 # the Railway-edge IP becomes request.client.host and every slowapi rate
 # limiter is effectively keyed per-edge-IP instead of per-client-IP. Also
 # fixes audit-log IP fidelity (Tier-2 tech debt from the Phase 37 closeout).
-exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS:-1} \
-    --proxy-headers --forwarded-allow-ips '*'
+#
+# Phase 40a B1 (2026-05-28) — start.sh stays as PID 1; uvicorn launches as
+# a background child instead of via `exec`. Pre-Phase-40a the SM worker
+# (child of PID 1) received no signal on Railway redeploy because Railway
+# sends SIGTERM to PID 1 only, not cgroup-wide — the worker was SIGKILLed
+# during force-stop. Post-fix the trap below forwards SIGTERM/SIGINT to
+# both children so each runs its graceful shutdown path. Confirmed
+# behavior is documented in DEPLOYMENT.md "Worker signal handling."
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS:-1} \
+    --proxy-headers --forwarded-allow-ips '*' &
+UVICORN_PID=$!
+echo "Uvicorn PID: ${UVICORN_PID}"
+
+_cleanup() {
+    echo "[start.sh] Received shutdown signal; forwarding to children…"
+    # Worker first — needs time to finish current tick. Tolerate the worker
+    # not being set (SUSTAINED_MAJORITY_WORKER_DISABLE=true skipped its
+    # launch) by guarding on the PID being non-empty.
+    if [ -n "${SM_WORKER_PID:-}" ]; then
+        kill -TERM "${SM_WORKER_PID}" 2>/dev/null || true
+    fi
+    sleep 1
+    # Then uvicorn.
+    kill -TERM "${UVICORN_PID}" 2>/dev/null || true
+    # Wait for both to exit. `wait` on an already-reaped PID is a no-op;
+    # `|| true` swallows any non-zero exit status so `set -e` doesn't kill
+    # the trap mid-cleanup.
+    if [ -n "${SM_WORKER_PID:-}" ]; then
+        wait "${SM_WORKER_PID}" 2>/dev/null || true
+    fi
+    wait "${UVICORN_PID}" 2>/dev/null || true
+    echo "[start.sh] All children exited; goodbye."
+    exit 0
+}
+
+trap _cleanup SIGTERM SIGINT
+
+# Block until any child exits. If uvicorn or the worker dies for unrelated
+# reasons (OOM, crash), we fall through to the cleanup path and bring the
+# other child down too — no orphans.
+wait -n
+echo "[start.sh] A child process exited unexpectedly; shutting down…"
+_cleanup

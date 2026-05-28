@@ -1067,26 +1067,39 @@ Set `DISABLE_DIGEST_SCHEDULER=1` in Railway env vars and redeploy. The startup h
 Log line `digest_loop: tick complete {daily: N, weekly: N, quiet: N, cleaned: N}` appears every hour in Railway logs. After a known opt-in user has fresh notifications and the local 9am tick fires, expect `daily >= 1`. The 90-day cleanup count surfaces every tick; that line is the heartbeat. With 4 workers, expect 4× `tick complete` lines per hour (one per worker); only one will show non-zero `daily`/`weekly` counts (the worker whose UPDATE landed first); the other three log all-zeros.
 
 
-## Phase 40 — Worker signal handling on Railway redeploy (B6.4 observation)
+## Phase 40 — Worker signal handling on Railway redeploy (B6.4, RESOLVED Phase 40a)
 
-**Finding (2026-05-27):** Railway sends SIGTERM to PID 1 only, not to the container cgroup. On a redeploy, uvicorn (PID 1 after `start.sh`'s `exec uvicorn ...`) receives SIGTERM and shuts down gracefully — the digest_scheduler `asyncio.create_task` running inside the uvicorn process gets the asyncio cancel and exits cleanly. The sustained_majority_worker subprocess (`python -m sustained_majority_worker &` in start.sh, child PID) receives NO signal. Its `_install_signal_handlers` "Received signal {signum}; finishing tick and exiting." log line is absent from every observed redeploy trace.
+**Original finding (Phase 40, 2026-05-27):** Railway sends SIGTERM to PID 1 only, not to the container cgroup. Pre-Phase-40a: `start.sh` ran `exec uvicorn ...` which made uvicorn PID 1 and the sustained_majority_worker (launched as a background subprocess earlier in `start.sh`) a non-PID-1 child. On redeploy, uvicorn received SIGTERM and shut down gracefully — the digest_scheduler `asyncio.create_task` running inside uvicorn got the asyncio cancel and exited cleanly — but the SM worker subprocess received NO signal. Its `_install_signal_handlers` "Received signal {signum}; finishing tick and exiting." log line was absent from every observed redeploy trace, conclusively confirming the worker was being SIGKILLed by Railway's force-stop after the SIGTERM grace window expired.
 
-**Evidence:** QA pass during Phase 40 closeout inspected REMOVED deployment `95465dda` (the deploy immediately preceding Phase 40 hotfix #1 at 2026-05-27 15:25:10 EDT). The uvicorn shutdown trace is intact (`Stopping Container` → `INFO: Shutting down` → `Waiting for application shutdown` → `Application shutdown complete` → `Finished server process [1]` → `digest_loop: cancelled; exiting` → final `Stopping Container`). The same deploy's `sustained_majority` filter shows only 3 records (startup + 2 ticks) — zero shutdown-handler messages. Searching the entire deploy log for the literal token `Received` returns "No logs found." This is conclusive: the SM worker is being SIGKILLed by Railway's eventual force-stop after the SIGTERM grace window expires, with no opportunity to finish its current tick gracefully.
+**Evidence captured during Phase 40 closeout:** QA pass inspected REMOVED deployment `95465dda` (immediately preceding Phase 40 hotfix #1 at 2026-05-27 15:25:10 EDT). The uvicorn shutdown trace was intact (`Stopping Container` → `INFO: Shutting down` → `Waiting for application shutdown` → `Application shutdown complete` → `Finished server process [1]` → `digest_loop: cancelled; exiting` → final `Stopping Container`). The same deploy's `sustained_majority` filter showed only 3 records (startup + 2 ticks) — zero shutdown-handler messages. Searching the entire deploy log for the literal token `Received` returned "No logs found."
 
-**Risk:** the SM worker can be killed mid-tick on every redeploy. At friend-pilot scale this is rare and recoverable (the next worker startup picks up where it left off — the tick is idempotent at the snapshot level). For higher-stakes pilot orgs with active voting at deploy time, this could mean a partially-written audit log line or an in-flight Stable Result Required evaluation that doesn't complete. Not a security risk; correctness/observability risk only.
+**Risk (pre-fix):** the SM worker could be killed mid-tick on every redeploy. At friend-pilot scale this was rare and recoverable (the next worker startup picks up where it left off — the tick is idempotent at the snapshot level). For higher-stakes pilot orgs with active voting at deploy time, this could mean a partially-written audit log line or an in-flight Stable Result Required evaluation that doesn't complete. Not a security risk; correctness/observability risk only.
 
-**Recommended fix (NOT applied in Phase 40 — surfaced as Phase 40+ followup for Z review):** modify `start.sh` to NOT use `exec uvicorn ...` and instead:
+**Resolution (Phase 40a, 2026-05-28):** `backend/start.sh` no longer uses `exec uvicorn ...`. Instead the shell stays as PID 1, launches both the SM worker AND uvicorn as background children, and installs a `trap _cleanup SIGTERM SIGINT` that forwards SIGTERM to the worker first (brief sleep for the worker's signal handler to run + finish current tick), then to uvicorn, then waits for both to exit cleanly. The `wait -n` (bash 4.3+) blocks until any child exits — if one crashes for unrelated reasons (OOM, panic), the cleanup path also brings the other down so no orphans linger.
 
 ```bash
-trap 'kill -TERM $SM_WORKER_PID 2>/dev/null; kill -TERM $UVICORN_PID 2>/dev/null; wait' SIGTERM SIGINT
-python -m sustained_majority_worker &
-SM_WORKER_PID=$!
 uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS:-1} \
     --proxy-headers --forwarded-allow-ips '*' &
 UVICORN_PID=$!
-wait
+
+_cleanup() {
+    echo "[start.sh] Received shutdown signal; forwarding to children…"
+    if [ -n "${SM_WORKER_PID:-}" ]; then
+        kill -TERM "${SM_WORKER_PID}" 2>/dev/null || true
+    fi
+    sleep 1
+    kill -TERM "${UVICORN_PID}" 2>/dev/null || true
+    if [ -n "${SM_WORKER_PID:-}" ]; then
+        wait "${SM_WORKER_PID}" 2>/dev/null || true
+    fi
+    wait "${UVICORN_PID}" 2>/dev/null || true
+    exit 0
+}
+trap _cleanup SIGTERM SIGINT
+wait -n
+_cleanup
 ```
 
-Cost: bash script becomes PID 1 instead of uvicorn — Railway's expectation of "PID 1 is the main process" is mildly violated but Railway tolerates this for shell-script entrypoints. Benefit: SIGTERM propagates to both subprocesses, both get their graceful shutdown paths (uvicorn's asyncio cancel, SM worker's `_Stop.flag=True` → finishes current tick → exits cleanly).
+Cost: bash script is PID 1 instead of uvicorn — Railway tolerates shell-script entrypoints for this. Benefit: SIGTERM propagates to both subprocesses; the SM worker's `_Stop.flag=True` → finishes current tick → exits cleanly path actually runs on redeploy.
 
-Why not in Phase 40: this is a deploy-infrastructure change. Per CLAUDE.md operating-mode the lead surfaces these for Z review before applying.
+**Verifying the fix is working post-deploy:** after any backend redeploy, search the REMOVED deployment's logs (i.e., the deployment that just got replaced) for the SM worker's shutdown line. The worker's `_install_signal_handlers` logs `Received signal {signum}; finishing tick and exiting.` when the trap forwards SIGTERM. If absent, the trap isn't delivering — investigate. If present, the fix is working as designed.
