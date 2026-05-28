@@ -98,4 +98,30 @@ def eligible_viewers_for_proposal(
     return visible
 
 
-__all__ = ["eligible_viewers_for_proposal"]
+def public_delegate_user_ids(
+    db: Session, *, topic_id: str | None = None,
+) -> set[str]:
+    """Return the set of user IDs that count as 'public delegates' for
+    identity-redaction purposes.
+
+    A user is a public delegate iff they have AT LEAST ONE DelegateProfile
+    row with ``visibility IN ('public', 'public_accepting')`` —
+    optionally scoped to a single topic when ``topic_id`` is provided.
+
+    Phase 41 (2026-05-28) — extracted from two inline reimplementations:
+    ``routes/users.py::delegation_tree`` (Phase 37 B3 site, no topic
+    filter) and ``routes/proposals.py::get_vote_graph`` (Phase 37 B3
+    sibling, per-topic loop). The Phase 37 closeout flagged the inline
+    duplication as Tier-3 followup. Single canonical predicate avoids
+    drift if the public-tier visibility values change.
+    """
+    q = db.query(models.DelegateProfile.user_id).filter(
+        models.DelegateProfile.visibility.in_(("public", "public_accepting")),
+    )
+    if topic_id is not None:
+        q = q.filter(models.DelegateProfile.topic_id == topic_id)
+    rows = q.all()
+    return {r.user_id for r in rows}
+
+
+__all__ = ["eligible_viewers_for_proposal", "public_delegate_user_ids"]

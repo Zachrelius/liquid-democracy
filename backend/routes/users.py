@@ -552,17 +552,14 @@ def delegation_tree(
             models.FollowRelationship.follower_id == current_user.id,
         ).all()
     }
-    # Phase 37 B3 (2026-05-27): visibility filter was an empty .filter() — every
-    # user with ANY DelegateProfile row (including visibility='private') was
-    # treated as a public delegate for the _viewer_may_see redaction check
-    # below, which silently broke identity redaction for any user with a
-    # prepared private profile.
-    public_delegate_user_ids: set[str] = {
-        row.user_id
-        for row in db.query(models.DelegateProfile.user_id).filter(
-            models.DelegateProfile.visibility.in_(("public", "public_accepting")),
-        ).all()
-    }
+    # Phase 41 (2026-05-28): use canonical eligibility.public_delegate_user_ids
+    # helper. Original Phase 37 B3 fix lived inline here; Phase 41 followup
+    # consolidates the visibility predicate so the vote-graph sibling at
+    # routes/proposals.py:2227 + this delegation_tree site share one
+    # implementation — defends against future drift if the public-tier
+    # visibility values change.
+    from eligibility import public_delegate_user_ids as _public_delegate_user_ids
+    public_delegate_user_ids: set[str] = _public_delegate_user_ids(db)
 
     def _viewer_may_see(uid: str) -> bool:
         # When the viewer IS the target, every node in their own
