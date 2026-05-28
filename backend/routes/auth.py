@@ -122,7 +122,10 @@ def _auto_join_demo_org(db: Session, user: models.User) -> None:
         status="active",
     )
     db.add(membership)
-    db.flush()
+    # Phase 41 (2026-05-28): no flush here — the caller (verify-email
+    # endpoint) commits the whole transaction at the end of its handler.
+    # The flush was a pre-Phase-9.7 holdover from when this function ran
+    # outside a transactional caller.
 
 
 def _consume_invitation(

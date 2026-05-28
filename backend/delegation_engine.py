@@ -994,7 +994,7 @@ class DelegationGraphStore:
         delegator_id: str,
         delegate_id: str,
         topic_id: Optional[str],
-        org_id: Optional[str] = None,  # TODO Phase 18 B3: make required
+        org_id: Optional[str] = None,
     ) -> bool:
         """Check whether the (delegator → delegate) edge would create a
         cycle within the org's graph(s).
@@ -1023,7 +1023,7 @@ class DelegationGraphStore:
         delegator_id: str,
         delegate_id: str,
         topic_id: Optional[str],
-        org_id: Optional[str] = None,  # TODO Phase 18 B3: make required
+        org_id: Optional[str] = None,
     ) -> None:
         with self._lock:
             g = self._get_or_create(org_id, topic_id)
@@ -1036,7 +1036,7 @@ class DelegationGraphStore:
         self,
         delegator_id: str,
         topic_id: Optional[str],
-        org_id: Optional[str] = None,  # TODO Phase 18 B3: make required
+        org_id: Optional[str] = None,
     ) -> None:
         with self._lock:
             g = self._get_or_create(org_id, topic_id)
@@ -1048,7 +1048,7 @@ class DelegationGraphStore:
         self,
         user_id: str,
         topic_id: Optional[str] = None,
-        org_id: Optional[str] = None,  # TODO Phase 18 B3: make required
+        org_id: Optional[str] = None,
     ) -> tuple[set[str], list[tuple[str, str, Optional[str]]]]:
         """Return (nodes, edges) for the user's neighborhood.
 
@@ -1104,7 +1104,7 @@ class DelegationGraphStore:
     def compute_voting_weight(
         self,
         user_id: str,
-        org_id: Optional[str] = None,  # TODO Phase 18 B3: make required
+        org_id: Optional[str] = None,
     ) -> int:
         """Voting weight = 1 + ancestors-in-org's-global-graph.
 

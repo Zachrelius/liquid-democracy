@@ -301,7 +301,7 @@ async def proposal_websocket(
 
     import auth as auth_utils
     import models
-    from routes.comments import _eligible_viewers_for_proposal
+    from eligibility import eligible_viewers_for_proposal as _eligible_viewers_for_proposal
 
     proposal = db.query(models.Proposal).filter(
         models.Proposal.id == proposal_id,
