@@ -1,0 +1,71 @@
+{
+  "scenario": "ld_landing_page_smoke",
+  "elapsed_s": 21.71,
+  "exit_code": 0,
+  "agent_returned_json": true,
+  "agent_json": {
+    "scenario": "ld_landing_page_smoke",
+    "url": "https://www.liquiddemocracy.us/",
+    "page_loaded": true,
+    "page_load_error": "",
+    "checks": [
+      {
+        "name": "title_present",
+        "expect": "Liquid Democracy",
+        "found": true
+      },
+      {
+        "name": "tagline_present",
+        "expect": "Delegate your vote",
+        "found": true
+      },
+      {
+        "name": "login_link_present",
+        "expect": "Log in or Login or Sign in (any case)",
+        "found": true
+      }
+    ],
+    "overall_pass": true,
+    "evidence_excerpt": "Liquid Democracy — Vote directly or delegate to people you trust, on every issue, any time. An open platform for liquid democracy. [Start an organization] [Try the Demo] [About the Project] [Sign In]. Topic-based delegation: Delegate your vote on healthcare to a doctor, economy to an economist, and vote directly on everything else. Instant revocability. Transparent accountability. Multiple voting methods."
+  },
+  "result_text": "```json\n{\n  \"scenario\": \"ld_landing_page_smoke\",\n  \"url\": \"https://www.liquiddemocracy.us/\",\n  \"page_loaded\": true,\n  \"page_load_error\": \"\",\n  \"checks\": [\n    {\"name\": \"title_present\", \"expect\": \"Liquid Democracy\", \"found\": true},\n    {\"name\": \"tagline_present\", \"expect\": \"Delegate your vote\", \"found\": true},\n    {\"name\": \"login_link_present\", \"expect\": \"Log in or Login or Sign in (any case)\", \"found\": true}\n  ],\n  \"overall_pass\": true,\n  \"evidence_excerpt\": \"Liquid Democracy — Vote directly or delegate to people you trust, on every issue, any time. An open platform for liquid democracy. [Start an organization] [Try the Demo] [About the Project] [Sign In]. Topic-based delegation: Delegate your vote on healthcare to a doctor, economy to an economist, and vote directly on everything else. Instant revocability. Transparent accountability. Multiple voting methods.\"\n}\n```",
+  "stderr_tail": "",
+  "payload_metadata": {
+    "is_error": false,
+    "duration_ms": 16953,
+    "duration_api_ms": 16023,
+    "num_turns": 4,
+    "session_id": "95e03ded-1a35-40ec-aabe-7fb49b6671e0",
+    "total_cost_usd": 0.29929724999999996,
+    "usage": {
+      "input_tokens": 13,
+      "cache_creation_input_tokens": 38041,
+      "cache_read_input_tokens": 76268,
+      "output_tokens": 899,
+      "server_tool_use": {
+        "web_search_requests": 0,
+        "web_fetch_requests": 0
+      },
+      "service_tier": "standard",
+      "cache_creation": {
+        "ephemeral_1h_input_tokens": 38041,
+        "ephemeral_5m_input_tokens": 0
+      },
+      "inference_geo": "",
+      "iterations": [
+        {
+          "input_tokens": 1,
+          "output_tokens": 584,
+          "cache_read_input_tokens": 28618,
+          "cache_creation_input_tokens": 1129,
+          "cache_creation": {
+            "ephemeral_5m_input_tokens": 0,
+            "ephemeral_1h_input_tokens": 1129
+          },
+          "type": "message"
+        }
+      ],
+      "speed": "standard"
+    }
+  }
+}

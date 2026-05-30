@@ -1,0 +1,258 @@
+[
+  {
+    "round": 1,
+    "name": "R1_seed",
+    "session_id": "ab2a0bfa-1c83-4953-9f2f-35ffb2e8a90c",
+    "elapsed_s": 10.62,
+    "exit_code": 0,
+    "cache_create_tokens": 0,
+    "cache_read_tokens": 43639,
+    "result_text": "Context absorbed. The workflow-automation track is a separate initiative from the website work, building a persistent autonomous planner/orchestrator that dispatches `claude -p` subprocesses (Max-subscription path, not Agent SDK) with continuity backed by a durable state layer plus session rotation. WA1 (state + IPC foundation: schema, atomic checkpoint writer, bootstrap/passdown renderers, file-IPC contract, tests, cold-start validation) is complete per the README status table. WA2 (architecture validation spike — planner continuity at planning scale, Playwright-MCP-from-`claude -p`, dashboard hook seam, Slack bridge, auth/ToS read) is specced and is the next pass. WA3–WA7 are downstream and gated on WA2 findings.\n\nTRACKER: WA1_status=done, WA2_status=specced_not_started, next_pass=WA2",
+    "grade": {
+      "name": "R1_seed",
+      "passed": true,
+      "note": "seed round establishes tracker; not graded"
+    }
+  },
+  {
+    "round": 2,
+    "name": "R2_recall_seed",
+    "session_id": "ab2a0bfa-1c83-4953-9f2f-35ffb2e8a90c",
+    "elapsed_s": 8.89,
+    "exit_code": 0,
+    "cache_create_tokens": 414,
+    "cache_read_tokens": 43639,
+    "result_text": "TRACKER: WA1_status=done, WA2_status=specced_not_started, next_pass=WA2\n\n- **Goal 3 (Max account, not API credits)** — directly hit. The entire architecture rests on `claude -p` CLI reusing the Max subscription's auth. A Max-OAuth-incompatible change kills the sanctioned path; the only fallback is metered Console API keys, which violates this goal explicitly.\n- **Goal 1 (Persistent planner)** — collaterally hit. Continuity is delivered via `claude -p --resume <planner_session>` running on Max. If Max-OAuth can't drive the CLI, the long-lived planner session can't be resumed under the Max-only constraint, and the goal-1 mechanism collapses unless we accept metered spend (re-violating goal 3).\n- **Goal 2 (Dispatch coding agents and hear back)** — collaterally hit. Code agents are dispatched as `claude -p` subprocesses authed via Max. Same auth break disables the dispatch mechanism wholesale; without it the orchestrator has nothing to dispatch.\n\n(Goal 4 is partially exposed too — QA agents are also `claude -p` — but the Playwright MCP layer itself survives; goals 1–3 are the more fundamental hits.)",
+    "grade": {
+      "name": "R2_recall_seed",
+      "passed": true,
+      "tracker_line": "TRACKER: WA1_status=done, WA2_status=specced_not_started, next_pass=WA2",
+      "must_hits": [
+        "TRACKER:",
+        "goal"
+      ],
+      "must_misses": [],
+      "tracker_hits": [
+        "WA1_status",
+        "WA2_status"
+      ],
+      "tracker_misses": []
+    }
+  },
+  {
+    "round": 3,
+    "name": "R3_decision_application",
+    "session_id": "ab2a0bfa-1c83-4953-9f2f-35ffb2e8a90c",
+    "elapsed_s": 16.55,
+    "exit_code": 0,
+    "cache_create_tokens": 566,
+    "cache_read_tokens": 44053,
+    "result_text": "TRACKER: WA1_status=done, WA2_status=specced_not_started, next_pass=WA2\n\n- **WA1 cold-start reconstruction validation (B5).** The pytest harness that spawns a fresh `claude -p --dangerously-skip-permissions` against the generated bootstrap context must unset `ANTHROPIC_API_KEY` in the subprocess env, or the validation step silently flips to metered billing — corrupting both the \"no metered spend\" guarantee and the proof that the Max path works. Already called out as a locked decision (D6) in the WA1 spec.\n- **WA1 file-IPC contract (B4).** The contract documents cwd discipline + env hygiene as a fixed convention for any future wrapper that spawns `claude -p`. If the contract doesn't pin \"child env strips `ANTHROPIC_API_KEY`,\" every downstream caller (WA4 dispatch, WA5 QA, the wrapper) has to rediscover the trap. This is the invariant's *documentation* anchor.\n- **WA2 P1 — planner-continuity at planning scale.** Each of the ≥10 `--resume` rounds is a fresh `claude -p` subprocess; if any one leaks `ANTHROPIC_API_KEY` from the parent shell, that round bills against API credit instead of Max quota. The spec's \"no metered spend\" verification check depends on this invariant holding across every spawn in the harness.\n- **WA2 P2 — Playwright MCP via `claude -p`.** The dispatched QA agent is another `claude -p` subprocess; same env hygiene required, otherwise the Playwright run quietly draws metered spend and the goal-4 mechanism is \"proven\" under the wrong auth model.\n- **WA4 orchestrator daemon — Code-agent dispatch.** The daemon's core action is spawning `claude -p` for every Code pass and every planner-session resume. The invariant becomes a runtime contract: the dispatch routine must scrub `ANTHROPIC_API_KEY` from the child env on every spawn, or the entire long-running orchestrator drifts onto metered billing without anyone noticing — violating goal 3 at scale, not just per-round.\n- **WA5 autonomous QA agent.** Same shape as WA4 dispatch but for Playwright-MCP-driven QA subprocesses. Each headless QA run is a `claude -p` spawn; the env-scrub invariant has to be part of the QA dispatch path too, not just the Code-agent dispatch path.",
+    "grade": {
+      "name": "R3_decision_application",
+      "passed": true,
+      "tracker_line": "TRACKER: WA1_status=done, WA2_status=specced_not_started, next_pass=WA2",
+      "must_hits": [
+        "TRACKER:",
+        "ANTHROPIC_API_KEY"
+      ],
+      "must_misses": [],
+      "tracker_hits": [
+        "WA1_status"
+      ],
+      "tracker_misses": []
+    }
+  },
+  {
+    "round": 4,
+    "name": "R4_cross_pass_dependency",
+    "session_id": "ab2a0bfa-1c83-4953-9f2f-35ffb2e8a90c",
+    "elapsed_s": 13.46,
+    "exit_code": 0,
+    "cache_create_tokens": 956,
+    "cache_read_tokens": 44619,
+    "result_text": "TRACKER: WA1_status=done, WA2_status=specced_not_started, next_pass=WA2\n\n**WA1 deliverables WA4 depends on:**\n- **State schema (B1) + checkpoint writer (B2)** — WA4's daemon checkpoints loop/orchestration state mid-run and reloads it on restart; the schema + atomic-write API is the substrate that makes the daemon crash-safe and the planner session rotatable.\n- **Bootstrap/recovery routine (B3)** — WA4 rotates the planner `claude -p --resume` session when it nears context limits by starting a fresh session bootstrapped from state; the bootstrap renderer is exactly that handoff.\n- **Passdown generator (B3)** — WA4 needs the passdown artifact to deliver goal 5 (easy passdown to a fresh planner version) without re-implementing the generation logic in the daemon.\n- **File-IPC contract (B4)** — WA4's dispatch loop reads specs from the spec-inbox, writes signals, and consumes Code closeouts from the outbox; the contract is the fixed interface the daemon binds to, and it pins the env-hygiene invariant (ANTHROPIC_API_KEY unset) the dispatch routine must honor.\n\n**WA2 deliverables WA4 depends on:**\n- **P1 planner-continuity-at-scale verdict** — WA4 implements the long-lived planner session as `claude -p --resume`; if P1 surfaces a degradation point, that point becomes WA4's documented rotation trigger (and if P1 fails outright, WA4's planner-session design has to change before build).\n- **Auth/ToS confirmation** — WA4 spawns `claude -p` continuously under Max; the read-the-docs confirmation that this path is sanctioned (and the June-15 credit-pool picture) gates whether WA4 is safe to run at production cadence at all.\n\n(WA3/WA5/WA6/WA7 are downstream of WA4 per the roadmap, not upstream — WA4 does not depend on them.)",
+    "grade": {
+      "name": "R4_cross_pass_dependency",
+      "passed": true,
+      "tracker_line": "TRACKER: WA1_status=done, WA2_status=specced_not_started, next_pass=WA2",
+      "must_hits": [
+        "TRACKER:",
+        "WA4"
+      ],
+      "must_misses": [],
+      "tracker_hits": [
+        "WA1_status"
+      ],
+      "tracker_misses": []
+    }
+  },
+  {
+    "round": 5,
+    "name": "R5_synthesis",
+    "session_id": "ab2a0bfa-1c83-4953-9f2f-35ffb2e8a90c",
+    "elapsed_s": 2.06,
+    "exit_code": 1,
+    "cache_create_tokens": 0,
+    "cache_read_tokens": 0,
+    "result_text": "You're out of extra usage · resets 12:30pm (America/Port-au-Prince)",
+    "grade": {
+      "name": "R5_synthesis",
+      "passed": false,
+      "tracker_line": "",
+      "must_hits": [],
+      "must_misses": [
+        "TRACKER:",
+        "WA4"
+      ],
+      "tracker_hits": [],
+      "tracker_misses": [
+        "WA1_status"
+      ]
+    }
+  },
+  {
+    "round": 6,
+    "name": "R6_update_tracker",
+    "session_id": "ab2a0bfa-1c83-4953-9f2f-35ffb2e8a90c",
+    "elapsed_s": 1.98,
+    "exit_code": 1,
+    "cache_create_tokens": 0,
+    "cache_read_tokens": 0,
+    "result_text": "You're out of extra usage · resets 12:30pm (America/Port-au-Prince)",
+    "grade": {
+      "name": "R6_update_tracker",
+      "passed": false,
+      "tracker_line": "",
+      "must_hits": [],
+      "must_misses": [
+        "TRACKER:",
+        "shipped",
+        "in_progress"
+      ],
+      "tracker_hits": [],
+      "tracker_misses": [
+        "WA1_status=shipped",
+        "WA2_status=in_progress"
+      ]
+    }
+  },
+  {
+    "round": 7,
+    "name": "R7_recall_post_update",
+    "session_id": "ab2a0bfa-1c83-4953-9f2f-35ffb2e8a90c",
+    "elapsed_s": 2.25,
+    "exit_code": 1,
+    "cache_create_tokens": 0,
+    "cache_read_tokens": 0,
+    "result_text": "You're out of extra usage · resets 12:30pm (America/Port-au-Prince)",
+    "grade": {
+      "name": "R7_recall_post_update",
+      "passed": false,
+      "tracker_line": "",
+      "must_hits": [],
+      "must_misses": [
+        "TRACKER:",
+        "WA1_status=shipped",
+        "schema_version"
+      ],
+      "tracker_hits": [],
+      "tracker_misses": [
+        "WA1_status=shipped"
+      ]
+    }
+  },
+  {
+    "round": 8,
+    "name": "R8_long_context",
+    "session_id": "ab2a0bfa-1c83-4953-9f2f-35ffb2e8a90c",
+    "elapsed_s": 2.07,
+    "exit_code": 1,
+    "cache_create_tokens": 0,
+    "cache_read_tokens": 0,
+    "result_text": "You're out of extra usage · resets 12:30pm (America/Port-au-Prince)",
+    "grade": {
+      "name": "R8_long_context",
+      "passed": false,
+      "tracker_line": "",
+      "must_hits": [],
+      "must_misses": [
+        "TRACKER:",
+        "WA4"
+      ],
+      "tracker_hits": [],
+      "tracker_misses": [
+        "WA1_status=shipped"
+      ]
+    }
+  },
+  {
+    "round": 9,
+    "name": "R9_recall_drift_check",
+    "session_id": "ab2a0bfa-1c83-4953-9f2f-35ffb2e8a90c",
+    "elapsed_s": 2.02,
+    "exit_code": 1,
+    "cache_create_tokens": 0,
+    "cache_read_tokens": 0,
+    "result_text": "You're out of extra usage · resets 12:30pm (America/Port-au-Prince)",
+    "grade": {
+      "name": "R9_recall_drift_check",
+      "passed": false,
+      "tracker_line": "",
+      "must_hits": [],
+      "must_misses": [
+        "TRACKER:"
+      ],
+      "tracker_hits": [],
+      "tracker_misses": [
+        "WA1_status=shipped"
+      ]
+    }
+  },
+  {
+    "round": 10,
+    "name": "R10_planning_judgment",
+    "session_id": "ab2a0bfa-1c83-4953-9f2f-35ffb2e8a90c",
+    "elapsed_s": 1.92,
+    "exit_code": 1,
+    "cache_create_tokens": 0,
+    "cache_read_tokens": 0,
+    "result_text": "You're out of extra usage · resets 12:30pm (America/Port-au-Prince)",
+    "grade": {
+      "name": "R10_planning_judgment",
+      "passed": false,
+      "tracker_line": "",
+      "must_hits": [],
+      "must_misses": [
+        "TRACKER:"
+      ],
+      "tracker_hits": [],
+      "tracker_misses": [
+        "WA1_status=shipped"
+      ]
+    }
+  },
+  {
+    "round": "rotation",
+    "name": "rotation_demo",
+    "session_id": null,
+    "elapsed_s": 1.81,
+    "exit_code": 1,
+    "result_text": "You're out of extra usage · resets 12:30pm (America/Port-au-Prince)",
+    "grade": {
+      "name": "rotation_demo",
+      "passed": false,
+      "tracker_line": "",
+      "must_hits": [],
+      "must_misses": [
+        "TRACKER:",
+        "WA1_status=shipped",
+        "next pass"
+      ],
+      "tracker_hits": [],
+      "tracker_misses": [
+        "WA1_status=shipped"
+      ]
+    }
+  }
+]

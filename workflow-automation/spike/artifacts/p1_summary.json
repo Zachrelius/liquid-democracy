@@ -1,0 +1,161 @@
+{
+  "total_rounds": 11,
+  "passed": 4,
+  "failed": 7,
+  "all_passed": false,
+  "first_failure": 5,
+  "elapsed_s_min": 1.81,
+  "elapsed_s_max": 16.55,
+  "elapsed_s_total": 63.63,
+  "cache_read_tokens_min": 0,
+  "cache_read_tokens_max": 44619,
+  "rounds_brief": [
+    {
+      "round": 1,
+      "name": "R1_seed",
+      "elapsed_s": 10.62,
+      "exit_code": 0,
+      "cache_read_tokens": 43639,
+      "passed": true,
+      "must_misses": [],
+      "tracker_misses": []
+    },
+    {
+      "round": 2,
+      "name": "R2_recall_seed",
+      "elapsed_s": 8.89,
+      "exit_code": 0,
+      "cache_read_tokens": 43639,
+      "passed": true,
+      "must_misses": [],
+      "tracker_misses": []
+    },
+    {
+      "round": 3,
+      "name": "R3_decision_application",
+      "elapsed_s": 16.55,
+      "exit_code": 0,
+      "cache_read_tokens": 44053,
+      "passed": true,
+      "must_misses": [],
+      "tracker_misses": []
+    },
+    {
+      "round": 4,
+      "name": "R4_cross_pass_dependency",
+      "elapsed_s": 13.46,
+      "exit_code": 0,
+      "cache_read_tokens": 44619,
+      "passed": true,
+      "must_misses": [],
+      "tracker_misses": []
+    },
+    {
+      "round": 5,
+      "name": "R5_synthesis",
+      "elapsed_s": 2.06,
+      "exit_code": 1,
+      "cache_read_tokens": 0,
+      "passed": false,
+      "must_misses": [
+        "TRACKER:",
+        "WA4"
+      ],
+      "tracker_misses": [
+        "WA1_status"
+      ]
+    },
+    {
+      "round": 6,
+      "name": "R6_update_tracker",
+      "elapsed_s": 1.98,
+      "exit_code": 1,
+      "cache_read_tokens": 0,
+      "passed": false,
+      "must_misses": [
+        "TRACKER:",
+        "shipped",
+        "in_progress"
+      ],
+      "tracker_misses": [
+        "WA1_status=shipped",
+        "WA2_status=in_progress"
+      ]
+    },
+    {
+      "round": 7,
+      "name": "R7_recall_post_update",
+      "elapsed_s": 2.25,
+      "exit_code": 1,
+      "cache_read_tokens": 0,
+      "passed": false,
+      "must_misses": [
+        "TRACKER:",
+        "WA1_status=shipped",
+        "schema_version"
+      ],
+      "tracker_misses": [
+        "WA1_status=shipped"
+      ]
+    },
+    {
+      "round": 8,
+      "name": "R8_long_context",
+      "elapsed_s": 2.07,
+      "exit_code": 1,
+      "cache_read_tokens": 0,
+      "passed": false,
+      "must_misses": [
+        "TRACKER:",
+        "WA4"
+      ],
+      "tracker_misses": [
+        "WA1_status=shipped"
+      ]
+    },
+    {
+      "round": 9,
+      "name": "R9_recall_drift_check",
+      "elapsed_s": 2.02,
+      "exit_code": 1,
+      "cache_read_tokens": 0,
+      "passed": false,
+      "must_misses": [
+        "TRACKER:"
+      ],
+      "tracker_misses": [
+        "WA1_status=shipped"
+      ]
+    },
+    {
+      "round": 10,
+      "name": "R10_planning_judgment",
+      "elapsed_s": 1.92,
+      "exit_code": 1,
+      "cache_read_tokens": 0,
+      "passed": false,
+      "must_misses": [
+        "TRACKER:"
+      ],
+      "tracker_misses": [
+        "WA1_status=shipped"
+      ]
+    },
+    {
+      "round": "rotation",
+      "name": "rotation_demo",
+      "elapsed_s": 1.81,
+      "exit_code": 1,
+      "cache_read_tokens": 0,
+      "passed": false,
+      "must_misses": [
+        "TRACKER:",
+        "WA1_status=shipped",
+        "next pass"
+      ],
+      "tracker_misses": [
+        "WA1_status=shipped"
+      ]
+    }
+  ]
+}
