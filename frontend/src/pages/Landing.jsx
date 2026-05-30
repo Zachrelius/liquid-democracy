@@ -1,7 +1,16 @@
 import { Link } from 'react-router-dom';
 import PublicLayout from '../components/PublicLayout';
+import { useAuth } from '../AuthContext';
 
 export default function Landing() {
+  // Phase 43 Cluster F: the "Start an organization" CTA routes by auth state.
+  // Logged-in users go directly to /orgs/create. Logged-out users go through
+  // /register?next=/orgs/create — Login.jsx already honors `next` post-auth
+  // and post-register, and VerifyEmail.jsx persists the intent across the
+  // email-verification round-trip via sessionStorage.
+  const { user } = useAuth();
+  const startOrgTo = user ? '/orgs/create' : '/register?next=/orgs/create';
+
   return (
     <PublicLayout>
       {/* Hero */}
@@ -19,10 +28,17 @@ export default function Landing() {
             any time. An open platform for liquid democracy.
           </p>
 
+          {/* Phase 43 Cluster F — primary CTA: Start an organization */}
           <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
             <Link
-              to="/demo"
+              to={startOrgTo}
               className="inline-flex items-center justify-center px-6 py-3 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors shadow-sm w-full sm:w-auto"
+            >
+              Start an organization
+            </Link>
+            <Link
+              to="/demo"
+              className="inline-flex items-center justify-center px-6 py-3 bg-white text-[var(--brand-primary)] text-sm font-medium rounded-lg border border-gray-300 hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors w-full sm:w-auto"
             >
               Try the Demo
             </Link>
@@ -32,11 +48,23 @@ export default function Landing() {
             >
               About the Project
             </Link>
+            {!user && (
+              <Link
+                to="/login"
+                className="inline-flex items-center justify-center px-6 py-3 text-[var(--brand-accent)] text-sm font-medium rounded-lg hover:underline w-full sm:w-auto"
+              >
+                Sign In
+              </Link>
+            )}
+          </div>
+
+          {/* Phase 43 Cluster H — secondary discoverability link to /help. */}
+          <div className="mt-6 text-sm">
             <Link
-              to="/login"
-              className="inline-flex items-center justify-center px-6 py-3 text-[var(--brand-accent)] text-sm font-medium rounded-lg hover:underline w-full sm:w-auto"
+              to="/help"
+              className="text-[var(--brand-accent)] hover:underline"
             >
-              Sign In
+              How it works →
             </Link>
           </div>
         </div>

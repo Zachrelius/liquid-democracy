@@ -403,6 +403,18 @@ export default function Nav() {
                 Delegates
               </NavLink>
 
+              {/* Phase 43 Cluster H — Help link in the authenticated nav.
+                  Public route so always reachable; sits between Delegates
+                  and the Admin dropdown. */}
+              <NavLink
+                to="/help"
+                className={({ isActive }) =>
+                  `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                }
+              >
+                Help
+              </NavLink>
+
               {/* Admin dropdown — visible to moderators, admins, stewards on parent-org scope */}
               {showLegacyAdminDropdown && parentSlugForLinks && (
                 <div ref={adminRef} className="relative">
@@ -613,6 +625,14 @@ export default function Nav() {
                 className="block py-2 text-sm text-blue-200 hover:text-white"
               >
                 Delegates
+              </Link>
+              {/* Phase 43 Cluster H — Help link in the mobile drawer too. */}
+              <Link
+                to="/help"
+                onClick={() => setMobileOpen(false)}
+                className="block py-2 text-sm text-blue-200 hover:text-white"
+              >
+                Help
               </Link>
             </>
           )}

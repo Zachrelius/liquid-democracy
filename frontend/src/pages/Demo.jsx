@@ -5,6 +5,14 @@ import { useToast } from '../components/Toast';
 import Avatar from '../components/Avatar';
 import api, { setTokens } from '../api';
 
+// Phase 43 Cluster X — count-aware copy helper. Renders English number
+// words for the small counts the demo directory plausibly returns; falls
+// back to the digits for unexpected values.
+function numberWord(n) {
+  const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six'];
+  return words[n] || String(n);
+}
+
 /**
  * Phase 23 F2 — three-org directory rewrite.
  *
@@ -86,6 +94,22 @@ export default function Demo() {
 
   const resetTime = directory?.reset_time_pacific || '00:00';
   const orgs = directory?.orgs || [];
+  // Phase 43 Cluster X — count-aware copy. Backend currently exposes 1 of
+  // the 3 seeded demo orgs publicly via /api/orgs/demo; the prior "three
+  // demo organizations" / "all three orgs" prose was stale. Derive from
+  // the fetched list so the copy is correct regardless of how many orgs
+  // the directory ends up serving.
+  const orgCount = orgs.length;
+  const orgsPhrase = orgCount === 1
+    ? 'the demo organization'
+    : orgCount > 1
+      ? `${numberWord(orgCount)} demo organizations`
+      : 'the demo organizations';
+  const orgsResetPhrase = orgCount === 1
+    ? 'this org'
+    : orgCount > 1
+      ? `all ${numberWord(orgCount)} orgs`
+      : 'all orgs';
 
   return (
     <PublicLayout>
@@ -100,18 +124,19 @@ export default function Demo() {
           </h1>
           <p className="mt-4 text-base text-[#2C3E50] leading-relaxed">
             This is a working demo of the Liquid Democracy platform. Sign
-            in as one of the pre-built personas across three demo
-            organizations to vote, delegate, and explore — or register
-            your own account to try the full onboarding flow.
+            in as one of the pre-built personas in {orgsPhrase} to
+            vote, delegate, and explore — or register your own account
+            to try the full onboarding flow.
           </p>
         </div>
 
         {/* Persistent-data notice */}
         <div className="mt-6 max-w-3xl p-4 rounded-lg border border-amber-200 bg-amber-50 text-sm text-amber-900">
-          <strong className="font-semibold">Heads up:</strong> these are
-          shared demo organizations. Anything you create — proposals,
-          delegations, votes — is visible to other visitors. Demo state
-          resets daily at {resetTime} Pacific across all three orgs.
+          <strong className="font-semibold">Heads up:</strong> {orgCount === 1 ? 'this is a' : 'these are'}{' '}
+          shared demo {orgCount === 1 ? 'organization' : 'organizations'}.
+          Anything you create — proposals, delegations, votes — is visible
+          to other visitors. Demo state resets daily at {resetTime} Pacific
+          across {orgsResetPhrase}.
         </div>
 
         {/* Org cards */}
