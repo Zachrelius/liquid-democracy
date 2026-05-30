@@ -1,11 +1,11 @@
 import { Link } from 'react-router-dom';
 import HelpBackLink from '../components/HelpBackLink';
+import HelpScreenshot from '../components/HelpScreenshot';
 
 /**
  * Phase 43 Cluster C — Getting started as a member.
  * Copy wired verbatim from phase43_help_content.md (planning-agent authored).
- * Screenshots TODO: capture against Cedar Hollow per markers in the content
- * artifact and place under frontend/public/help-screenshots/.
+ * Screenshots wired in Phase 43a; captured from Cedar Hollow demo.
  */
 export default function GettingStartedMember() {
   return (
@@ -41,7 +41,10 @@ export default function GettingStartedMember() {
         <p>
           Each proposal shows who wrote it, the topics it touches, how many votes have been cast, and how much time is left.
         </p>
-        <ScreenshotPlaceholder caption="The Proposals list in Cedar Hollow showing the All/Deliberation/Voting/Passed/Failed filter row and proposal cards with vote tallies and time remaining." />
+        <HelpScreenshot
+          src="/help-screenshots/member-proposals-list.png"
+          caption="The Proposals list in Cedar Hollow showing the All/Deliberation/Voting/Passed/Failed filter row and proposal cards with vote tallies and time remaining."
+        />
       </Section>
 
       <Section title="Cast your vote">
@@ -51,7 +54,10 @@ export default function GettingStartedMember() {
         <p>
           Changed your mind? As long as voting is still open, you can select <strong>Change Vote</strong> and update it.
         </p>
-        <ScreenshotPlaceholder caption="A single proposal detail in the Voting stage showing the Approve / Reject / Abstain buttons and the Submit Vote button." />
+        <HelpScreenshot
+          src="/help-screenshots/member-vote-cast.png"
+          caption="A single proposal detail in the Voting stage showing the Approve / Reject / Abstain buttons and the Submit Vote button."
+        />
       </Section>
 
       <Section title="Join the discussion">
@@ -69,7 +75,10 @@ export default function GettingStartedMember() {
           <li><strong>It's per topic.</strong> You might delegate "Budget" to one person and vote on everything else yourself.</li>
           <li><strong>You're always in control.</strong> Your delegate's vote applies until you change or revoke it — and if you vote directly on a specific proposal, your direct vote overrides the delegation just for that one.</li>
         </ul>
-        <ScreenshotPlaceholder caption="The Browse Delegates page showing delegate cards (bio, topic tags, delegator count, View Profile)." />
+        <HelpScreenshot
+          src="/help-screenshots/member-browse-delegates.png"
+          caption="The Browse Delegates page showing delegate cards (bio, topic tags, delegator count, View Profile)."
+        />
       </Section>
 
       <Section title="Stay in the loop">
@@ -98,10 +107,3 @@ function Section({ title, children }) {
   );
 }
 
-function ScreenshotPlaceholder({ caption }) {
-  return (
-    <div className="my-3 p-3 bg-gray-50 border border-dashed border-gray-300 rounded text-xs text-gray-500 italic">
-      [Screenshot pending: {caption}]
-    </div>
-  );
-}
