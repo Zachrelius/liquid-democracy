@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom';
 import HelpBackLink from '../components/HelpBackLink';
+import HelpScreenshot from '../components/HelpScreenshot';
 
 /**
  * Phase 43 Cluster C — Getting started as a public delegate.
  * Copy wired verbatim from phase43_help_content.md.
+ * Screenshots wired in Phase 43a.
  */
 export default function GettingStartedDelegate() {
   return (
@@ -25,7 +27,10 @@ export default function GettingStartedDelegate() {
         <p>
           You manage all of this from <strong>My Delegate Page</strong> (in the menu under your name, top right).
         </p>
-        <ScreenshotPlaceholder caption="The 'My Delegate Page' editing view for a delegate, showing the intro/profile area and the per-topic sections." />
+        <HelpScreenshot
+          src="/help-screenshots/delegate-my-delegate-page.png"
+          caption="The 'My Delegate Page' editing view for a delegate, showing the intro/profile area and the per-topic sections."
+        />
       </Section>
 
       <Section title="Step 1: Write your introduction">
@@ -91,10 +96,3 @@ function Section({ title, children }) {
   );
 }
 
-function ScreenshotPlaceholder({ caption }) {
-  return (
-    <div className="my-3 p-3 bg-gray-50 border border-dashed border-gray-300 rounded text-xs text-gray-500 italic">
-      [Screenshot pending: {caption}]
-    </div>
-  );
-}

@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom';
 import HelpBackLink from '../components/HelpBackLink';
+import HelpScreenshot from '../components/HelpScreenshot';
 
 /**
  * Phase 43 Cluster C — Getting started as a steward.
  * Copy wired verbatim from phase43_help_content.md.
+ * Screenshots wired in Phase 43a.
  */
 export default function GettingStartedSteward() {
   return (
@@ -25,7 +27,10 @@ export default function GettingStartedSteward() {
         <p>
           Everything below lives under the <strong>Admin</strong> menu in the top bar.
         </p>
-        <ScreenshotPlaceholder caption="The Admin dropdown menu open, showing Org Settings, Permissions, Members, Proposals, Topics, etc." />
+        <HelpScreenshot
+          src="/help-screenshots/steward-admin-menu.png"
+          caption="The Admin dropdown menu open, showing Org Settings, Permissions, Members, Proposals, Topics, etc."
+        />
       </Section>
 
       <Section title="Step 1: Set up your organization">
@@ -87,10 +92,3 @@ function Section({ title, children }) {
   );
 }
 
-function ScreenshotPlaceholder({ caption }) {
-  return (
-    <div className="my-3 p-3 bg-gray-50 border border-dashed border-gray-300 rounded text-xs text-gray-500 italic">
-      [Screenshot pending: {caption}]
-    </div>
-  );
-}
