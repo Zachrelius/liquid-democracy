@@ -3,6 +3,7 @@ import { useOrg } from '../../OrgContext';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
+import NewStewardPointer from '../../components/NewStewardPointer';
 // Phase 12.5 F4 — Default-thresholds editor gates on `org.edit_settings`.
 // Phase 12.7 F4 — Branding section gates on `org.edit_branding`.
 import { useHasPermission } from '../../hooks/useHasPermission';
@@ -672,6 +673,9 @@ export default function OrgSettings() {
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-10">
       <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Organization Settings</h1>
+
+      {/* Phase 43 Cluster C — post-creation orientation pointer (dismissible). */}
+      <NewStewardPointer />
 
       {/* General — Phase 16 F4 moves the Save button from the page bottom
           to immediately below this section so per-section save UX is

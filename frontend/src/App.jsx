@@ -67,6 +67,11 @@ import NotificationsHelp from './pages/NotificationsHelp';
 import OrganizationsHelp from './pages/OrganizationsHelp';
 // Phase 19 D1 — public help page for the public-delegate surface.
 import PublicDelegatesHelp from './pages/PublicDelegatesHelp';
+// Phase 43 Clusters H + C — help hub + three new "getting started" pages.
+import HelpIndex from './pages/HelpIndex';
+import GettingStartedMember from './pages/GettingStartedMember';
+import GettingStartedSteward from './pages/GettingStartedSteward';
+import GettingStartedDelegate from './pages/GettingStartedDelegate';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
 import Landing from './pages/Landing';
@@ -180,9 +185,12 @@ function OrgScopedLayout({ children }) {
  * render the Landing page as before.
  */
 function LandingOrRedirect() {
-  const { user, loading } = useAuth();
+  // Phase 43 Cluster F: previously redirected authenticated users to /orgs.
+  // The new "Start an organization" CTA needs to be reachable from / for
+  // both logged-out (recruiting) and logged-in (existing user starting a
+  // second org) audiences — QA scenarios 1 + 2. Render Landing for both.
+  const { loading } = useAuth();
   if (loading) return null;
-  if (user) return <Navigate to="/orgs" replace />;
   return <Landing />;
 }
 
@@ -211,6 +219,12 @@ export default function App() {
         <Route path="/demo" element={<Demo />} />
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
+        {/* Phase 43 Cluster H — public help hub. */}
+        <Route path="/help" element={<HelpIndex />} />
+        {/* Phase 43 Cluster C — three new "getting started" audience pages. */}
+        <Route path="/help/getting-started-member" element={<GettingStartedMember />} />
+        <Route path="/help/getting-started-steward" element={<GettingStartedSteward />} />
+        <Route path="/help/getting-started-delegate" element={<GettingStartedDelegate />} />
         <Route path="/help/voting-methods" element={<VotingMethodsHelp />} />
         <Route path="/help/stable-result" element={<StableResultHelp />} />
         {/* Phase 20 F3 — legacy route alias; same component, different URL. */}

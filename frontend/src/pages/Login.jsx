@@ -28,12 +28,12 @@ function landingForOrgs(orgs) {
 // values, which would otherwise navigate off-site). On rejection we fall
 // back to the default landingForOrgs path so the auth flow still
 // completes; we just don't honor the unsafe redirect.
-function resolveNext(rawNext) {
-  if (typeof rawNext !== 'string') return null;
-  if (!rawNext.startsWith('/')) return null;
-  if (rawNext.startsWith('//')) return null;
-  return rawNext;
-}
+//
+// Phase 43 Cluster F (2026-05-30) — extracted to ../utils/resolveNext so
+// VerifyEmail.jsx can share the same validator for its persisted-intent
+// flow. Backwards-compat re-export of the local name kept for any future
+// caller that grepped here.
+import { resolveNext } from '../utils/resolveNext';
 
 export default function Login() {
   const { login, register } = useAuth();
@@ -131,6 +131,18 @@ export default function Login() {
     setSubmitting(true);
     try {
       const result = await register(regUsername, regDisplayName, regEmail, regPassword);
+      // Phase 43 Cluster F — persist `next` across the email-verification
+      // round-trip. The /verify-email link emailed to the user has no `next`
+      // param, so VerifyEmail.jsx reads this sessionStorage entry after a
+      // successful verification to route back to the original intent
+      // (e.g., /orgs/create). Same-browser case is the common one; cross-
+      // browser verification falls through to the standard "Go to Login"
+      // flow which is acceptable for v1 per the Phase 43 spec.
+      if (nextParam) {
+        try { sessionStorage.setItem('postVerifyNext', nextParam); } catch {
+          // sessionStorage unavailable (private window) — graceful no-op.
+        }
+      }
       if (result.is_first_user) {
         navigate('/setup');
       } else if (nextParam) {
