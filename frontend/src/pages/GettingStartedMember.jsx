@@ -49,14 +49,14 @@ export default function GettingStartedMember() {
 
       <Section title="Cast your vote">
         <p>
-          Open any proposal that's in <strong>Voting</strong>. Depending on how the proposal is set up, you'll choose <strong>Approve</strong>, <strong>Reject</strong>, or <strong>Abstain</strong> (some proposals offer more options, like approval or ranked-choice — the proposal will show you what's available). Pick your choice and select <strong>Submit Vote</strong>.
+          Open any proposal that's in <strong>Voting</strong>. You'll choose <strong>Yes</strong>, <strong>No</strong>, or <strong>Abstain</strong> (some proposals use other methods, like approval or ranked-choice — the proposal will show you what's available). Your choice is recorded immediately; there's no separate submit step.
         </p>
         <p>
-          Changed your mind? As long as voting is still open, you can select <strong>Change Vote</strong> and update it.
+          Changed your mind? As long as voting is still open, you can change your vote any time — just select a different option.
         </p>
         <HelpScreenshot
           src="/help-screenshots/member-vote-cast.png"
-          caption="A single proposal detail in the Voting stage showing the Approve / Reject / Abstain buttons and the Submit Vote button."
+          caption="A single proposal detail in the Voting stage showing the Yes / No / Abstain vote options."
         />
       </Section>
 

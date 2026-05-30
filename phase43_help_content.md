@@ -41,11 +41,11 @@ Each proposal shows who wrote it, the topics it touches, how many votes have bee
 
 ### Section — Cast your vote
 
-Open any proposal that's in **Voting**. Depending on how the proposal is set up, you'll choose **Approve**, **Reject**, or **Abstain** (some proposals offer more options, like approval or ranked-choice — the proposal will show you what's available). Pick your choice and select **Submit Vote**.
+Open any proposal that's in **Voting**. You'll choose **Yes**, **No**, or **Abstain** (some proposals use other methods, like approval or ranked-choice — the proposal will show you what's available). Your choice is recorded immediately; there's no separate submit step.
 
-Changed your mind? As long as voting is still open, you can select **Change Vote** and update it.
+Changed your mind? As long as voting is still open, you can change your vote any time — just select a different option.
 
-[SCREENSHOT: A single proposal detail in the Voting stage showing the Approve / Reject / Abstain buttons and the Submit Vote button. Capture at a /demo-cedar-hollow proposal that is in Voting.]
+[SCREENSHOT: A single proposal detail in the Voting stage showing the Yes / No / Abstain vote options. Capture at a /demo-cedar-hollow proposal that is in Voting.]
 
 ### Section — Join the discussion
 
