@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Workflow Automation — At-Desk Dashboard</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Workflow Automation — At-Desk Dashboard</h1>
+    <div class="conn-status" id="conn-status" title="WebSocket connection state">
+      <span class="dot dot-idle" id="conn-dot"></span>
+      <span id="conn-text">connecting...</span>
+    </div>
+  </header>
+
+  <main class="grid">
+    <!-- ============================================================ -->
+    <!-- Activity stream panel (B3) -->
+    <!-- ============================================================ -->
+    <section class="panel panel-activity">
+      <header class="panel-header">
+        <h2>Live activity</h2>
+        <span class="count" id="event-count" title="Total events received">0</span>
+      </header>
+      <div class="activity-toolbar">
+        <label class="filter-label">
+          <input type="checkbox" id="filter-pretooluse" checked>
+          PreToolUse
+        </label>
+        <label class="filter-label">
+          <input type="checkbox" id="filter-posttooluse" checked>
+          PostToolUse
+        </label>
+        <label class="filter-label">
+          <input type="checkbox" id="filter-other">
+          Other events
+        </label>
+        <button id="clear-events" class="btn-small" title="Clear visible events">Clear view</button>
+      </div>
+      <ol class="event-list" id="event-list">
+        <li class="event-empty">No events yet. Configure Claude Code hooks per the README to stream events here.</li>
+      </ol>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- State panel (B2) -->
+    <!-- ============================================================ -->
+    <section class="panel panel-state">
+      <header class="panel-header">
+        <h2>Planner state</h2>
+        <button id="refresh-state" class="btn-small" title="Re-read planner_state.json from disk">Refresh</button>
+      </header>
+      <div class="state-body" id="state-body">
+        <p class="state-empty">Loading state…</p>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- Chat panel (B4) -->
+    <!-- ============================================================ -->
+    <section class="panel panel-chat">
+      <header class="panel-header">
+        <h2>Chat</h2>
+        <span class="chat-hint" title="Messages go into the WA1 IPC inbox; replies appear from the outbox">via IPC</span>
+      </header>
+      <div class="chat-history" id="chat-history">
+        <p class="chat-empty">No chat history. Send a message to start the round-trip.</p>
+      </div>
+      <form class="chat-form" id="chat-form">
+        <textarea
+          id="chat-input"
+          rows="3"
+          placeholder="Type a message for the planner (Cmd/Ctrl+Enter to send)…"
+        ></textarea>
+        <button type="submit" id="chat-send" class="btn-primary">Send</button>
+      </form>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- Quota / model / cost panel (B5) -->
+    <!-- ============================================================ -->
+    <section class="panel panel-quota">
+      <header class="panel-header">
+        <h2>Quota &amp; sessions</h2>
+        <button id="quota-clear" class="btn-small" title="Manually clear the throttled flag">Clear flag</button>
+      </header>
+      <div class="quota-throttle" id="quota-throttle">
+        <span class="throttle-state throttle-ok">OK — no throttle observed.</span>
+      </div>
+      <div class="quota-sessions">
+        <h3>Sessions</h3>
+        <table class="quota-table">
+          <thead>
+            <tr>
+              <th>session_id</th>
+              <th>model</th>
+              <th>rounds</th>
+              <th>in / out / cache</th>
+              <th>cost telem (USD)</th>
+            </tr>
+          </thead>
+          <tbody id="quota-sessions-body">
+            <tr><td colspan="5" class="muted">No sessions observed yet.</td></tr>
+          </tbody>
+        </table>
+        <p class="quota-note muted">
+          Cost telemetry is the "what this would have cost on the API"
+          number from <code>claude -p --output-format json</code>;
+          actual billing on Max comes from interactive-usage quota.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/dashboard.js"></script>
+</body>
+</html>
