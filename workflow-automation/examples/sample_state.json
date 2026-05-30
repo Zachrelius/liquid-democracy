@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "project": {
+    "name": "Liquid Democracy",
+    "repo_root": "C:/Users/zachk/liquid-democracy",
+    "prod_url": "https://www.liquiddemocracy.us",
+    "current_pointer": "Phase 42 SHIPPED 2026-05-29 — master 89dbc0c. Workflow-automation viability spike returned GO. Bundle index-Dp3YmSzh.js unchanged; 1476 PASS / 27 pre-existing FAILED."
+  },
+  "loop_state": {
+    "current_pass": "WA1 — State & IPC Foundation",
+    "current_pass_status": "in_progress",
+    "pending": [
+      "WA2 — Architecture validation spike (planner-continuity-at-scale + Playwright MCP from claude -p + dashboard hook pattern + Slack bridge feasibility)",
+      "Phase 43 — front-door + help (parallel website work; not a planner-dependency)"
+    ],
+    "blocked": [
+      {
+        "item": "Cowork-QA build (S3 from Phase 42)",
+        "reason": "Requires Z to drive the Cowork-side probe; protocol documented as first task of that pass."
+      }
+    ],
+    "last_code_activity": {
+      "pass": "Phase 42",
+      "timestamp": "2026-05-29",
+      "summary": "Workflow-automation viability spike (investigation only). GO recommendation on the claude -p wrapper architecture. S1 cold-start PASS, S2 --resume durability 12/12 PASS, 3 -p non-negotiables PASS.",
+      "result": "shipped"
+    }
+  },
+  "decisions": [
+    {
+      "date": "2026-05-30T12:00:00Z",
+      "topic": "Workflow-automation auth model",
+      "decision": "Shell out to `claude -p` CLI subprocesses; do NOT embed the Claude Agent SDK.",
+      "rationale": "Anthropic compliance docs forbid using Free/Pro/Max OAuth tokens with the Agent SDK (requires a metered Console API key). `claude -p` CLI on Max is explicitly sanctioned. June 15 2026 moves programmatic `claude -p` to a dedicated monthly credit pool — quota economics, not a build gate."
+    },
+    {
+      "date": "2026-05-30T12:15:00Z",
+      "topic": "Workflow-automation autonomous QA browser",
+      "decision": "Use Playwright MCP for autonomous QA agents. Keep Claude-in-Chrome for interactive (human/Code-driven) QA per existing website CLAUDE.md convention.",
+      "rationale": "No open-source project drives the Claude-in-Chrome extension from a headless orchestrator. Playwright MCP is the de-facto agent-QA browser layer (Microsoft, Apache-2.0, mature, headless). Slight reinterpretation of goal 4's 'or similar' wording."
+    },
+    {
+      "date": "2026-05-30T13:00:00Z",
+      "topic": "Workflow-automation repo split",
+      "decision": "Stay co-located in the liquid-democracy repo through WA1/WA2. Split into a dedicated repo before the live daemon (WA4).",
+      "rationale": "Lowest-friction validation; reuses repo context. WA4 onward the orchestrator is a separate project that may orchestrate beyond Liquid Democracy. IPC files still land in this repo where Code works."
+    }
+  ],
+  "working_context_digest": "Phase 42 returned a clean GO on the wrapper architecture. The state-model recommendation locked in: fresh-session-per-pass as the wrapper default, `--resume` for within-pass rounds. WA1 is the no-regret bedrock (state + checkpoint + passdown + IPC contract); WA2 confirms the corrected pieces (planner-continuity-at-scale, Playwright MCP from claude -p, dashboard hook pattern, Slack bridge). WA3-WA7 are speccable once WA2 lands."
+}
