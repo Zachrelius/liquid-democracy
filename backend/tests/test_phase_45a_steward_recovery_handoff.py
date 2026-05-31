@@ -593,3 +593,46 @@ class TestAtLeastOneStewardInvariant:
         )
         db.expire_all()
         assert _count_active_stewards(db, org.id) == 1
+
+
+# ===========================================================================
+# Phase 45a hotfix #1 — OWNER_ONLY_KEYS surface in user_permissions
+# ===========================================================================
+
+class TestOwnerOnlyKeysInUserPermissions:
+    """Phase 45a hotfix #1: the FE useHasPermission hook reads
+    currentOrg.user_permissions; OWNER_ONLY_KEYS (`org.delete`,
+    `org.transfer_stewardship`) are deliberately outside PERMISSION_REGISTRY
+    so they were not surfacing. The Phase 45a F1 + F2 FE gates broke on
+    prod because of this. The hotfix adds them via the same has_permission
+    resolver so Steward sees them, non-Steward doesn't."""
+
+    def test_steward_user_permissions_includes_owner_only_keys(
+        self, client: TestClient, db: Session, auth_for,
+    ):
+        org, steward, admin, member = _setup_basic_org(db)
+        r = client.get(f"/api/orgs/{org.slug}", headers=auth_for(steward))
+        assert r.status_code == 200
+        perms = r.json()["user_permissions"]
+        assert "org.delete" in perms
+        assert "org.transfer_stewardship" in perms
+
+    def test_admin_user_permissions_excludes_owner_only_keys(
+        self, client: TestClient, db: Session, auth_for,
+    ):
+        org, steward, admin, member = _setup_basic_org(db)
+        r = client.get(f"/api/orgs/{org.slug}", headers=auth_for(admin))
+        assert r.status_code == 200
+        perms = r.json()["user_permissions"]
+        assert "org.delete" not in perms
+        assert "org.transfer_stewardship" not in perms
+
+    def test_member_user_permissions_excludes_owner_only_keys(
+        self, client: TestClient, db: Session, auth_for,
+    ):
+        org, steward, admin, member = _setup_basic_org(db)
+        r = client.get(f"/api/orgs/{org.slug}", headers=auth_for(member))
+        assert r.status_code == 200
+        perms = r.json()["user_permissions"]
+        assert "org.delete" not in perms
+        assert "org.transfer_stewardship" not in perms

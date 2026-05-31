@@ -171,6 +171,20 @@ def _org_to_out(
         for perm_def in PERMISSION_REGISTRY:
             if has_permission(db, user_id, org.id, perm_def.key):
                 user_permissions.append(perm_def.key)
+        # Phase 45a hotfix #1 — OWNER_ONLY_KEYS (org.delete,
+        # org.transfer_stewardship) are deliberately excluded from
+        # PERMISSION_REGISTRY because they're hardcoded gates on
+        # role.system_key=='steward' rather than matrix-routed. But the FE
+        # useHasPermission hook reads only user_permissions, so prior to
+        # this enrichment any UI gate using useHasPermission for these
+        # keys resolved permanently False — including the Phase 45a F1
+        # Danger Zone gate and F2 Stewardship section gate. has_permission
+        # handles OWNER_ONLY_KEYS correctly (returns True iff steward), so
+        # we just feed them through the same resolver.
+        from role_permissions import OWNER_ONLY_KEYS
+        for key in OWNER_ONLY_KEYS:
+            if has_permission(db, user_id, org.id, key):
+                user_permissions.append(key)
 
     # Phase 12.7 B4 — always emit a branding object on org responses.
     # Reads from Organization.settings.branding (a JSON sub-dict written
