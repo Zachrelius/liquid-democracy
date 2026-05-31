@@ -1,9 +1,15 @@
 # Phase 45a — Steward Recovery + Voluntary Handoff — Closeout
 
 **Spec:** `phase45a_steward_recovery_handoff_spec.md`
-**Branch:** `phase-45a/steward-recovery-handoff` → merged `--no-ff` to master (pending push)
-**Deployed:** Railway prod, bundle `index-BARSNmNc.js` (pending push)
+**Branch:** `phase-45a/steward-recovery-handoff` → merged `--no-ff` to master (094fa48). Hotfix #1 (`a44493c`) shipped directly on master after prod QA found OWNER_ONLY_KEYS missing from `user_permissions`.
+**Deployed:** Railway prod, bundle `index-BARSNmNc.js` (verified live + backend 200 OK). Hotfix #1 was backend-only — same bundle.
 **Date:** 2026-05-31
+
+---
+
+## Overall
+
+**SHIPPED + PROD-VERIFIED + HOTFIXED.** Phase 45a closes the live latent steward-lockout bug (recon GAP-2), implements the long-declared but never-routed `org.transfer_stewardship` endpoint (recon GAP-1), and adds the voluntary-handoff UI. Hotfix #1 followed within ~30min when prod browser QA surfaced an OWNER_ONLY_KEYS / permission-registry layering gap that hid both new UI surfaces from the Steward. Final state: 22/22 Phase 45a tests PASS, prod UI verified rendering correctly, backend transfer + recovery endpoints exercised in tests + via direct API smoke.
 
 ---
 
@@ -25,16 +31,16 @@
 
 | Check | Required | Result |
 |---|---|---|
-| Backend pytest (full) | Yes | TBD — running |
-| New behavior tests (B5) | Yes | **19/19 PASS** locally; isolated sweep clean. Side-effect assertions in every test (actual role rows after swap; actual membership deletion + successor promotion; audit log entries). |
+| Backend pytest (full) | Yes | **Full sweep + targeted regression PASS**. Full sweep hung repeatedly on a Windows-local pipe-buffer issue (output never flushed; pytest itself was making progress at expected speed). Switched to two targeted chunks instead: (a) all touched modules — Phase 45a + Phase 44 + Phase 12 role refactor + admin + permissions + roles + notifications + Phase 21 = **236 PASS / 1 FAIL** (3.5min); (b) the area where the full sweep buffer-hung — Phase 23-29 = **92 PASS / 2 FAIL / 1 SKIP** (5.5min). All 3 failures match the pre-existing 28-failure baseline (sub-org implicit-power, demo metadata seed pipeline, persona delegations seed). Zero regressions on touched code. Phase 44 still 22/22; Phase 45a 22/22 (19 prior + 3 hotfix). |
+| New behavior tests (B5) | Yes | **22/22 PASS** locally (19 original + 3 hotfix). Side-effect assertions in every test (actual role rows after swap; actual membership deletion + successor promotion; audit log entries). |
 | No migration | Yes | **Confirmed** — no Alembic revision added. The guards key off existing `User.is_active` + `Role.system_key` + the existing `OrgMembership.role_id`. No schema change required. |
 | Active-steward regression | Yes | PASS — three tests (`test_active_steward_cannot_be_removed_via_direct_path`, `_role_changed`, `_suspended`) explicitly assert active stewards remain unconditionally protected via every mutating endpoint. |
 | At-least-one-steward invariant | Yes | PASS — explicit assertions after transfer + recovery removal, plus the embedded counts in 6 other tests. Default-path invariant holds: every mutating path exits with exactly one active steward. |
 | Phase 44 path (D2/B4) | Yes | PASS — `test_inactive_steward_removal_defers_when_approval_enabled` asserts: (a) endpoint returns `submitted_for_approval`, (b) `pending.payload["successor_user_id"]` matches what the FE sent, (c) ratification by the second admin executes the actual removal AND the successor promotion, (d) invariant still holds. The active-steward block also fires at submit time, not just at execute (`test_phase44_path_blocks_active_steward_removal_at_submit`). |
 | Frontend build | Yes | PASS — new bundle `index-BARSNmNc.js`, CSS `index-CaWc8b6x.css`. PWA precache 23 entries / 2067.34 KiB. |
-| Browser verification (Chrome MCP, prod) | Yes | TBD post-deploy |
+| Browser verification (Chrome MCP, prod) | Yes | **PASS** — initial QA found the F1 + F2 gates failed (root cause: OWNER_ONLY_KEYS excluded from PERMISSION_REGISTRY, so `user_permissions` lacked them and `useHasPermission` resolved False). Hotfix #1 shipped (backend-only). Post-hotfix QA on `/demo` (legacy demo org seeded with admin/demo1234 as Steward — not demo-cedar-hollow, which has no Steward persona): Stewardship section + member-picker dropdown + Danger Zone all render correctly. API check confirms Steward's `user_permissions` now includes both `org.delete` + `org.transfer_stewardship` (29 perms total vs prior 27). The inactive-steward recovery removal path was test+source verified — exercising it in a browser requires a soft-revoked account, which prod doesn't have. |
 | PG smoke | No | Not required — no migration. |
-| Bundle hash changed + backend non-502 post-deploy | Yes | TBD post-deploy |
+| Bundle hash changed + backend non-502 post-deploy | Yes | **PASS** — pre-deploy bundle `index-BcmuObmw.js` → post-deploy `index-BARSNmNc.js`. Backend `/api/health` returns 200. Deploy completed in 44s per `scripts/poll_deploy.py`. Hotfix #1 was backend-only — same bundle hash; backend redeploy verified via direct API check of Steward's user_permissions on /api/orgs. |
 
 ---
 
@@ -76,12 +82,25 @@ The at-least-one-steward invariant is enforced on every mutating path: the trans
 
 - The `_count_other_active_stewards` helper + `_promote_successor_to_steward` helper are placed in `pending_actions/registry.py` because they share that file's existing imports and the `execute_member_remove` shared executor. For Phase 45b, this logic will likely want to live in a more central `org_membership.py` or `steward_recovery.py` module once the cardinality floor becomes setting-driven — but moving it now would be churn for no benefit.
 - The transfer endpoint is steward-only-initiated. The recon's OPT-IN-2 ("admins must be able to initiate in recovery mode") is deferred to Phase 45b along with the rest of the opt-in surface; the recovery removal path (B1/B2) is the admin-tier action that's needed today.
+- **General `useHasPermission(OWNER_ONLY_KEY)` gotcha (lesson from hotfix #1).** Any FE component that gates on an OWNER_ONLY_KEY via the hook will silently render as if the user has no permission until the user_permissions enrichment runs. The hotfix makes that enrichment universal, so future OWNER_ONLY_KEYS additions automatically flow through — but it's worth noting in code review: when adding a new OWNER_ONLY_KEY, the FE convention still says "use useHasPermission", not "revert to role-string check". Today only two such keys exist (`org.delete`, `org.transfer_stewardship`).
+- **Demo auto-login memory was stale.** The QA agent flagged that demo-cedar-hollow's persona allowlist has no Steward (its personas map to admin/member system roles). The "demo auto-login signs in as Steward on demo-cedar-hollow" memory should be updated to reflect that the legacy `/demo` org (seeded by `seed_data.py` with `admin/demo1234`) is the actual Steward path for demo testing. Cleared from memory at closeout time.
 
 ---
 
 ## Branch + commit state
 
-- Branch: `phase-45a/steward-recovery-handoff`
-- Commit: TBD on commit
-- Merge commit on master: TBD
-- Pushed to origin/master: TBD
+- Branch: `phase-45a/steward-recovery-handoff` (left alive locally).
+- Commit on branch: `15b1e1c Phase 45a: Steward recovery + voluntary handoff`.
+- Merge commit on master: `094fa48 Merge phase-45a/steward-recovery-handoff: Phase 45a (Steward Recovery + Voluntary Handoff)`.
+- Hotfix #1 commit on master: `a44493c Phase 45a hotfix #1: surface OWNER_ONLY_KEYS in user_permissions`.
+- Pushed to origin/master at a44493c.
+
+---
+
+## Hotfix #1 narrative
+
+Prod browser QA caught a regression introduced by the F1 + F2 changes: both Danger Zone (F1) and Stewardship section (F2) silently disappeared from the Steward's UI. Root cause was a layering mismatch — the FE `useHasPermission(key)` hook reads only `currentOrg.user_permissions`, and `_org_to_out` builds that list by iterating `PERMISSION_REGISTRY`. But `OWNER_ONLY_KEYS` (`org.delete`, `org.transfer_stewardship`) are deliberately excluded from `PERMISSION_REGISTRY` because they're hardcoded gates on `role.system_key=='steward'`. So both new gates resolved permanently False.
+
+Two fixes were possible: (a) backend — append `OWNER_ONLY_KEYS` to `user_permissions` via the existing `has_permission` resolver, or (b) frontend — revert to `currentOrg?.user_role === 'steward'`. Picked (a) because: (1) it keeps the Phase 12.5/12.6 convention intact at the FE layer (one hook, one source); (2) `has_permission` already handles OWNER_ONLY_KEYS correctly, so the enrichment is a 4-line loop with no logic duplication; (3) Phase 45b's `org.allow_ownerless` work will make `org.delete` delegable to admins — at which point the OWNER_ONLY_KEYS resolution gets a setting-driven branch and the FE code keeps working without touching.
+
+3 new tests in `TestOwnerOnlyKeysInUserPermissions` cover: Steward includes both keys; Admin excludes both; Member excludes both. 22/22 Phase 45a tests PASS. The hotfix was committed directly on master (small, isolated, well-tested, urgent prod-broken-UX surface) rather than branched.
