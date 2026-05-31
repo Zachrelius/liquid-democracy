@@ -7,6 +7,7 @@ import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
+import PendingActionsBanner from '../../components/PendingActionsBanner';
 
 function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, perms, confirm }) {
   const { canChangeRole, canSuspend, canRemove } = perms;
@@ -212,8 +213,16 @@ export default function Members() {
 
   async function handleRemove(userId) {
     try {
-      await api.delete(`/api/orgs/${slug}/members/${userId}`);
-      toast.success('Member removed');
+      const res = await api.delete(`/api/orgs/${slug}/members/${userId}`);
+      // Phase 44 — when approval is on, the backend returns 200 +
+      // {status: "submitted_for_approval", ...} instead of 204. Show a
+      // different toast so the user knows the action is pending.
+      if (res && res.status === 'submitted_for_approval') {
+        const need = res.pending_action?.threshold ?? 2;
+        toast.success(`Submitted for approval (${need} approvals needed)`);
+      } else {
+        toast.success('Member removed');
+      }
       load();
     } catch (e) {
       toast.error(e.message);
@@ -296,6 +305,7 @@ export default function Members() {
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-10">
       <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Member Management</h1>
+      <PendingActionsBanner orgSlug={slug} actionType="member.remove" />
 
       {/* Pending Join Requests */}
       {pendingRequests.length > 0 && (

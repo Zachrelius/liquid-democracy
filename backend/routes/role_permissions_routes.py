@@ -270,6 +270,46 @@ def patch_role_permissions(
             ),
         )
 
+    # Phase 44 — when approval is on, defer the mutation to the ratification
+    # queue. The submit endpoint captures a baseline snapshot (D11b) so the
+    # approver UI can show the before→after diff AND so execution-time
+    # drift detection works (D7).
+    from pending_actions import (
+        engine as p44_engine,
+        settings as p44_settings,
+        registry as p44_registry,
+    )
+    if p44_settings.is_action_wrapped(org, "role_permissions.edit"):
+        ip = request.client.host if request.client else None
+        baseline = p44_registry.capture_baseline(db, org)
+        changes_payload = [
+            {
+                "role_system_key": c.role_system_key,
+                "permission_key": c.permission_key,
+                "enabled": c.enabled,
+            }
+            for c in body.changes
+        ]
+        result = p44_engine.submit_pending_action(
+            db, org, current_user, "role_permissions.edit",
+            {"changes": changes_payload, "baseline": baseline},
+            ip_address=ip,
+        )
+        db.commit()
+        if result.executed_directly:
+            return {
+                "status": "executed_directly",
+                "changes_applied": len(changes_payload),
+                **_build_matrix_payload(db, org),
+            }
+        db.refresh(result.pending_action)
+        return {
+            "status": "submitted_for_approval",
+            "pending_action": p44_engine.serialize_pending(
+                db, result.pending_action, viewer_id=current_user.id,
+            ),
+        }
+
     # Pre-fetch the org's preset roles for fast lookup. Missing role rows
     # would be a data-integrity bug (Stage 1 seeds all four), so it's
     # safe to fail loudly if one is absent.

@@ -33,6 +33,7 @@ import api from '../../api';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 import ErrorMessage from '../../components/ErrorMessage';
+import PendingActionsBanner from '../../components/PendingActionsBanner';
 
 // Display order is taken from the server's `roles` array (each role has
 // `display_order`). We re-derive it here as a fallback so the table still
@@ -196,14 +197,26 @@ export default function RolePermissionsPage() {
         `/api/orgs/${slug}/role-permissions`,
         { changes },
       );
-      // The B2 response includes the full updated matrix in the same shape
-      // as B1 (org_id, org_slug, roles, permissions, locked).
-      setServerMatrix(resp);
-      setPendingChanges(new Map());
-      const applied = resp?.changes_applied ?? changes.length;
-      toast.success(
-        `Permissions updated. ${applied} change${applied === 1 ? '' : 's'} saved.`,
-      );
+      // Phase 44 — when approval is on, the backend returns
+      // {status: "submitted_for_approval", pending_action: {...}} and
+      // does NOT mutate the live matrix. Show a distinct toast and
+      // keep the pending changes so the user understands nothing
+      // applied yet.
+      if (resp && resp.status === 'submitted_for_approval') {
+        const need = resp.pending_action?.threshold ?? 2;
+        toast.success(
+          `Permission changes submitted for approval (${need} approvals needed).`,
+        );
+        setPendingChanges(new Map());
+      } else {
+        // Direct-path response includes the full updated matrix.
+        setServerMatrix(resp);
+        setPendingChanges(new Map());
+        const applied = resp?.changes_applied ?? changes.length;
+        toast.success(
+          `Permissions updated. ${applied} change${applied === 1 ? '' : 's'} saved.`,
+        );
+      }
     } catch (e) {
       // Defense in depth: a 400 from the server about a locked cell
       // shouldn't normally surface here (the UI doesn't render an editable
@@ -261,6 +274,7 @@ export default function RolePermissionsPage() {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
+      <PendingActionsBanner orgSlug={slug} actionType="role_permissions.edit" />
       {/* Header (D1 verbatim copy) */}
       <div className="space-y-3">
         <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">

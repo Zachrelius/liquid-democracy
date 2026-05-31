@@ -5,6 +5,7 @@ import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
+import PendingActionsBanner from '../../components/PendingActionsBanner';
 
 const PRESET_COLORS = [
   '#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
@@ -119,8 +120,14 @@ export default function Topics() {
     });
     if (!ok) return;
     try {
-      await api.delete(`/api/orgs/${slug}/topics/${topicId}`);
-      toast.success('Topic deactivated');
+      const res = await api.delete(`/api/orgs/${slug}/topics/${topicId}`);
+      // Phase 44 — approval-on path.
+      if (res && res.status === 'submitted_for_approval') {
+        const need = res.pending_action?.threshold ?? 2;
+        toast.success(`Submitted for approval (${need} approvals needed)`);
+      } else {
+        toast.success('Topic deactivated');
+      }
       load();
     } catch (err) {
       toast.error(err.message);
@@ -153,6 +160,7 @@ export default function Topics() {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
+      <PendingActionsBanner orgSlug={slug} actionType="topic.delete" />
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Topic Management</h1>
         {/* Phase 12.5 F2 — Create button gated on `topic.create`. */}

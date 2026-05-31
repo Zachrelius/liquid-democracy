@@ -72,6 +72,9 @@ export function urlFor(org, kind, ...args) {
       return `/${slug}/admin/analytics`;
     case 'admin-polises':
       return `/${slug}/admin/polises`;
+    // Phase 44 — multi-admin approval pending-actions queue.
+    case 'admin-pending-actions':
+      return `/${slug}/admin/pending-actions`;
     case 'admin-polises-create':
       return `/${slug}/admin/polises/create`;
     case 'admin-polis-detail': {

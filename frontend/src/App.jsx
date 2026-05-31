@@ -42,6 +42,8 @@ import OrgSettings from './pages/admin/OrgSettings';
 import RolePermissionsPage from './pages/admin/RolePermissionsPage';
 import Members from './pages/admin/Members';
 import ProposalManagement from './pages/admin/ProposalManagement';
+// Phase 44 — multi-admin approval pending-actions queue.
+import PendingActions from './pages/admin/PendingActions';
 import Topics from './pages/admin/Topics';
 import Analytics from './pages/admin/Analytics';
 // Phase 8.5 — sub-org admin route family
@@ -518,6 +520,19 @@ export default function App() {
               <OrgProvider>
                 <AdminRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.members}>
                   <OrgScopedLayout><Members /></OrgScopedLayout>
+                </AdminRoute>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 44 — pending-actions queue (multi-admin approval). */}
+        <Route
+          path="/:org_slug/admin/pending-actions"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <AdminRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.pendingActions}>
+                  <OrgScopedLayout><PendingActions /></OrgScopedLayout>
                 </AdminRoute>
               </OrgProvider>
             </ProtectedRoute>
