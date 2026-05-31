@@ -778,7 +778,30 @@ def run_one_tick(
         "cleaned": 0,
         "halfway_delegate_silent": 0,
         "halfway_you_havent_voted": 0,
+        "pending_actions_expired": 0,
     }
+
+    # Phase 44 (B5) — expire any pending admin actions whose window has
+    # elapsed. Cheap short-circuit when none are due; wrapped in
+    # try/except so an expiry failure doesn't break the rest of the
+    # tick. Lazy expire-on-read inside engine paths is the secondary
+    # guard; this is the source of truth.
+    try:
+        from pending_actions.engine import expire_due_pending_actions
+        now_naive = (
+            now.astimezone(timezone.utc).replace(tzinfo=None)
+            if now.tzinfo is not None
+            else now
+        )
+        counts["pending_actions_expired"] = expire_due_pending_actions(
+            db, now=now_naive,
+        )
+    except Exception:  # noqa: BLE001
+        log.exception("digest tick: pending_actions expiry failed")
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
 
     # Phase 21 (B3 / D8) — halfway-deadline check runs on every tick. No
     # hour-of-day gate; idempotency via has_ever_emitted guarantees a

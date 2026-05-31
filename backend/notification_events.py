@@ -70,6 +70,7 @@ CATEGORIES: tuple[str, ...] = (
     "Membership",
     "Delegation",
     "Polis",
+    "Admin actions",
 )
 
 
@@ -295,6 +296,42 @@ EVENT_REGISTRY: list[EventDefinition] = [
         description="A new Polis deliberation was created in an organization you belong to.",
         category="Polis",
         signal_level="ambient",
+    ),
+    # ---- Admin actions (Phase 44 — multi-admin approval) ----------------
+    EventDefinition(
+        key="pending_action.submitted",
+        label="New action awaiting your approval",
+        description="A destructive admin action was submitted to the ratification queue and is awaiting your approval.",
+        category="Admin actions",
+        signal_level="critical",
+    ),
+    EventDefinition(
+        key="pending_action.executed",
+        label="Your submitted action was approved",
+        description="An action you submitted for approval reached the approval threshold and was executed.",
+        category="Admin actions",
+        signal_level="critical",
+    ),
+    EventDefinition(
+        key="pending_action.declined",
+        label="Your submitted action was declined",
+        description="An action you submitted for approval was declined by another approver.",
+        category="Admin actions",
+        signal_level="critical",
+    ),
+    EventDefinition(
+        key="pending_action.expired",
+        label="Your submitted action expired",
+        description="An action you submitted expired without reaching the approval threshold.",
+        category="Admin actions",
+        signal_level="standard",
+    ),
+    EventDefinition(
+        key="pending_action.failed",
+        label="Your submitted action failed at execution",
+        description="An action you submitted reached approval but could not be executed (target changed, permission lost, or matrix drifted).",
+        category="Admin actions",
+        signal_level="critical",
     ),
 ]
 

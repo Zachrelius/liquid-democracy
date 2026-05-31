@@ -196,7 +196,10 @@ const api = {
   post: (path, body) => request('POST', path, body),
   put: (path, body) => request('PUT', path, body),
   patch: (path, body) => request('PATCH', path, body),
-  delete: (path) => request('DELETE', path),
+  // Phase 44 — DELETE can carry a body (e.g. {confirmation: <slug>} for
+  // org.delete under multi-admin approval). Callers pass {body: ...}
+  // or omit; legacy callers that pass no second arg keep working.
+  delete: (path, opts) => request('DELETE', path, opts?.body),
   postFormData: (path, form) => requestFormData(path, form),
 
   // Auth endpoints (no JSON body — uses form encoding for /login)

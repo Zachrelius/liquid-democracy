@@ -4,6 +4,7 @@ import api from '../../api';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 import NewStewardPointer from '../../components/NewStewardPointer';
+import PendingActionsBanner from '../../components/PendingActionsBanner';
 // Phase 12.5 F4 — Default-thresholds editor gates on `org.edit_settings`.
 // Phase 12.7 F4 — Branding section gates on `org.edit_branding`.
 import { useHasPermission } from '../../hooks/useHasPermission';
@@ -224,6 +225,8 @@ export default function OrgSettings() {
   const [savingVotingDefaults, setSavingVotingDefaults] = useState(false);
   const [savingThresholds, setSavingThresholds] = useState(false);
   const [savingVotingMethods, setSavingVotingMethods] = useState(false);
+  // Phase 44 F1 — Multi-admin approval section saving state.
+  const [savingMultiAdminApproval, setSavingMultiAdminApproval] = useState(false);
 
   // Phase 12.7 F4 — Branding section local state.
   //
@@ -384,7 +387,18 @@ export default function OrgSettings() {
   async function handleDelete() {
     if (deleteConfirm !== currentOrg.name) return;
     try {
-      await api.delete(`/api/orgs/${currentOrg.slug}`);
+      // Phase 44 — when approval is on, send confirmation = org slug
+      // (required by the org.delete payload validator). The slug check
+      // is incidental to the FE prompt (which uses the name); we just
+      // forward the slug as the confirmation token.
+      const res = await api.delete(`/api/orgs/${currentOrg.slug}`, {
+        body: { confirmation: currentOrg.slug },
+      });
+      if (res && res.status === 'submitted_for_approval') {
+        const need = res.pending_action?.threshold ?? 2;
+        toast.success(`Org deletion submitted for approval (${need} approvals needed).`);
+        return;
+      }
       localStorage.removeItem('currentOrgSlug');
       // Phase 16 F5 — also clear the lastOrgSlug used by Nav.jsx so the
       // user's next visit to /settings doesn't try to resolve nav links
@@ -549,6 +563,33 @@ export default function OrgSettings() {
     }
   }
 
+  async function handleSaveMultiAdminApproval() {
+    // Phase 44 F1 — opt-in N-of-M approval over destructive admin actions.
+    setSavingMultiAdminApproval(true);
+    try {
+      const m = settings.multi_admin_approval || {};
+      const payload = {
+        multi_admin_approval: {
+          enabled: !!m.enabled,
+          thresholds: {
+            'member.remove': Number(m.thresholds?.['member.remove'] ?? 2),
+            'topic.delete': Number(m.thresholds?.['topic.delete'] ?? 2),
+            'role_permissions.edit': Number(m.thresholds?.['role_permissions.edit'] ?? 2),
+            'org.delete': Number(m.thresholds?.['org.delete'] ?? 2),
+          },
+          window_hours: Number(m.window_hours ?? 72),
+        },
+      };
+      await api.patch(`/api/orgs/${currentOrg.slug}`, { settings: payload });
+      await refreshOrgs();
+      toast.success('Multi-admin approval settings saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save multi-admin approval settings');
+    } finally {
+      setSavingMultiAdminApproval(false);
+    }
+  }
+
   async function handleSavePublicDelegates() {
     // Phase 32.2 F3/P1 — per-section save for the Public Delegates
     // block (enabled toggle + approval_required toggle).
@@ -676,6 +717,9 @@ export default function OrgSettings() {
 
       {/* Phase 43 Cluster C — post-creation orientation pointer (dismissible). */}
       <NewStewardPointer />
+
+      {/* Phase 44 F2b — discovery banner for any pending admin action. */}
+      <PendingActionsBanner orgSlug={currentOrg?.slug} />
 
       {/* General — Phase 16 F4 moves the Save button from the page bottom
           to immediately below this section so per-section save UX is
@@ -1609,6 +1653,95 @@ export default function OrgSettings() {
               </p>
             </div>
           </label>
+        </div>
+      </section>
+
+      {/* Multi-Admin Approval — Phase 44 F1. Opt-in N-of-M ratification
+          over four destructive admin actions: remove member, delete topic,
+          edit permissions, delete org. Defaults to OFF; every org behaves
+          exactly as before until a steward opts in. */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+          Multi-Admin Approval
+        </h2>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+          <p className="text-sm text-gray-600">
+            When enabled, destructive admin actions (remove member, delete topic, edit permissions, delete this organization) require N-of-M ratification from other eligible approvers before executing. Off by default.
+          </p>
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!settings.multi_admin_approval?.enabled}
+              onChange={e => updateSetting('multi_admin_approval', {
+                ...(settings.multi_admin_approval || {}),
+                enabled: e.target.checked,
+              })}
+              className="mt-0.5 accent-[var(--brand-accent)]"
+            />
+            <div>
+              <p className="text-sm text-gray-700">Require multi-admin approval for destructive actions</p>
+              <p className="text-xs text-gray-400">
+                Approvers receive a notification and a queue entry. One decline vetoes the action. Initiator's submission counts as their own approval.
+              </p>
+            </div>
+          </label>
+          {settings.multi_admin_approval?.enabled && (
+            <div className="space-y-3 pl-7">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  ['member.remove', 'Remove member'],
+                  ['topic.delete', 'Delete topic'],
+                  ['role_permissions.edit', 'Edit role permissions'],
+                  ['org.delete', 'Delete organization'],
+                ].map(([key, label]) => (
+                  <label key={key} className="text-sm">
+                    <span className="block text-gray-700 mb-1">{label} threshold</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={settings.multi_admin_approval?.thresholds?.[key] ?? 2}
+                      onChange={e => updateSetting('multi_admin_approval', {
+                        ...(settings.multi_admin_approval || {}),
+                        thresholds: {
+                          ...(settings.multi_admin_approval?.thresholds || {}),
+                          [key]: Math.max(1, Number(e.target.value) || 1),
+                        },
+                      })}
+                      className="w-24 border border-gray-300 rounded px-2 py-1 text-sm"
+                    />
+                  </label>
+                ))}
+              </div>
+              <label className="text-sm block">
+                <span className="block text-gray-700 mb-1">Expiry window (hours)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={720}
+                  value={settings.multi_admin_approval?.window_hours ?? 72}
+                  onChange={e => updateSetting('multi_admin_approval', {
+                    ...(settings.multi_admin_approval || {}),
+                    window_hours: Math.max(1, Number(e.target.value) || 1),
+                  })}
+                  className="w-28 border border-gray-300 rounded px-2 py-1 text-sm"
+                />
+                <span className="block text-xs text-gray-400 mt-1">
+                  Submitted actions expire if not ratified in this window. Defaults to 72 hours.
+                </span>
+              </label>
+            </div>
+          )}
+          <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+            <button
+              type="button"
+              onClick={handleSaveMultiAdminApproval}
+              disabled={savingMultiAdminApproval}
+              className="px-5 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+            >
+              {savingMultiAdminApproval ? 'Saving…' : 'Save multi-admin approval settings'}
+            </button>
+          </div>
         </div>
       </section>
 

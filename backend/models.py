@@ -1441,3 +1441,94 @@ class NotificationPreference(Base):
     )
 
     user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
+
+
+# ---------------------------------------------------------------------------
+# Phase 44 — Multi-Admin Approval (ratification queue for destructive actions)
+# ---------------------------------------------------------------------------
+
+class PendingAdminAction(Base):
+    """One submitted destructive admin action awaiting N-of-M ratification.
+
+    Status transitions: ``pending`` → one of ``executed`` | ``declined``
+    | ``expired`` | ``failed``. Resolution is terminal — no row is ever
+    re-opened. Approvals live in the ``PendingActionApproval`` child
+    table so the audit trail is queryable rather than a JSON blob.
+
+    ``payload`` carries the action-type-specific data (e.g. target user
+    id for ``member.remove``; proposed grants + baseline snapshot for
+    ``role_permissions.edit``). The shape per type is enforced by the
+    action registry's payload validator.
+    """
+
+    __tablename__ = "pending_admin_actions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    action_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    initiator_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String, nullable=False, default="pending",
+        server_default="pending", index=True,
+    )
+    threshold: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
+    )
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    resolution_detail: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    organization: Mapped["Organization"] = relationship(
+        "Organization", foreign_keys=[org_id],
+    )
+    initiator: Mapped["User"] = relationship("User", foreign_keys=[initiator_id])
+    approvals: Mapped[list["PendingActionApproval"]] = relationship(
+        "PendingActionApproval",
+        back_populates="pending_action",
+        cascade="all, delete-orphan",
+    )
+
+
+class PendingActionApproval(Base):
+    """One approver decision (approve or decline) on a pending action.
+
+    Unique on (pending_action_id, approver_id) so a single approver
+    cannot weigh in twice. The initiator's submission is recorded here
+    too (decision=approve, reason=null) per Phase 44 D4 — the
+    submission IS the initiator's approval.
+    """
+
+    __tablename__ = "pending_action_approvals"
+    __table_args__ = (
+        UniqueConstraint(
+            "pending_action_id",
+            "approver_id",
+            name="uq_pending_action_one_decision_per_approver",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    pending_action_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("pending_admin_actions.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    approver_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True,
+    )
+    decision: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
+    )
+
+    pending_action: Mapped["PendingAdminAction"] = relationship(
+        "PendingAdminAction", back_populates="approvals",
+    )
+    approver: Mapped["User"] = relationship("User", foreign_keys=[approver_id])

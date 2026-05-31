@@ -6,6 +6,7 @@ import { urlFor } from '../utils/urls';
 import { ADMIN_NAV_SUBSECTION_PERMISSIONS } from '../constants/admin_nav_permissions';
 import Avatar from './Avatar';
 import NotificationBadge from './NotificationBadge';
+import usePendingActionsCount from '../hooks/usePendingActionsCount';
 
 /**
  * Org switcher tree (Phase 8.5).
@@ -285,6 +286,11 @@ export default function Nav() {
   const showSettings = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.settings);
   const showPermissions = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.permissions);
   const showAnalytics = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.analytics);
+  // Phase 44 — show pending-actions queue when feature enabled + user
+  // is eligible. The count comes from usePendingActionsCount which polls
+  // the cheap count endpoint; if approval is off (or user not eligible)
+  // count=0 and eligible=false and the menu item is hidden.
+  const showPendingActions = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.pendingActions);
 
   // Sub-org admin shortcut still relies on role-tier (sub-org user_role
   // hasn't been fully ported to permission-driven gating; that's tracked
@@ -306,6 +312,12 @@ export default function Nav() {
     }
     return currentOrg.slug;
   })();
+
+  // Phase 44 F2b — pending-actions count for nav-badge discovery.
+  const pendingActions = usePendingActionsCount(
+    showPendingActions ? parentSlugForLinks : null,
+  );
+  const pendingCount = pendingActions.eligible ? pendingActions.count : 0;
 
   useEffect(() => {
     function handleClick(e) {
@@ -430,7 +442,7 @@ export default function Nav() {
                     </svg>
                   </button>
                   {adminOpen && (
-                    <div className="absolute left-0 top-full mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden">
+                    <div className="absolute left-0 top-full mt-2 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-50 overflow-hidden">
                       {[
                         // Phase 12.5 F1 — each subsection gates on the
                         // ADMIN_NAV_SUBSECTION_PERMISSIONS mapping, not on
@@ -445,16 +457,26 @@ export default function Nav() {
                         showDelegates && { to: urlFor(parentSlugForLinks, 'delegate-applications-review'), label: 'Delegate Applications' },
                         showAnalytics && { to: urlFor(parentSlugForLinks, 'admin-analytics'), label: 'Analytics' },
                         showSubOrgs && { to: urlFor(parentSlugForLinks, 'admin-sub-orgs'), label: 'Sub-Organizations' },
+                        showPendingActions && pendingActions.eligible && {
+                          to: urlFor(parentSlugForLinks, 'admin-pending-actions'),
+                          label: 'Pending actions',
+                          badge: pendingCount,
+                        },
                       ].filter(Boolean).map((item, i) => (
                         <Link
                           key={item.to}
                           to={item.to}
                           onClick={() => setAdminOpen(false)}
-                          className={`block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors ${
+                          className={`flex items-center justify-between px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors ${
                             i > 0 ? 'border-t border-gray-100' : ''
                           }`}
                         >
-                          {item.label}
+                          <span>{item.label}</span>
+                          {item.badge != null && item.badge > 0 && (
+                            <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold bg-[var(--brand-accent)] text-white rounded-full">
+                              {item.badge}
+                            </span>
+                          )}
                         </Link>
                       ))}
                     </div>
@@ -663,14 +685,24 @@ export default function Nav() {
                 showDelegates && { to: urlFor(parentSlugForLinks, 'delegate-applications-review'), label: 'Delegate Apps' },
                 showAnalytics && { to: urlFor(parentSlugForLinks, 'admin-analytics'), label: 'Analytics' },
                 showSubOrgs && { to: urlFor(parentSlugForLinks, 'admin-sub-orgs'), label: 'Sub-Orgs' },
+                showPendingActions && pendingActions.eligible && {
+                  to: urlFor(parentSlugForLinks, 'admin-pending-actions'),
+                  label: 'Pending actions',
+                  badge: pendingCount,
+                },
               ].filter(Boolean).map(item => (
                 <Link
                   key={item.to}
                   to={item.to}
                   onClick={() => setMobileOpen(false)}
-                  className="block py-2 text-sm text-blue-200 hover:text-white pl-3"
+                  className="flex items-center justify-between py-2 text-sm text-blue-200 hover:text-white pl-3 pr-2"
                 >
-                  {item.label}
+                  <span>{item.label}</span>
+                  {item.badge != null && item.badge > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-xs font-semibold bg-[var(--brand-accent)] text-white rounded-full">
+                      {item.badge}
+                    </span>
+                  )}
                 </Link>
               ))}
             </>

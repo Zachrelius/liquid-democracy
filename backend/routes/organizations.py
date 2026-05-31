@@ -608,21 +608,56 @@ def update_organization(
     return _org_to_out(org, db, current_user.id)
 
 
-@router.delete("/{org_slug}", status_code=status.HTTP_204_NO_CONTENT)
+class _OrgDeleteBody(BaseModel):
+    confirmation: Optional[str] = None
+
+
+@router.delete("/{org_slug}")
 def delete_organization(
     org_slug: str,
+    request: Request,
+    body: Optional[_OrgDeleteBody] = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_owner),
 ):
-    """Delete org (requires owner)."""
+    """Delete org (requires Steward).
+
+    Phase 44 — wrapped under multi-admin approval when enabled. The
+    request body may include a ``confirmation`` field (= org slug) to
+    satisfy the pending-action payload validator; this is optional when
+    approval is OFF (the direct path matches the live pre-Phase-44
+    behavior of any-Steward-can-delete).
+    """
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
+
+    from pending_actions import engine as p44_engine, settings as p44_settings
+    if p44_settings.is_action_wrapped(org, "org.delete"):
+        ip = request.client.host if request.client else None
+        confirmation = body.confirmation if body is not None else None
+        result = p44_engine.submit_pending_action(
+            db, org, current_user, "org.delete",
+            {"confirmation": confirmation},
+            ip_address=ip,
+        )
+        db.commit()
+        if result.executed_directly:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        db.refresh(result.pending_action)
+        return {
+            "status": "submitted_for_approval",
+            "pending_action": p44_engine.serialize_pending(
+                db, result.pending_action, viewer_id=current_user.id,
+            ),
+        }
+
     db.delete(org)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ============================================================================
@@ -706,18 +741,46 @@ def change_member_role(
     )
 
 
-@router.delete("/{org_slug}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{org_slug}/members/{user_id}")
 def remove_member(
     org_slug: str,
     user_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     admin_membership: models.OrgMembership = Depends(require_org_admin),
 ):
-    """Remove member (requires admin)."""
+    """Remove member (requires admin).
+
+    Phase 44 — when the org has opted in to multi-admin approval and the
+    ``member.remove`` action is wrapped, the destructive mutation is
+    deferred to the ratification queue and this endpoint returns a
+    ``submitted_for_approval`` response instead of executing.
+    """
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
+
+    # Phase 44 intercept — when approval is on, hand off to the engine.
+    from pending_actions import engine as p44_engine, settings as p44_settings
+    if p44_settings.is_action_wrapped(org, "member.remove"):
+        ip = request.client.host if request.client else None
+        result = p44_engine.submit_pending_action(
+            db, org, current_user, "member.remove",
+            {"target_user_id": user_id},
+            ip_address=ip,
+        )
+        db.commit()
+        if result.executed_directly:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        db.refresh(result.pending_action)
+        return {
+            "status": "submitted_for_approval",
+            "pending_action": p44_engine.serialize_pending(
+                db, result.pending_action, viewer_id=current_user.id,
+            ),
+        }
+
     m = db.query(models.OrgMembership).filter(
         models.OrgMembership.org_id == org.id,
         models.OrgMembership.user_id == user_id,
@@ -729,6 +792,7 @@ def remove_member(
         raise HTTPException(status_code=400, detail="Cannot remove the Steward")
     db.delete(m)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{org_slug}/members/{user_id}/suspend", status_code=200)
@@ -1871,18 +1935,41 @@ def update_org_topic(
     return topic
 
 
-@router.delete("/{org_slug}/topics/{topic_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{org_slug}/topics/{topic_id}")
 def delete_org_topic(
     org_slug: str,
     topic_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     admin_membership: models.OrgMembership = Depends(require_org_admin),
 ):
-    """Deactivate topic (admin) — soft-delete by removing org association."""
+    """Deactivate topic (admin) — soft-delete by removing org association.
+
+    Phase 44 — wrapped under multi-admin approval when enabled.
+    """
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
+
+    from pending_actions import engine as p44_engine, settings as p44_settings
+    if p44_settings.is_action_wrapped(org, "topic.delete"):
+        ip = request.client.host if request.client else None
+        result = p44_engine.submit_pending_action(
+            db, org, current_user, "topic.delete", {"topic_id": topic_id},
+            ip_address=ip,
+        )
+        db.commit()
+        if result.executed_directly:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        db.refresh(result.pending_action)
+        return {
+            "status": "submitted_for_approval",
+            "pending_action": p44_engine.serialize_pending(
+                db, result.pending_action, viewer_id=current_user.id,
+            ),
+        }
+
     topic = db.query(models.Topic).filter(
         models.Topic.id == topic_id,
         models.Topic.org_id == org.id,
@@ -1891,6 +1978,7 @@ def delete_org_topic(
         raise HTTPException(status_code=404, detail="Topic not found in this organization")
     topic.org_id = None  # soft-deactivate
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ============================================================================

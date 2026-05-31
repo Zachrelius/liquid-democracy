@@ -32,4 +32,13 @@ export const ADMIN_NAV_SUBSECTION_PERMISSIONS = {
   permissions: ['role_permissions.edit'],
   analytics: ['analytics.view'],
   audit: ['audit.view_org'],
+  // Phase 44 — Pending actions queue is visible to anyone who could
+  // initiate one of the four wrapped destructive actions. The list
+  // endpoint also enforces eligibility server-side
+  // (engine.can_view_pending_actions).
+  pendingActions: [
+    'member.remove',
+    'topic.delete',
+    'role_permissions.edit',
+  ],
 };
