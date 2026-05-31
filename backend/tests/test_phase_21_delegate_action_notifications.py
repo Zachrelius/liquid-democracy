@@ -136,6 +136,15 @@ _EXPECTED_SIGNAL_LEVEL: dict[str, str] = {
     "delegate.application_decided": "always_on",
     "delegate_application_approved": "always_on",
     "follow.approved": "always_on",
+    # Phase 44 — multi-admin approval pending-action events.
+    # All but expiry are critical (approver fan-out + initiator
+    # decision/execute/fail outcomes); expiry is standard since the
+    # initiator can also see the action staled by visiting the queue.
+    "pending_action.submitted": "critical",
+    "pending_action.executed": "critical",
+    "pending_action.declined": "critical",
+    "pending_action.expired": "standard",
+    "pending_action.failed": "critical",
 }
 
 

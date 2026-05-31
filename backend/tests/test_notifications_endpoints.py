@@ -694,9 +694,11 @@ def test_get_registry_returns_all_entries(client, test_db):
     # Every entry has non-empty label, description, category.
     for ev in body["events"]:
         assert ev["label"] and ev["description"] and ev["category"]
-    # Categories are the documented five.
+    # Categories are the documented set (Phase 21 added five originals;
+    # Phase 44 added "Admin actions" for the multi-admin approval events).
     assert set(body["categories"]) == {
         "Comments", "Proposals", "Membership", "Delegation", "Polis",
+        "Admin actions",
     }
 
 
