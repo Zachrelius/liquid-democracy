@@ -37,6 +37,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 import models
+from audit_utils import log_audit_event
 from permission_registry import PERMISSION_REGISTRY
 
 
@@ -179,11 +180,83 @@ def _validate_member_remove(
     )
     if membership is None:
         raise HTTPException(status_code=404, detail="Target is not a member of this org")
-    # Steward cannot be removed (mirrors the live direct path).
+    # Phase 45a B1 — steward removal is permitted only if the steward's
+    # account is inactive (the recovery path). Active stewards remain
+    # un-removable. When removing leaves the org without a steward, D3
+    # requires a named successor in the payload (B2).
     if membership.role_id is not None:
         role = db.get(models.Role, membership.role_id)
         if role is not None and role.system_key == "steward":
-            raise HTTPException(status_code=400, detail="Cannot remove the Steward")
+            if target_user.is_active:
+                raise HTTPException(status_code=400, detail="Cannot remove the Steward")
+            # Inactive steward removal — count other active stewards.
+            other_steward_count = _count_other_active_stewards(
+                db, org, exclude_user_id=target_user_id,
+            )
+            if other_steward_count == 0:
+                successor_user_id = payload.get("successor_user_id")
+                if not isinstance(successor_user_id, str) or not successor_user_id.strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Removing the sole steward requires a "
+                            "'successor_user_id' to promote to steward."
+                        ),
+                    )
+                if successor_user_id == target_user_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Successor cannot be the user being removed.",
+                    )
+                successor_membership = (
+                    db.query(models.OrgMembership)
+                    .filter(
+                        models.OrgMembership.org_id == org.id,
+                        models.OrgMembership.user_id == successor_user_id,
+                        models.OrgMembership.status == "active",
+                    )
+                    .first()
+                )
+                if successor_membership is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Successor must be an active member of this "
+                            "organization."
+                        ),
+                    )
+                successor_user = db.get(models.User, successor_user_id)
+                if successor_user is None or not successor_user.is_active:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Successor's account must be active.",
+                    )
+
+
+def _count_other_active_stewards(
+    db: Session, org: models.Organization, *, exclude_user_id: str,
+) -> int:
+    """Return the count of active stewards in ``org`` whose user_id is not
+    ``exclude_user_id``. Used by the inactive-steward removal path to
+    decide whether a successor must be named (B2/D3)."""
+    memberships = (
+        db.query(models.OrgMembership)
+        .filter(
+            models.OrgMembership.org_id == org.id,
+            models.OrgMembership.status == "active",
+        )
+        .all()
+    )
+    count = 0
+    for m in memberships:
+        if m.user_id == exclude_user_id:
+            continue
+        if m.role_id is None:
+            continue
+        role = db.get(models.Role, m.role_id)
+        if role is not None and role.system_key == "steward":
+            count += 1
+    return count
 
 
 def _validate_topic_delete(
@@ -249,12 +322,23 @@ def _validate_org_delete(
 # ---------------------------------------------------------------------------
 
 def execute_member_remove(
-    db: Session, org: models.Organization, target_user_id: str,
+    db: Session,
+    org: models.Organization,
+    target_user_id: str,
+    *,
+    successor_user_id: Optional[str] = None,
+    actor_id: Optional[str] = None,
+    ip_address: Optional[str] = None,
 ) -> None:
     """Hard-delete the OrgMembership row. Mirrors the live direct path
-    at ``routes/organizations.py::remove_member``. Caller is responsible
-    for permission + steward-protection checks BEFORE calling this; this
-    function only enforces the not-the-steward guard as a final safety.
+    at ``routes/organizations.py::remove_member``.
+
+    Phase 45a B1/B2 — inactive stewards are removable as a recovery
+    action. When the removal would leave the org with zero stewards,
+    ``successor_user_id`` must name an active member who is promoted to
+    steward in the same transaction (D3). The asymmetry vs. the active-
+    steward block is recorded with a ``steward.removed_while_inactive``
+    audit event.
     """
     m = (
         db.query(models.OrgMembership)
@@ -266,11 +350,101 @@ def execute_member_remove(
     )
     if m is None:
         raise HTTPException(status_code=404, detail="Member not found")
+
+    is_steward = False
     if m.role_id is not None:
         role = db.get(models.Role, m.role_id)
         if role is not None and role.system_key == "steward":
-            raise HTTPException(status_code=400, detail="Cannot remove the Steward")
+            is_steward = True
+
+    if is_steward:
+        target_user = db.get(models.User, target_user_id)
+        if target_user is not None and target_user.is_active:
+            raise HTTPException(
+                status_code=400, detail="Cannot remove the Steward",
+            )
+        other_steward_count = _count_other_active_stewards(
+            db, org, exclude_user_id=target_user_id,
+        )
+        if other_steward_count == 0:
+            if not successor_user_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Removing the sole steward requires a successor."
+                    ),
+                )
+            _promote_successor_to_steward(db, org, successor_user_id, target_user_id)
+        log_audit_event(
+            db,
+            action="steward.removed_while_inactive",
+            target_type="org_membership",
+            target_id=str(m.user_id),
+            actor_id=actor_id,
+            details={
+                "org_id": org.id,
+                "removed_user_id": target_user_id,
+                "successor_user_id": successor_user_id if other_steward_count == 0 else None,
+                "had_other_stewards": other_steward_count > 0,
+            },
+            ip_address=ip_address,
+        )
+
     db.delete(m)
+
+
+def _promote_successor_to_steward(
+    db: Session,
+    org: models.Organization,
+    successor_user_id: str,
+    removed_user_id: str,
+) -> None:
+    """Promote ``successor_user_id`` to the steward role on ``org``.
+
+    Used during inactive-steward recovery removal (B2). Mutates the
+    successor's OrgMembership.role_id in-place; caller's transaction
+    encompasses both this promotion and the removal of the prior steward,
+    so the org never observes a zero-steward state on the default path.
+    """
+    successor_membership = (
+        db.query(models.OrgMembership)
+        .filter(
+            models.OrgMembership.org_id == org.id,
+            models.OrgMembership.user_id == successor_user_id,
+            models.OrgMembership.status == "active",
+        )
+        .first()
+    )
+    if successor_membership is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Successor must be an active member of this organization.",
+        )
+    if successor_user_id == removed_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Successor cannot be the user being removed.",
+        )
+    successor_user = db.get(models.User, successor_user_id)
+    if successor_user is None or not successor_user.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="Successor's account must be active.",
+        )
+    steward_role = (
+        db.query(models.Role)
+        .filter(
+            models.Role.org_id == org.id,
+            models.Role.system_key == "steward",
+        )
+        .first()
+    )
+    if steward_role is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Org is missing the preset Steward role",
+        )
+    successor_membership.role_id = steward_role.id
 
 
 def execute_topic_delete(
@@ -378,8 +552,13 @@ def _exec_member_remove(
     db: Session, action: "models.PendingAdminAction", actor_user: models.User,
 ) -> None:
     target_user_id = action.payload["target_user_id"]
+    successor_user_id = action.payload.get("successor_user_id")
     org = db.get(models.Organization, action.org_id)
-    execute_member_remove(db, org, target_user_id)
+    execute_member_remove(
+        db, org, target_user_id,
+        successor_user_id=successor_user_id,
+        actor_id=actor_user.id if actor_user else None,
+    )
 
 
 def _exec_topic_delete(
@@ -433,7 +612,7 @@ def _preview_member_remove(
     target = db.get(models.User, action.payload.get("target_user_id"))
     target_name = target.display_name if target else "(unknown user)"
     reason = action.payload.get("reason") or ""
-    return {
+    out: dict[str, Any] = {
         "label": "Remove member",
         "summary": f"Remove {target_name} from the organization",
         "target": {
@@ -443,6 +622,20 @@ def _preview_member_remove(
         },
         "reason": reason,
     }
+    successor_user_id = action.payload.get("successor_user_id")
+    if successor_user_id:
+        successor = db.get(models.User, successor_user_id)
+        successor_name = successor.display_name if successor else "(unknown user)"
+        out["successor"] = {
+            "type": "user",
+            "id": successor_user_id,
+            "display_name": successor_name,
+        }
+        out["summary"] = (
+            f"Remove {target_name} (inactive steward) and promote "
+            f"{successor_name} to Steward"
+        )
+    return out
 
 
 def _preview_topic_delete(

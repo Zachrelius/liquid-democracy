@@ -193,10 +193,14 @@ export default function OrgSettings() {
   // Steward + Admin). This is the UI that finally consumes it.
   const canEditBranding = useHasPermission('org.edit_branding');
   // Phase 12 Stage 2 F7 — D4 hardcoded-gate UI hiding.
-  // org.delete is hardcoded Steward-only (not matrix-routed), so this gate
-  // mirrors the backend's role check. Sub-org delete in SubOrgSettings is
-  // matrix-routed via sub_org.delete and uses useHasPermission instead.
-  const isSteward = currentOrg?.user_role === 'steward';
+  // org.delete is an OWNER_ONLY_KEY: backend grants it iff the caller's
+  // role.system_key == 'steward'. Phase 45a F1 switches this gate to the
+  // permission-driven check so the UI tracks any future relaxation
+  // (recon GAP-5).
+  const canDeleteOrg = useHasPermission('org.delete');
+  // Phase 45a F2 — voluntary stewardship handoff. Same OWNER_ONLY_KEY
+  // pattern: only the Steward currently resolves the permission to True.
+  const canTransferStewardship = useHasPermission('org.transfer_stewardship');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [joinPolicy, setJoinPolicy] = useState('approval_required');
@@ -261,6 +265,16 @@ export default function OrgSettings() {
   // content before flipping their join_policy to a public variant.
   const [introText, setIntroText] = useState('');
   const [savingIntro, setSavingIntro] = useState(false);
+
+  // Phase 45a F2 — Transfer Stewardship section state.
+  // The form is collapsed by default; expanding reveals a member picker
+  // populated from /api/orgs/{slug}/members (active members only,
+  // current user excluded — the steward cannot transfer to themselves).
+  const [showTransfer, setShowTransfer] = useState(false);
+  const [transferTargetId, setTransferTargetId] = useState('');
+  const [transferMembers, setTransferMembers] = useState([]);
+  const [loadingTransferMembers, setLoadingTransferMembers] = useState(false);
+  const [savingTransfer, setSavingTransfer] = useState(false);
 
   // Phase 17 F1 — Tie Resolution section state.
   //
@@ -381,6 +395,56 @@ export default function OrgSettings() {
       setMsg(e.message || 'Failed to save');
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Phase 45a F2 — fetch active members for the transfer picker. Triggered
+  // when the steward expands the Transfer Stewardship section. We exclude
+  // the calling user (cannot transfer to self per B3) and any inactive
+  // members the backend may surface.
+  async function loadTransferMembers() {
+    if (!currentOrg) return;
+    setLoadingTransferMembers(true);
+    try {
+      const all = await api.get(`/api/orgs/${currentOrg.slug}/members`);
+      // currentOrg.user_role === 'steward' is the calling user by definition.
+      // Filter on status === 'active' to match the backend gate.
+      const eligible = (all || []).filter(m => m.status === 'active');
+      setTransferMembers(eligible);
+    } catch (e) {
+      toast.error(e.message || 'Failed to load members');
+    } finally {
+      setLoadingTransferMembers(false);
+    }
+  }
+
+  async function handleTransferStewardship() {
+    if (!transferTargetId) return;
+    const target = transferMembers.find(m => m.user_id === transferTargetId);
+    const targetLabel = target ? (target.display_name || target.username) : 'this member';
+    const ok = await confirm({
+      title: 'Transfer Stewardship?',
+      message: (
+        `You will become an Admin of "${currentOrg.name}" and ${targetLabel} ` +
+        `will become the new Steward. This is an atomic swap and cannot be undone from this side.`
+      ),
+      destructive: true,
+    });
+    if (!ok) return;
+    setSavingTransfer(true);
+    try {
+      await api.post(`/api/orgs/${currentOrg.slug}/transfer-stewardship`, {
+        target_user_id: transferTargetId,
+      });
+      toast.success(`Stewardship transferred to ${targetLabel}`);
+      // Refresh org list so the user_role + user_permissions flip.
+      await refreshOrgs();
+      setShowTransfer(false);
+      setTransferTargetId('');
+    } catch (e) {
+      toast.error(e.message || 'Failed to transfer stewardship');
+    } finally {
+      setSavingTransfer(false);
     }
   }
 
@@ -1873,9 +1937,81 @@ export default function OrgSettings() {
         </div>
       </section>
 
-      {/* Danger Zone — Phase 12 Stage 2 F7 D4 UI hiding (see isSteward
-          derivation comment at the top of this file). */}
-      {isSteward && (
+      {/* Phase 45a F2 — voluntary stewardship handoff. Gated on the
+          permission key (today Steward-only via OWNER_ONLY_KEYS, but
+          using the permission gate keeps the UI honest if the key ever
+          relaxes). The action is an atomic role swap (outgoing → admin,
+          incoming → steward), implemented as a single backend transaction. */}
+      {canTransferStewardship && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Stewardship</h2>
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+            <p className="text-sm text-gray-700">
+              Hand off Steward of <strong>{currentOrg.name}</strong> to another active member.
+              You will become an Admin; they will become the new Steward.
+            </p>
+            {!showTransfer ? (
+              <button
+                onClick={() => {
+                  setShowTransfer(true);
+                  if (transferMembers.length === 0) loadTransferMembers();
+                }}
+                className="text-sm px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Transfer Stewardship…
+              </button>
+            ) : (
+              <div className="space-y-3">
+                {loadingTransferMembers ? (
+                  <p className="text-sm text-gray-500">Loading members…</p>
+                ) : (
+                  <>
+                    <label className="block text-xs text-gray-600">
+                      New Steward
+                    </label>
+                    <select
+                      value={transferTargetId}
+                      onChange={e => setTransferTargetId(e.target.value)}
+                      className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    >
+                      <option value="">Select a member…</option>
+                      {transferMembers
+                        .filter(m => m.role !== 'steward')
+                        .map(m => (
+                          <option key={m.user_id} value={m.user_id}>
+                            {m.display_name || m.username} ({m.role})
+                          </option>
+                        ))}
+                    </select>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleTransferStewardship}
+                        disabled={!transferTargetId || savingTransfer}
+                        className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                      >
+                        {savingTransfer ? 'Transferring…' : 'Transfer Stewardship'}
+                      </button>
+                      <button
+                        onClick={() => { setShowTransfer(false); setTransferTargetId(''); }}
+                        className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* Danger Zone — Phase 45a F1 — permission-driven gate (recon GAP-5).
+          org.delete is an OWNER_ONLY_KEY today; the permission check
+          resolves to True only for Steward, identical to the prior
+          role-string check. Switching the gate keeps the UI consistent
+          with the Phase 12.5/12.6 convention used elsewhere on the page. */}
+      {canDeleteOrg && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-red-500 uppercase tracking-wide">Danger Zone</h2>
           <div className="bg-white border border-red-200 rounded-xl p-5 space-y-4">

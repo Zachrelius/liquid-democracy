@@ -612,6 +612,97 @@ class _OrgDeleteBody(BaseModel):
     confirmation: Optional[str] = None
 
 
+class _TransferStewardshipBody(BaseModel):
+    """Phase 45a B3 — body for POST /api/orgs/{slug}/transfer-stewardship."""
+    target_user_id: str
+
+
+@router.post("/{org_slug}/transfer-stewardship")
+def transfer_stewardship(
+    org_slug: str,
+    body: _TransferStewardshipBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_owner),
+):
+    """Phase 45a B3 — voluntary stewardship handoff.
+
+    Atomic role swap (D1): the outgoing steward becomes Admin; the
+    named ``target_user_id`` (must be an active member of this org)
+    becomes Steward. Steward-only initiation; gated by
+    ``require_org_owner`` which matches the ``org.transfer_stewardship``
+    OWNER_ONLY_KEY (Phase 12 D4) that has been declared since Phase 12
+    but had no consuming route until now.
+
+    Per D3, this is the structurally-safe path: the swap is atomic, so
+    the org never observes a zero-steward state.
+    """
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    target_membership = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == org.id,
+        models.OrgMembership.user_id == body.target_user_id,
+        models.OrgMembership.status == "active",
+    ).first()
+    if target_membership is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Target must be an active member of this organization.",
+        )
+
+    target_user = db.get(models.User, body.target_user_id)
+    if target_user is None or not target_user.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="Target user's account must be active.",
+        )
+
+    if body.target_user_id == current_user.id:
+        raise HTTPException(
+            status_code=400,
+            detail="You cannot transfer stewardship to yourself.",
+        )
+
+    # Resolve the Admin + Steward role ids for this org.
+    steward_role_id = _resolve_role_id_by_system_key(db, org.id, "steward")
+    admin_role_id = _resolve_role_id_by_system_key(db, org.id, "admin")
+    if steward_role_id is None or admin_role_id is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Org is missing the preset Steward or Admin role",
+        )
+
+    # Atomic swap: outgoing steward → admin, target → steward.
+    outgoing_membership = membership
+    outgoing_membership.role_id = admin_role_id
+    target_membership.role_id = steward_role_id
+
+    log_audit_event(
+        db,
+        action="org.stewardship_transferred",
+        target_type="organization",
+        target_id=org.id,
+        actor_id=current_user.id,
+        details={
+            "outgoing_steward_id": current_user.id,
+            "incoming_steward_id": body.target_user_id,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+
+    db.commit()
+    return {
+        "status": "ok",
+        "outgoing_steward_id": current_user.id,
+        "incoming_steward_id": body.target_user_id,
+    }
+
+
 @router.delete("/{org_slug}")
 def delete_organization(
     org_slug: str,
@@ -741,11 +832,18 @@ def change_member_role(
     )
 
 
+class _MemberRemoveBody(BaseModel):
+    # Phase 45a B2 — optional successor required when removing the org's
+    # sole (inactive) steward. Ignored for non-steward removals.
+    successor_user_id: Optional[str] = None
+
+
 @router.delete("/{org_slug}/members/{user_id}")
 def remove_member(
     org_slug: str,
     user_id: str,
     request: Request,
+    body: Optional[_MemberRemoveBody] = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     admin_membership: models.OrgMembership = Depends(require_org_admin),
@@ -756,18 +854,28 @@ def remove_member(
     ``member.remove`` action is wrapped, the destructive mutation is
     deferred to the ratification queue and this endpoint returns a
     ``submitted_for_approval`` response instead of executing.
+
+    Phase 45a — an inactive steward (User.is_active=False) may be removed
+    as a recovery action. If removal would leave the org steward-less,
+    the request body must include ``successor_user_id`` naming an active
+    member to atomically promote to Steward in the same transaction.
     """
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
 
+    successor_user_id = body.successor_user_id if body is not None else None
+
     # Phase 44 intercept — when approval is on, hand off to the engine.
     from pending_actions import engine as p44_engine, settings as p44_settings
     if p44_settings.is_action_wrapped(org, "member.remove"):
         ip = request.client.host if request.client else None
+        payload: dict = {"target_user_id": user_id}
+        if successor_user_id:
+            payload["successor_user_id"] = successor_user_id
         result = p44_engine.submit_pending_action(
             db, org, current_user, "member.remove",
-            {"target_user_id": user_id},
+            payload,
             ip_address=ip,
         )
         db.commit()
@@ -781,16 +889,15 @@ def remove_member(
             ),
         }
 
-    m = db.query(models.OrgMembership).filter(
-        models.OrgMembership.org_id == org.id,
-        models.OrgMembership.user_id == user_id,
-    ).first()
-    if not m:
-        raise HTTPException(status_code=404, detail="Member not found")
-    # Phase 12 — Steward (renamed from 'owner') cannot be removed.
-    if membership_role_system_key(m) == "steward":
-        raise HTTPException(status_code=400, detail="Cannot remove the Steward")
-    db.delete(m)
+    # Direct path — delegate to the shared executor so the inactive-steward
+    # recovery logic + audit emission lives in one place.
+    from pending_actions.registry import execute_member_remove
+    execute_member_remove(
+        db, org, user_id,
+        successor_user_id=successor_user_id,
+        actor_id=current_user.id,
+        ip_address=request.client.host if request.client else None,
+    )
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
