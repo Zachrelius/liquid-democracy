@@ -29,7 +29,14 @@ set -e
 # migration. Existing-DB branch: skip ``create_all`` entirely; let alembic
 # apply only the pending revisions.
 
-if alembic current 2>/dev/null | grep -q '[a-f0-9]\{12\}'; then
+# NB: Match 12+ alphanumeric chars (not just hex). Hand-crafted Alembic
+# revision IDs can start with non-hex chars (e.g. Phase 48 used
+# 'g5a8b1c93412' + 'h6b9c2d04523'); a hex-only regex mis-detects those
+# as "fresh DB" and runs create_all + stamp head, which silently skips
+# every pending migration. That bit Phase 48 Stage 2 on prod (column
+# election_slate_mode never applied). Alphanumeric matches both
+# auto-generated hex revs and hand-rolled ones.
+if alembic current 2>/dev/null | grep -q '[[:alnum:]]\{12,\}'; then
     echo "Alembic-stamped DB detected — applying pending migrations…"
     alembic upgrade head
 else
