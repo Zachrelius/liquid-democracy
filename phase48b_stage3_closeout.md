@@ -96,8 +96,20 @@ Both committed on the Stage 3 branch (start.sh edit on this branch; CLAUDE.md no
 ## Branch + commit state
 
 - Branch: `phase-48b/elections-stage-3` (left alive locally).
-- Commit on branch: TBD.
-- Merge commit on master: TBD.
-- Pushed to origin/master: TBD.
-- Railway deploy: TBD.
-- Bundle hash on prod: TBD (post-deploy verification).
+- Commit on branch: `0942593` (Stage 3 implementation + tests + closeout).
+- Merge commit on master: `edd9d33` (no-ff merge into master).
+- Pushed to origin/master: confirmed.
+- Railway deploy: `97f1050e-f996-412f-a767-04a471fb1da6` SUCCESS @ 2026-06-01 18:53:26 -04:00 — backend booted cleanly (no Stage-2-style mis-detection this time; the broadened regex `[[:alnum:]]\{12,\}` correctly matched the existing `h6b9c2d04523` head, and even if it hadn't the new users-existence guard would have aborted loudly instead of stamping).
+- Bundle hash on prod: `index-B-Q_wWQc.js` (verified live via curl).
+- `/api/health`: 200 (verified).
+- Proposal-touching endpoints: 401 (auth-required, not 500) — confirms SQLAlchemy mapping loads cleanly with the new helpers in elections.py + pending_actions/registry.py.
+
+---
+
+## Phase 48 (overall) — complete
+
+Three deploys: Stage 1 (`5d301eb` merge, `195baf95` SUCCESS) → Stage 2 (`0c8883f` merge, hotfix `0d440aa`, `f75a4b30` SUCCESS post-hotfix) → Stage 3 (`edd9d33` merge, `97f1050e` SUCCESS no incident). The bisection-by-stage design did its job: when Stage 2 crashed on a deploy-class bug (start.sh fresh-DB regex), the symptom localized to that stage's revision-ID specifically and the recovery + durable fix landed in <30 minutes without touching any election code. The start.sh fix carries forward as a project-wide hardening (regex + users-existence guard + recovery-script template) — future passes inherit the protection.
+
+**Phase 48 + the Phase 48 incident together establish the convention**: hex-prefix revision IDs by default, with a structural backstop (users-existence guard) for the case where a future contributor forgets. Codified in CLAUDE.md.
+
+Phase 49 (D11 — scheduled / fixed-term elections + auto-re-election) is the next election-related work, but it's a separate phase and not yet scoped/spec'd.
