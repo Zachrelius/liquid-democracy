@@ -11,12 +11,20 @@ Covers:
   - Quiet-hours-end-to-end: emit at 11pm local with quiet_hours_enabled +
     email pref ON => in_app row exists, payload tagged for queue, no
     real-time email sent. Then the flush sends + clears the flag.
+
+Phase 48.1 — the send-performing functions ``render_and_send_digest``
+and ``flush_quiet_hours_queue`` are now ``async`` (the digest tick
+awaits the email transport directly instead of bouncing through
+``_run_async``, which self-deadlocked when run inside uvicorn's loop).
+The tests that exercise them are correspondingly converted to async
++ ``pytest.mark.asyncio``. ``aggregate_for_user`` stays sync.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import BackgroundTasks
@@ -267,7 +275,8 @@ def test_aggregate_only_includes_events_in_window(test_db):
 # render_and_send_digest marks delivered
 # ---------------------------------------------------------------------------
 
-def test_render_marks_delivered_after_send(test_db):
+@pytest.mark.asyncio
+async def test_render_marks_delivered_after_send(test_db):
     user = _make_user(test_db, "rmark_user")
     org = _make_org(test_db, "rmark_org")
     n = _make_notification(test_db, user.id, event_type="comment.replied",
@@ -277,12 +286,9 @@ def test_render_marks_delivered_after_send(test_db):
 
     agg = aggregate_for_user(test_db, user, "daily")
     assert not agg.is_empty
-    # Patch the transport (send_email) to a no-op success.
-    with patch("digest_scheduler.send_email") as mock_send:
-        async def _ok(*a, **kw):
-            return True
-        mock_send.side_effect = _ok
-        sent = render_and_send_digest(test_db, agg)
+    # Patch the transport (send_email) to a no-op async success.
+    with patch("digest_scheduler.send_email", new=AsyncMock(return_value=True)):
+        sent = await render_and_send_digest(test_db, agg)
     assert sent is True
 
     test_db.refresh(n)
@@ -362,7 +368,8 @@ def test_quiet_hours_normal_send_outside_window(test_db, monkeypatch):
     assert len(bt.tasks) == 1
 
 
-def test_flush_quiet_hours_queue_sends_and_clears_flag(test_db):
+@pytest.mark.asyncio
+async def test_flush_quiet_hours_queue_sends_and_clears_flag(test_db):
     user = _make_user(test_db, "qh_flush_user")
     org = _make_org(test_db, "qh_org")
     n = _make_notification(
@@ -377,17 +384,20 @@ def test_flush_quiet_hours_queue_sends_and_clears_flag(test_db):
     )
     test_db.commit()
 
-    # Patch send_org_email to record calls + return True.
-    with patch("digest_scheduler.send_org_email") as mock_send:
-        mock_send.return_value = True
-        flushed = flush_quiet_hours_queue(test_db, user)
+    # Patch the async send path the flush function now uses.
+    with patch(
+        "digest_scheduler.send_org_email_async",
+        new=AsyncMock(return_value=True),
+    ):
+        flushed = await flush_quiet_hours_queue(test_db, user)
     assert flushed == 1
     test_db.refresh(n)
     assert n.payload.get("queued_for_quiet_hours_end") is False
     assert "queue_flushed_at" in n.payload
 
 
-def test_flush_quiet_hours_queue_skips_non_queued_rows(test_db):
+@pytest.mark.asyncio
+async def test_flush_quiet_hours_queue_skips_non_queued_rows(test_db):
     user = _make_user(test_db, "qh_skip_user")
     org = _make_org(test_db, "qh_skip_org")
     _make_notification(
@@ -396,7 +406,65 @@ def test_flush_quiet_hours_queue_skips_non_queued_rows(test_db):
     )
     test_db.commit()
 
-    with patch("digest_scheduler.send_org_email") as mock_send:
-        flushed = flush_quiet_hours_queue(test_db, user)
+    mock_send = AsyncMock(return_value=True)
+    with patch("digest_scheduler.send_org_email_async", new=mock_send):
+        flushed = await flush_quiet_hours_queue(test_db, user)
     assert flushed == 0
     mock_send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Phase 48.1 — no-deadlock regression
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_run_one_tick_inside_event_loop_does_not_deadlock(test_db):
+    """The bug that wedged prod: ``digest_loop`` runs in uvicorn's
+    asyncio loop and called sync ``render_and_send_digest`` -> sync
+    ``send_org_email`` -> ``_run_async(send_email(...))`` -> takes
+    the ``run_coroutine_threadsafe`` branch and blocks
+    ``future.result(timeout=30)`` on the very loop the coroutine
+    needs to make progress on. Under backlog the loop wedged and the
+    backend stopped serving (502).
+
+    The fix is that ``run_one_tick`` is now ``async`` and awaits the
+    transport directly. This regression test exercises that path:
+      * Runs inside ``pytest.mark.asyncio``'s event loop (the
+        production scenario).
+      * A qualifying digest is queued for a user.
+      * ``send_email`` is mocked to a fast async no-op so we assert
+        the await path is taken, not that a real email goes out.
+      * The tick completes within a short timeout and returns its
+        counts. A deadlock would manifest as ``asyncio.wait_for``
+        timing out — that's the failure mode the test guards.
+    """
+    user = _make_user(test_db, "ndlock_user")
+    org = _make_org(test_db, "ndlock_org")
+    n = _make_notification(
+        test_db, user.id, event_type="comment.replied", org_id=org.id,
+        payload={"actor_display_name": "Sender", "proposal_title": "P"},
+    )
+    test_db.commit()
+
+    # The tick walks ALL users and only the user whose local-hour matches
+    # DAILY_DIGEST_HOUR receives a send. Force every user's local hour
+    # to the daily hour so this user qualifies regardless of timezone.
+    from digest_scheduler import (
+        DAILY_DIGEST_HOUR,
+        run_one_tick,
+    )
+    mock_send = AsyncMock(return_value=True)
+    with patch("digest_scheduler.send_email", new=mock_send), \
+            patch(
+                "digest_scheduler._user_local_hour",
+                lambda u, now_utc=None: DAILY_DIGEST_HOUR,
+            ):
+        # If the bug regresses, the tick would hang here; the wait_for
+        # bounds the failure mode.
+        counts = await asyncio.wait_for(run_one_tick(test_db), timeout=10)
+
+    # The send path was actually exercised.
+    assert mock_send.await_count >= 1
+    assert counts["daily"] == 1
+    test_db.refresh(n)
+    assert n.payload.get("delivered_in_digest") is True
