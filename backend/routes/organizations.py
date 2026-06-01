@@ -871,6 +871,36 @@ def change_governance_mode(
             status_code=400,
             detail="Successor must currently hold the Admin role.",
         )
+
+    # Phase 48 Stage 3 D12 — direct council→single_steward revert
+    # requires multi-admin sign-off when Phase 44 is enabled for the
+    # ``org.governance_mode_revert`` action. The elected-revert path
+    # (electing a steward in council mode) bypasses this — the
+    # election itself is the multi-admin ratification, surfaced via
+    # `elections._flip_mode_to_single_steward` with via='elected_revert'.
+    from pending_actions import engine as p44_engine, settings as p44_settings
+    if p44_settings.is_action_wrapped(org, "org.governance_mode_revert"):
+        result = p44_engine.submit_pending_action(
+            db, org, current_user, "org.governance_mode_revert",
+            {"successor_user_id": successor_user_id},
+            ip_address=ip,
+        )
+        db.commit()
+        if result.executed_directly:
+            return {
+                "status": "ok",
+                "mode": SINGLE_STEWARD,
+                "changed": True,
+                "promoted_user_id": successor_user_id,
+            }
+        db.refresh(result.pending_action)
+        return {
+            "status": "submitted_for_approval",
+            "pending_action": p44_engine.serialize_pending(
+                db, result.pending_action, viewer_id=current_user.id,
+            ),
+        }
+
     steward_role_id = _resolve_role_id_by_system_key(db, org.id, "steward")
     if steward_role_id is None:
         raise HTTPException(
@@ -888,6 +918,7 @@ def change_governance_mode(
         details={
             "from": ADMIN_COUNCIL,
             "to": SINGLE_STEWARD,
+            "via": "direct",
             "promoted_user_id": successor_user_id,
         },
         ip_address=ip,

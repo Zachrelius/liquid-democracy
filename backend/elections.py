@@ -50,6 +50,62 @@ def elections_enabled(org: models.Organization) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Phase 48 Stage 3 — Trigger config (D4) + elected-revert (D12 partner)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_TRIGGER_SOURCES = ("admin_direct",)
+VALID_TRIGGER_SOURCES = frozenset({"admin_direct", "member_cosign"})
+
+
+def trigger_sources(org: models.Organization) -> list[str]:
+    """Return the list of allowed election-trigger sources for the org
+    per D4. Default ``['admin_direct']`` so Stage 1 / Stage 2 callers
+    are unchanged. Orgs that enable member-cosign petitioning add
+    ``'member_cosign'`` to the list.
+
+    Tolerant read: malformed config falls back to the default; an
+    explicit empty list is honored (meaning "no triggers" — an effective
+    way to pause elections without disabling them).
+    """
+    settings = (org.settings or {}).get("elections")
+    if not isinstance(settings, dict):
+        return list(_DEFAULT_TRIGGER_SOURCES)
+    raw = settings.get("trigger_sources")
+    if raw is None:
+        return list(_DEFAULT_TRIGGER_SOURCES)
+    if not isinstance(raw, list):
+        return list(_DEFAULT_TRIGGER_SOURCES)
+    return [s for s in raw if isinstance(s, str) and s in VALID_TRIGGER_SOURCES]
+
+
+def trigger_source_enabled(
+    org: models.Organization, source: str,
+) -> bool:
+    return source in trigger_sources(org)
+
+
+def allow_elected_revert(org: models.Organization) -> bool:
+    """Per the D12 elected-revert partner: an org in admin_council mode
+    can open a steward-binding election that, on close, flips the mode
+    back to single_steward + installs the winner as steward. Opt-in
+    via ``settings.elections.allow_elected_revert = True``; default
+    False so existing council-mode orgs are unaffected.
+
+    The opt-in is read at OPEN time (to allow the election to be
+    created in council mode despite Phase 47's default rejection) AND
+    at CLOSE time (to authorize the mode flip atomically with the
+    title assignment). Reading the same flag in both places means an
+    admin can't toggle it off mid-election to leave the system in a
+    half-flipped state — if it's off at close, the election fails
+    cleanly (the close hook records `outcome: revert_not_authorized`).
+    """
+    settings = (org.settings or {}).get("elections")
+    if not isinstance(settings, dict):
+        return False
+    return bool(settings.get("allow_elected_revert", False))
+
+
+# ---------------------------------------------------------------------------
 # Title-electable check
 # ---------------------------------------------------------------------------
 
@@ -267,6 +323,56 @@ def finalize_election(
             )
             return {"resolved": "failed", "reason": e.detail}
 
+    # Phase 48 Stage 3 — elected revert (D12 partner). If this is a
+    # steward-binding election in admin_council mode AND the org has
+    # the elected-revert opt-in on, FLIP THE MODE FIRST. The atomic
+    # ordering matters: by the time `_apply_election_winner` calls
+    # `_apply_bound_role_for_assign`, mode==single_steward, so Phase
+    # 47's "no steward seat in council mode" rejection (routes/
+    # org_titles.py:365) doesn't fire and the steward swap proceeds
+    # exactly as a single_steward-mode election would.
+    #
+    # If the opt-in is OFF, we record `revert_not_authorized` and let
+    # the assignment fail downstream via Phase 47's rejection. That's
+    # the loud-failure path: the user can see why no winner was
+    # installed.
+    revert_applied = False
+    if (
+        title.bound_role == "steward"
+        and _mode_of(org) == _ADMIN_COUNCIL
+    ):
+        if allow_elected_revert(org):
+            _flip_mode_to_single_steward(
+                db, org,
+                actor_id=actor_id, ip_address=ip_address,
+                proposal_id=proposal.id,
+            )
+            revert_applied = True
+        else:
+            log_audit_event(
+                db,
+                action="election.resolved",
+                target_type="proposal",
+                target_id=proposal.id,
+                actor_id=actor_id,
+                details={
+                    "outcome": "revert_not_authorized",
+                    "title_id": title.id,
+                    "title_name": title.name,
+                    "reason": (
+                        "Steward-binding election won in admin_council "
+                        "mode but settings.elections.allow_elected_revert "
+                        "is off — winner cannot be installed."
+                    ),
+                },
+                ip_address=ip_address,
+            )
+            return {
+                "resolved": "failed",
+                "reason": "revert_not_authorized",
+                "title_id": title.id,
+            }
+
     # Install each winner.
     installed: list[str] = []
     failures: list[dict] = []
@@ -301,6 +407,7 @@ def finalize_election(
             "slate_mode": slate_mode,
             "candidate_count": len(candidates),
             "auto_win_uncontested": len(candidates) <= num_winners,
+            "elected_revert_applied": revert_applied,
         },
         ip_address=ip_address,
     )
@@ -309,7 +416,63 @@ def finalize_election(
         "title_id": title.id,
         "winner_ids": installed,
         "failures": failures,
+        "elected_revert_applied": revert_applied,
     }
+
+
+def _mode_of(org: models.Organization) -> str:
+    """Lazy wrapper around governance.mode_of so this module doesn't
+    pull the governance import at module load. Localized for testability
+    + to mirror Stage 1's pattern of late-binding governance reads."""
+    from governance import mode_of
+    return mode_of(org)
+
+
+_ADMIN_COUNCIL = "admin_council"
+_SINGLE_STEWARD = "single_steward"
+
+
+def _flip_mode_to_single_steward(
+    db: Session,
+    org: models.Organization,
+    *,
+    actor_id: Optional[str],
+    ip_address: Optional[str],
+    proposal_id: str,
+) -> None:
+    """Atomic mode flip for the elected-revert (Stage 3 D12 partner).
+
+    Called from `finalize_election` ONLY when the gate has confirmed
+    this is an authorized elected revert. Emits the same
+    ``org.governance_mode_changed`` audit event the direct revert path
+    emits, with an additional ``via: elected_revert`` marker so the
+    audit log distinguishes the two paths cleanly.
+
+    Does NOT route through Phase 44 multi-admin approval — the
+    election itself IS the multi-admin ratification (D12 partner
+    note). The direct ``change_governance_mode`` revert is the path
+    that wraps under Phase 44.
+
+    Does NOT promote a successor admin to steward — the close hook's
+    ``_apply_bound_role_for_assign`` does that as the next step. By
+    the time it runs, mode==single_steward and the call succeeds.
+    """
+    from audit_utils import log_audit_event
+    org.governance_mode = _SINGLE_STEWARD
+    log_audit_event(
+        db,
+        action="org.governance_mode_changed",
+        target_type="organization",
+        target_id=org.id,
+        actor_id=actor_id,
+        details={
+            "from": _ADMIN_COUNCIL,
+            "to": _SINGLE_STEWARD,
+            "via": "elected_revert",
+            "proposal_id": proposal_id,
+        },
+        ip_address=ip_address,
+    )
 
 
 def _apply_election_winner(

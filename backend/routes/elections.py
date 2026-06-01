@@ -42,6 +42,12 @@ class _OpenElectionBody(BaseModel):
     voting_method: str = "ranked_choice"
     num_winners: int = 1
     slate_mode: str = "fill_vacancies"  # or 'refresh_slate'
+    # Phase 48 Stage 3 — trigger source (D4). Default 'admin_direct'
+    # so Stage 1+2 callers + tests are unchanged. 'member_cosign'
+    # creates the election proposal in cosign-gathering state; it
+    # advances to voting when the cosign threshold is met (Phase 46
+    # path, unchanged).
+    trigger: str = "admin_direct"
 
 
 # ---------------------------------------------------------------------------
@@ -93,23 +99,22 @@ def open_election(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
-    admin_membership: models.OrgMembership = Depends(require_org_admin),
+    membership: models.OrgMembership = Depends(require_org_membership),
 ):
-    """Open an election for a specific title (D4 admin-direct trigger).
+    """Open an election for a specific title.
 
-    Validates per D3: elections must be opted in at the org level.
-    Validates per D4: the target title must have `fill_method` in
-    'elected' or 'both'. Validates per D7/D8: incumbent (current
-    title holder, if any) is NOT automatically nominated — they must
-    self-declare during the nomination window.
+    Two trigger sources per D4 (controlled by
+    ``settings.elections.trigger_sources``):
+      * ``admin_direct`` — admin/steward direct trigger (Stage 1+2).
+        Requires the caller to hold the admin role. Proposal enters
+        ``deliberation`` (nomination window) immediately.
+      * ``member_cosign`` (Stage 3) — any member opens a petition.
+        Proposal enters cosign-gathering state; advances to nomination
+        + voting when the cosign threshold is met (reuses Phase 46).
 
-    Creates a proposal flagged as an election + linked to the title.
-    The proposal enters 'deliberation' status (the nomination window);
-    voting opens via the existing /advance endpoint when the admin
-    moves the proposal to 'voting'.
-
-    Stage 1 uses 'binary' voting method for single-winner elections;
-    Stage 2 generalizes to ranked_choice + num_winners > 1.
+    Validates per D3 (elections enabled), D4 (title electable), D12
+    partner (steward-binding council-mode allowed iff
+    ``allow_elected_revert`` is on), and per-trigger source allowed.
     """
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug,
@@ -117,7 +122,10 @@ def open_election(
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    from elections import elections_enabled, title_is_electable
+    from elections import (
+        elections_enabled, title_is_electable,
+        trigger_source_enabled, allow_elected_revert,
+    )
 
     if not elections_enabled(org):
         raise HTTPException(
@@ -127,6 +135,39 @@ def open_election(
                 "Set settings.elections.enabled = true to opt in."
             ),
         )
+
+    # Phase 48 Stage 3 — validate trigger source per D4.
+    if body.trigger not in ("admin_direct", "member_cosign"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "trigger must be 'admin_direct' or 'member_cosign'"
+            ),
+        )
+    if not trigger_source_enabled(org, body.trigger):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Trigger source '{body.trigger}' is not enabled for "
+                "this organization. Update "
+                "settings.elections.trigger_sources to allow it."
+            ),
+        )
+    # admin_direct trigger requires admin or steward role; member_cosign
+    # is open to any active member (membership dep above).
+    if body.trigger == "admin_direct":
+        actor_role = None
+        if membership.role_id is not None:
+            role = db.get(models.Role, membership.role_id)
+            actor_role = role.system_key if role is not None else None
+        if actor_role not in ("admin", "steward"):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Admin or steward role required to open an "
+                    "admin-direct election."
+                ),
+            )
 
     title = db.get(models.OrgTitle, body.title_id)
     if title is None or title.org_id != org.id:
@@ -141,19 +182,26 @@ def open_election(
             ),
         )
 
-    # Per D3 + 47-council-mode-rejection (mirrored here so the failure
-    # surfaces at open time rather than at close time): a steward-
-    # binding title cannot be elected in admin_council mode.
+    # Phase 47 council-mode rejection — loosened in Stage 3 for the
+    # elected-revert path (D12 partner). The rejection still fires
+    # UNLESS the org has explicitly opted in to elected revert via
+    # ``settings.elections.allow_elected_revert``. When the opt-in is
+    # on, the close→assign hook flips the mode atomically before
+    # calling _apply_bound_role_for_assign, so Phase 47's check passes
+    # at assignment time.
     from governance import mode_of, ADMIN_COUNCIL
     if title.bound_role == "steward" and mode_of(org) == ADMIN_COUNCIL:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Cannot open an election for a steward-binding title "
-                "in admin_council mode — the org has no steward seat. "
-                "Switch governance mode first."
-            ),
-        )
+        if not allow_elected_revert(org):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Cannot open an election for a steward-binding title "
+                    "in admin_council mode unless "
+                    "settings.elections.allow_elected_revert is enabled. "
+                    "Enable the elected-revert opt-in or switch "
+                    "governance mode first."
+                ),
+            )
 
     # Validate Stage 2 inputs.
     if body.voting_method not in ("binary", "approval", "ranked_choice"):
@@ -204,6 +252,16 @@ def open_election(
     )
     db.add(proposal)
     db.flush()
+
+    # Phase 48 Stage 3 — cosign-trigger: stamp cosign markers + insert
+    # the author's implicit first signature. Threshold-met advances
+    # this proposal to voting via the existing Phase 46 worker (no
+    # changes to the worker needed — election proposals look like any
+    # other cosign-gated proposal from the worker's POV).
+    if body.trigger == "member_cosign":
+        from cosign import init_cosign_gated_proposal
+        init_cosign_gated_proposal(db, proposal, org)
+
     log_audit_event(
         db,
         action="election.opened",
@@ -215,9 +273,10 @@ def open_election(
             "title_id": title.id,
             "title_name": title.name,
             "bound_role": title.bound_role,
-            "trigger": "admin_direct",
+            "trigger": body.trigger,
             "deliberation_days": body.deliberation_days,
             "voting_days": body.voting_days,
+            "cosign_gated": body.trigger == "member_cosign",
         },
         ip_address=request.client.host if request.client else None,
     )
@@ -230,8 +289,9 @@ def open_election(
         details={
             "title": proposal.title,
             "org_id": org.id,
-            "voting_method": "binary",
+            "voting_method": body.voting_method,
             "is_election": True,
+            "is_cosign_gated": body.trigger == "member_cosign",
         },
         ip_address=request.client.host if request.client else None,
     )

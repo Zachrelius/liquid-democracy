@@ -32,6 +32,8 @@ DEFAULT_THRESHOLDS: dict[str, int] = {
     "topic.delete": 2,
     "role_permissions.edit": 2,
     "org.delete": 2,
+    # Phase 48 Stage 3 D12 — council→single_steward revert.
+    "org.governance_mode_revert": 2,
 }
 
 DEFAULT_WINDOW_HOURS: int = 72

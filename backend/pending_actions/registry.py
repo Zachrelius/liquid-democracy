@@ -51,7 +51,7 @@ PreviewBuilder = Callable[["models.PendingAdminAction", Session], dict[str, Any]
 @dataclass(frozen=True)
 class ActionDefinition:
     action_type: str
-    required_permission_key: Optional[str]  # None for org.delete (steward-only)
+    required_permission_key: Optional[str]  # None for steward_only / admin_or_steward_only actions
     summary_label: str  # human-readable noun-phrase for the action type
     approver_set_resolver: ApproverSetResolver
     payload_validator: PayloadValidator
@@ -60,6 +60,13 @@ class ActionDefinition:
     # Steward-only flag: action requires steward role rather than a
     # permission key. Used for org.delete per D5.
     steward_only: bool = False
+    # Phase 48 Stage 3 D12 — admin-or-steward gate. Used for
+    # ``org.governance_mode_revert`` which is meaningful only in
+    # admin_council mode (no steward seat) but should also be usable
+    # if an org somehow drifted back to single_steward state. Either
+    # tier can initiate; the approver-set resolver decides who
+    # ratifies (admins in council mode).
+    admin_or_steward_only: bool = False
 
 
 _REGISTRY: dict[str, ActionDefinition] = {}
@@ -139,6 +146,33 @@ def _stewards_of(db: Session, org: models.Organization) -> set[str]:
             continue
         role = db.get(models.Role, m.role_id)
         if role is not None and role.system_key == "steward":
+            out.add(m.user_id)
+    return out
+
+
+def _admins_of(db: Session, org: models.Organization) -> set[str]:
+    """Return user_ids of active members whose role.system_key=='admin'.
+
+    Phase 48 Stage 3 D12 — approver set for ``org.governance_mode_revert``.
+    The revert is admin-tier-ratified (council mode's governing tier),
+    not permission-gated, so the approver set is the admin(s) rather
+    than the holders of any specific permission key. Mirrors
+    ``_stewards_of`` for symmetry.
+    """
+    memberships = (
+        db.query(models.OrgMembership)
+        .filter(
+            models.OrgMembership.org_id == org.id,
+            models.OrgMembership.status == "active",
+        )
+        .all()
+    )
+    out: set[str] = set()
+    for m in memberships:
+        if m.role_id is None:
+            continue
+        role = db.get(models.Role, m.role_id)
+        if role is not None and role.system_key == "admin":
             out.add(m.user_id)
     return out
 
@@ -313,6 +347,47 @@ def _validate_org_delete(
         raise HTTPException(
             status_code=400,
             detail="org.delete requires 'confirmation' to equal the org slug",
+        )
+
+
+def _validate_governance_mode_revert(
+    payload: dict, db: Session, org: models.Organization, actor: models.User,
+) -> None:
+    """Phase 48 Stage 3 D12 — validate council→single_steward revert.
+
+    Payload must name a ``successor_user_id`` who is currently an
+    active admin in the org. That admin becomes the new Steward when
+    the action executes. The acting admin can name themselves as the
+    successor; that's the common case.
+    """
+    successor_user_id = payload.get("successor_user_id")
+    if not isinstance(successor_user_id, str) or not successor_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "org.governance_mode_revert requires "
+                "'successor_user_id' naming the admin who claims the "
+                "Steward seat."
+            ),
+        )
+    successor_membership = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == org.id,
+        models.OrgMembership.user_id == successor_user_id,
+        models.OrgMembership.status == "active",
+    ).first()
+    if successor_membership is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Successor must be an active member of this organization.",
+        )
+    role = (
+        db.get(models.Role, successor_membership.role_id)
+        if successor_membership.role_id else None
+    )
+    if role is None or role.system_key != "admin":
+        raise HTTPException(
+            status_code=400,
+            detail="Successor must currently hold the Admin role.",
         )
 
 
@@ -497,6 +572,67 @@ def execute_org_delete(db: Session, org: models.Organization) -> None:
     db.delete(org)
 
 
+def execute_governance_mode_revert(
+    db: Session,
+    org: models.Organization,
+    successor_user_id: str,
+    *,
+    actor_id: Optional[str] = None,
+    ip_address: Optional[str] = None,
+    via: str = "multi_admin_approval",
+) -> None:
+    """Phase 48 Stage 3 D12 — flip mode council→single_steward + promote
+    the named admin to Steward atomically.
+
+    Mirrors the body of ``routes.organizations.change_governance_mode``
+    for the council→single direction, but as a standalone callable so
+    the Phase 44 ratification executor can invoke it. ``via`` is
+    recorded in the audit details to distinguish the direct admin
+    revert (``via='direct'``) from the multi-admin-ratified revert
+    (``via='multi_admin_approval'``) — the elected-revert path uses
+    ``elections._flip_mode_to_single_steward`` directly (``via=
+    'elected_revert'``), not this function.
+    """
+    from audit_utils import log_audit_event
+    from governance import SINGLE_STEWARD, ADMIN_COUNCIL
+
+    successor_membership = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == org.id,
+        models.OrgMembership.user_id == successor_user_id,
+        models.OrgMembership.status == "active",
+    ).first()
+    if successor_membership is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Successor is no longer an active member of this organization.",
+        )
+    steward_role = db.query(models.Role).filter(
+        models.Role.org_id == org.id,
+        models.Role.system_key == "steward",
+    ).first()
+    if steward_role is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Org is missing the preset Steward role",
+        )
+    successor_membership.role_id = steward_role.id
+    org.governance_mode = SINGLE_STEWARD
+    log_audit_event(
+        db,
+        action="org.governance_mode_changed",
+        target_type="organization",
+        target_id=org.id,
+        actor_id=actor_id,
+        details={
+            "from": ADMIN_COUNCIL,
+            "to": SINGLE_STEWARD,
+            "via": via,
+            "promoted_user_id": successor_user_id,
+        },
+        ip_address=ip_address,
+    )
+
+
 def execute_role_permissions_edit(
     db: Session, org: models.Organization, changes: list[dict], actor_id: str,
 ) -> int:
@@ -630,6 +766,21 @@ def _exec_org_delete(
     execute_org_delete(db, org)
 
 
+def _exec_governance_mode_revert(
+    db: Session, action: "models.PendingAdminAction", actor_user: models.User,
+) -> None:
+    """Phase 48 Stage 3 D12 — ratified executor for council→single."""
+    org = db.get(models.Organization, action.org_id)
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    successor_user_id = action.payload["successor_user_id"]
+    execute_governance_mode_revert(
+        db, org, successor_user_id,
+        actor_id=actor_user.id if actor_user else None,
+        via="multi_admin_approval",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Preview builders — structured human-readable change descriptions.
 # Frontend uses ``label`` + ``summary`` + (optional) ``diff`` + ``drift``.
@@ -751,6 +902,31 @@ def _preview_org_delete(
     }
 
 
+def _preview_governance_mode_revert(
+    action: "models.PendingAdminAction", db: Session,
+) -> dict[str, Any]:
+    """Phase 48 Stage 3 D12 — preview for council→single revert."""
+    org = db.get(models.Organization, action.org_id)
+    name = org.name if org else "(unknown org)"
+    successor_id = action.payload.get("successor_user_id")
+    successor = db.get(models.User, successor_id) if isinstance(successor_id, str) else None
+    successor_name = successor.display_name if successor else "(unknown user)"
+    return {
+        "label": "Revert to single-steward governance",
+        "summary": (
+            f"Switch \"{name}\" from admin_council back to single_steward "
+            f"governance + promote {successor_name} to Steward"
+        ),
+        "destructive": "high",
+        "target": {"type": "organization", "id": action.org_id, "name": name},
+        "successor": {
+            "type": "user",
+            "id": successor_id,
+            "display_name": successor_name,
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Matrix snapshot + baseline-drift helpers
 # ---------------------------------------------------------------------------
@@ -846,4 +1022,21 @@ register(ActionDefinition(
     executor=_exec_org_delete,
     preview_builder=_preview_org_delete,
     steward_only=True,
+))
+
+# Phase 48 Stage 3 D12 — council→single_steward revert requires
+# multi-admin sign-off when Phase 44 approval is enabled. Approver
+# set is "any admin" (the council's governing tier in admin_council
+# mode), which makes the revert genuinely a council-wide decision.
+# The elected-revert path does NOT route through this — the election
+# itself is the multi-admin ratification.
+register(ActionDefinition(
+    action_type="org.governance_mode_revert",
+    required_permission_key=None,
+    summary_label="Revert to single-steward governance",
+    approver_set_resolver=_admins_of,
+    payload_validator=_validate_governance_mode_revert,
+    executor=_exec_governance_mode_revert,
+    preview_builder=_preview_governance_mode_revert,
+    admin_or_steward_only=True,
 ))

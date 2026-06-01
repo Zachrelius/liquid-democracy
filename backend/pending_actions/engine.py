@@ -152,6 +152,13 @@ def submit_pending_action(
                 status_code=403,
                 detail="Only the Steward can initiate this action",
             )
+    elif getattr(defn, "admin_or_steward_only", False):
+        from role_permissions import _user_role_system_key
+        if _user_role_system_key(db, initiator.id, org.id) not in ("admin", "steward"):
+            raise HTTPException(
+                status_code=403,
+                detail="Only an Admin or Steward can initiate this action",
+            )
     else:
         from role_permissions import has_permission
         if not has_permission(
