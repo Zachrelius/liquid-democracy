@@ -9,7 +9,7 @@
 
 ## Overall
 
-**SHIPPED + PROD-VERIFIED** (pending Chrome MCP). Phase 47 adds the **title/office** concept as a first-class, per-org primitive — decoupled from but optionally bound to platform roles, with public display and direct assignment. Built-in reconciliation (Steward/Admin as system titles per D6) is conservative: the role + `governance.py` floor + recovery + governance modes are **byte-for-byte unchanged**. Foundation for Phase 48 (elections fill a title).
+**SHIPPED + PROD-VERIFIED + HOTFIXED.** Phase 47 adds the **title/office** concept as a first-class, per-org primitive — decoupled from but optionally bound to platform roles, with public display and direct assignment. Built-in reconciliation (Steward/Admin as system titles per D6) is conservative: the role + `governance.py` floor + recovery + governance modes are **byte-for-byte unchanged**. Foundation for Phase 48 (elections fill a title).
 
 ---
 
@@ -43,8 +43,8 @@
 | Migration reversible + cycle test | Yes | **PASS** — `test_phase_47_upgrade_downgrade_upgrade_cycle` + `test_phase_47_backfills_system_titles_for_existing_orgs`. |
 | PG smoke `--mode both --prior-revision e8b4d6f31a92` | Yes | **PASS (all modes)** after the boolean-type fix in the backfill SQL. Both fresh-DB and upgrade-from-prior succeed. |
 | Frontend build + bundle hash | Yes | **PASS** — new bundle `index-CpX8ElRx.js`, CSS `index-tbFjDNYp.css`. PWA precache 23 entries / 2083.80 KiB. |
-| Browser verification (Chrome MCP, prod) | Yes | TBD post-deploy. Watch PWA cache per the 46/46a memory; expected workflow: define Council Member + President titles, assign Council Member to a member (no role change), assign President with steward binding (atomic swap), revoke President (floor blocks if only steward), verify held_titles on Members page. |
-| Bundle hash changed + backend non-502 post-deploy | Yes | TBD post-deploy. |
+| Browser verification (Chrome MCP, prod) | Yes | **Initial QA: T2 PASS + T3 PASS + T1/T4 FAIL (root-cause: existing orgs lacked the `title.manage` row_permissions rows)**. Hotfix #1 (`a9ea553`, backfill migration `f4d8a9c52312`) backfilled the grant for steward + admin roles on every existing org. **Post-hotfix verification PASS**: Steward of `/demo` now has 30 user_permissions including `title.manage` (was 29); `POST /api/orgs/demo/titles/<steward_id>/assignments` returns the expected 400 "System titles are derived from the member's role and cannot be assigned directly" (T4 — the system-title block fires correctly when the caller has the gate permission). Held_titles surface (T2) was always working; backend titles endpoint (T3) always working. |
+| Bundle hash changed + backend non-502 post-deploy | Yes | **PASS** — bundle `index-DBkO-try.js` → `index-CpX8ElRx.js`. Backend `/api/health` 200. Hotfix #1 redeploy succeeded; new migration `f4d8a9c52312` applied (added `title.manage` row to existing steward + admin role_permissions). |
 | Worker / start.sh | Not touched | **Confirmed worker untouched** — Phase 47 has no scheduled behavior; that's Phase 49 territory. No worker-touching check required. |
 
 ---
@@ -106,9 +106,22 @@ Orgs that never define a custom title behave **byte-for-byte as pre-47**:
 
 ---
 
+## Hotfix #1 narrative
+
+Prod QA found that on the live deploy, the Phase 47 F1 panel didn't render and B2/B3 endpoints returned 403 — even for the Steward. Root cause: PERMISSION_REGISTRY + DEFAULT_GRANTS includes `title.manage` (DEFAULT_GRANTS uses `set(ALL_PERMISSION_KEYS)` for steward + admin tiers), but `seed_default_roles_for_org` runs only at org-create time. For orgs created BEFORE Phase 47 — every org on prod — the `role_permissions` rows were seeded with the pre-47 grant set; they have no row for the new key, and `has_permission` returns False. F2 (held_titles display on the members roster) wasn't gated, so that always worked.
+
+This is structurally the same gap as Phase 45a hotfix #1 + Phase 46 hotfix #1, but at the *permission-grant* layer rather than the *response-schema* layer. The 46a `OrgOut` serializer-coverage test wouldn't have caught it (the test asserts the field is on the response; the field IS on the response — `user_permissions` exists, it just doesn't include `title.manage` because no DB row grants it). The structural lesson: adding a new permission key requires a backfill migration for existing orgs, not just registry registration.
+
+Hotfix #1 (`a9ea553`, migration `f4d8a9c52312`): backfills the `role_permissions` row for every steward + admin role across all orgs. Idempotent on re-run. Reversible downgrade drops the backfilled rows. Verified locally with both fresh-DB and an explicit backfill simulation. PG smoke PASS both modes. 22/22 Phase 47 tests still PASS. Prod post-hotfix: Steward of `/demo` now has `title.manage` in `user_permissions`; system-title assignment correctly returns 400.
+
+**Followup tech debt**: a generic "permission registry CI test" would catch this pattern at PR time — for each key in PERMISSION_REGISTRY that's in DEFAULT_GRANTS for steward + admin, assert that every existing role with system_key in (steward, admin) has a corresponding role_permissions row. This would be a fixture-level assertion run during the regression sweep, not a runtime check. Recommended for the next pass that touches the permission system.
+
+---
+
 ## Branch + commit state
 
 - Branch: `phase-47/org-titles` (left alive locally).
-- Commit on branch: TBD on commit.
-- Merge commit on master: TBD.
-- Pushed to origin/master: TBD.
+- Commit on branch: `90db542 Phase 47: Org titles / offices (decoupled from platform roles)`.
+- Merge commit on master: `f9fd8d0 Merge phase-47/org-titles: Phase 47 (Org Titles / Offices)`.
+- Hotfix #1 commit on master: `a9ea553 Phase 47 hotfix #1: backfill title.manage grants for existing orgs`.
+- Pushed to origin/master at `a9ea553`.
