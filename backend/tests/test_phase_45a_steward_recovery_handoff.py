@@ -339,7 +339,10 @@ class TestInactiveStewardRecovery:
         details = audit[0].details
         assert details["removed_user_id"] == steward.id
         assert details["successor_user_id"] == admin.id
-        assert details["had_other_stewards"] is False
+        # Phase 45b renamed had_other_stewards -> had_other_governors to
+        # cover both governance modes; default mode still emits the same
+        # semantic ("the org had no other governing-tier holders").
+        assert details["had_other_governors"] is False
 
     def test_inactive_steward_removal_with_nonactive_successor_rejected(
         self, client: TestClient, db: Session, auth_for,

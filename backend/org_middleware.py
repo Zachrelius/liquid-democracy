@@ -206,18 +206,28 @@ async def require_org_owner(
     org: Organization = Depends(get_org_context),
     membership: OrgMembership = Depends(require_org_membership),
 ):
-    """Verify current user is the Steward of the org (Phase 12 — renamed
-    from 'owner').
+    """Verify current user holds the org's top governing tier.
 
     Used by ``org.delete`` and ``org.transfer_stewardship`` — D4 hardcoded
     gates that bypass the configurable permission system.
+
+    Phase 45b D4 — mode-aware: in ``single_steward`` mode the gate is
+    Steward-only (pre-45b behavior); in ``admin_council`` mode the
+    governing tier is any admin (since there's no steward seat).
 
     Phase 38 B4 — transferability check runs here too. Steward transfer
     is locked-on at the helper level so this is effectively a no-op for
     legitimate Stewards, but the helper call is left in for symmetry +
     audit clarity.
     """
-    if membership_role_system_key(membership) != _STEWARD_SYSTEM_KEY:
+    actor_role = membership_role_system_key(membership)
+    # Build allowed-roles set from the org's governance mode.
+    allowed: set[str] = {_STEWARD_SYSTEM_KEY}
+    if org is not None:
+        from governance import mode_of, ADMIN_COUNCIL
+        if mode_of(org) == ADMIN_COUNCIL:
+            allowed = {"admin"}
+    if actor_role not in allowed:
         raise HTTPException(
             status_code=403,
             detail="You do not have permission to perform this action in this organization.",

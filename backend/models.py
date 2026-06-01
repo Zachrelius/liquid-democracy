@@ -77,6 +77,22 @@ class Organization(Base):
     # drives the directory cards and the per-org demo-login validation.
     # Real orgs leave NULL.
     personas: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # Phase 45b — per-org governance mode (B1). Two values:
+    #   - ``single_steward`` (default; today's behavior): exactly one
+    #     Steward seat always exists; OWNER_ONLY_KEYS + STEWARD_LOCKED
+    #     gates resolve to the Steward; cardinality floor is "≥1 active
+    #     steward" (the Phase 45a invariant).
+    #   - ``admin_council`` (opt-in): no Steward seat required; governing
+    #     authority is the admin tier; OWNER_ONLY_KEYS + STEWARD_LOCKED
+    #     gates resolve to ANY admin (D4/D5); cardinality floor is "≥1
+    #     active admin" (D6).
+    # Default + server_default 'single_steward' so untouched orgs +
+    # migrated rows behave byte-for-byte as Phase 45a left them.
+    governance_mode: Mapped[str] = mapped_column(
+        String(length=32), nullable=False,
+        default="single_steward", server_default="single_steward",
+        index=True,
+    )
     # Phase 23 (Amendment F) — Phase 24 branding prep. All NULL in Phase 23;
     # populated in Phase 24 once the asset pipeline lands. Hex colors are
     # 7-char strings like "#3A7CA5"; ``logo_url`` is a path under the static

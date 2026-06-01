@@ -1475,6 +1475,9 @@ class OrgOut(BaseModel):
     # returning endpoint emits the same shape. All-null fields when the
     # org hasn't configured branding.
     branding: BrandingOut = BrandingOut()
+    # Phase 45b — per-org governance mode. Defaults to 'single_steward'
+    # so untouched orgs surface the today-behavior value.
+    governance_mode: str = "single_steward"
     model_config = ConfigDict(from_attributes=True)
 
 
