@@ -88,19 +88,52 @@ export default function OrgTitlesPanel({ orgSlug }) {
   }
 
   async function handleOpenElection(title) {
+    // Phase 48 Stage 2 — multi-holder titles can elect num_winners > 1;
+    // single-holder titles are always num_winners=1.
+    const isMulti = title.cardinality_mode === 'multi';
+    let numWinners = 1;
+    if (isMulti) {
+      const raw = prompt(
+        `Open election for "${title.name}" (multi-holder).\n\n` +
+        'How many seats are up for election?',
+        '1',
+      );
+      if (raw == null) return;
+      numWinners = parseInt(raw, 10);
+      if (!Number.isFinite(numWinners) || numWinners < 1) {
+        toast.error('num_winners must be a positive integer');
+        return;
+      }
+    }
+    let slateMode = 'fill_vacancies';
+    if (isMulti) {
+      const slate = prompt(
+        'Slate mode: type "refresh" to wipe current holders, ' +
+        'or anything else to fill vacancies (add to existing).',
+        'fill',
+      );
+      if (slate == null) return;
+      slateMode = slate.toLowerCase().startsWith('refresh')
+        ? 'refresh_slate' : 'fill_vacancies';
+    }
     if (!confirm(
       `Open an election for "${title.name}"?\n\n` +
+      `Seats: ${numWinners}\n` +
+      `Slate mode: ${slateMode}\n\n` +
       'The election proposal will enter the nomination window. ' +
-      'Members can self-nominate; voting begins when an admin advances ' +
-      'the proposal to voting.'
+      'Members can self-nominate; voting begins when an admin ' +
+      'advances the proposal to voting.'
     )) return;
     try {
       const proposal = await api.post(
         `/api/orgs/${orgSlug}/elections`,
-        { title_id: title.id },
+        {
+          title_id: title.id,
+          num_winners: numWinners,
+          slate_mode: slateMode,
+        },
       );
       toast.success(`Election opened for "${title.name}"`);
-      // Navigate to the new proposal so the admin can manage it.
       window.location.href = `/${orgSlug}/proposals/${proposal.id}`;
     } catch (e) {
       toast.error(e.message || 'Failed to open election');
