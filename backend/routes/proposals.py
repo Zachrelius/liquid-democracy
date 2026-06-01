@@ -1997,6 +1997,28 @@ def advance_proposal(
             proposal=proposal,
             org=org_for_advance,
         )
+        # Phase 48 Stage 2 — lock the candidate set into ProposalOption
+        # rows so the existing tally engine (RCV / approval) can resolve
+        # winners over candidate-keyed options. ``option.label`` carries
+        # the candidate's user_id so ``finalize_election`` maps tally
+        # winners back to users. Idempotent — only fires if no options
+        # exist yet (avoids duplicating if advance is somehow retried).
+        if (
+            getattr(proposal, "is_election", False)
+            and not proposal.options
+        ):
+            from elections import active_candidacies
+            candidates = active_candidacies(db, proposal.id)
+            for i, c in enumerate(candidates):
+                user = db.get(models.User, c.user_id)
+                display = user.display_name if user else c.user_id
+                db.add(models.ProposalOption(
+                    proposal_id=proposal.id,
+                    label=c.user_id,
+                    description=display,
+                    display_order=i,
+                ))
+            db.flush()
     elif next_status == "passed":
         tally = delegation_engine.compute_tally(proposal, db)
         if proposal.voting_method == "approval":

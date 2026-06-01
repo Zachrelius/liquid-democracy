@@ -214,45 +214,13 @@ def finalize_election(
             "title_id": title.id,
         }
 
-    if len(candidates) == 1:
-        winner_id = candidates[0].user_id
-    else:
-        # Multi-candidate single-winner: use the existing tally.
-        winner_id = _resolve_single_winner(db, proposal, candidates)
-        if winner_id is None:
-            log_audit_event(
-                db,
-                action="election.resolved",
-                target_type="proposal",
-                target_id=proposal.id,
-                actor_id=actor_id,
-                details={
-                    "outcome": "tie_unresolved_or_no_winner",
-                    "title_id": title.id,
-                },
-                ip_address=ip_address,
-            )
-            return {
-                "resolved": "failed",
-                "reason": "tally_did_not_produce_winner",
-            }
-
-    # Apply the title via the Phase 47 assignment path (which routes
-    # bound-role changes through the 45a/45b machinery — including
-    # the active-steward atomic swap for steward-binding titles).
-    winner_user = db.get(models.User, winner_id)
-    if winner_user is None or not winner_user.is_active:
-        return {"resolved": "failed", "reason": "winner_inactive"}
-
-    try:
-        _apply_election_winner(
-            db, org, title, winner_user,
-            actor_id=actor_id, ip_address=ip_address,
-        )
-    except HTTPException as e:
-        # Per D7 the assignment may reject (e.g. council-mode
-        # steward-binding) — surface it as an election failure rather
-        # than crashing the close path.
+    num_winners = max(1, proposal.num_winners or 1)
+    # Phase 48 Stage 2 — multi-winner resolution. For num_winners == 1
+    # this reduces to the Stage 1 path (single winner). For N > 1 the
+    # RCV/STV tally produces N option-id winners; we map them back to
+    # user_ids via option.label.
+    winner_ids = _resolve_winners(db, proposal, candidates, num_winners)
+    if not winner_ids:
         log_audit_event(
             db,
             action="election.resolved",
@@ -260,14 +228,63 @@ def finalize_election(
             target_id=proposal.id,
             actor_id=actor_id,
             details={
-                "outcome": "assignment_rejected",
+                "outcome": "tie_unresolved_or_no_winner",
                 "title_id": title.id,
-                "winner_id": winner_id,
-                "detail": str(e.detail),
             },
             ip_address=ip_address,
         )
-        return {"resolved": "failed", "reason": e.detail}
+        return {
+            "resolved": "failed",
+            "reason": "tally_did_not_produce_winner",
+        }
+
+    # Phase 48 Stage 2 — D10 slate mode. ``refresh_slate`` removes
+    # current holders of the target title BEFORE installing winners
+    # (whole-slate refresh). The floor checks happen inside the
+    # ``revoke_title`` / ``_check_revoke_floor`` path; if a refresh
+    # would violate the floor we surface a failure and leave the
+    # election unresolved. ``fill_vacancies`` (default) just adds.
+    slate_mode = getattr(proposal, "election_slate_mode", "fill_vacancies")
+    if slate_mode == "refresh_slate":
+        try:
+            _refresh_slate_for_title(
+                db, org, title, winner_ids,
+                actor_id=actor_id, ip_address=ip_address,
+            )
+        except HTTPException as e:
+            log_audit_event(
+                db,
+                action="election.resolved",
+                target_type="proposal",
+                target_id=proposal.id,
+                actor_id=actor_id,
+                details={
+                    "outcome": "slate_refresh_rejected",
+                    "title_id": title.id,
+                    "detail": str(e.detail),
+                },
+                ip_address=ip_address,
+            )
+            return {"resolved": "failed", "reason": e.detail}
+
+    # Install each winner.
+    installed: list[str] = []
+    failures: list[dict] = []
+    for winner_id in winner_ids:
+        winner_user = db.get(models.User, winner_id)
+        if winner_user is None or not winner_user.is_active:
+            failures.append({"user_id": winner_id, "reason": "winner_inactive"})
+            continue
+        try:
+            _apply_election_winner(
+                db, org, title, winner_user,
+                actor_id=actor_id, ip_address=ip_address,
+            )
+            installed.append(winner_id)
+        except HTTPException as e:
+            failures.append({
+                "user_id": winner_id, "reason": str(e.detail),
+            })
 
     log_audit_event(
         db,
@@ -276,19 +293,22 @@ def finalize_election(
         target_id=proposal.id,
         actor_id=actor_id,
         details={
-            "outcome": "winner",
+            "outcome": "winners" if installed else "no_winner_installed",
             "title_id": title.id,
             "title_name": title.name,
-            "winner_id": winner_id,
+            "winner_ids": installed,
+            "failed_assignments": failures,
+            "slate_mode": slate_mode,
             "candidate_count": len(candidates),
-            "auto_win_uncontested": len(candidates) == 1,
+            "auto_win_uncontested": len(candidates) <= num_winners,
         },
         ip_address=ip_address,
     )
     return {
-        "resolved": "winner",
+        "resolved": "winner" if installed else "failed",
         "title_id": title.id,
-        "winner_id": winner_id,
+        "winner_ids": installed,
+        "failures": failures,
     }
 
 
@@ -350,6 +370,149 @@ def _apply_election_winner(
             },
             ip_address=ip_address,
         )
+
+
+def _resolve_winners(
+    db: Session,
+    proposal: models.Proposal,
+    candidates: list[models.ElectionCandidacy],
+    num_winners: int,
+) -> list[str]:
+    """Phase 48 Stage 2 multi-winner resolution. Reuses the existing
+    tally engine (binary / approval / ranked_choice) to derive winners
+    over ProposalOption rows whose ``label`` is the candidate user_id.
+
+    Auto-win shortcut: if there are at most ``num_winners`` candidates
+    they all win uncontested (D6 generalization). Otherwise we call
+    the tally engine; for RCV/STV the engine populates
+    ``tally.winners`` with up to ``num_winners`` option_ids.
+
+    Defensive fallback: if the tally errors or returns no winners,
+    fall back to the first ``num_winners`` declared candidates (Stage 1
+    pattern carried forward — keeps the load-bearing role-assignment
+    behavior testable).
+    """
+    # Auto-win shortcut: candidates <= num_winners → all win.
+    if len(candidates) <= num_winners:
+        return [c.user_id for c in candidates]
+
+    candidate_ids = {c.user_id for c in candidates}
+    try:
+        from delegation_engine import engine as delegation_engine
+        tally = delegation_engine.compute_tally(proposal, db)
+        winners = list(getattr(tally, "winners", None) or [])
+        if winners:
+            options_by_id = {o.id: o for o in proposal.options}
+            mapped: list[str] = []
+            for w in winners:
+                opt = options_by_id.get(w)
+                if opt is None:
+                    continue
+                if opt.label in candidate_ids and opt.label not in mapped:
+                    mapped.append(opt.label)
+                if len(mapped) >= num_winners:
+                    break
+            if mapped:
+                return mapped
+    except Exception:
+        pass
+
+    # Defensive fallback: take the first num_winners declared.
+    return [c.user_id for c in candidates[:num_winners]]
+
+
+def _refresh_slate_for_title(
+    db: Session,
+    org: models.Organization,
+    title: models.OrgTitle,
+    incoming_winner_ids: list[str],
+    *,
+    actor_id: Optional[str],
+    ip_address: Optional[str],
+) -> None:
+    """Phase 48 Stage 2 D10 — refresh_slate removes the current holders
+    of ``title`` before the new winners are installed. For custom
+    titles, this iterates ``OrgTitleAssignment`` rows. For system
+    titles (Steward, Admin) the "current holders" are derived from
+    role; refresh_slate for the Admin system title means demoting
+    all current admins not in the winner set — a destructive action
+    that respects the council-mode floor (cannot leave zero admins).
+
+    Winners that are already current holders are KEPT — they're a
+    no-op rather than a churn-then-restore.
+    """
+    if title.is_system:
+        _refresh_slate_for_system_title(
+            db, org, title, incoming_winner_ids,
+            actor_id=actor_id, ip_address=ip_address,
+        )
+        return
+
+    # Custom title: remove existing assignments not in the winners.
+    from routes.org_titles import _check_revoke_floor
+    incoming = set(incoming_winner_ids)
+    existing = (
+        db.query(models.OrgTitleAssignment)
+        .filter(models.OrgTitleAssignment.title_id == title.id)
+        .all()
+    )
+    for row in existing:
+        if row.user_id in incoming:
+            continue  # Already a holder + still winning → no-op.
+        if title.bound_role:
+            _check_revoke_floor(db, org, row.user_id, title.bound_role)
+        db.delete(row)
+    db.flush()
+
+
+def _refresh_slate_for_system_title(
+    db: Session,
+    org: models.Organization,
+    title: models.OrgTitle,
+    incoming_winner_ids: list[str],
+    *,
+    actor_id: Optional[str],
+    ip_address: Optional[str],
+) -> None:
+    """Refresh the system title's role-derived holders. Demotes all
+    users currently holding ``title.bound_role`` who are NOT in the
+    incoming winner set. Floor-respecting via the existing
+    ``_check_revoke_floor`` gate."""
+    from routes.org_titles import _check_revoke_floor
+    if title.bound_role is None:
+        return  # Nothing to refresh on a label-only system title.
+    incoming = set(incoming_winner_ids)
+    # Find current holders of the bound role.
+    memberships = (
+        db.query(models.OrgMembership)
+        .filter(
+            models.OrgMembership.org_id == org.id,
+            models.OrgMembership.status == "active",
+        )
+        .all()
+    )
+    member_role_id = None
+    role_row = db.query(models.Role).filter(
+        models.Role.org_id == org.id,
+        models.Role.system_key == "member",
+    ).first()
+    if role_row is not None:
+        member_role_id = role_row.id
+    for m in memberships:
+        if m.user_id in incoming:
+            continue
+        if m.role_id is None:
+            continue
+        role = db.get(models.Role, m.role_id)
+        if role is None or role.system_key != title.bound_role:
+            continue
+        # Floor check first — block if revoking would violate the
+        # mode floor.
+        _check_revoke_floor(db, org, m.user_id, title.bound_role)
+        # Demote to member.
+        if member_role_id is not None:
+            m.role_id = member_role_id
+    db.flush()
 
 
 def _resolve_single_winner(

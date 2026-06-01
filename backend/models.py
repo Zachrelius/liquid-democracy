@@ -633,6 +633,15 @@ class Proposal(Base):
     election_title_id: Mapped[Optional[str]] = mapped_column(
         String, ForeignKey("org_titles.id"), nullable=True, index=True,
     )
+    # Phase 48 Stage 2 — D10 slate behavior. ``refresh_slate`` removes
+    # all current holders of the target title before installing the
+    # winners (whole-slate refresh); ``fill_vacancies`` adds the winners
+    # alongside existing holders. Default ``fill_vacancies`` keeps
+    # behavior closest to a non-disruptive single-winner election.
+    election_slate_mode: Mapped[str] = mapped_column(
+        String(length=16), nullable=False,
+        default="fill_vacancies", server_default="fill_vacancies",
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now, nullable=False)
 

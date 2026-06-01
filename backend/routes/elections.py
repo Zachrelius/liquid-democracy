@@ -34,6 +34,14 @@ class _OpenElectionBody(BaseModel):
     body: str = ""
     deliberation_days: float = 3.0  # Nomination window
     voting_days: float = 7.0
+    # Phase 48 Stage 2 — multi-winner + slate config (D9 + D10).
+    # voting_method defaults to 'ranked_choice' so the existing
+    # RCV/STV engine produces winners over per-candidate options.
+    # num_winners defaults to 1 (single-holder election); the FE
+    # picks higher values when the target title is multi-holder.
+    voting_method: str = "ranked_choice"
+    num_winners: int = 1
+    slate_mode: str = "fill_vacancies"  # or 'refresh_slate'
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +155,32 @@ def open_election(
             ),
         )
 
+    # Validate Stage 2 inputs.
+    if body.voting_method not in ("binary", "approval", "ranked_choice"):
+        raise HTTPException(
+            status_code=400,
+            detail="voting_method must be 'binary', 'approval', or 'ranked_choice'",
+        )
+    if body.num_winners < 1:
+        raise HTTPException(
+            status_code=400,
+            detail="num_winners must be >= 1",
+        )
+    if body.slate_mode not in ("fill_vacancies", "refresh_slate"):
+        raise HTTPException(
+            status_code=400,
+            detail="slate_mode must be 'fill_vacancies' or 'refresh_slate'",
+        )
+    # Multi-winner is only meaningful for multi-holder titles.
+    if body.num_winners > 1 and title.cardinality_mode == "single":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Title '{title.name}' is single-holder; num_winners "
+                "must be 1."
+            ),
+        )
+
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     proposal = models.Proposal(
         title=f"Election: {title.name}",
@@ -156,8 +190,8 @@ def open_election(
         ),
         author_id=current_user.id,
         org_id=org.id,
-        voting_method="binary",
-        num_winners=1,
+        voting_method=body.voting_method,
+        num_winners=body.num_winners,
         status="deliberation",
         deliberation_start=now,
         deliberation_days=body.deliberation_days,
@@ -166,6 +200,7 @@ def open_election(
         quorum_threshold=org.settings.get("default_quorum_threshold", 0.40) if org.settings else 0.40,
         is_election=True,
         election_title_id=title.id,
+        election_slate_mode=body.slate_mode,
     )
     db.add(proposal)
     db.flush()
