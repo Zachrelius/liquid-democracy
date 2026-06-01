@@ -211,7 +211,9 @@ def _build_linked_polises(
 
 
 def _build_proposal_out(
-    proposal: models.Proposal, db: Session,
+    proposal: models.Proposal,
+    db: Session,
+    viewer_id: Optional[str] = None,
 ) -> schemas.ProposalOut:
     """Build the ProposalOut payload.
 
@@ -298,7 +300,35 @@ def _build_proposal_out(
         show_votes_during_deliberation_overridable=_svd.overridable,
         effective_max_write_ins=resolve_max_write_ins(proposal, _org),
         effective_edit_lockout_fraction=resolve_edit_lockout_fraction(proposal, _org),
+        # Phase 46 — cosign-gated proposal surface (B3/B4). Always
+        # safe to read: getattr-with-defaults on non-cosign-gated
+        # proposals (the column is False/null). signature_count is a
+        # cheap COUNT(*) — for non-gated proposals it returns 0.
+        is_cosign_gated=bool(getattr(proposal, "is_cosign_gated", False)),
+        cosign_threshold_snapshot=getattr(proposal, "cosign_threshold_snapshot", None),
+        cosign_expires_at=getattr(proposal, "cosign_expires_at", None),
+        cosign_signature_count=_cosign_signature_count(proposal, db),
+        viewer_has_cosigned=_viewer_has_cosigned(proposal, db, viewer_id),
     )
+
+
+def _cosign_signature_count(proposal: models.Proposal, db: Session) -> int:
+    if not getattr(proposal, "is_cosign_gated", False):
+        return 0
+    from cosign import signature_count
+    return signature_count(db, proposal.id)
+
+
+def _viewer_has_cosigned(
+    proposal: models.Proposal, db: Session, viewer_id: Optional[str],
+) -> Optional[bool]:
+    if viewer_id is None or not getattr(proposal, "is_cosign_gated", False):
+        return None
+    row = db.query(models.ProposalCosignature).filter(
+        models.ProposalCosignature.proposal_id == proposal.id,
+        models.ProposalCosignature.user_id == viewer_id,
+    ).first()
+    return row is not None
 
 
 def _emit_polis_link_diff_audits(
@@ -866,7 +896,9 @@ def get_proposal(
     if not current_user.is_admin:
         if current_user.id not in _eligible_viewers_for_proposal(db, proposal):
             raise HTTPException(status_code=404, detail="Proposal not found")
-    return _build_proposal_out(proposal, db)
+    # Phase 46 — thread viewer_id so viewer_has_cosigned populates on
+    # detail GET (used by the Sign/Withdraw UI gate).
+    return _build_proposal_out(proposal, db, viewer_id=current_user.id)
 
 
 @router.patch("/{proposal_id}", response_model=schemas.ProposalOut)
@@ -1991,6 +2023,226 @@ def advance_proposal(
             pass
 
     return _build_proposal_out(proposal, db)
+
+
+# ---------------------------------------------------------------------------
+# Phase 46 — Cosign endpoints
+# ---------------------------------------------------------------------------
+
+def _advance_cosign_to_voting(
+    db: Session,
+    proposal: models.Proposal,
+    background_tasks: BackgroundTasks,
+    actor_id: str,
+    ip_address: Optional[str],
+) -> None:
+    """Run the deliberation → voting transition triggered by reaching the
+    cosign threshold. Reuses the existing advance machinery so downstream
+    behavior is indistinguishable from a manual advance: voting_end
+    computed via ``_compute_voting_end_at_advance``, ``proposal.entered_voting``
+    notifications fired, ``proposal.status_changed`` audit emitted.
+    """
+    if proposal.status != "deliberation":
+        return  # Defensive: already advanced or in a terminal state.
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    org_for_advance = (
+        db.get(models.Organization, proposal.org_id)
+        if proposal.org_id else None
+    )
+    proposal.voting_start = now
+    proposal.voting_end = _compute_voting_end_at_advance(
+        voting_start=now,
+        body_voting_end=None,
+        proposal=proposal,
+        org=org_for_advance,
+    )
+    old_status = proposal.status
+    proposal.status = "voting"
+    log_audit_event(
+        db,
+        action="proposal.status_changed",
+        target_type="proposal",
+        target_id=proposal.id,
+        actor_id=actor_id,
+        details={
+            "proposal_id": proposal.id,
+            "old_status": old_status,
+            "new_status": "voting",
+            "trigger": "cosign_threshold_met",
+        },
+        ip_address=ip_address,
+    )
+    log_audit_event(
+        db,
+        action="proposal.cosign_threshold_met",
+        target_type="proposal",
+        target_id=proposal.id,
+        actor_id=actor_id,
+        details={
+            "proposal_id": proposal.id,
+            "threshold": proposal.cosign_threshold_snapshot,
+            "voting_start": now.isoformat(),
+            "voting_end": proposal.voting_end.isoformat(),
+        },
+        ip_address=ip_address,
+    )
+    try:
+        _emit_proposal_status_notifications(
+            db, background_tasks, proposal,
+            old_status=old_status, new_status="voting",
+            actor_id=actor_id,
+        )
+    except Exception:  # noqa: BLE001
+        log.exception(
+            "cosign auto-advance: emit_proposal_status_notifications failed "
+            "for proposal %s; continuing (notification failure must not "
+            "sink the advance).",
+            proposal.id,
+        )
+
+
+def _require_cosign_gathering(proposal: models.Proposal) -> None:
+    """Raise 400 unless the proposal is currently in cosign gathering
+    (cosign-gated AND status=='deliberation')."""
+    if not getattr(proposal, "is_cosign_gated", False):
+        raise HTTPException(
+            status_code=400,
+            detail="This proposal is not cosign-gated.",
+        )
+    if proposal.status != "deliberation":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Proposal is no longer gathering signatures "
+                f"(status='{proposal.status}')."
+            ),
+        )
+
+
+def _require_active_org_member(
+    db: Session, user_id: str, proposal: models.Proposal,
+) -> None:
+    """Raise 403 unless the user has an active OrgMembership on the
+    proposal's org (cosigning is org-scoped per D4)."""
+    if proposal.org_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Cosign is only supported on org-scoped proposals.",
+        )
+    membership = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == proposal.org_id,
+        models.OrgMembership.user_id == user_id,
+        models.OrgMembership.status == "active",
+    ).first()
+    if membership is None:
+        raise HTTPException(
+            status_code=403,
+            detail="You must be an active member of this organization to cosign.",
+        )
+
+
+@router.post("/{proposal_id}/cosign", response_model=schemas.ProposalOut)
+def cosign_proposal(
+    proposal_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 46 B4 — sign a cosign-gated proposal.
+
+    Idempotent: re-signing is a no-op (returns 200 with the unchanged
+    count). If this signature pushes the count to the threshold, the
+    proposal auto-advances to voting in the same transaction.
+    """
+    proposal = _proposal_or_404(proposal_id, db)
+    _require_cosign_gathering(proposal)
+    _require_active_org_member(db, current_user.id, proposal)
+
+    from cosign import add_signature, threshold_met
+
+    added, new_count = add_signature(db, proposal, current_user.id)
+    ip = request.client.host if request.client else None
+
+    if added:
+        log_audit_event(
+            db,
+            action="proposal.cosigned",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=current_user.id,
+            details={
+                "proposal_id": proposal.id,
+                "new_count": new_count,
+                "threshold": proposal.cosign_threshold_snapshot,
+            },
+            ip_address=ip,
+        )
+
+    # Threshold check — fires whenever the count reaches threshold,
+    # including idempotent re-signs that happen to coincide (defensive).
+    if threshold_met(db, proposal):
+        _advance_cosign_to_voting(
+            db, proposal, background_tasks,
+            actor_id=current_user.id, ip_address=ip,
+        )
+
+    db.commit()
+    db.refresh(proposal)
+    return _build_proposal_out(proposal, db, viewer_id=current_user.id)
+
+
+@router.delete("/{proposal_id}/cosign", response_model=schemas.ProposalOut)
+def withdraw_cosign(
+    proposal_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 46 B4 — withdraw your signature from a cosign-gated proposal.
+
+    The author cannot withdraw their implicit first signature (D4); they
+    must withdraw the proposal itself (the existing /advance or PATCH
+    status route). Other members may withdraw freely while the proposal
+    is still gathering; the count decrements, which can drop it below
+    threshold.
+    """
+    proposal = _proposal_or_404(proposal_id, db)
+    _require_cosign_gathering(proposal)
+    _require_active_org_member(db, current_user.id, proposal)
+
+    if current_user.id == proposal.author_id:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The author cannot withdraw their implicit signature; "
+                "withdraw the proposal instead."
+            ),
+        )
+
+    from cosign import remove_signature
+
+    removed, new_count = remove_signature(db, proposal, current_user.id)
+    ip = request.client.host if request.client else None
+
+    if removed:
+        log_audit_event(
+            db,
+            action="proposal.cosign_withdrawn",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=current_user.id,
+            details={
+                "proposal_id": proposal.id,
+                "new_count": new_count,
+                "threshold": proposal.cosign_threshold_snapshot,
+            },
+            ip_address=ip,
+        )
+
+    db.commit()
+    db.refresh(proposal)
+    return _build_proposal_out(proposal, db, viewer_id=current_user.id)
 
 
 @router.get("/{proposal_id}/results", response_model=schemas.ProposalResults)

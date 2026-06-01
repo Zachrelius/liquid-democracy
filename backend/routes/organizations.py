@@ -501,7 +501,16 @@ def update_organization(
         org.description = body.description
     if body.join_policy is not None:
         org.join_policy = body.join_policy
+    if body.proposal_creation_mode is not None:
+        # Phase 46 — value is validated by the Pydantic field validator.
+        org.proposal_creation_mode = body.proposal_creation_mode
     if body.settings is not None:
+        # Phase 46 — validate cosign config shape before merge so a bad
+        # value fails the whole PATCH cleanly (matches the existing
+        # default-threshold / tie_resolution validators below).
+        if "cosign" in body.settings:
+            from cosign import normalize_config_input
+            body.settings["cosign"] = normalize_config_input(body.settings["cosign"])
         from sustained_majority_service import diff_stable_result_settings
         # Phase 12.5 — validate default-threshold keys (F4 backend support).
         # Range 0.0-1.0 inclusive; no hard floor per spec Q2 decision. The
@@ -2573,17 +2582,41 @@ def create_org_proposal(
         if requested_vote_days is not None else default_vote_days
     )
 
+    # Phase 46 — cosign-gating dispatch (B3). For parent-org-scoped
+    # proposals only (sub-org-scoped proposals retain their own
+    # creation rules per Phase 8.5). If the org is in cosign_required
+    # mode and the caller is member-tier (lacks proposal.advance_phase),
+    # the proposal enters cosign gathering; in admin_only mode a
+    # member-tier caller is rejected here. Holders of advance_phase
+    # create normally regardless of mode. Sub-org-scoped proposals
+    # skip this dispatch.
+    from cosign import gate_proposal_creation, init_cosign_gated_proposal
+    cosign_decision = "direct"
+    if target_sub_org is None:
+        cosign_decision = gate_proposal_creation(db, current_user.id, org)
+
     # Phase 25 B2 — 0-day deliberation skip: when the effective
     # deliberation duration resolves to zero (either an explicit
     # per-proposal override or the org default), create the proposal
     # directly in `voting` status. Single audit event (draft -> voting)
     # rather than two-at-the-same-timestamp events; the user's intent is
     # "skip deliberation," not "deliberate for zero seconds."
+    # Cosign-gated proposals always enter `deliberation` (the gathering
+    # phase reuses deliberation), so they bypass the 0-day skip.
     skip_deliberation = (
-        effective_delib_days is not None and float(effective_delib_days) == 0.0
+        cosign_decision != "cosign_gated"
+        and effective_delib_days is not None
+        and float(effective_delib_days) == 0.0
     )
-    initial_status = "voting" if skip_deliberation else "draft"
-    now_at_create = _now() if skip_deliberation else None
+    if cosign_decision == "cosign_gated":
+        initial_status = "deliberation"
+        now_at_create = _now()
+    elif skip_deliberation:
+        initial_status = "voting"
+        now_at_create = _now()
+    else:
+        initial_status = "draft"
+        now_at_create = None
 
     proposal = models.Proposal(
         title=body.title,
@@ -2595,7 +2628,7 @@ def create_org_proposal(
         num_winners=body.num_winners,
         status=initial_status,
         deliberation_start=now_at_create,
-        voting_start=now_at_create,
+        voting_start=now_at_create if skip_deliberation else None,
         voting_end=(
             now_at_create + timedelta(days=float(effective_vote_days))
             if skip_deliberation else None
@@ -2622,6 +2655,25 @@ def create_org_proposal(
     )
     db.add(proposal)
     db.flush()
+
+    # Phase 46 B3 — stamp cosign markers + insert author's implicit first
+    # signature (D3) when the proposal entered gathering state.
+    if cosign_decision == "cosign_gated":
+        init_cosign_gated_proposal(db, proposal, org)
+        log_audit_event(
+            db,
+            action="proposal.cosign_created",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=current_user.id,
+            details={
+                "proposal_id": proposal.id,
+                "org_id": org.id,
+                "threshold": proposal.cosign_threshold_snapshot,
+                "expires_at": proposal.cosign_expires_at.isoformat(),
+            },
+            ip_address=request.client.host if request.client else None,
+        )
 
     if skip_deliberation:
         # Single audit event (draft -> voting) for the skip path. Per

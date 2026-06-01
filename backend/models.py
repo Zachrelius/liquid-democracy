@@ -77,6 +77,23 @@ class Organization(Base):
     # drives the directory cards and the per-org demo-login validation.
     # Real orgs leave NULL.
     personas: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # Phase 46 — per-org proposal-creation gating tier (B1). Three values:
+    #   - ``open`` (default; today's behavior): members with proposal.create
+    #     create proposals that go live immediately.
+    #   - ``cosign_required``: a member-tier creator's proposal enters the
+    #     cosign-gathering state (deliberation status + is_cosign_gated=True)
+    #     and only advances to voting when the cosign threshold is met.
+    #     Admins / users holding proposal.create above the baseline create
+    #     normally (mode is a floor for ordinary members, not a ceiling).
+    #   - ``admin_only``: only proposal.create-holders can create.
+    # Default + server_default 'open' so untouched orgs behave byte-for-byte
+    # as pre-46. Cosign threshold + expiry-window live in
+    # ``Organization.settings.cosign`` per D1/D2.
+    proposal_creation_mode: Mapped[str] = mapped_column(
+        String(length=32), nullable=False,
+        default="open", server_default="open",
+        index=True,
+    )
     # Phase 45b — per-org governance mode (B1). Two values:
     #   - ``single_steward`` (default; today's behavior): exactly one
     #     Steward seat always exists; OWNER_ONLY_KEYS + STEWARD_LOCKED
@@ -514,6 +531,12 @@ class Proposal(Base):
         Enum(
             "draft", "deliberation", "voting", "passed", "failed",
             "withdrawn", "unresolved",
+            # Phase 46 — cosign-gated proposals whose gathering window
+            # elapsed without meeting the signature threshold land in
+            # this terminal state. Distinct from 'failed' so analytics
+            # and the FE can tell "people voted no" apart from "the
+            # petition never got off the ground."
+            "expired_unsigned",
             name="proposal_status",
         ),
         nullable=False,
@@ -579,6 +602,24 @@ class Proposal(Base):
     edit_lockout_fraction: Mapped[Optional[float]] = mapped_column(
         Float, nullable=True,
     )
+    # Phase 46 — cosign-gated proposal markers (B2/B3). Set when the
+    # creating org is in ``cosign_required`` mode AND the creator is a
+    # member-tier user (no proposal.create permission). The proposal
+    # enters ``deliberation`` status with these set; signatures accumulate
+    # via ``proposal_cosignatures`` rows; reaching the threshold advances
+    # to voting via the existing /advance machinery; the worker closes
+    # un-met proposals at ``cosign_expires_at`` into ``expired_unsigned``.
+    # ``cosign_threshold_snapshot`` is captured at create time so later
+    # org-config changes don't move the goalposts mid-petition (D3).
+    is_cosign_gated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0",
+    )
+    cosign_threshold_snapshot: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True,
+    )
+    cosign_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True, index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now, nullable=False)
 
@@ -605,10 +646,50 @@ class Proposal(Base):
         cascade="all, delete-orphan",
         order_by="ProposalRevision.edited_at",
     )
+    # Phase 46 — cosignature rows (B2). Cascade-delete so withdrawing a
+    # cosign-gated proposal cleans up the audit floor too. Ordered by
+    # ``created_at`` so the FE can render a chronological list.
+    cosignatures: Mapped[list["ProposalCosignature"]] = relationship(
+        "ProposalCosignature", back_populates="proposal",
+        cascade="all, delete-orphan",
+        order_by="ProposalCosignature.created_at",
+    )
 
     @property
     def topic_ids(self) -> list[str]:
         return [pt.topic_id for pt in self.proposal_topics]
+
+
+class ProposalCosignature(Base):
+    """Phase 46 — one signature on a cosign-gated proposal (B2).
+
+    Unique on (proposal_id, user_id) so the one-per-member semantic (D4)
+    is a DB invariant. The author's implicit first signature is also a
+    row (per D3 author-counts-as-1), inserted at create time.
+    """
+    __tablename__ = "proposal_cosignatures"
+    __table_args__ = (
+        UniqueConstraint(
+            "proposal_id", "user_id",
+            name="uq_proposal_cosignatures_proposal_user",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    proposal_id: Mapped[str] = mapped_column(
+        String, ForeignKey("proposals.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
+    )
+
+    proposal: Mapped["Proposal"] = relationship(
+        "Proposal", back_populates="cosignatures",
+    )
 
 
 class ProposalOption(Base):
