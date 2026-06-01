@@ -366,12 +366,13 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
     <form onSubmit={handleSubmit} className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
       <h3 className="text-lg font-semibold text-[var(--brand-primary)]">Create Proposal</h3>
 
-      {/* Phase 46 F2 — cosign-required advisory. Members in
-          cosign_required orgs see this so the creation flow doesn't
-          silently change behavior. */}
+      {/* Phase 46 F2 / Phase 46a — cosign-required advisory.
+          Members in cosign_required orgs see this so the creation flow
+          doesn't silently change behavior. 46a: threshold is measured
+          in WEIGHT (delegation-aware) and evaluated at window-end. */}
       {showCosignAdvisory && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900">
-          <strong>This org gathers signatures first.</strong> Your proposal will need <strong>{cosignThreshold}</strong> signature{cosignThreshold === 1 ? '' : 's'} (including your own implicit one) within roughly <strong>{cosignWindowDays} day{cosignWindowDays === 1 ? '' : 's'}</strong> before it advances to a vote. If it doesn't reach the threshold in time it closes as "expired_unsigned."
+          <strong>This org gathers signatures first.</strong> Your proposal will need <strong>{cosignThreshold} weight</strong> of cosign support (you count for yourself plus everyone who delegates a relevant topic to you) within roughly <strong>{cosignWindowDays} day{cosignWindowDays === 1 ? '' : 's'}</strong>. The threshold is checked at window-end: if support is met, the proposal advances to voting; otherwise it closes as "expired_unsigned."
         </div>
       )}
 

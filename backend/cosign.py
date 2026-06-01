@@ -152,11 +152,115 @@ def gate_proposal_creation(
 
 
 def signature_count(db: Session, proposal_id: str) -> int:
+    """Headcount of signers on a proposal. Phase 46a — kept as a
+    distinct surface from ``cosign_weight`` so the UI can show both
+    ("Signed by 4 members · 8.5 of 12 weight needed")."""
     return (
         db.query(models.ProposalCosignature)
         .filter(models.ProposalCosignature.proposal_id == proposal_id)
         .count()
     )
+
+
+def signer_ids_for(db: Session, proposal_id: str) -> set[str]:
+    """Return the user_ids of everyone who has signed this proposal."""
+    rows = (
+        db.query(models.ProposalCosignature.user_id)
+        .filter(models.ProposalCosignature.proposal_id == proposal_id)
+        .all()
+    )
+    return {r.user_id for r in rows}
+
+
+def cosign_weight(
+    db: Session, proposal: models.Proposal,
+) -> int:
+    """Phase 46a Item 1 — total cosign weight = number of eligible
+    voters whose vote on this proposal would resolve to ANY current
+    signer's ballot if those signers had cast direct ballots and no
+    one else had.
+
+    Reuses the platform's tally/delegation engine (not a parallel
+    implementation): builds a ProposalContext with the real delegation
+    graph + topic precedences, overrides ``direct_ballots`` /
+    ``direct_votes`` with synthetic ballots for the signers only, and
+    counts users whose ``resolve_vote_pure`` result lands on a signer's
+    ``cast_by_id``.
+
+    Properties:
+      * A direct signer with no inbound delegation contributes weight 1
+        (themselves).
+      * A signer who is the topic-relevant delegate for N users
+        contributes weight 1 + N (themselves + N delegators).
+      * Multiple signers do not double-count overlapping delegators:
+        a user who would resolve to ANY one signer counts once.
+      * Weight resolves live against the current delegation graph —
+        not snapshotted at signing time. The window-end gate (Item 2)
+        evaluates against this live weight.
+    """
+    signers = signer_ids_for(db, proposal.id)
+    return resolve_cosign_weight_for_signers(db, proposal, signers)
+
+
+def resolve_cosign_weight_for_signers(
+    db: Session,
+    proposal: models.Proposal,
+    signer_ids: set[str],
+) -> int:
+    """Same computation as ``cosign_weight`` but with an explicit signer
+    set. Used by the weight resolution itself + by the UI to project
+    "what if I signed?" weights (the FE may surface the viewer's own
+    resolved weight on the gathering panel).
+    """
+    if not signer_ids:
+        return 0
+
+    # Late import — delegation_engine imports models too; circular if
+    # we top-level import.
+    from delegation_engine import (
+        DelegationService, resolve_vote_pure, Ballot,
+        eligible_voter_ids_for_proposal,
+    )
+
+    try:
+        eligible_ids = eligible_voter_ids_for_proposal(db, proposal)
+    except Exception:
+        # Defensive: if eligibility resolution errors for any reason,
+        # fall back to headcount semantics for this proposal so the
+        # cosign machinery keeps working. Cheap on real prod orgs.
+        return len(signer_ids)
+
+    ctx = DelegationService._build_context(
+        proposal, db, eligible_ids=eligible_ids,
+    )
+    # Override real direct ballots with synthetic ones for ONLY the
+    # signers. The real ballots aren't relevant to the cosign-weight
+    # question (we're asking "what weight would these signers' votes
+    # carry if cast now?"), and during cosign gathering there are no
+    # real votes anyway. Synthetic ballot shape is voting-method-
+    # specific so the resolver's dispatch finds a non-empty ballot.
+    ctx.direct_votes = {}
+    ctx.direct_ballots = {}
+    voting_method = ctx.voting_method
+    for sid in signer_ids:
+        if voting_method == "approval":
+            ctx.direct_ballots[sid] = Ballot(approvals=["__cosign__"])
+        elif voting_method == "ranked_choice":
+            ctx.direct_ballots[sid] = Ballot(ranking=["__cosign__"])
+        else:
+            # Binary — use a non-null vote_value so the resolver
+            # recognizes the direct ballot at step 1.
+            ctx.direct_votes[sid] = "yes"
+
+    weight = 0
+    for uid in eligible_ids:
+        try:
+            result = resolve_vote_pure(uid, ctx)
+        except Exception:
+            continue
+        if result is not None and result.cast_by_id in signer_ids:
+            weight += 1
+    return weight
 
 
 def add_signature(
@@ -252,9 +356,12 @@ def init_cosign_gated_proposal(
 
 
 def threshold_met(db: Session, proposal: models.Proposal) -> bool:
-    """True iff the proposal's current signature count meets or exceeds
-    its snapshot threshold."""
+    """Phase 46a Item 1 — True iff the proposal's current cosign WEIGHT
+    meets or exceeds its snapshot threshold. Phase 46 used headcount;
+    46a switched to weight to honor delegation (a topic-trusted delegate
+    can advance with proportionally less raw headcount).
+    """
     threshold = threshold_for(proposal)
     if threshold is None:
         return False
-    return signature_count(db, proposal.id) >= threshold
+    return cosign_weight(db, proposal) >= threshold

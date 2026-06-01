@@ -815,33 +815,48 @@ def run_one_tick(db: Session) -> int:
         f"(snapshots written: {processed})"
     )
 
-    # Phase 46 B5 — expire cosign-gated proposals whose gathering window
-    # elapsed without meeting threshold. Cheap short-circuit when no
-    # rows are due. Each expiry is its own transaction so one bad row
-    # doesn't block the others. Wrapped in try/except so a worker import
-    # bug or unexpected exception here does NOT crash the tick (which
-    # would make the worker exit + take the container with it on
-    # restart loops; see DEPLOYMENT.md "Worker signal handling").
+    # Phase 46 / 46a — window-end gate for cosign-gated proposals.
+    # 46 had two separate exit conditions (immediate-advance-on-threshold
+    # + expire-on-timeout). 46a Item 2 unifies them: one decision
+    # evaluated at cosign_expires_at against LIVE weight. Cheap short-
+    # circuit when no rows are due. Wrapped in try/except so any
+    # unexpected exception here cannot crash the worker (start.sh
+    # set -e would take the container with it on restart loops; see
+    # DEPLOYMENT.md "Worker signal handling").
     try:
-        expired = expire_due_cosign_proposals(db)
-        if expired:
-            log.info(f"cosign expiry tick: expired {expired} proposal(s)")
+        gate_result = resolve_due_cosign_proposals(db)
+        if gate_result["advanced"] or gate_result["expired"]:
+            log.info(
+                f"cosign window-end tick: advanced "
+                f"{gate_result['advanced']} / expired "
+                f"{gate_result['expired']} proposal(s)"
+            )
     except Exception:  # noqa: BLE001
-        log.exception("cosign expiry tick failed; continuing the worker loop")
+        log.exception("cosign window-end tick failed; continuing the worker loop")
     return processed
 
 
-def expire_due_cosign_proposals(db: Session) -> int:
-    """Phase 46 B5 — close cosign-gated proposals whose
-    ``cosign_expires_at`` has passed without reaching threshold.
+def resolve_due_cosign_proposals(db: Session) -> dict[str, int]:
+    """Phase 46a Item 2 — unified window-end gate for cosign-gated
+    proposals.
 
     A proposal is "due" if it's currently in ``deliberation`` status,
     ``is_cosign_gated=True``, and its ``cosign_expires_at`` is in the
-    past. Each due row is moved to ``expired_unsigned`` in its own
-    transaction; per-row errors are logged + rolled back without
-    blocking the others.
+    past. For each due proposal, evaluate the LIVE cosign weight
+    against the snapshot threshold (no latching — a proposal that
+    crossed mid-window but dropped back under fails here per D2.3):
 
-    Returns the count of proposals expired in this call.
+      * weight ≥ threshold → advance ``deliberation → voting`` via the
+        existing advance machinery (downstream behavior identical to a
+        manual advance).
+      * weight < threshold → ``expired_unsigned``.
+
+    Each evaluation runs in its own transaction; per-row errors are
+    logged + rolled back without blocking the rest. The whole tick is
+    wrapped in try/except by the caller so a worker-import / runtime
+    bug here cannot crash the container (start.sh's ``set -e``).
+
+    Returns ``{advanced: int, expired: int}``.
     """
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     due = (
@@ -854,25 +869,39 @@ def expire_due_cosign_proposals(db: Session) -> int:
         .all()
     )
     if not due:
-        return 0
+        return {"advanced": 0, "expired": 0}
 
-    # Import here to avoid module import order issues at worker startup.
-    from cosign import signature_count
+    # Late imports — keep worker startup cheap + avoid cycles.
+    from cosign import cosign_weight, signature_count
     from audit_utils import log_audit_event
+    from routes.proposals import _advance_cosign_to_voting
 
-    expired_count = 0
+    advanced = 0
+    expired = 0
     for proposal in due:
         try:
-            # Defensive — if a row crossed threshold between the worker's
-            # last tick and now without auto-advancing (shouldn't happen,
-            # since the sign endpoint advances inline; but a race in
-            # multi-instance setups could let a row land here), skip
-            # expiry and let the next sign trigger the advance.
-            count_now = signature_count(db, proposal.id)
             threshold = proposal.cosign_threshold_snapshot or 0
-            if count_now >= threshold:
+            weight = cosign_weight(db, proposal)
+            count_now = signature_count(db, proposal.id)
+
+            if weight >= threshold and threshold > 0:
+                # Window-end gate met → advance via the standard path
+                # so downstream behavior matches a manual advance.
+                _advance_cosign_to_voting(
+                    db, proposal,
+                    background_tasks=None,
+                    actor_id=None,
+                    ip_address=None,
+                )
+                db.commit()
+                advanced += 1
+                log.info(
+                    f"cosign window-end: proposal {proposal.id} advanced "
+                    f"(weight={weight}, threshold={threshold}, signers={count_now})"
+                )
                 continue
 
+            # Window closed under threshold → expire.
             old_status = proposal.status
             proposal.status = "expired_unsigned"
             log_audit_event(
@@ -885,33 +914,52 @@ def expire_due_cosign_proposals(db: Session) -> int:
                     "proposal_id": proposal.id,
                     "old_status": old_status,
                     "new_status": "expired_unsigned",
-                    "trigger": "cosign_window_expired",
-                    "signature_count_at_expiry": count_now,
+                    "trigger": "cosign_window_closed_unmet",
+                    "weight_at_close": weight,
+                    "signature_count_at_close": count_now,
                     "threshold": threshold,
                 },
             )
             log_audit_event(
                 db,
-                action="proposal.cosign_expired",
+                action="proposal.cosign_window_closed_unmet",
                 target_type="proposal",
                 target_id=proposal.id,
                 actor_id=None,
                 details={
                     "proposal_id": proposal.id,
-                    "signature_count_at_expiry": count_now,
+                    "weight_at_close": weight,
+                    "signature_count_at_close": count_now,
                     "threshold": threshold,
-                    "expires_at": proposal.cosign_expires_at.isoformat(),
+                    "expires_at": (
+                        proposal.cosign_expires_at.isoformat()
+                        if proposal.cosign_expires_at else None
+                    ),
                 },
             )
             db.commit()
-            expired_count += 1
+            expired += 1
         except Exception:  # noqa: BLE001
             log.exception(
-                f"cosign expiry: error expiring proposal {proposal.id}; "
+                f"cosign window-end: error resolving proposal {proposal.id}; "
                 f"rolling back and continuing"
             )
             db.rollback()
-    return expired_count
+    return {"advanced": advanced, "expired": expired}
+
+
+def expire_due_cosign_proposals(db: Session) -> int:
+    """Phase 46 backward-compat shim. Phase 46a Item 2 unified the
+    expiry path with the window-end advance gate in
+    ``resolve_due_cosign_proposals``. Old call sites that import the
+    pre-46a function name get the same behavior + a count back. Tests
+    that asserted "expired" count remain valid for proposals that didn't
+    cross threshold; advanced proposals are no longer reflected in this
+    return value (callers wanting both counts should call
+    ``resolve_due_cosign_proposals`` directly).
+    """
+    result = resolve_due_cosign_proposals(db)
+    return result["expired"]
 
 
 # ---------------------------------------------------------------------------
