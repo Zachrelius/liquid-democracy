@@ -407,9 +407,13 @@ class TestSignAndWithdraw:
         assert r2.status_code == 200
         assert r2.json()["cosign_signature_count"] == 2  # unchanged
 
-    def test_threshold_met_advances_to_voting(
+    def test_threshold_met_does_NOT_immediately_advance(
         self, client: TestClient, db: Session, auth_for,
     ):
+        """Phase 46a Item 2 changed 46's behavior: signing no longer
+        advances the proposal mid-window. The worker performs the
+        unified window-end gate at ``cosign_expires_at`` and only
+        then decides advance-or-expire against the LIVE weight."""
         org, author, others, pid = self._make_petition(
             client, db, auth_for, "p46advance", threshold=3,
         )
@@ -420,19 +424,19 @@ class TestSignAndWithdraw:
         )
         assert r.status_code == 200, r.text
         body = r.json()
-        # Side effects: status -> voting; voting_start + voting_end set.
-        assert body["status"] == "voting"
-        assert body["voting_start"] is not None
-        assert body["voting_end"] is not None
-        # Audit events: status_changed + cosign_threshold_met.
+        # Phase 46a: proposal stays in deliberation gathering until the
+        # window closes — no immediate advance.
+        assert body["status"] == "deliberation"
+        assert body["voting_start"] is None
+        # cosign_threshold_met is NOT audited mid-window (Phase 46a
+        # B2.5 — that event only fires at window-end advancement).
         audit_actions = {
             row.action for row in
             db.query(models.AuditLog).filter(
                 models.AuditLog.target_id == pid,
             ).all()
         }
-        assert "proposal.status_changed" in audit_actions
-        assert "proposal.cosign_threshold_met" in audit_actions
+        assert "proposal.cosign_threshold_met" not in audit_actions
 
     def test_withdraw_decrements_count(
         self, client: TestClient, db: Session, auth_for,
@@ -575,7 +579,11 @@ class TestWorkerExpiry:
                 models.AuditLog.target_id == pid,
             ).all()
         }
-        assert "proposal.cosign_expired" in actions
+        # Phase 46a renamed proposal.cosign_expired to
+        # proposal.cosign_window_closed_unmet (the unified window-end
+        # gate distinguishes "didn't make threshold" from a future
+        # generic expiry semantic).
+        assert "proposal.cosign_window_closed_unmet" in actions
 
     def test_not_yet_expired_proposal_untouched(
         self, client: TestClient, db: Session, auth_for,
@@ -596,14 +604,14 @@ class TestWorkerExpiry:
         proposal_row = db.get(models.Proposal, pid)
         assert proposal_row.status == "deliberation"
 
-    def test_expiry_skips_proposal_at_or_above_threshold(
+    def test_window_end_at_threshold_advances_to_voting(
         self, client: TestClient, db: Session, auth_for,
     ):
-        """Defensive — if a proposal somehow reached threshold without
-        auto-advancing AND its window expired, the worker skips it
-        rather than expiring a petition that should have advanced."""
+        """Phase 46a Item 2 — the worker performs the unified window-end
+        gate. A proposal at/above threshold at window-end advances to
+        voting (not skipped, not expired)."""
         org, steward, admin, members = _setup_org(
-            db, "p46defensive", mode="cosign_required",
+            db, "p46atthresh", mode="cosign_required",
             cosign_threshold=2, cosign_expiry_hours=1,
         )
         r = client.post(
@@ -612,8 +620,7 @@ class TestWorkerExpiry:
             json=_create_proposal_body(),
         )
         pid = r.json()["id"]
-        # Insert a second signature directly (bypass the endpoint that
-        # would auto-advance) to simulate the race window.
+        # Insert a second signature directly so weight=2 = threshold.
         db.add(models.ProposalCosignature(
             proposal_id=pid, user_id=members[1].id,
         ))
@@ -623,10 +630,19 @@ class TestWorkerExpiry:
             - timedelta(hours=1)
         )
         db.commit()
-        from sustained_majority_worker import expire_due_cosign_proposals
-        count = expire_due_cosign_proposals(db)
-        assert count == 0
+        from sustained_majority_worker import resolve_due_cosign_proposals
+        result = resolve_due_cosign_proposals(db)
+        # Advanced, not expired.
+        assert result == {"advanced": 1, "expired": 0}
         proposal_row = db.get(models.Proposal, pid)
-        # Still deliberation — defensive skip leaves the row for the
-        # next sign-endpoint call to advance.
-        assert proposal_row.status == "deliberation"
+        assert proposal_row.status == "voting"
+        assert proposal_row.voting_start is not None
+        assert proposal_row.voting_end is not None
+        # Audit: cosign_threshold_met now fires at window-end advance.
+        actions = {
+            row.action for row in db.query(models.AuditLog).filter(
+                models.AuditLog.target_id == pid,
+            ).all()
+        }
+        assert "proposal.cosign_threshold_met" in actions
+        assert "proposal.status_changed" in actions

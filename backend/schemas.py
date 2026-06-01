@@ -501,6 +501,11 @@ class ProposalOut(BaseModel):
     cosign_threshold_snapshot: Optional[int] = None
     cosign_expires_at: Optional[datetime] = None
     cosign_signature_count: int = 0
+    # Phase 46a Item 1 — weighted accrual. The threshold is measured
+    # in weight, not headcount; the FE shows BOTH the signer count
+    # (above) and the live resolved weight (below) so members can see
+    # how delegation shifts the bar. 0 for non-cosign-gated.
+    cosign_weight: int = 0
     # True iff the requesting viewer has signed (FE renders Sign vs
     # Withdraw accordingly). Null when the request is anonymous / has
     # no auth context.

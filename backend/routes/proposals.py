@@ -308,8 +308,20 @@ def _build_proposal_out(
         cosign_threshold_snapshot=getattr(proposal, "cosign_threshold_snapshot", None),
         cosign_expires_at=getattr(proposal, "cosign_expires_at", None),
         cosign_signature_count=_cosign_signature_count(proposal, db),
+        cosign_weight=_cosign_weight(proposal, db),
         viewer_has_cosigned=_viewer_has_cosigned(proposal, db, viewer_id),
     )
+
+
+def _cosign_weight(proposal: models.Proposal, db: Session) -> int:
+    if not getattr(proposal, "is_cosign_gated", False):
+        return 0
+    from cosign import cosign_weight as _resolve_weight
+    try:
+        return _resolve_weight(db, proposal)
+    except Exception:  # noqa: BLE001 — defensive; fall back to headcount.
+        from cosign import signature_count
+        return signature_count(db, proposal.id)
 
 
 def _cosign_signature_count(proposal: models.Proposal, db: Session) -> int:
@@ -2032,15 +2044,28 @@ def advance_proposal(
 def _advance_cosign_to_voting(
     db: Session,
     proposal: models.Proposal,
-    background_tasks: BackgroundTasks,
-    actor_id: str,
+    background_tasks: Optional[BackgroundTasks],
+    actor_id: Optional[str],
     ip_address: Optional[str],
 ) -> None:
-    """Run the deliberation → voting transition triggered by reaching the
-    cosign threshold. Reuses the existing advance machinery so downstream
-    behavior is indistinguishable from a manual advance: voting_end
-    computed via ``_compute_voting_end_at_advance``, ``proposal.entered_voting``
-    notifications fired, ``proposal.status_changed`` audit emitted.
+    """Run the deliberation → voting transition triggered by the cosign
+    window-end gate (Phase 46a Item 2 — formerly fired inline by the
+    sign endpoint in Phase 46; now only fired by the worker).
+
+    Reuses the existing advance machinery so downstream behavior is
+    indistinguishable from a manual advance: voting_end computed via
+    ``_compute_voting_end_at_advance``, ``proposal.entered_voting``
+    notifications fired (best-effort), ``proposal.status_changed`` audit
+    emitted.
+
+    Phase 46a — ``background_tasks`` is Optional because the worker
+    calls this without a FastAPI request scope. ``_emit_proposal_status_
+    notifications`` already wraps individual emits in try/except so
+    passing ``None`` is safe — the notifications use background_tasks
+    only for the in-app push delivery; missing background_tasks
+    degrades to no async push (audit + DB notification rows are still
+    written). ``actor_id=None`` is accepted for the same worker-context
+    reason; the audit entry just records a system-level actor.
     """
     if proposal.status != "deliberation":
         return  # Defensive: already advanced or in a terminal state.
@@ -2149,17 +2174,19 @@ def cosign_proposal(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
-    """Phase 46 B4 — sign a cosign-gated proposal.
+    """Phase 46 B4 + 46a Item 2 — sign a cosign-gated proposal.
 
     Idempotent: re-signing is a no-op (returns 200 with the unchanged
-    count). If this signature pushes the count to the threshold, the
-    proposal auto-advances to voting in the same transaction.
+    count). Signing only accrues weight; it does NOT advance the
+    proposal mid-window. The deliberation window is the gathering
+    cadence; the worker performs the unified window-end gate
+    (advance-if-met / expire-if-unmet) at ``cosign_expires_at``.
     """
     proposal = _proposal_or_404(proposal_id, db)
     _require_cosign_gathering(proposal)
     _require_active_org_member(db, current_user.id, proposal)
 
-    from cosign import add_signature, threshold_met
+    from cosign import add_signature
 
     added, new_count = add_signature(db, proposal, current_user.id)
     ip = request.client.host if request.client else None
@@ -2177,14 +2204,6 @@ def cosign_proposal(
                 "threshold": proposal.cosign_threshold_snapshot,
             },
             ip_address=ip,
-        )
-
-    # Threshold check — fires whenever the count reaches threshold,
-    # including idempotent re-signs that happen to coincide (defensive).
-    if threshold_met(db, proposal):
-        _advance_cosign_to_voting(
-            db, proposal, background_tasks,
-            actor_id=current_user.id, ip_address=ip,
         )
 
     db.commit()

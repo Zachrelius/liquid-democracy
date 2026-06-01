@@ -1575,24 +1575,35 @@ export default function ProposalDetail() {
             )}
           </div>
 
-          {/* Phase 46 F1 — Cosign gathering panel. Renders only when
-              the proposal is in cosign gathering state (cosign-gated
-              AND status=='deliberation'). Shows the counter, an
-              expiry hint, and a Sign/Withdraw button. The author's
-              implicit signature renders as a non-actionable badge
-              ("You created this — your signature is implicit"). */}
+          {/* Phase 46 F1 / Phase 46a — Cosign gathering panel. Renders
+              only when the proposal is in cosign gathering state
+              (cosign-gated AND status=='deliberation'). 46a Item 1: the
+              advancement bar is WEIGHT, not headcount — a high-weight
+              delegate can move the bar substantially. The UI shows
+              both numbers so members can see how delegation shifts it.
+              46a Item 2: the threshold is a window-end gate, not a
+              trigger. The proposal stays in deliberation for its full
+              window; the worker decides advance-or-expire at expiry. */}
           {proposal.is_cosign_gated && proposal.status === 'deliberation' && (
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div>
                   <h3 className="text-sm font-semibold text-amber-800 uppercase tracking-wide">Gathering Signatures</h3>
                   <p className="text-sm text-amber-900 mt-1">
-                    <strong>{proposal.cosign_signature_count} of {proposal.cosign_threshold_snapshot}</strong>
-                    {' signatures'}
+                    <strong>
+                      Signed by {proposal.cosign_signature_count} member{proposal.cosign_signature_count === 1 ? '' : 's'}
+                      {' · '}
+                      {proposal.cosign_weight} of {proposal.cosign_threshold_snapshot} weight
+                    </strong>
                     {(() => {
-                      const need = (proposal.cosign_threshold_snapshot || 0) - (proposal.cosign_signature_count || 0);
-                      return need > 0 ? ` — ${need} more needed to advance to voting` : ' — threshold met!';
+                      const need = (proposal.cosign_threshold_snapshot || 0) - (proposal.cosign_weight || 0);
+                      return need > 0
+                        ? ` — ${need} more weight needed at window-end`
+                        : ' — threshold met (the advance happens at window-end)';
                     })()}
+                  </p>
+                  <p className="text-xs text-amber-800 mt-1">
+                    Weight counts each signer plus everyone whose vote on this proposal would resolve to them through delegation. The proposal advances to voting at window-end if weight meets the threshold; otherwise it closes as expired.
                   </p>
                   {proposal.cosign_expires_at && (
                     <p className="text-xs text-amber-700 mt-1">
