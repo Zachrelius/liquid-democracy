@@ -40,8 +40,8 @@
 | Owner-only keys + locked perms in council mode (D4/D5) | Yes | **PASS** — `TestD4OwnerOnlyKeysResolveByMode` × 4 (steward/admin holds in single; admin holds in council; member excluded in council; admin can DELETE in council). `TestD5LockedPermissionsHeldByGoverningTier` × 2. |
 | Recovery state (B4) | Yes | **PASS** — `TestRecoveryState` × 7 (zero-governor detection, audit emit/no-emit, platform-admin re-seat, rejected when healthy, role-mode match, platform-admin required). Optional scheduled at-risk check NOT implemented — deferred with note (the in-request detection is the minimum viable per spec). |
 | Frontend build | Yes | **PASS** — new bundle `index-BcTFEL-K.js`, CSS unchanged. PWA precache 23 entries / 2071.30 KiB. |
-| Browser verification (Chrome MCP, prod) | Yes | TBD post-deploy — verifying (1) Steward switches to council → becomes admin + UI updates; (2) Admin reverts → claims steward seat; (3) default-mode org's admin screens unchanged. |
-| Bundle hash changed + backend non-502 post-deploy | Yes | TBD post-deploy |
+| Browser verification (Chrome MCP, prod) | Yes | **4/4 PASS** on `/demo` (Steward `admin/demo1234`). (1) Default-mode regression: Governance Mode + Stewardship + Danger Zone all render in correct order. (2) Switch dialog opens with expected consequence copy; Cancel returns no-change (mode stays single_steward). (3) `POST /api/orgs/demo/governance-mode` idempotent no-op returns `{status:'ok',mode:'single_steward',changed:false}`. (4) Rebootstrap endpoint mounted + guarded: returns 400 "Org is not in the needs_rebootstrap condition" (platform-admin user verified — guard fires correctly, prevents bypass of in-org governance). Full council-mode lifecycle was NOT exercised in browser (would require actually switching `/demo` to council, which would destabilize the demo data); test+source verified for that path. |
+| Bundle hash changed + backend non-502 post-deploy | Yes | **PASS** — `index-BARSNmNc.js` → `index-BcTFEL-K.js`. Backend `/api/health` 200. Deploy completed in 41s. `governance_mode` field surfacing correctly on `/api/orgs` (returns 'single_steward' for the demo org). |
 
 ---
 
@@ -108,7 +108,7 @@ Every existing org keeps `governance_mode = 'single_steward'` via the migration'
 
 ## Branch + commit state
 
-- Branch: `phase-45b/governance-modes`.
-- Commit on branch: TBD.
-- Merge commit on master: TBD.
-- Pushed to origin/master: TBD.
+- Branch: `phase-45b/governance-modes` (left alive locally).
+- Commit on branch: `38dae51 Phase 45b: Opt-in ownerless governance (flat admin council)`.
+- Merge commit on master: `a5f1ca6 Merge phase-45b/governance-modes: Phase 45b (Opt-in Ownerless Governance — Flat Admin Council)`.
+- Pushed to origin/master at `a5f1ca6`.
