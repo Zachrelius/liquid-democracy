@@ -1911,6 +1911,37 @@ export default function OrgSettings() {
           assigned + deleted (when empty). */}
       <OrgTitlesPanel orgSlug={currentOrg?.slug} />
 
+      {/* Phase 48 Stage 1 — Elections opt-in. Off by default per D3;
+          appointment (45a/45b) remains the default seat-filling
+          mechanism until an admin opts in here. */}
+      {canEditOrgSettings && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Elections
+          </h2>
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+            <p className="text-sm text-gray-600">
+              When enabled, an electable title can be filled by an election proposal. Members self-nominate during the nomination window; the winner is installed at close. Off by default — appointment remains the default seat-filling mechanism.
+            </p>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!settings.elections?.enabled}
+                onChange={e => updateSetting('elections', {
+                  ...(settings.elections || {}),
+                  enabled: e.target.checked,
+                })}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <div className="text-sm text-gray-700">Enable elections in this organization</div>
+                <div className="text-xs text-gray-500">Then set a title's fill method to "elected" or "both" to make it electable, and click "Open election" on that title.</div>
+              </div>
+            </label>
+          </div>
+        </section>
+      )}
+
       {/* Multi-Admin Approval — Phase 44 F1. Opt-in N-of-M ratification
           over four destructive admin actions: remove member, delete topic,
           edit permissions, delete org. Defaults to OFF; every org behaves

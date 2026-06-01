@@ -506,6 +506,12 @@ class ProposalOut(BaseModel):
     # (above) and the live resolved weight (below) so members can see
     # how delegation shifts the bar. 0 for non-cosign-gated.
     cosign_weight: int = 0
+    # Phase 48 Stage 1 — election subtype (D1). False for normal
+    # proposals — non-election callers see byte-identical responses.
+    is_election: bool = False
+    election_title_id: Optional[str] = None
+    election_title_name: Optional[str] = None
+    election_candidates: list[str] = []
     # True iff the requesting viewer has signed (FE renders Sign vs
     # Withdraw accordingly). Null when the request is anonymous / has
     # no auth context.
