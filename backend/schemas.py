@@ -1517,6 +1517,10 @@ class OrgOut(BaseModel):
 
 
 class OrgMemberOut(BaseModel):
+    # Phase 47 — list of held titles (D8). Combines system titles
+    # derived from role + custom titles from org_title_assignments,
+    # sorted by display order. Empty list for members with no titles.
+    held_titles: list[str] = []
     user_id: str
     username: str
     display_name: str

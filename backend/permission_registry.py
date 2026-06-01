@@ -227,6 +227,17 @@ PERMISSION_REGISTRY: list[PermissionDefinition] = [
         "Allow editing the matrix of which roles have which permissions in this organization.",
         "Organization",
     ),
+    # Phase 47 — manage org titles / offices (define, edit, delete custom
+    # titles; assign/revoke titles to members). System titles (Steward,
+    # Admin) are uneditable + undeletable; their underlying roles are
+    # still managed via the existing transfer-stewardship +
+    # change-member-role flows.
+    PermissionDefinition(
+        "title.manage",
+        "Manage organization titles",
+        "Allow defining, editing, and assigning org titles (offices/positions).",
+        "Organization",
+    ),
     # --- Audit and analytics (2) ---
     PermissionDefinition(
         "audit.view_org",

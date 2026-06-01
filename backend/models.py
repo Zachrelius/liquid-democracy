@@ -1629,3 +1629,112 @@ class PendingActionApproval(Base):
         "PendingAdminAction", back_populates="approvals",
     )
     approver: Mapped["User"] = relationship("User", foreign_keys=[approver_id])
+
+
+# ---------------------------------------------------------------------------
+# Phase 47 — Org titles / offices
+# ---------------------------------------------------------------------------
+
+class OrgTitle(Base):
+    """Phase 47 — a labeled office/position within an org.
+
+    A title carries a display name plus optional configuration:
+      * ``bound_role`` — when set ('steward' | 'admin' | 'moderator' |
+        'member'), holding the title grants the corresponding platform
+        role via the existing 45a/45b role-assignment machinery. None
+        = pure label, no permission effect.
+      * ``cardinality_mode`` — 'single' (President, Treasurer; one
+        holder) or 'multi' (Council Member; N holders).
+      * ``max_holders`` — optional cap for multi-holder titles. NULL =
+        uncapped.
+      * ``fill_method`` — 'assigned' (direct grant — this pass),
+        'elected' (Phase 48), 'both' (either). Stored now; the
+        elected path is implemented in 48.
+      * ``is_system`` — system-seeded titles (Steward, Admin) that are
+        uneditable + undeletable. Per Phase 47 D6 these are a label
+        layer over the existing role; the role remains the source of
+        truth for permissions and the cardinality floor.
+      * ``display_order`` — sort priority for display surfaces.
+
+    Per D2 + D6: the role model + governance.py floor are unchanged.
+    Titles are additive. A custom title binding steward is a
+    convenience that goes through the existing transfer-stewardship +
+    floor machinery — it does not bypass them.
+    """
+    __tablename__ = "org_titles"
+    __table_args__ = (
+        UniqueConstraint("org_id", "name", name="uq_org_titles_org_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    name: Mapped[str] = mapped_column(String(length=80), nullable=False)
+    bound_role: Mapped[Optional[str]] = mapped_column(
+        String(length=16), nullable=True,
+    )
+    cardinality_mode: Mapped[str] = mapped_column(
+        String(length=8), nullable=False, default="single",
+        server_default="single",
+    )
+    max_holders: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    fill_method: Mapped[str] = mapped_column(
+        String(length=12), nullable=False, default="assigned",
+        server_default="assigned",
+    )
+    is_system: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0",
+    )
+    display_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
+    )
+
+    assignments: Mapped[list["OrgTitleAssignment"]] = relationship(
+        "OrgTitleAssignment", back_populates="title",
+        cascade="all, delete-orphan",
+    )
+
+
+class OrgTitleAssignment(Base):
+    """Phase 47 — one (title, user) record meaning this user holds this
+    title. Cardinality is enforced at the application layer (single
+    vs. multi vs. max_holders); the DB invariant is one row per
+    (title, user) so a user can't hold the same title twice.
+
+    System titles (Steward, Admin) are NOT recorded here — they're
+    derived at response-build time from the user's membership role.
+    Per D6, the role is the source of truth; system titles are a
+    label layer over it. Storing system-title assignments separately
+    would create a sync problem with the role.
+    """
+    __tablename__ = "org_title_assignments"
+    __table_args__ = (
+        UniqueConstraint(
+            "title_id", "user_id",
+            name="uq_org_title_assignments_title_user",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    title_id: Mapped[str] = mapped_column(
+        String, ForeignKey("org_titles.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True,
+    )
+    granted_by: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id"), nullable=True,
+    )
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
+    )
+
+    title: Mapped["OrgTitle"] = relationship(
+        "OrgTitle", back_populates="assignments",
+    )

@@ -174,6 +174,41 @@ class TestOrgOutSurfaceContract:
             )
 
 
+class TestOrgMemberOutSurfaceContract:
+    """Phase 47 B4 — extend the 46a serializer-coverage convention to
+    the member roster. Titles are an FE-facing field per the public-
+    display requirement (D8); they MUST surface on the member roster
+    or the Members page silently doesn't show them. Closes the same
+    model-vs-response gap pattern at a new surface."""
+
+    def test_held_titles_field_present_on_orgmemberout_schema(self, db: Session):
+        """The OrgMemberOut Pydantic schema declares ``held_titles``.
+        We check the model field directly rather than spinning a
+        TestClient (the app's lifespan checks SECRET_KEY which isn't
+        relevant to this coverage assertion)."""
+        import schemas
+        assert "held_titles" in schemas.OrgMemberOut.model_fields, (
+            "OrgMemberOut is missing the held_titles field — Phase 47 "
+            "B4 surface. Add held_titles to schemas.OrgMemberOut + "
+            "populate it from org_titles.held_titles_for_member in "
+            "the list_members route."
+        )
+
+    def test_held_titles_helper_returns_system_title_for_steward(
+        self, db: Session,
+    ):
+        """The org_titles.held_titles_for_member helper returns the
+        Steward system title for a member whose role is 'steward'."""
+        from org_titles import (
+            seed_system_titles_for_org, held_titles_for_member,
+        )
+        org, steward = _make_org_with_steward(db)
+        seed_system_titles_for_org(db, org.id)
+        db.commit()
+        titles = held_titles_for_member(db, org.id, steward.id, "steward")
+        assert "Steward" in titles
+
+
 class TestSerializerCatchesARegression:
     """Belt-and-suspenders: prove the coverage test would actually fire
     if someone dropped a must-surface field. This test simulates that

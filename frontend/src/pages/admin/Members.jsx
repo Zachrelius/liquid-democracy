@@ -25,9 +25,17 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, pe
         onClick={() => !isOwner && setExpanded(!expanded)}
         className={`flex items-center gap-4 px-4 py-3 text-sm ${isOwner ? '' : 'cursor-pointer hover:bg-gray-50'} transition-colors`}
       >
-        <span className="flex-1 font-medium text-gray-800 flex items-center gap-2">
+        <span className="flex-1 font-medium text-gray-800 flex items-center gap-2 flex-wrap">
           <Avatar user={{ id: member.user_id, display_name: member.display_name, avatar_url: member.avatar_url, avatar_url_small: member.avatar_url_small }} size="sm" />
           {member.display_name}
+          {/* Phase 47 F2 — render held_titles after the member name.
+              Per D8 the title display respects identity-visibility
+              upstream (the FE only renders what the backend surfaces). */}
+          {Array.isArray(member.held_titles) && member.held_titles.length > 0 && (
+            <span className="text-xs text-gray-500 italic">
+              ({member.held_titles.join(', ')})
+            </span>
+          )}
         </span>
         <span className="w-32 text-gray-500">@{member.username}</span>
         <span className="w-24">
