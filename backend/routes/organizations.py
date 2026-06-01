@@ -27,6 +27,7 @@ from org_config import (
 )
 from permission_registry import PERMISSION_REGISTRY
 from reserved_slugs import RESERVED_SLUGS
+from org_titles import seed_system_titles_for_org
 from role_permissions import has_permission
 from role_seed import seed_default_roles_for_org
 from settings import settings as app_settings
@@ -412,6 +413,12 @@ def create_organization(
     # RolePermission grants for this brand-new org BEFORE creating the
     # creator's OrgMembership (so we have a Steward role to point role_id at).
     roles_by_key = seed_default_roles_for_org(db, org.id)
+
+    # Phase 47 B5 — seed the two system titles per D6. These are a
+    # label layer over the existing roles, NOT a separate permission
+    # path. The role is still the source of truth for permissions and
+    # the cardinality floor.
+    seed_system_titles_for_org(db, org.id)
 
     # Creator becomes Steward (the renamed-from-"owner" top-tier role).
     membership = models.OrgMembership(
@@ -960,10 +967,14 @@ def list_members(
     memberships = db.query(models.OrgMembership).filter(
         models.OrgMembership.org_id == org.id,
     ).all()
+    # Phase 47 B4 — resolve held titles for each member (system titles
+    # from role + custom titles from org_title_assignments).
+    from org_titles import held_titles_for_member
     result = []
     for m in memberships:
         user = db.get(models.User, m.user_id)
         if user:
+            role_key = membership_role_system_key(m) or "member"
             result.append(schemas.OrgMemberOut(
                 user_id=m.user_id,
                 username=user.username,
@@ -972,9 +983,10 @@ def list_members(
                 avatar_url=user.avatar_url,
                 # Phase 12 — emit role.system_key (e.g. 'steward', 'admin');
                 # the dropped string column would surface a Role ORM object.
-                role=membership_role_system_key(m) or "member",
+                role=role_key,
                 status=m.status,
                 joined_at=m.joined_at,
+                held_titles=held_titles_for_member(db, org.id, m.user_id, role_key),
             ))
     return result
 

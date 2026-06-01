@@ -4,6 +4,7 @@ import api from '../../api';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 import NewStewardPointer from '../../components/NewStewardPointer';
+import OrgTitlesPanel from '../../components/OrgTitlesPanel';
 import PendingActionsBanner from '../../components/PendingActionsBanner';
 // Phase 12.5 F4 — Default-thresholds editor gates on `org.edit_settings`.
 // Phase 12.7 F4 — Branding section gates on `org.edit_branding`.
@@ -1903,6 +1904,12 @@ export default function OrgSettings() {
           </div>
         </section>
       )}
+
+      {/* Phase 47 F1 — Org Titles management panel. Renders only when
+          the caller holds title.manage. System titles (Steward, Admin)
+          are listed but uneditable; custom titles can be created +
+          assigned + deleted (when empty). */}
+      <OrgTitlesPanel orgSlug={currentOrg?.slug} />
 
       {/* Multi-Admin Approval — Phase 44 F1. Opt-in N-of-M ratification
           over four destructive admin actions: remove member, delete topic,
