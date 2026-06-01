@@ -814,7 +814,104 @@ def run_one_tick(db: Session) -> int:
         f"stable_result tick: processed {processed} proposals "
         f"(snapshots written: {processed})"
     )
+
+    # Phase 46 B5 — expire cosign-gated proposals whose gathering window
+    # elapsed without meeting threshold. Cheap short-circuit when no
+    # rows are due. Each expiry is its own transaction so one bad row
+    # doesn't block the others. Wrapped in try/except so a worker import
+    # bug or unexpected exception here does NOT crash the tick (which
+    # would make the worker exit + take the container with it on
+    # restart loops; see DEPLOYMENT.md "Worker signal handling").
+    try:
+        expired = expire_due_cosign_proposals(db)
+        if expired:
+            log.info(f"cosign expiry tick: expired {expired} proposal(s)")
+    except Exception:  # noqa: BLE001
+        log.exception("cosign expiry tick failed; continuing the worker loop")
     return processed
+
+
+def expire_due_cosign_proposals(db: Session) -> int:
+    """Phase 46 B5 — close cosign-gated proposals whose
+    ``cosign_expires_at`` has passed without reaching threshold.
+
+    A proposal is "due" if it's currently in ``deliberation`` status,
+    ``is_cosign_gated=True``, and its ``cosign_expires_at`` is in the
+    past. Each due row is moved to ``expired_unsigned`` in its own
+    transaction; per-row errors are logged + rolled back without
+    blocking the others.
+
+    Returns the count of proposals expired in this call.
+    """
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    due = (
+        db.query(models.Proposal)
+        .filter(
+            models.Proposal.is_cosign_gated == True,  # noqa: E712
+            models.Proposal.status == "deliberation",
+            models.Proposal.cosign_expires_at <= now,
+        )
+        .all()
+    )
+    if not due:
+        return 0
+
+    # Import here to avoid module import order issues at worker startup.
+    from cosign import signature_count
+    from audit_utils import log_audit_event
+
+    expired_count = 0
+    for proposal in due:
+        try:
+            # Defensive — if a row crossed threshold between the worker's
+            # last tick and now without auto-advancing (shouldn't happen,
+            # since the sign endpoint advances inline; but a race in
+            # multi-instance setups could let a row land here), skip
+            # expiry and let the next sign trigger the advance.
+            count_now = signature_count(db, proposal.id)
+            threshold = proposal.cosign_threshold_snapshot or 0
+            if count_now >= threshold:
+                continue
+
+            old_status = proposal.status
+            proposal.status = "expired_unsigned"
+            log_audit_event(
+                db,
+                action="proposal.status_changed",
+                target_type="proposal",
+                target_id=proposal.id,
+                actor_id=None,
+                details={
+                    "proposal_id": proposal.id,
+                    "old_status": old_status,
+                    "new_status": "expired_unsigned",
+                    "trigger": "cosign_window_expired",
+                    "signature_count_at_expiry": count_now,
+                    "threshold": threshold,
+                },
+            )
+            log_audit_event(
+                db,
+                action="proposal.cosign_expired",
+                target_type="proposal",
+                target_id=proposal.id,
+                actor_id=None,
+                details={
+                    "proposal_id": proposal.id,
+                    "signature_count_at_expiry": count_now,
+                    "threshold": threshold,
+                    "expires_at": proposal.cosign_expires_at.isoformat(),
+                },
+            )
+            db.commit()
+            expired_count += 1
+        except Exception:  # noqa: BLE001
+            log.exception(
+                f"cosign expiry: error expiring proposal {proposal.id}; "
+                f"rolling back and continuing"
+            )
+            db.rollback()
+    return expired_count
 
 
 # ---------------------------------------------------------------------------

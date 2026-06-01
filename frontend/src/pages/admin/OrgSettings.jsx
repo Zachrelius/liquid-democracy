@@ -1816,6 +1816,94 @@ export default function OrgSettings() {
         </div>
       </section>
 
+      {/* Proposal Creation Mode — Phase 46 F1. Three tiers:
+          - open (today's behavior): proposal.create-holders create proposals
+            that go live immediately.
+          - cosign_required: member-tier creators' proposals enter cosign
+            gathering; advance when the threshold is met. Admins create
+            directly.
+          - admin_only: only proposal.advance_phase-holders create. */}
+      {canEditOrgSettings && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Proposal Creation Mode
+          </h2>
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+            <p className="text-sm text-gray-600">
+              Choose how proposals come into being. <strong>Open</strong> is the default — any holder of <em>Create proposals</em> creates a live proposal. <strong>Cosign required</strong> makes member-created proposals gather signatures before going to a vote (admins still create directly). <strong>Admin only</strong> restricts creation to admins/moderators.
+            </p>
+            <div className="space-y-2">
+              {[
+                {value: 'open', label: 'Open', desc: 'Any proposal-creator goes live immediately.'},
+                {value: 'cosign_required', label: 'Cosign required', desc: 'Members gather signatures first; admins create directly.'},
+                {value: 'admin_only', label: 'Admin only', desc: 'Only admins/moderators can create.'},
+              ].map(opt => (
+                <label key={opt.value} className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="proposalCreationMode"
+                    value={opt.value}
+                    checked={(currentOrg?.proposal_creation_mode || 'open') === opt.value}
+                    onChange={async () => {
+                      try {
+                        await api.patch(`/api/orgs/${currentOrg.slug}`, {
+                          proposal_creation_mode: opt.value,
+                        });
+                        await refreshOrgs();
+                        toast.success(`Creation mode set to "${opt.label}"`);
+                      } catch (e) {
+                        toast.error(e.message || 'Failed to update mode');
+                      }
+                    }}
+                    className="mt-0.5 accent-[var(--brand-accent)]"
+                  />
+                  <div>
+                    <div className="text-sm font-medium text-gray-700">{opt.label}</div>
+                    <div className="text-xs text-gray-500">{opt.desc}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            {(currentOrg?.proposal_creation_mode || 'open') === 'cosign_required' && (
+              <div className="border-t border-gray-200 pt-4 space-y-3">
+                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cosign configuration</h3>
+                <div className="flex flex-wrap gap-4">
+                  <label className="text-sm space-y-1">
+                    <span className="block text-xs text-gray-600">Threshold (signatures including author)</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={settings.cosign?.threshold ?? 3}
+                      onChange={e => updateSetting('cosign', {
+                        ...(settings.cosign || {}),
+                        threshold: Math.max(1, parseInt(e.target.value || '3', 10)),
+                      })}
+                      className="w-24 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                  </label>
+                  <label className="text-sm space-y-1">
+                    <span className="block text-xs text-gray-600">Gathering window (hours)</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={settings.cosign?.expiry_hours ?? 168}
+                      onChange={e => updateSetting('cosign', {
+                        ...(settings.cosign || {}),
+                        expiry_hours: Math.max(1, parseInt(e.target.value || '168', 10)),
+                      })}
+                      className="w-28 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                  </label>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Save with the main "Save All Settings" button below. Authors count as the first signature, so a threshold of 3 means "author + 2 others."
+                </p>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
       {/* Multi-Admin Approval — Phase 44 F1. Opt-in N-of-M ratification
           over four destructive admin actions: remove member, delete topic,
           edit permissions, delete org. Defaults to OFF; every org behaves

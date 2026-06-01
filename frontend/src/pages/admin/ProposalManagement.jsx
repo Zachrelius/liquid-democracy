@@ -121,6 +121,19 @@ function OptionsEditor({ options, onChange }) {
 
 function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onCancel }) {
   const toast = useToast();
+  // Phase 46 F2 — creation-flow awareness. When the org is in
+  // cosign_required mode AND the caller can't bypass (no
+  // proposal.advance_phase permission), surface advisory copy so the
+  // user understands their proposal will gather signatures before going
+  // to a vote.
+  const { currentOrg } = useOrg();
+  const cosignRequired = (currentOrg?.proposal_creation_mode || 'open') === 'cosign_required';
+  const canBypassCosign = useHasPermission('proposal.advance_phase');
+  const showCosignAdvisory = cosignRequired && !canBypassCosign;
+  const cosignCfg = currentOrg?.settings?.cosign || {};
+  const cosignThreshold = cosignCfg.threshold ?? 3;
+  const cosignWindowHours = cosignCfg.expiry_hours ?? 168;
+  const cosignWindowDays = Math.round(cosignWindowHours / 24);
   // Phase 12.5 F3 — threshold inputs are gated on `proposal.set_thresholds`.
   // Members granted `proposal.create` but not `proposal.set_thresholds` see
   // the form WITHOUT threshold inputs; the backend (Cluster B3) applies
@@ -352,6 +365,15 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
   return (
     <form onSubmit={handleSubmit} className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
       <h3 className="text-lg font-semibold text-[var(--brand-primary)]">Create Proposal</h3>
+
+      {/* Phase 46 F2 — cosign-required advisory. Members in
+          cosign_required orgs see this so the creation flow doesn't
+          silently change behavior. */}
+      {showCosignAdvisory && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900">
+          <strong>This org gathers signatures first.</strong> Your proposal will need <strong>{cosignThreshold}</strong> signature{cosignThreshold === 1 ? '' : 's'} (including your own implicit one) within roughly <strong>{cosignWindowDays} day{cosignWindowDays === 1 ? '' : 's'}</strong> before it advances to a vote. If it doesn't reach the threshold in time it closes as "expired_unsigned."
+        </div>
+      )}
 
       {/* Phase 8.5 — Scope Selector */}
       {subOrgs && subOrgs.length > 0 && (

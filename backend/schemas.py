@@ -495,6 +495,17 @@ class ProposalOut(BaseModel):
     effective_max_write_ins: int = 10
     effective_edit_lockout_fraction: float = 0.75
 
+    # Phase 46 — cosign-gated proposal fields (B3). All null/false for
+    # non-cosign-gated proposals so existing FE code is unaffected.
+    is_cosign_gated: bool = False
+    cosign_threshold_snapshot: Optional[int] = None
+    cosign_expires_at: Optional[datetime] = None
+    cosign_signature_count: int = 0
+    # True iff the requesting viewer has signed (FE renders Sign vs
+    # Withdraw accordingly). Null when the request is anonymous / has
+    # no auth context.
+    viewer_has_cosigned: Optional[bool] = None
+
     model_config = {"from_attributes": True}
 
 
@@ -1294,6 +1305,22 @@ class OrgUpdate(BaseModel):
     description: Optional[str] = None
     join_policy: Optional[str] = None
     settings: Optional[dict] = None
+    # Phase 46 — proposal creation gating tier (B1). When None, the field
+    # is left unchanged; when set, validated against the known tiers in
+    # cosign.VALID_MODES.
+    proposal_creation_mode: Optional[str] = None
+
+    @field_validator("proposal_creation_mode")
+    @classmethod
+    def validate_creation_mode(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if v not in ("open", "cosign_required", "admin_only"):
+            raise ValueError(
+                "proposal_creation_mode must be one of "
+                "'open', 'cosign_required', 'admin_only'"
+            )
+        return v
 
     @field_validator("join_policy")
     @classmethod

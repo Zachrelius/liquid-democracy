@@ -1190,6 +1190,10 @@ export default function ProposalDetail() {
   // (b) look up URL-detected conversation_ids against the viewer's
   // visibility scope.
   const [linkedPolises, setLinkedPolises] = useState([]);
+  // Phase 46 F1 — cosign-gated proposal state. The proposal payload
+  // carries is_cosign_gated + cosign_threshold_snapshot + count + the
+  // viewer's signed state; the panel renders a counter + Sign/Withdraw.
+  const [cosignBusy, setCosignBusy] = useState(false);
 
   const fetchData = useCallback(async () => {
     // Phase 25 F3 — clear stale error before re-fetch so the Retry
@@ -1399,6 +1403,35 @@ export default function ProposalDetail() {
     } catch {/* ignore */}
   }, [id]);
 
+  // Phase 46 F1 — cosign sign / withdraw handlers. The backend returns
+  // the updated ProposalOut so we just merge it into our local state.
+  async function handleCosignSign() {
+    setCosignBusy(true);
+    try {
+      const updated = await api.post(`/api/proposals/${id}/cosign`);
+      setProposal(updated);
+      // If the threshold was met, the proposal moved to voting — refresh
+      // the tally/my-vote so the voting UI renders correctly.
+      if (updated.status === 'voting') await refreshVote();
+    } catch (e) {
+      setError(e?.message || 'Failed to add signature');
+    } finally {
+      setCosignBusy(false);
+    }
+  }
+
+  async function handleCosignWithdraw() {
+    setCosignBusy(true);
+    try {
+      const updated = await api.delete(`/api/proposals/${id}/cosign`);
+      setProposal(updated);
+    } catch (e) {
+      setError(e?.message || 'Failed to withdraw signature');
+    } finally {
+      setCosignBusy(false);
+    }
+  }
+
   if (loading) return <Spinner />;
   if (error) return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -1541,6 +1574,58 @@ export default function ProposalDetail() {
               </p>
             )}
           </div>
+
+          {/* Phase 46 F1 — Cosign gathering panel. Renders only when
+              the proposal is in cosign gathering state (cosign-gated
+              AND status=='deliberation'). Shows the counter, an
+              expiry hint, and a Sign/Withdraw button. The author's
+              implicit signature renders as a non-actionable badge
+              ("You created this — your signature is implicit"). */}
+          {proposal.is_cosign_gated && proposal.status === 'deliberation' && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <h3 className="text-sm font-semibold text-amber-800 uppercase tracking-wide">Gathering Signatures</h3>
+                  <p className="text-sm text-amber-900 mt-1">
+                    <strong>{proposal.cosign_signature_count} of {proposal.cosign_threshold_snapshot}</strong>
+                    {' signatures'}
+                    {(() => {
+                      const need = (proposal.cosign_threshold_snapshot || 0) - (proposal.cosign_signature_count || 0);
+                      return need > 0 ? ` — ${need} more needed to advance to voting` : ' — threshold met!';
+                    })()}
+                  </p>
+                  {proposal.cosign_expires_at && (
+                    <p className="text-xs text-amber-700 mt-1">
+                      Window closes {new Date(proposal.cosign_expires_at).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  {isAuthor ? (
+                    <span className="text-xs italic text-amber-700">
+                      Your signature is implicit (you proposed this).
+                    </span>
+                  ) : proposal.viewer_has_cosigned === true ? (
+                    <button
+                      onClick={handleCosignWithdraw}
+                      disabled={cosignBusy}
+                      className="text-sm px-4 py-2 border border-amber-300 text-amber-800 rounded-lg hover:bg-amber-100 transition-colors disabled:opacity-50"
+                    >
+                      {cosignBusy ? 'Withdrawing…' : 'Withdraw signature'}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={handleCosignSign}
+                      disabled={cosignBusy}
+                      className="text-sm px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors disabled:opacity-50"
+                    >
+                      {cosignBusy ? 'Signing…' : 'Sign this petition'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Phase 32.1 F2.4 — change-log accordion. Hidden when no
               revisions exist. Visible to all org members. */}
