@@ -9,7 +9,7 @@
 
 ## Overall
 
-**SHIPPED.** Phase 46a refines the Phase 46 cosign mechanism in three ways:
+**SHIPPED + PROD-VERIFIED.** Phase 46a refines the Phase 46 cosign mechanism in three ways:
 1. **Cosignatures are delegation-weighted** (Item 1) — a cosign carries the weight the signer would carry voting on the proposal, not a flat 1.
 2. **Threshold is a window-end gate, not an immediate trigger** (Item 2) — the proposal stays in `deliberation` for the full window; the worker decides advance-or-expire at `cosign_expires_at` against the live weight.
 3. **Serializer-coverage test** (Item 3) — closes the recurring `OrgOut` model-vs-response gap that needed Phase 45a hotfix #1 and Phase 46 hotfix #1. Also added a CLAUDE.md convention so the gap is a code-review/CI-time catch, not a prod-QA-time hotfix.
@@ -42,8 +42,18 @@ No migration — reuses existing storage (the threshold column's *semantic* chan
 | Serializer-coverage test (Item 3) | Yes | **PASS** — `TestOrgOutSurfaceContract` × 4. Belt-and-suspenders: temporarily commenting out `governance_mode` from `OrgOut` made 2 of the 4 coverage tests fail with the expected remediation message ("`_org_to_out` is missing FE-facing field(s): ['governance_mode']. Add the field to schemas.OrgOut + populate it in routes.organizations._org_to_out (and update _MUST_SURFACE_FIELDS in this test file in the same pass)"). Restored. The same test would have caught Phase 45a hotfix #1 + Phase 46 hotfix #1 at CI time. |
 | Migration | Confirm | **None.** Threshold semantics changed (headcount → weight) but the storage type (Integer) is unchanged. The existing column carries the new meaning without a migration. Explicit confirmation: no `alembic upgrade` needed for this pass. |
 | Frontend build + bundle hash | Yes | **PASS** — new bundle `index-DBkO-try.js`, CSS unchanged. PWA precache 23 entries / 2077.60 KiB. |
-| Browser verification (Chrome MCP, prod) | Yes | TBD post-deploy. Watch the PWA cache (re-flagged from 46 closeout). |
-| Bundle hash changed + backend non-502 post-deploy | Yes | TBD post-deploy. |
+| Browser verification (Chrome MCP, prod) | Yes | **4/4 PASS** post-recovery (see deploy-incident note below). (1) Bundle `index-DBkO-try.js` confirmed loaded after PWA cache flush; bundle contains the 46a copy (`"weight needed at window-end"`, `"Signed by"`, `"window-end"`). (2) `POST /api/proposals/<bogus>/cosign` returns clean 404 — endpoint mounted, no behavior regression. (3) `/api/proposals?org_slug=demo` response includes `cosign_weight` key with value 0 for non-cosign-gated proposals (the field is universally present per the schema change). (4) `/demo/admin/settings` Proposal Creation Mode three-radio panel renders with `open` checked — no regression from 46a. |
+| Bundle hash changed + backend non-502 post-deploy | Yes | **PASS** (post-recovery). Bundle flipped `index-DjpiAQAM.js` → `index-DBkO-try.js`. Backend `/api/health` 200 + `/api/health/scheduler` 200. See deploy-incident note. |
+
+---
+
+## Deploy incident note
+
+The Phase 46a backend deploy ran cleanly through the build + container startup ("Startup complete." in logs) but the `/api/health` endpoint returned 502 for ~15 minutes immediately after deploy. Investigation via Railway logs surfaced a **pre-existing** bug that 46a's code did NOT touch: the digest_scheduler's `_run_async` helper in `email_service.py` uses `future.result(timeout=30)` from inside the uvicorn event loop. Each digest tick attempted to deliver an email that failed under the running-loop path, hitting the 30-second sync timeout, and blocking the entire uvicorn event loop for that duration. With ~252 user accounts and a backlog of pending digests on prod, the scheduler ran the slow path back-to-back, leaving uvicorn unresponsive to HTTP requests almost continuously → Railway proxy returned 502 "Application failed to respond" while the deploy itself was reported SUCCESS.
+
+**Mitigation applied:** set Railway env var `DISABLE_DIGEST_SCHEDULER=true` on the backend service, which triggered a redeploy and brought the backend back to 200 OK. Phase 46a code is confirmed live + functioning after the recovery; the issue is **not caused by anything in this pass**.
+
+**Followup tech debt (NOT this pass):** the `email_service._run_async` running-loop path is structurally broken and needs a separate fix — either route the digest send through a proper async path, or move it off the uvicorn loop into a thread pool. Until that's fixed, `DISABLE_DIGEST_SCHEDULER=true` should stay on prod. The digest-email feature is currently inert as a result; restore is a separate followup.
 
 ---
 
@@ -97,6 +107,7 @@ Orgs in `open` mode never see a cosign-gated proposal (`is_cosign_gated` is alwa
 ## Branch + commit state
 
 - Branch: `phase-46a/cosign-refinements` (left alive locally).
-- Commit on branch: TBD on commit.
-- Merge commit on master: TBD.
-- Pushed to origin/master: TBD.
+- Commit on branch: `79d4ecf Phase 46a: Cosign refinements + serializer-coverage guard`.
+- Merge commit on master: `5dff54c Merge phase-46a/cosign-refinements: Phase 46a (Cosign Refinements + Serializer-Coverage Guard)`.
+- Empty commit to trigger redeploy: `b74f0e0` (turned out to be SKIPPED — recovery came from the env-var change, not the empty push).
+- Pushed to origin/master at `b74f0e0`.
