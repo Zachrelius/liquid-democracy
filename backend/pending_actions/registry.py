@@ -180,83 +180,83 @@ def _validate_member_remove(
     )
     if membership is None:
         raise HTTPException(status_code=404, detail="Target is not a member of this org")
-    # Phase 45a B1 — steward removal is permitted only if the steward's
-    # account is inactive (the recovery path). Active stewards remain
-    # un-removable. When removing leaves the org without a steward, D3
-    # requires a named successor in the payload (B2).
-    if membership.role_id is not None:
-        role = db.get(models.Role, membership.role_id)
-        if role is not None and role.system_key == "steward":
-            if target_user.is_active:
-                raise HTTPException(status_code=400, detail="Cannot remove the Steward")
-            # Inactive steward removal — count other active stewards.
-            other_steward_count = _count_other_active_stewards(
-                db, org, exclude_user_id=target_user_id,
+    if membership.role_id is None:
+        return
+    role = db.get(models.Role, membership.role_id)
+    if role is None:
+        return
+
+    # Phase 45a/45b — top-tier (governing-role) target handling. In
+    # single_steward mode the governing role is 'steward'; in
+    # admin_council mode it's 'admin'. The behavior splits on the
+    # target's User.is_active and on how many other governors remain.
+    from governance import (
+        is_top_tier_role, count_active_governors,
+        mode_of, SINGLE_STEWARD,
+    )
+
+    if not is_top_tier_role(org, role.system_key):
+        return  # Non-governor target — proceed as today.
+
+    other_governor_count = count_active_governors(
+        db, org, exclude_user_id=target_user_id,
+    )
+
+    if target_user.is_active:
+        # ACTIVE top-tier target.
+        # - single_steward mode: 45a behavior preserved — the active
+        #   steward is unconditionally blocked (the rule is "you reassign
+        #   via transfer, never via removal").
+        # - admin_council mode: D6 floor — the last active admin is
+        #   protected; other admins can be removed.
+        if mode_of(org) == SINGLE_STEWARD:
+            raise HTTPException(status_code=400, detail="Cannot remove the Steward")
+        if other_governor_count == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot remove the last admin from this organization.",
             )
-            if other_steward_count == 0:
-                successor_user_id = payload.get("successor_user_id")
-                if not isinstance(successor_user_id, str) or not successor_user_id.strip():
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            "Removing the sole steward requires a "
-                            "'successor_user_id' to promote to steward."
-                        ),
-                    )
-                if successor_user_id == target_user_id:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Successor cannot be the user being removed.",
-                    )
-                successor_membership = (
-                    db.query(models.OrgMembership)
-                    .filter(
-                        models.OrgMembership.org_id == org.id,
-                        models.OrgMembership.user_id == successor_user_id,
-                        models.OrgMembership.status == "active",
-                    )
-                    .first()
-                )
-                if successor_membership is None:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            "Successor must be an active member of this "
-                            "organization."
-                        ),
-                    )
-                successor_user = db.get(models.User, successor_user_id)
-                if successor_user is None or not successor_user.is_active:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Successor's account must be active.",
-                    )
+        return  # council mode + other governors remain → proceed.
 
+    # INACTIVE top-tier target — recovery path. If removal would leave
+    # zero governors, a successor must be named so the floor holds.
+    if other_governor_count > 0:
+        return  # Other governors remain — silent proceed.
 
-def _count_other_active_stewards(
-    db: Session, org: models.Organization, *, exclude_user_id: str,
-) -> int:
-    """Return the count of active stewards in ``org`` whose user_id is not
-    ``exclude_user_id``. Used by the inactive-steward removal path to
-    decide whether a successor must be named (B2/D3)."""
-    memberships = (
+    successor_user_id = payload.get("successor_user_id")
+    if not isinstance(successor_user_id, str) or not successor_user_id.strip():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Removing the sole governor requires a 'successor_user_id' "
+                "who will be promoted to fill the seat."
+            ),
+        )
+    if successor_user_id == target_user_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Successor cannot be the user being removed.",
+        )
+    successor_membership = (
         db.query(models.OrgMembership)
         .filter(
             models.OrgMembership.org_id == org.id,
+            models.OrgMembership.user_id == successor_user_id,
             models.OrgMembership.status == "active",
         )
-        .all()
+        .first()
     )
-    count = 0
-    for m in memberships:
-        if m.user_id == exclude_user_id:
-            continue
-        if m.role_id is None:
-            continue
-        role = db.get(models.Role, m.role_id)
-        if role is not None and role.system_key == "steward":
-            count += 1
-    return count
+    if successor_membership is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Successor must be an active member of this organization.",
+        )
+    successor_user = db.get(models.User, successor_user_id)
+    if successor_user is None or not successor_user.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="Successor's account must be active.",
+        )
 
 
 def _validate_topic_delete(
@@ -351,60 +351,85 @@ def execute_member_remove(
     if m is None:
         raise HTTPException(status_code=404, detail="Member not found")
 
-    is_steward = False
+    role = None
     if m.role_id is not None:
         role = db.get(models.Role, m.role_id)
-        if role is not None and role.system_key == "steward":
-            is_steward = True
 
-    if is_steward:
+    from governance import (
+        is_top_tier_role, count_active_governors,
+        mode_of, SINGLE_STEWARD,
+    )
+
+    is_governor = role is not None and is_top_tier_role(org, role.system_key)
+
+    if is_governor:
         target_user = db.get(models.User, target_user_id)
-        if target_user is not None and target_user.is_active:
-            raise HTTPException(
-                status_code=400, detail="Cannot remove the Steward",
-            )
-        other_steward_count = _count_other_active_stewards(
+        other_governor_count = count_active_governors(
             db, org, exclude_user_id=target_user_id,
         )
-        if other_steward_count == 0:
-            if not successor_user_id:
+        if target_user is not None and target_user.is_active:
+            # Active governing-role target. Block per the mode-specific
+            # floor (Phase 45a + Phase 45b D6).
+            if mode_of(org) == SINGLE_STEWARD:
+                raise HTTPException(
+                    status_code=400, detail="Cannot remove the Steward",
+                )
+            if other_governor_count == 0:
                 raise HTTPException(
                     status_code=400,
-                    detail=(
-                        "Removing the sole steward requires a successor."
-                    ),
+                    detail="Cannot remove the last admin from this organization.",
                 )
-            _promote_successor_to_steward(db, org, successor_user_id, target_user_id)
-        log_audit_event(
-            db,
-            action="steward.removed_while_inactive",
-            target_type="org_membership",
-            target_id=str(m.user_id),
-            actor_id=actor_id,
-            details={
-                "org_id": org.id,
-                "removed_user_id": target_user_id,
-                "successor_user_id": successor_user_id if other_steward_count == 0 else None,
-                "had_other_stewards": other_steward_count > 0,
-            },
-            ip_address=ip_address,
-        )
+            # council mode + other admins remain → proceed below.
+        else:
+            # Inactive governing-role target — recovery path. If removing
+            # leaves zero governors, promote the named successor in the
+            # same transaction. Emit the recovery audit event in either
+            # mode (the event name is generalized for council mode too).
+            if other_governor_count == 0:
+                if not successor_user_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Removing the sole governor requires a successor."
+                        ),
+                    )
+                _promote_successor_to_top_tier(
+                    db, org, successor_user_id, target_user_id,
+                )
+            log_audit_event(
+                db,
+                action="steward.removed_while_inactive",
+                target_type="org_membership",
+                target_id=str(m.user_id),
+                actor_id=actor_id,
+                details={
+                    "org_id": org.id,
+                    "governance_mode": mode_of(org),
+                    "removed_user_id": target_user_id,
+                    "removed_role_system_key": role.system_key if role else None,
+                    "successor_user_id": (
+                        successor_user_id if other_governor_count == 0 else None
+                    ),
+                    "had_other_governors": other_governor_count > 0,
+                },
+                ip_address=ip_address,
+            )
 
     db.delete(m)
 
 
-def _promote_successor_to_steward(
+def _promote_successor_to_top_tier(
     db: Session,
     org: models.Organization,
     successor_user_id: str,
     removed_user_id: str,
 ) -> None:
-    """Promote ``successor_user_id`` to the steward role on ``org``.
+    """Promote ``successor_user_id`` to the org's mode-appropriate top
+    governing tier (steward in single_steward mode; admin in council).
 
-    Used during inactive-steward recovery removal (B2). Mutates the
-    successor's OrgMembership.role_id in-place; caller's transaction
-    encompasses both this promotion and the removal of the prior steward,
-    so the org never observes a zero-steward state on the default path.
+    Phase 45a B2 + Phase 45b D6 — caller's transaction encompasses this
+    promotion AND the removal of the prior governor, so the org never
+    observes a zero-governor state on the default path.
     """
     successor_membership = (
         db.query(models.OrgMembership)
@@ -431,20 +456,22 @@ def _promote_successor_to_steward(
             status_code=400,
             detail="Successor's account must be active.",
         )
-    steward_role = (
+    from governance import governing_role_key
+    target_role_key = governing_role_key(org)
+    target_role = (
         db.query(models.Role)
         .filter(
             models.Role.org_id == org.id,
-            models.Role.system_key == "steward",
+            models.Role.system_key == target_role_key,
         )
         .first()
     )
-    if steward_role is None:
+    if target_role is None:
         raise HTTPException(
             status_code=500,
-            detail="Org is missing the preset Steward role",
+            detail=f"Org is missing the preset {target_role_key!r} role",
         )
-    successor_membership.role_id = steward_role.id
+    successor_membership.role_id = target_role.id
 
 
 def execute_topic_delete(
@@ -500,12 +527,14 @@ def execute_role_permissions_edit(
         role_system_key = c["role_system_key"]
         new_enabled = bool(c["enabled"])
 
-        if is_locked(role_system_key, permission_key):
+        # Phase 45b — mode-aware: in admin_council mode the lock vests
+        # in the admin tier; in single_steward mode the steward.
+        if is_locked(role_system_key, permission_key, org=org):
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Cannot change '{permission_key}' for the Steward "
-                    "role: this permission is locked."
+                    f"Cannot change '{permission_key}' for the top "
+                    "governing role: this permission is locked."
                 ),
             )
         if permission_key not in valid_keys:

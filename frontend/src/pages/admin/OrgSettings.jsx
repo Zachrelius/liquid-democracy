@@ -201,6 +201,15 @@ export default function OrgSettings() {
   // Phase 45a F2 — voluntary stewardship handoff. Same OWNER_ONLY_KEY
   // pattern: only the Steward currently resolves the permission to True.
   const canTransferStewardship = useHasPermission('org.transfer_stewardship');
+  // Phase 45b F1 — Governance mode controls. The mode field surfaces on
+  // currentOrg.governance_mode (default 'single_steward'). Mode switch
+  // is gated by the actor's role on the backend (steward initiates the
+  // switch to council; any admin initiates the revert). FE just gates
+  // visibility of the appropriate control.
+  const governanceMode = currentOrg?.governance_mode || 'single_steward';
+  const userRole = currentOrg?.user_role;
+  const canSwitchToCouncil = governanceMode === 'single_steward' && userRole === 'steward';
+  const canRevertToSingle = governanceMode === 'admin_council' && userRole === 'admin';
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [joinPolicy, setJoinPolicy] = useState('approval_required');
@@ -265,6 +274,14 @@ export default function OrgSettings() {
   // content before flipping their join_policy to a public variant.
   const [introText, setIntroText] = useState('');
   const [savingIntro, setSavingIntro] = useState(false);
+
+  // Phase 45b F1 — Governance Mode section state. The revert flow needs
+  // the active members list to pick a successor; the switch-to-council
+  // flow does not (the steward demotes themselves).
+  const [savingGovernanceMode, setSavingGovernanceMode] = useState(false);
+  const [revertTargetId, setRevertTargetId] = useState('');
+  const [revertMembers, setRevertMembers] = useState([]);
+  const [loadingRevertMembers, setLoadingRevertMembers] = useState(false);
 
   // Phase 45a F2 — Transfer Stewardship section state.
   // The form is collapsed by default; expanding reveals a member picker
@@ -395,6 +412,85 @@ export default function OrgSettings() {
       setMsg(e.message || 'Failed to save');
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Phase 45b F1 — switch to council mode. Steward-only; the steward
+  // atomically demotes to admin per D2.
+  async function handleSwitchToCouncil() {
+    const ok = await confirm({
+      title: 'Switch to Admin Council mode?',
+      message: (
+        `You will become an Admin of "${currentOrg.name}" and the org will ` +
+        `run on its admin council — no single Steward. Any admin can revert ` +
+        `this later. The org's behavior outside this setting is otherwise ` +
+        `unchanged.`
+      ),
+      destructive: true,
+    });
+    if (!ok) return;
+    setSavingGovernanceMode(true);
+    try {
+      const res = await api.post(
+        `/api/orgs/${currentOrg.slug}/governance-mode`,
+        { mode: 'admin_council' },
+      );
+      toast.success('Now running on admin council — you are now an Admin');
+      await refreshOrgs();
+      return res;
+    } catch (e) {
+      toast.error(e.message || 'Failed to switch governance mode');
+    } finally {
+      setSavingGovernanceMode(false);
+    }
+  }
+
+  async function loadRevertMembers() {
+    if (!currentOrg) return;
+    setLoadingRevertMembers(true);
+    try {
+      const all = await api.get(`/api/orgs/${currentOrg.slug}/members`);
+      // Council revert needs an existing admin; filter accordingly.
+      const eligible = (all || []).filter(
+        m => m.status === 'active' && m.role === 'admin',
+      );
+      setRevertMembers(eligible);
+    } catch (e) {
+      toast.error(e.message || 'Failed to load admins');
+    } finally {
+      setLoadingRevertMembers(false);
+    }
+  }
+
+  async function handleRevertToSingle() {
+    const target = revertMembers.find(m => m.user_id === revertTargetId);
+    const targetLabel = target ? (target.display_name || target.username) : 'you';
+    const ok = await confirm({
+      title: 'Revert to Single Steward?',
+      message: (
+        `${targetLabel === 'you' ? 'You' : targetLabel} will become the new ` +
+        `Steward of "${currentOrg.name}" and the org will run on a single ` +
+        `top officer again. Any admin can switch back later.`
+      ),
+      destructive: false,
+    });
+    if (!ok) return;
+    setSavingGovernanceMode(true);
+    try {
+      const body = { mode: 'single_steward' };
+      if (revertTargetId) body.successor_user_id = revertTargetId;
+      const res = await api.post(
+        `/api/orgs/${currentOrg.slug}/governance-mode`,
+        body,
+      );
+      toast.success('Reverted to single-steward mode');
+      await refreshOrgs();
+      setRevertTargetId('');
+      return res;
+    } catch (e) {
+      toast.error(e.message || 'Failed to revert governance mode');
+    } finally {
+      setSavingGovernanceMode(false);
     }
   }
 
@@ -1937,12 +2033,96 @@ export default function OrgSettings() {
         </div>
       </section>
 
+      {/* Phase 45b F1 — Governance Mode. The switch is bidirectional:
+          single_steward → admin_council (steward initiates; demotes
+          self to admin) and the reverse (any admin picks who claims the
+          new steward seat). Hidden in council mode for the transfer
+          stewardship section below since there's no steward to transfer
+          from. */}
+      {(canSwitchToCouncil || canRevertToSingle) && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Governance Mode</h2>
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+            <div>
+              <p className="text-sm text-gray-700">
+                Current mode: <strong>{governanceMode === 'admin_council' ? 'Admin Council' : 'Single Steward'}</strong>
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                {governanceMode === 'admin_council'
+                  ? 'Authority is held collectively by the admin tier. No single top officer.'
+                  : 'A single Steward holds top authority. This is the default model.'}
+              </p>
+            </div>
+            {canSwitchToCouncil && (
+              <div className="space-y-2">
+                <p className="text-sm text-gray-600">
+                  Switch to admin-council mode: you become an Admin alongside
+                  any existing admins. There will be no Steward. Reversible.
+                </p>
+                <button
+                  onClick={handleSwitchToCouncil}
+                  disabled={savingGovernanceMode}
+                  className="text-sm px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                >
+                  {savingGovernanceMode ? 'Switching…' : 'Switch to Admin Council'}
+                </button>
+              </div>
+            )}
+            {canRevertToSingle && (
+              <div className="space-y-2">
+                <p className="text-sm text-gray-600">
+                  Revert to single-steward mode: pick an admin (or yourself)
+                  to claim the Steward seat. The remaining admins keep their
+                  role.
+                </p>
+                {revertMembers.length === 0 && !loadingRevertMembers ? (
+                  <button
+                    onClick={loadRevertMembers}
+                    className="text-sm px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Pick new Steward…
+                  </button>
+                ) : loadingRevertMembers ? (
+                  <p className="text-sm text-gray-500">Loading admins…</p>
+                ) : (
+                  <>
+                    <label className="block text-xs text-gray-600">New Steward (leave blank to claim it yourself)</label>
+                    <select
+                      value={revertTargetId}
+                      onChange={e => setRevertTargetId(e.target.value)}
+                      className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    >
+                      <option value="">(myself)</option>
+                      {revertMembers.map(m => (
+                        <option key={m.user_id} value={m.user_id}>
+                          {m.display_name || m.username}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={handleRevertToSingle}
+                      disabled={savingGovernanceMode}
+                      className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                    >
+                      {savingGovernanceMode ? 'Reverting…' : 'Revert to Single Steward'}
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
       {/* Phase 45a F2 — voluntary stewardship handoff. Gated on the
           permission key (today Steward-only via OWNER_ONLY_KEYS, but
           using the permission gate keeps the UI honest if the key ever
           relaxes). The action is an atomic role swap (outgoing → admin,
-          incoming → steward), implemented as a single backend transaction. */}
-      {canTransferStewardship && (
+          incoming → steward), implemented as a single backend transaction.
+          Phase 45b F2 — also hide when org is in admin_council mode (no
+          Steward to transfer from; the analogous control there is the
+          Governance Mode revert above). */}
+      {canTransferStewardship && governanceMode === 'single_steward' && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Stewardship</h2>
           <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">

@@ -333,14 +333,15 @@ def patch_role_permissions(
     rows_to_update: list[tuple[models.RolePermission | None, models.Role, RolePermissionChange]] = []
 
     for change in body.changes:
-        # Locked-cell guard.
-        if is_locked(change.role_system_key, change.permission_key):
+        # Locked-cell guard. Phase 45b — mode-aware: in admin_council
+        # mode the lock vests in the admin tier instead of the Steward.
+        if is_locked(change.role_system_key, change.permission_key, org=org):
             raise HTTPException(
                 status_code=400,
                 detail=(
                     f"Cannot change '{change.permission_key}' for the "
-                    f"Steward role: this permission is locked for the "
-                    f"Steward role and cannot be changed."
+                    f"top governing role: this permission is locked to "
+                    f"prevent self-lockout and cannot be changed."
                 ),
             )
 

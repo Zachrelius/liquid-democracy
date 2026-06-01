@@ -235,6 +235,9 @@ def _org_to_out(
         user_role=user_role,
         user_permissions=user_permissions,
         branding=branding_out,
+        # Phase 45b — surface the governance mode so the FE can render
+        # the mode-aware controls (F1 switch, F2 conditional UI).
+        governance_mode=org.governance_mode or "single_steward",
     )
 
 
@@ -631,6 +634,19 @@ class _TransferStewardshipBody(BaseModel):
     target_user_id: str
 
 
+class _GovernanceModeBody(BaseModel):
+    """Phase 45b B2 — body for POST /api/orgs/{slug}/governance-mode.
+
+    ``mode`` is the target mode. When switching FROM admin_council back
+    TO single_steward, ``successor_user_id`` names the admin who claims
+    the Steward seat. When switching FROM single_steward to council mode
+    the caller (current Steward) atomically demotes to admin; no
+    successor is needed.
+    """
+    mode: str
+    successor_user_id: Optional[str] = None
+
+
 @router.post("/{org_slug}/transfer-stewardship")
 def transfer_stewardship(
     org_slug: str,
@@ -714,6 +730,153 @@ def transfer_stewardship(
         "status": "ok",
         "outgoing_steward_id": current_user.id,
         "incoming_steward_id": body.target_user_id,
+    }
+
+
+@router.post("/{org_slug}/governance-mode")
+def change_governance_mode(
+    org_slug: str,
+    body: _GovernanceModeBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_admin),
+):
+    """Phase 45b B2 — switch the org's governance mode.
+
+    Two directions:
+      * ``single_steward → admin_council`` (D1/D2): caller must be the
+        current Steward. The Steward atomically demotes to admin and
+        the mode flips, in one transaction. After the switch there is
+        no steward and at least one admin (the former steward).
+      * ``admin_council → single_steward`` (D3): caller must be an
+        admin. The body's ``successor_user_id`` names the admin who
+        claims the new Steward seat (defaults to the caller). Atomic:
+        the named admin's role flips to steward and the mode flips.
+
+    Mode switch is NOT gated by Phase 44 multi-admin approval (D1 —
+    less dramatic than org.delete, which is steward-only/any-admin per
+    mode). In-mode high-stakes actions still defer to Phase 44 when
+    that opt-in is on.
+    """
+    from governance import (
+        mode_of, SINGLE_STEWARD, ADMIN_COUNCIL, VALID_MODES,
+    )
+
+    if body.mode not in VALID_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown governance mode: {body.mode!r}",
+        )
+
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug,
+    ).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    current_mode = mode_of(org)
+    if body.mode == current_mode:
+        # Idempotent no-op.
+        return {"status": "ok", "mode": current_mode, "changed": False}
+
+    actor_role = membership_role_system_key(membership)
+    ip = request.client.host if request.client else None
+
+    if current_mode == SINGLE_STEWARD and body.mode == ADMIN_COUNCIL:
+        # D2 — steward-initiated; the steward demotes to admin
+        # atomically with the mode flip.
+        if actor_role != "steward":
+            raise HTTPException(
+                status_code=403,
+                detail="Only the Steward can switch to admin_council mode.",
+            )
+        admin_role_id = _resolve_role_id_by_system_key(db, org.id, "admin")
+        if admin_role_id is None:
+            raise HTTPException(
+                status_code=500,
+                detail="Org is missing the preset Admin role",
+            )
+        membership.role_id = admin_role_id
+        org.governance_mode = ADMIN_COUNCIL
+        log_audit_event(
+            db,
+            action="org.governance_mode_changed",
+            target_type="organization",
+            target_id=org.id,
+            actor_id=current_user.id,
+            details={
+                "from": SINGLE_STEWARD,
+                "to": ADMIN_COUNCIL,
+                "demoted_user_id": current_user.id,
+            },
+            ip_address=ip,
+        )
+        db.commit()
+        return {
+            "status": "ok",
+            "mode": ADMIN_COUNCIL,
+            "changed": True,
+            "demoted_user_id": current_user.id,
+        }
+
+    # current_mode == ADMIN_COUNCIL and body.mode == SINGLE_STEWARD
+    # D3 — admin-initiated; the named admin (default: caller) claims
+    # the steward seat atomically with the mode flip.
+    if actor_role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Only an Admin can switch the org back to single_steward mode.",
+        )
+    successor_user_id = body.successor_user_id or current_user.id
+    successor_membership = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == org.id,
+        models.OrgMembership.user_id == successor_user_id,
+        models.OrgMembership.status == "active",
+    ).first()
+    if successor_membership is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Successor must be an active admin of this organization.",
+        )
+    successor_user = db.get(models.User, successor_user_id)
+    if successor_user is None or not successor_user.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="Successor's account must be active.",
+        )
+    if membership_role_system_key(successor_membership) != "admin":
+        raise HTTPException(
+            status_code=400,
+            detail="Successor must currently hold the Admin role.",
+        )
+    steward_role_id = _resolve_role_id_by_system_key(db, org.id, "steward")
+    if steward_role_id is None:
+        raise HTTPException(
+            status_code=500,
+            detail="Org is missing the preset Steward role",
+        )
+    successor_membership.role_id = steward_role_id
+    org.governance_mode = SINGLE_STEWARD
+    log_audit_event(
+        db,
+        action="org.governance_mode_changed",
+        target_type="organization",
+        target_id=org.id,
+        actor_id=current_user.id,
+        details={
+            "from": ADMIN_COUNCIL,
+            "to": SINGLE_STEWARD,
+            "promoted_user_id": successor_user_id,
+        },
+        ip_address=ip,
+    )
+    db.commit()
+    return {
+        "status": "ok",
+        "mode": SINGLE_STEWARD,
+        "changed": True,
+        "promoted_user_id": successor_user_id,
     }
 
 
@@ -821,10 +984,27 @@ def change_member_role(
     ).first()
     if not m:
         raise HTTPException(status_code=404, detail="Member not found")
-    # Phase 12 — Steward (renamed from 'owner') is protected from
-    # role-change via this endpoint; reassignment is its own flow.
-    if membership_role_system_key(m) == "steward":
+    # Phase 12 / 45b — top governing tier is protected from demotion via
+    # this endpoint. In single_steward mode that's Steward (today's rule).
+    # In admin_council mode, the last admin must remain; demoting a
+    # non-last admin to a lower role is permitted.
+    current_role_key = membership_role_system_key(m)
+    if current_role_key == "steward":
         raise HTTPException(status_code=400, detail="Cannot change Steward role")
+    # Phase 45b D6 — in admin_council mode, demoting the LAST active
+    # admin would drop the org below the floor; block that path.
+    from governance import mode_of, ADMIN_COUNCIL, count_active_governors
+    if current_role_key == "admin" and mode_of(org) == ADMIN_COUNCIL:
+        new_system_key = _INV_ROLE_TO_SYSTEM_KEY.get(body.role, body.role)
+        if new_system_key != "admin":
+            other_governors = count_active_governors(
+                db, org, exclude_user_id=m.user_id,
+            )
+            if other_governors == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot demote the last admin of this organization.",
+                )
     new_role_id = _resolve_role_id_by_system_key(
         db, org.id, _INV_ROLE_TO_SYSTEM_KEY.get(body.role, body.role),
     )
@@ -912,6 +1092,13 @@ def remove_member(
         actor_id=current_user.id,
         ip_address=request.client.host if request.client else None,
     )
+    # Phase 45b B4 — detect + audit zero-governor recovery condition.
+    from governance import check_and_audit_rebootstrap
+    check_and_audit_rebootstrap(
+        db, org,
+        actor_id=current_user.id,
+        ip_address=request.client.host if request.client else None,
+    )
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -934,10 +1121,28 @@ def suspend_member(
     ).first()
     if not m:
         raise HTTPException(status_code=404, detail="Member not found")
-    # Phase 12 — Steward (renamed from 'owner') cannot be suspended.
-    if membership_role_system_key(m) == "steward":
+    # Phase 12 / 45b — top governing tier cannot be suspended. In
+    # single_steward mode that's Steward (today's rule). In
+    # admin_council mode, the last admin cannot be suspended either
+    # (D6 floor — suspending leaves zero active governors).
+    current_role_key = membership_role_system_key(m)
+    if current_role_key == "steward":
         raise HTTPException(status_code=400, detail="Cannot suspend the Steward")
+    from governance import mode_of, ADMIN_COUNCIL, count_active_governors
+    if current_role_key == "admin" and mode_of(org) == ADMIN_COUNCIL:
+        other_governors = count_active_governors(
+            db, org, exclude_user_id=m.user_id,
+        )
+        if other_governors == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot suspend the last admin of this organization.",
+            )
     m.status = "suspended"
+    # Phase 45b B4 — detect + audit zero-governor recovery condition.
+    # Suspension drops the user out of the active-governor count.
+    from governance import check_and_audit_rebootstrap
+    check_and_audit_rebootstrap(db, org, actor_id=current_user.id)
     db.commit()
     return {"message": "Member suspended"}
 

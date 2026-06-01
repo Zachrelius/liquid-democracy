@@ -93,8 +93,8 @@ def _auth(user: models.User) -> dict:
 
 
 def test_steward_sees_all_25_permission_keys(client, test_db):
-    """Steward holds every default-grant key (26 total per Phase 16),
-    so user_permissions in the response equals the full registry set."""
+    """Steward holds every default-grant key (27 base per Phase 16 +
+    2 OWNER_ONLY_KEYS surfaced by Phase 45a hotfix #1 = 29 total)."""
     user = _make_user(test_db, "steward_perms")
     org = _make_org(test_db, "steward-perms")
     make_org_membership(test_db, org_id=org.id, user_id=user.id, role="steward")
@@ -104,7 +104,9 @@ def test_steward_sees_all_25_permission_keys(client, test_db):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert "user_permissions" in body
-    assert len(body["user_permissions"]) == 27
+    # 27 matrix-routed + 2 OWNER_ONLY_KEYS (org.delete + org.transfer_stewardship)
+    # surfaced via the Phase 45a hotfix #1 enrichment loop.
+    assert len(body["user_permissions"]) == 29
     # Spot-check one key from each category.
     expected_subset = {
         "proposal.create",
@@ -258,11 +260,12 @@ def test_repeated_has_permission_calls_via_endpoint_use_cache(client, test_db):
         event.remove(test_db.bind, "before_cursor_execute", _count)
 
     assert resp.status_code == 200, resp.text
-    # Steward returns 25 keys; cache should have absorbed all 25
-    # has_permission calls into ONE SELECT (the first call's load).
-    assert len(resp.json()["user_permissions"]) == 27
+    # Steward returns 29 keys (27 matrix + 2 OWNER_ONLY post-45a-hotfix);
+    # cache should have absorbed all has_permission calls into ONE SELECT
+    # (the first call's load — OWNER_ONLY_KEYS don't hit role_permissions).
+    assert len(resp.json()["user_permissions"]) == 29
     assert role_permission_query_count["n"] == 1, (
-        f"expected exactly 1 SELECT FROM role_permissions across the 25 "
+        f"expected exactly 1 SELECT FROM role_permissions across the "
         f"has_permission calls inside _org_to_out (Stage 1's per-request "
         f"cache); got {role_permission_query_count['n']}"
     )

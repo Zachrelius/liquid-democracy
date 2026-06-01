@@ -84,19 +84,32 @@ STEWARD_LOCKED_PERMISSIONS: frozenset[str] = frozenset(
 _PARENT_IMPLICIT_ADMIN_KEYS: frozenset[str] = frozenset({"admin", "steward"})
 
 
-def is_locked(role_system_key: str, permission_key: str) -> bool:
+def is_locked(
+    role_system_key: str,
+    permission_key: str,
+    org: Optional["models.Organization"] = None,
+) -> bool:
     """Return True if this (role, permission) cell is hardcoded and not
     user-editable via the matrix.
 
-    Currently only Steward has locked cells (the three
-    self-lockout-protected permissions in
-    ``STEWARD_LOCKED_PERMISSIONS``). The function is structured to admit
-    future locks on other roles without a signature change — callers
-    pass both axes and trust this single source of truth.
+    Phase 12: the Steward holds the three self-lockout-protected
+    permissions in ``STEWARD_LOCKED_PERMISSIONS``. Phase 45b D5: in
+    ``admin_council`` mode, those same permissions are locked for the
+    admin tier instead (the steward seat doesn't exist).
+
+    ``org`` is optional for back-compat with call sites that don't
+    thread it through; without ``org`` the function defaults to
+    pre-45b behavior (steward locked, admin matrix-editable). Call sites
+    that gate the matrix PATCH endpoint thread ``org`` through so the
+    correct tier is protected in council mode.
     """
-    if role_system_key == "steward" and permission_key in STEWARD_LOCKED_PERMISSIONS:
-        return True
-    return False
+    if permission_key not in STEWARD_LOCKED_PERMISSIONS:
+        return False
+    if org is None:
+        # Back-compat: pre-45b call sites still get the steward lock.
+        return role_system_key == "steward"
+    from governance import governing_role_key
+    return role_system_key == governing_role_key(org)
 
 
 def get_or_init_permission_cache(db: Session) -> dict:
@@ -241,25 +254,31 @@ def has_permission(
         return allowed
 
     # --- Resolution step 2: D4 owner-only hardcoded gates ---
+    # Phase 45b D4 — in ``admin_council`` mode there is no Steward; the
+    # OWNER_ONLY_KEYS (``org.delete``, ``org.transfer_stewardship``)
+    # vest in any admin instead. Default ``single_steward`` mode keeps
+    # the pre-45b steward-only resolution.
     if permission_key in OWNER_ONLY_KEYS:
-        # The role_permissions table is NOT consulted for these keys; only
-        # the role's system_key being 'steward' grants them.
-        return _user_role_system_key(db, user_id, org_id) == "steward"
+        from governance import governing_role_key
+        target_role = governing_role_key(org)
+        return _user_role_system_key(db, user_id, org_id) == target_role
 
     # --- Resolution step 2b: Phase 12 Stage 2 belt-and-suspenders ---
-    # Steward-locked permissions are hardcoded TRUE for the Steward role
-    # on this org regardless of the underlying ``role_permissions`` row
-    # state. The matrix PATCH endpoint rejects flips on these cells, so
-    # in normal operation the row will always be enabled=True; this
-    # extra check defends against a corrupted row, a partial backfill, or
-    # direct DB tampering. Cheap (one frozenset membership check + one
-    # role lookup that's also needed for D4 above).
+    # Steward-locked permissions are hardcoded TRUE for the top-tier
+    # role on this org regardless of the underlying ``role_permissions``
+    # row state. Phase 45b D5 — in admin_council mode that's the admin
+    # tier; in single_steward mode it's the steward.
+    # The matrix PATCH endpoint rejects flips on these cells for the
+    # top-tier row, so in normal operation the row will always be
+    # enabled=True; this extra check defends against a corrupted row,
+    # a partial backfill, or direct DB tampering. Cheap.
     if permission_key in STEWARD_LOCKED_PERMISSIONS:
-        if _user_role_system_key(db, user_id, org_id) == "steward":
+        from governance import governing_role_key
+        target_role = governing_role_key(org)
+        if _user_role_system_key(db, user_id, org_id) == target_role:
             return True
-        # Non-Steward callers fall through to the standard path; their
-        # access is whatever the matrix says (admin defaults to True for
-        # role_permissions.edit, etc.).
+        # Non-top-tier callers fall through to the standard path; their
+        # access is whatever the matrix says.
 
     # --- Resolution step 3: standard path through role_permissions ---
     cache_key = (user_id, org_id)

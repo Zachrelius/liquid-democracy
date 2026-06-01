@@ -582,4 +582,137 @@ def get_audit_ballot(
     )
     db.commit()
 
+
+# ---------------------------------------------------------------------------
+# Phase 45b B4 — Platform-admin backstop for needs_rebootstrap orgs
+# ---------------------------------------------------------------------------
+
+from pydantic import BaseModel as _BaseModel
+
+
+class _RebootstrapBody(_BaseModel):
+    """Phase 45b B4 — body for POST /api/admin/orgs/{slug}/rebootstrap.
+
+    ``target_user_id`` must be a user (need not currently be a member of
+    the org). ``target_role`` is the governance-tier role to assign:
+    'steward' for single_steward mode, 'admin' for council mode. The
+    target user gets an active OrgMembership at that role if they don't
+    have one; if they do, their role is upgraded.
+    """
+    target_user_id: str
+    target_role: str  # 'steward' or 'admin'
+
+
+@router.post("/orgs/{org_slug}/rebootstrap")
+def rebootstrap_org(
+    org_slug: str,
+    body: _RebootstrapBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_admin),
+):
+    """Phase 45b B4 — platform-admin backstop for orgs that have lost
+    their last active governor (``count_active_governors == 0``). Seats
+    the named user as Steward or Admin so the org can resume self-
+    governance.
+
+    Restricted to platform admins (``User.is_admin``). The org must
+    actually be in the ``needs_rebootstrap`` condition — this endpoint
+    rejects with 400 if there's already at least one active governor,
+    to prevent a platform admin from bypassing in-org governance under
+    the guise of recovery.
+    """
+    from governance import (
+        at_risk_of_needs_rebootstrap, mode_of,
+        SINGLE_STEWARD, ADMIN_COUNCIL,
+    )
+
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug,
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    if not at_risk_of_needs_rebootstrap(db, org):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Org is not in the needs_rebootstrap condition; "
+                "platform-admin re-seat is not authorized."
+            ),
+        )
+
+    valid_roles = {"steward", "admin"}
+    if body.target_role not in valid_roles:
+        raise HTTPException(
+            status_code=400,
+            detail=f"target_role must be one of {sorted(valid_roles)}",
+        )
+    expected_role_for_mode = "admin" if mode_of(org) == ADMIN_COUNCIL else "steward"
+    if body.target_role != expected_role_for_mode:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Org is in {mode_of(org)!r} mode; target_role must be "
+                f"{expected_role_for_mode!r}"
+            ),
+        )
+
+    target_user = db.get(models.User, body.target_user_id)
+    if target_user is None:
+        raise HTTPException(status_code=404, detail="Target user not found")
+    if not target_user.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail="Target user's account must be active.",
+        )
+
+    role_row = db.query(models.Role).filter(
+        models.Role.org_id == org.id,
+        models.Role.system_key == body.target_role,
+    ).first()
+    if role_row is None:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Org is missing the preset {body.target_role!r} role",
+        )
+
+    membership = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == org.id,
+        models.OrgMembership.user_id == body.target_user_id,
+    ).first()
+    if membership is None:
+        membership = models.OrgMembership(
+            user_id=body.target_user_id,
+            org_id=org.id,
+            role_id=role_row.id,
+            status="active",
+        )
+        db.add(membership)
+    else:
+        membership.status = "active"
+        membership.role_id = role_row.id
+
+    log_audit_event(
+        db,
+        action="org.rebootstrapped",
+        target_type="organization",
+        target_id=org.id,
+        actor_id=current_user.id,
+        details={
+            "target_user_id": body.target_user_id,
+            "target_role": body.target_role,
+            "governance_mode": mode_of(org),
+            "platform_admin_override": True,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    return {
+        "status": "ok",
+        "target_user_id": body.target_user_id,
+        "target_role": body.target_role,
+        "mode": mode_of(org),
+    }
+
     return schemas.AuditLogOut.model_validate(entry, from_attributes=True)
