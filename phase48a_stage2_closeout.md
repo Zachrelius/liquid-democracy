@@ -40,8 +40,9 @@
 | Slate config (D10) | Yes | **PASS** — `TestSlateMode::test_fill_vacancies_does_not_remove_existing_holders` + `test_refresh_slate_removes_existing_holders_not_in_winners`. |
 | Migration reversible + cycle test | Yes | **PASS implicitly via PG smoke**. The Stage 2 migration is a simple column add with batch_alter_table on both up + down. |
 | PG smoke `--mode both --prior-revision g5a8b1c93412` | Yes | **PASS (all modes)** — fresh-DB + upgrade-from-prior both succeed. |
-| Frontend build + bundle hash | Yes | **PASS** — new bundle `index-CfbDek-a.js`. |
-| Browser verification (Chrome MCP, prod) | Yes | TBD post-deploy. Expected workflow: admin creates a Council Member title with cardinality=multi + bound_role=admin + fill_method=elected → admin clicks "Open election" → prompted for num_winners + slate_mode → election proposal opens → members self-nominate → admin advances to voting (ProposalOption rows auto-created) → admin advances to close → N winners become admins. |
+| Frontend build + bundle hash | Yes | **PASS** — new bundle `index-CfbDek-a.js` live on prod. |
+| Backend deploy + boot | Yes | **PASS after hotfix** — first deploy CRASHED (start.sh regex bug); hotfix `0d440aa` patched the column + start.sh; redeploy `f75a4b30` SUCCESS; `/api/health` 200; proposal routes return 401 (auth-required, not 500) confirming new column present + SQLAlchemy mapping loads cleanly. See "Stage 2 deploy incident" section below for full root-cause writeup. |
+| Browser verification (Chrome MCP, prod) | Yes | **PENDING** — backend is up + healthy, but the end-to-end flow (admin creates Council Member title with cardinality=multi + bound_role=admin + fill_method=elected → "Open Election" → prompted for num_winners + slate_mode → election proposal opens → members self-nominate → advance to voting (ProposalOption rows auto-created) → advance to close → N winners installed as admins) has not been run on prod. Recommended next step: dispatch a QA sub-agent (per `feedback_qa_agent_for_browser_verify.md`) before Stage 3 starts. Routine UI surfaces (the new `<select>` + prompts in `OrgTitlesPanel.jsx`) PASS-by-source. |
 | Worker / start.sh | Not touched | **Confirmed worker untouched** — Stage 2 has no scheduled behavior. Stage 3's cosign-trigger touches the worker (reuses 46's expiry path); that's where the `bash start.sh` check is mandatory. |
 
 ---
@@ -62,6 +63,51 @@ Orgs that never opted into elections still get 400 on open-election. Existing el
 ## Branch + commit state
 
 - Branch: `phase-48a/elections-stage-2` (left alive locally).
-- Commit on branch: TBD.
-- Merge commit on master: TBD.
-- Pushed to origin/master: TBD.
+- Commit on branch: `3a30fbd` (Stage 2 implementation).
+- Merge commit on master: `0c8883f` (no-ff merge into master).
+- Hotfix on master: `0d440aa` (start.sh fresh-DB regex + recovery script).
+- Pushed to origin/master: confirmed (master @ `0d440aa`).
+- Final Railway deploy: `f75a4b30` SUCCESS @ 2026-06-01 07:45:29 -04:00.
+- Bundle hash on prod: `index-CfbDek-a.js`.
+- Backend `/api/health` returns 200; Proposal-touching routes return 401 (auth-required) — not 500 — confirming the new column is present + SQLAlchemy mapping loads cleanly.
+
+---
+
+## Stage 2 deploy incident — start.sh fresh-DB mis-detection
+
+**Symptom.** First Stage 2 deploy after merge (`9966269e`) entered CRASHED state. Backend logs:
+```
+Fresh database detected — bootstrapping via create_all + stamp head.
+... Public demo — additive seed (existing users: 252)…
+... psycopg2.errors.UndefinedColumn: column proposals.election_slate_mode does not exist
+```
+"Fresh database" + "existing users: 252" — contradictory on its face.
+
+**Root cause.** `start.sh` detects "fresh DB vs alembic-stamped DB" via:
+```bash
+if alembic current 2>/dev/null | grep -q '[a-f0-9]\{12\}'; then ...
+```
+The regex requires **12 consecutive lowercase-hex chars**. Stage 1 stamped revision ID `g5a8b1c93412` (starts with `g`) — no 12-char hex substring exists, so the regex fails. Same for Stage 2's `h6b9c2d04523`. Result on Stage 2 deploy:
+1. `alembic current` returns `g5a8b1c93412 (head)` (Stage 1 head).
+2. Regex fails to match.
+3. start.sh enters fresh-DB branch.
+4. `create_all` runs — idempotent at the **table** level, does NOT add columns to existing tables.
+5. `alembic stamp head` overwrites `alembic_version` to `h6b9c2d04523` — telling alembic the migration has been applied when it hasn't.
+6. App boots → first Proposal query → `UndefinedColumn`.
+
+**Why Stage 1 wasn't affected.** Pre-Stage-1 head was `f4d8a9c52312` (all hex) — regex matched → `alembic upgrade head` ran → Stage 1 migration applied cleanly. The bug only triggered when **the current head** had a non-hex prefix.
+
+**Fix.**
+1. **Prod DB**: `scripts/fix_stage2_column.py` added the missing column (`ALTER TABLE proposals ADD COLUMN election_slate_mode VARCHAR(16) NOT NULL DEFAULT 'fill_vacancies'`). Verified column present + alembic_version unchanged at `h6b9c2d04523`.
+2. **start.sh durable fix**: broadened the regex to `[[:alnum:]]\{12,\}` so any 12+ alphanumeric revision ID is recognized as stamped. Inline comment documents the Phase 48 Stage 2 incident.
+3. **Recovery tooling**: `scripts/fix_stage2_column.py` checked in as a reusable emergency-recovery script (idempotent — safe to re-run).
+4. **Redeploy**: `f75a4b30` SUCCESS — backend boots, `/api/health` 200, proposal routes 401-not-500.
+
+**Naming convention recommendation for Stage 3+.** Stage 3's migration (and any future hand-rolled migration) should use a revision ID with a hex prefix — e.g. `a7c1d8e94521` instead of `i7c1d8e94521` — so even if the start.sh fix is reverted or a future env runs an older start.sh, the regex-based detection still works. This is belt-and-suspenders on top of the regex fix.
+
+---
+
+## Tech debt added by this incident
+
+- **start.sh fresh-DB detection is brittle.** The current "regex match on `alembic current` output" approach is sensitive to the format of revision IDs AND to the format of `alembic current` itself (which alembic could change across versions). A more robust approach: query the DB directly for `SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = 'alembic_version')`. Tracked for future polish — not urgent because the regex fix unblocks the immediate path and Stage 3 onward will be checked against this start.sh.
+- **No CI smoke test of start.sh fresh-DB detection.** A unit test that exercises the detection branch against both fresh + stamped Postgres state would have caught this before merge. Tracked for future tooling work.
