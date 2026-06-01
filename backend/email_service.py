@@ -233,46 +233,35 @@ def _format_subject(template_key: str, template_vars: dict[str, Any]) -> str:
 # E1 — public API: send_org_email
 # ---------------------------------------------------------------------------
 
-def send_org_email(
+def _prepare_org_email(
     db: Session,
     user_id: str,
     org_id: Optional[str],
     template_key: str,
     template_vars: dict[str, Any],
-) -> bool:
-    """Render and send an email for the given user + template_key.
+) -> Optional[tuple[str, str, str]]:
+    """Resolve recipient + render subject + HTML body for an org email.
 
-    Steps:
-      1. Look up the user. If user has no email or hasn't verified it,
-         skip silently (returns False) — preserves the existing
-         send_invitation_email behavior of not delivering to unverified
-         addresses except the invitation flow which targets a literal
-         email address (handled separately by ``send_invitation_email``).
-      2. Look up the org (if ``org_id`` is non-null) and resolve its
-         branded primary color.
-      3. Load the HTML template + substitute ``${PRIMARY_COLOR}`` and the
-         caller-provided ``template_vars``.
-      4. Format the subject line.
-      5. Dispatch ``send_email`` (Resend / SMTP / console) via
-         ``asyncio.run`` since this entry point is sync.
-
-    Returns the boolean from the transport. Sync wrapper around the
-    async transport so callers (notification_emit's BackgroundTasks
-    queue, the digest scheduler) don't need to manage event loops.
+    Returns ``(recipient_email, subject, html_body)`` on success or
+    ``None`` when the send should be skipped (user missing / no
+    email / unverified / template missing). Pure rendering — no
+    transport call. Shared by the sync ``send_org_email`` and the
+    async ``send_org_email_async`` so they never diverge in
+    templating behavior.
     """
     user = db.get(models.User, user_id)
     if user is None:
         log.warning("send_org_email: user %s not found; skipping", user_id)
-        return False
+        return None
     if not user.email:
         log.debug("send_org_email: user %s has no email; skipping", user_id)
-        return False
+        return None
     if not user.email_verified:
         log.debug(
             "send_org_email: user %s email not verified; skipping",
             user_id,
         )
-        return False
+        return None
 
     org = db.get(models.Organization, org_id) if org_id else None
     primary_color = _resolve_org_primary_color(org)
@@ -284,7 +273,7 @@ def send_org_email(
             "send_org_email: template not found for key %r; skipping",
             template_key,
         )
-        return False
+        return None
 
     subs: dict[str, str] = {"PRIMARY_COLOR": primary_color}
     # Translate template_vars keys to UPPER_CASE for ${VAR_NAME} substitution.
@@ -299,8 +288,60 @@ def send_org_email(
     # never crashes a send.
     html_body = Template(raw_template).safe_substitute(subs)
     subject = _format_subject(template_key, template_vars)
+    return user.email, subject, html_body
 
-    return _run_async(send_email(user.email, subject, html_body))
+
+async def send_org_email_async(
+    db: Session,
+    user_id: str,
+    org_id: Optional[str],
+    template_key: str,
+    template_vars: dict[str, Any],
+) -> bool:
+    """Async-native send for callers already running in an event loop.
+
+    Phase 48.1 — the digest scheduler's tick runs inside uvicorn's
+    asyncio loop. Bouncing email sends through ``_run_async`` from
+    the running loop self-deadlocks (``future.result(timeout=30)``
+    blocks the loop thread waiting for a coroutine that needs that
+    same loop). The fix is to ``await`` the transport directly from
+    the already-async tick. This function is the real implementation;
+    ``send_org_email`` is now a thin sync wrapper for legacy sync
+    callers.
+    """
+    prepared = _prepare_org_email(
+        db, user_id, org_id, template_key, template_vars,
+    )
+    if prepared is None:
+        return False
+    recipient, subject, html_body = prepared
+    return bool(await send_email(recipient, subject, html_body))
+
+
+def send_org_email(
+    db: Session,
+    user_id: str,
+    org_id: Optional[str],
+    template_key: str,
+    template_vars: dict[str, Any],
+) -> bool:
+    """Sync wrapper around ``send_org_email_async``.
+
+    Kept for genuinely-sync callers — specifically the real-time
+    ``send_event_email`` path invoked via FastAPI ``BackgroundTasks``
+    (which runs sync tasks off the main loop in a threadpool, so
+    ``_run_async``'s ``asyncio.run`` branch is correct + safe there).
+    Phase 48.1 callers that already live in an async context must
+    use ``send_org_email_async`` instead to avoid the self-deadlock
+    that wedged prod (see ``send_org_email_async`` docstring).
+    """
+    prepared = _prepare_org_email(
+        db, user_id, org_id, template_key, template_vars,
+    )
+    if prepared is None:
+        return False
+    recipient, subject, html_body = prepared
+    return _run_async(send_email(recipient, subject, html_body))
 
 
 def _run_async(coro) -> bool:

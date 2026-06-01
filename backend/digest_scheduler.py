@@ -53,9 +53,8 @@ from email_service import (
     _build_event_template_vars,
     _format_subject,
     _resolve_org_primary_color,
-    _run_async,
     send_email,
-    send_org_email,
+    send_org_email_async,
 )
 from notification_emit import (
     QUIET_HOURS_END,
@@ -299,7 +298,7 @@ def _digest_cta(row: models.Notification, recipient_user_id: str) -> str:
 # Render + send
 # ---------------------------------------------------------------------------
 
-def render_and_send_digest(
+async def render_and_send_digest(
     db: Session, aggregate: DigestAggregate,
 ) -> bool:
     """Render the digest HTML + dispatch via send_email.
@@ -311,6 +310,12 @@ def render_and_send_digest(
     email is silently lost — the user retains the in-app notifications
     and the next tick won't retry the digest. This is the accepted
     tradeoff (per spec): one lost email is better than 4 duplicate ones.
+
+    Phase 48.1 — async-native. The digest tick runs inside uvicorn's
+    asyncio loop; we ``await send_email`` directly instead of bouncing
+    through ``_run_async`` (the self-deadlock that wedged prod). The
+    DB work (atomic claim + commit) stays sync against the sync
+    SQLAlchemy session — only the transport call is awaited.
     """
     if aggregate.is_empty:
         return False
@@ -366,7 +371,7 @@ def render_and_send_digest(
         f"digest.{aggregate.cadence}", {"user_id": user.id},
     )
 
-    sent = _run_async(send_email(user.email, subject, html_body))
+    sent = await send_email(user.email, subject, html_body)
     if not sent:
         log.warning(
             "render_and_send_digest: send_email failed for user %s after atomic claim; "
@@ -481,7 +486,7 @@ def _mark_delivered_in_digest(db: Session, notification_ids: list[str]) -> None:
 # Quiet-hours queue + flush
 # ---------------------------------------------------------------------------
 
-def flush_quiet_hours_queue(
+async def flush_quiet_hours_queue(
     db: Session, user: models.User,
 ) -> int:
     """Send the email for any notification rows queued during this
@@ -493,6 +498,11 @@ def flush_quiet_hours_queue(
     ``send_event_email``, and clears the flag on success.
 
     Returns the number of rows flushed.
+
+    Phase 48.1 — async-native. ``send_org_email_async`` is the
+    real-impl entry point; the sync ``send_org_email`` would
+    re-introduce the self-deadlock when called from this tick (which
+    runs inside uvicorn's loop).
     """
     rows = (
         db.query(models.Notification)
@@ -510,7 +520,7 @@ def flush_quiet_hours_queue(
         template_vars = _build_event_template_vars(
             db, row.event_type, payload, user.id,
         )
-        ok = send_org_email(
+        ok = await send_org_email_async(
             db, user_id=user.id, org_id=row.org_id,
             template_key=row.event_type, template_vars=template_vars,
         )
@@ -762,13 +772,23 @@ def _scheduler_background_tasks():
 # Hourly tick
 # ---------------------------------------------------------------------------
 
-def run_one_tick(
+async def run_one_tick(
     db: Session, *, now: Optional[datetime] = None,
 ) -> dict:
     """One hour's processing.
 
     Returns a small report dict ``{daily: N, weekly: N, quiet: N,
     cleaned: N}`` for logging / tests.
+
+    Phase 48.1 — async-native. The function itself is ``async`` so it
+    can ``await`` the email transport calls inside
+    ``render_and_send_digest`` and ``flush_quiet_hours_queue``.
+    Everything else — DB scans, pending-actions expiry,
+    halfway-deadline check, demo-reset check, cleanup — remains
+    synchronous against the sync SQLAlchemy session, which is fine
+    (the deadlock was specifically about the email coroutine, not
+    DB work). The tick's ordering + try/except isolation are
+    unchanged from pre-Phase-48.1.
     """
     now = now or datetime.now(timezone.utc)
     counts = {
@@ -847,7 +867,7 @@ def run_one_tick(
             try:
                 aggregate = aggregate_for_user(db, user, "daily", now=now)
                 if not aggregate.is_empty:
-                    if render_and_send_digest(db, aggregate):
+                    if await render_and_send_digest(db, aggregate):
                         counts["daily"] += 1
             except Exception:  # noqa: BLE001
                 log.exception("digest tick: daily failed for user=%s", user.id)
@@ -861,7 +881,7 @@ def run_one_tick(
                 if local_now.weekday() == WEEKLY_DIGEST_WEEKDAY:
                     aggregate = aggregate_for_user(db, user, "weekly", now=now)
                     if not aggregate.is_empty:
-                        if render_and_send_digest(db, aggregate):
+                        if await render_and_send_digest(db, aggregate):
                             counts["weekly"] += 1
             except Exception:  # noqa: BLE001
                 log.exception("digest tick: weekly failed for user=%s", user.id)
@@ -878,7 +898,7 @@ def run_one_tick(
                 user_end_hour = QUIET_HOURS_END
             if local_hour == user_end_hour:
                 try:
-                    n = flush_quiet_hours_queue(db, user)
+                    n = await flush_quiet_hours_queue(db, user)
                     counts["quiet"] += n
                 except Exception:  # noqa: BLE001
                     log.exception(
@@ -999,7 +1019,7 @@ async def digest_loop() -> None:
                     # when SCALABILITY_AUDIT_INSTRUMENTATION_ENABLED=true.
                     from scalability_instrumentation import instrument_tick
                     with instrument_tick("digest_scheduler") as _ctx:
-                        counts = run_one_tick(db)
+                        counts = await run_one_tick(db)
                         _ctx["work_units"] = counts
                     log.info("digest_loop: tick complete %s", counts)
                     # Phase 40 B4 — record successful tick.
