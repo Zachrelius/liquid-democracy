@@ -238,6 +238,11 @@ def _org_to_out(
         # Phase 45b — surface the governance mode so the FE can render
         # the mode-aware controls (F1 switch, F2 conditional UI).
         governance_mode=org.governance_mode or "single_steward",
+        # Phase 46 — surface the proposal creation gating tier so the
+        # FE can render the mode selector (OrgSettings F1) + the
+        # creation-flow advisory (ProposalManagement F2) + the
+        # cosign-required check in the Proposal form.
+        proposal_creation_mode=getattr(org, "proposal_creation_mode", None) or "open",
     )
 
 

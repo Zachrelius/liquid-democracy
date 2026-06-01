@@ -1505,6 +1505,9 @@ class OrgOut(BaseModel):
     # Phase 45b — per-org governance mode. Defaults to 'single_steward'
     # so untouched orgs surface the today-behavior value.
     governance_mode: str = "single_steward"
+    # Phase 46 — per-org proposal creation gating tier. Defaults to
+    # 'open' so untouched orgs surface the pre-46 value.
+    proposal_creation_mode: str = "open"
     model_config = ConfigDict(from_attributes=True)
 
 

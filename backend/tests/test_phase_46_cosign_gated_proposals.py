@@ -208,6 +208,20 @@ class TestOpenModeRegression:
         assert r.status_code == 201, r.text
         assert r.json()["is_cosign_gated"] is False
 
+    def test_org_response_surfaces_proposal_creation_mode(
+        self, client: TestClient, db: Session, auth_for,
+    ):
+        """Hotfix #1: the FE's cosign-required UI gates on
+        currentOrg.proposal_creation_mode. The field must surface on the
+        OrgOut response.
+        """
+        org, steward, admin, members = _setup_org(
+            db, "p46modesurface", mode="cosign_required",
+        )
+        r = client.get(f"/api/orgs/{org.slug}", headers=auth_for(steward))
+        assert r.status_code == 200
+        assert r.json()["proposal_creation_mode"] == "cosign_required"
+
 
 # ===========================================================================
 # cosign_required mode — creation routes to gathering state
