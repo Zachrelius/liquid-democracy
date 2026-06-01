@@ -13,6 +13,8 @@ production code calls that seed helper directly during org creation /
 migration, so the conftest indirection is a test-only convenience.
 """
 
+import os
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
@@ -63,12 +65,15 @@ def _reset_slowapi_limiter():
 # A valid bcrypt hash for "test" — avoids bcrypt backend issues in tests
 _DUMMY_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewrwKJuRxm5pJmJi"
 
-TEST_DB_URL = "sqlite:///:memory:"
+TEST_DB_URL = os.environ.get("TEST_DATABASE_URL") or "sqlite:///:memory:"
 
 
 @pytest.fixture(scope="function")
 def db() -> Session:
-    engine = create_engine(TEST_DB_URL, connect_args={"check_same_thread": False})
+    if TEST_DB_URL.startswith("sqlite"):
+        engine = create_engine(TEST_DB_URL, connect_args={"check_same_thread": False})
+    else:
+        engine = create_engine(TEST_DB_URL)
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine)
     session = SessionLocal()

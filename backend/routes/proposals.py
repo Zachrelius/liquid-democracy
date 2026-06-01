@@ -1997,28 +1997,7 @@ def advance_proposal(
             proposal=proposal,
             org=org_for_advance,
         )
-        # Phase 48 Stage 2 — lock the candidate set into ProposalOption
-        # rows so the existing tally engine (RCV / approval) can resolve
-        # winners over candidate-keyed options. ``option.label`` carries
-        # the candidate's user_id so ``finalize_election`` maps tally
-        # winners back to users. Idempotent — only fires if no options
-        # exist yet (avoids duplicating if advance is somehow retried).
-        if (
-            getattr(proposal, "is_election", False)
-            and not proposal.options
-        ):
-            from elections import active_candidacies
-            candidates = active_candidacies(db, proposal.id)
-            for i, c in enumerate(candidates):
-                user = db.get(models.User, c.user_id)
-                display = user.display_name if user else c.user_id
-                db.add(models.ProposalOption(
-                    proposal_id=proposal.id,
-                    label=c.user_id,
-                    description=display,
-                    display_order=i,
-                ))
-            db.flush()
+        _lock_election_candidate_options(db, proposal)
     elif next_status == "passed":
         tally = delegation_engine.compute_tally(proposal, db)
         if proposal.voting_method == "approval":
@@ -2110,6 +2089,41 @@ def advance_proposal(
 # Phase 46 — Cosign endpoints
 # ---------------------------------------------------------------------------
 
+def _lock_election_candidate_options(
+    db: Session, proposal: models.Proposal,
+) -> None:
+    """Phase 48 Stage 2 + Stage 3 — lock the candidate set into
+    ProposalOption rows so the existing tally engine (RCV / approval)
+    can resolve winners over candidate-keyed options.
+
+    ``option.label`` carries the candidate's user_id so
+    ``finalize_election`` maps tally winners back to users.
+
+    Idempotent — only fires if no options exist yet (avoids
+    duplicating if advance is somehow retried). Called from both the
+    admin-direct advance path (``advance_proposal``) and the
+    cosign-threshold-met auto-advance path
+    (``_advance_cosign_to_voting``) so cosign-triggered elections (D4
+    member_cosign trigger) lock options too.
+    """
+    if not getattr(proposal, "is_election", False):
+        return
+    if proposal.options:
+        return
+    from elections import active_candidacies
+    candidates = active_candidacies(db, proposal.id)
+    for i, c in enumerate(candidates):
+        user = db.get(models.User, c.user_id)
+        display = user.display_name if user else c.user_id
+        db.add(models.ProposalOption(
+            proposal_id=proposal.id,
+            label=c.user_id,
+            description=display,
+            display_order=i,
+        ))
+    db.flush()
+
+
 def _advance_cosign_to_voting(
     db: Session,
     proposal: models.Proposal,
@@ -2152,6 +2166,9 @@ def _advance_cosign_to_voting(
     )
     old_status = proposal.status
     proposal.status = "voting"
+    # Phase 48 Stage 3 — cosign-triggered elections: lock candidate
+    # options before voting opens (same as the admin-direct path).
+    _lock_election_candidate_options(db, proposal)
     log_audit_event(
         db,
         action="proposal.status_changed",

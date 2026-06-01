@@ -1938,6 +1938,64 @@ export default function OrgSettings() {
                 <div className="text-xs text-gray-500">Then set a title's fill method to "elected" or "both" to make it electable, and click "Open election" on that title.</div>
               </div>
             </label>
+
+            {/* Phase 48 Stage 3 — D4 trigger configuration. Default is
+                admin_direct (Stage 1+2 behavior); enabling member_cosign
+                lets ordinary members open a cosign-gated election petition. */}
+            {settings.elections?.enabled && (
+              <div className="pl-7 space-y-2 border-l-2 border-gray-100">
+                <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Trigger sources</div>
+                {[
+                  ['admin_direct', 'Admin/steward direct', 'Admins and stewards can open an election immediately for any electable title.'],
+                  ['member_cosign', 'Member cosign petition', 'Any member can open a petition; the election advances to voting when the cosign threshold is met.'],
+                ].map(([key, label, hint]) => {
+                  const sources = settings.elections?.trigger_sources;
+                  const list = Array.isArray(sources) ? sources : ['admin_direct'];
+                  const checked = list.includes(key);
+                  return (
+                    <label key={key} className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={e => {
+                          const next = new Set(list);
+                          if (e.target.checked) next.add(key); else next.delete(key);
+                          updateSetting('elections', {
+                            ...(settings.elections || {}),
+                            trigger_sources: Array.from(next),
+                          });
+                        }}
+                        className="mt-0.5 accent-[var(--brand-accent)]"
+                      />
+                      <div>
+                        <div className="text-sm text-gray-700">{label}</div>
+                        <div className="text-xs text-gray-500">{hint}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+
+                {/* Phase 48 Stage 3 D12 partner — elected revert opt-in.
+                    Only meaningful in admin_council mode; surfacing in
+                    single_steward mode is harmless (it just doesn't
+                    activate). */}
+                <label className="flex items-start gap-3 cursor-pointer mt-2">
+                  <input
+                    type="checkbox"
+                    checked={!!settings.elections?.allow_elected_revert}
+                    onChange={e => updateSetting('elections', {
+                      ...(settings.elections || {}),
+                      allow_elected_revert: e.target.checked,
+                    })}
+                    className="mt-0.5 accent-[var(--brand-accent)]"
+                  />
+                  <div>
+                    <div className="text-sm text-gray-700">Allow elected revert (admin_council mode)</div>
+                    <div className="text-xs text-gray-500">When on, the council can elect a Steward, which atomically flips the org back to single-steward governance + installs the winner. Off keeps Phase 47's strict separation between the two modes.</div>
+                  </div>
+                </label>
+              </div>
+            )}
           </div>
         </section>
       )}

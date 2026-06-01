@@ -36,11 +36,43 @@ set -e
 # every pending migration. That bit Phase 48 Stage 2 on prod (column
 # election_slate_mode never applied). Alphanumeric matches both
 # auto-generated hex revs and hand-rolled ones.
+#
+# Phase 48 Stage 2 hardening — the stamp-head-masks-pending-migration
+# hazard is a class beyond the regex. Even if a future detection bug
+# fires the fresh-DB branch on a non-fresh DB, the fresh-DB branch
+# itself now guards against it: it queries the DB for the presence of
+# `users` (the canonical "this isn't a fresh DB" probe — the users
+# table is created in the very first migration `58de3df8727f` and has
+# never been dropped). If `users` exists, abort loudly with operator
+# guidance rather than silently stamping head over a misdetection.
 if alembic current 2>/dev/null | grep -q '[[:alnum:]]\{12,\}'; then
     echo "Alembic-stamped DB detected — applying pending migrations…"
     alembic upgrade head
 else
-    echo "Fresh database detected — bootstrapping via create_all + stamp head."
+    echo "Fresh-database branch triggered — verifying DB is actually fresh…"
+    USERS_EXISTS=$(python -c "
+from sqlalchemy import inspect
+from database import engine
+print('1' if 'users' in inspect(engine).get_table_names() else '0')
+" 2>/dev/null)
+    if [ "${USERS_EXISTS}" = "1" ]; then
+        echo "ERROR: 'users' table exists but alembic_version is missing/unrecognized." >&2
+        echo "       This means alembic stamp state was lost or the version" >&2
+        echo "       string is in an unexpected format. REFUSING to run" >&2
+        echo "       create_all + stamp head because that would mask the" >&2
+        echo "       missing migrations (e.g. Phase 48 Stage 2 incident)." >&2
+        echo "" >&2
+        echo "       To recover, connect to the DB and run:" >&2
+        echo "         alembic current        # inspect output format" >&2
+        echo "         alembic history --verbose  # confirm chain head" >&2
+        echo "       Then either:" >&2
+        echo "         (a) alembic stamp <correct-prior-revision> && alembic upgrade head" >&2
+        echo "         (b) manually run any unapplied migrations via direct SQL" >&2
+        echo "             + correct the alembic_version row." >&2
+        echo "       See backend/scripts/fix_stage2_column.py for the template." >&2
+        exit 1
+    fi
+    echo "Fresh database confirmed (no 'users' table) — bootstrapping via create_all + stamp head."
     python -c "from database import create_tables; create_tables()"
     alembic stamp head
 fi
