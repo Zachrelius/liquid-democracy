@@ -15,6 +15,7 @@ import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 import VerifyEmailInlineNote from '../components/VerifyEmailInlineNote';
 import StatusBadge from '../components/StatusBadge';
+import ElectionBadge from '../components/ElectionBadge';
 import TopicBadge from '../components/TopicBadge';
 import VoteBar from '../components/VoteBar';
 import VoteFlowGraph from '../components/VoteFlowGraph';
@@ -1574,6 +1575,17 @@ export default function ProposalDetail() {
               </p>
             )}
           </div>
+
+          {/* Phase 48 Stage 1 — Election badge + self-nominate
+              control. Renders only when proposal.is_election; lists
+              the candidates + the action button for the viewer. */}
+          {proposal.is_election && currentOrg?.slug && (
+            <ElectionBadge
+              proposal={proposal}
+              orgSlug={currentOrg.slug}
+              onChanged={fetchData}
+            />
+          )}
 
           {/* Phase 46 F1 / Phase 46a — Cosign gathering panel. Renders
               only when the proposal is in cosign gathering state

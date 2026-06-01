@@ -87,6 +87,38 @@ export default function OrgTitlesPanel({ orgSlug }) {
     }
   }
 
+  async function handleOpenElection(title) {
+    if (!confirm(
+      `Open an election for "${title.name}"?\n\n` +
+      'The election proposal will enter the nomination window. ' +
+      'Members can self-nominate; voting begins when an admin advances ' +
+      'the proposal to voting.'
+    )) return;
+    try {
+      const proposal = await api.post(
+        `/api/orgs/${orgSlug}/elections`,
+        { title_id: title.id },
+      );
+      toast.success(`Election opened for "${title.name}"`);
+      // Navigate to the new proposal so the admin can manage it.
+      window.location.href = `/${orgSlug}/proposals/${proposal.id}`;
+    } catch (e) {
+      toast.error(e.message || 'Failed to open election');
+    }
+  }
+
+  async function handleSetFillMethod(title, fillMethod) {
+    try {
+      await api.patch(`/api/orgs/${orgSlug}/titles/${title.id}`, {
+        fill_method: fillMethod,
+      });
+      toast.success(`Fill method set to "${fillMethod}" for ${title.name}`);
+      await refresh();
+    } catch (e) {
+      toast.error(e.message || 'Failed to update title');
+    }
+  }
+
   async function handleAssign(title) {
     if (!assignTargetId) return;
     try {
@@ -151,7 +183,29 @@ export default function OrgTitlesPanel({ orgSlug }) {
                       Held by {t.holder_count}
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-wrap">
+                    {/* Phase 48 Stage 1 — fill_method selector (admin
+                        can flip a title to electable). Available on
+                        all titles since fill_method is an org-policy
+                        knob, not a structural property. */}
+                    <select
+                      value={t.fill_method}
+                      onChange={e => handleSetFillMethod(t, e.target.value)}
+                      title="Fill method"
+                      className="text-xs px-2 py-1 border border-gray-300 rounded"
+                    >
+                      <option value="assigned">assigned</option>
+                      <option value="elected">elected</option>
+                      <option value="both">both</option>
+                    </select>
+                    {(t.fill_method === 'elected' || t.fill_method === 'both') && (
+                      <button
+                        onClick={() => handleOpenElection(t)}
+                        className="text-xs px-2 py-1 border border-purple-300 text-purple-700 rounded hover:bg-purple-50"
+                      >
+                        Open election
+                      </button>
+                    )}
                     {!t.is_system && (
                       <>
                         <button

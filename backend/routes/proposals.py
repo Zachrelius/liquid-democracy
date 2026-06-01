@@ -310,7 +310,31 @@ def _build_proposal_out(
         cosign_signature_count=_cosign_signature_count(proposal, db),
         cosign_weight=_cosign_weight(proposal, db),
         viewer_has_cosigned=_viewer_has_cosigned(proposal, db, viewer_id),
+        is_election=bool(getattr(proposal, "is_election", False)),
+        election_title_id=getattr(proposal, "election_title_id", None),
+        election_title_name=_election_title_name(proposal, db),
+        election_candidates=_election_candidates(proposal, db),
     )
+
+
+def _election_title_name(proposal: models.Proposal, db: Session) -> Optional[str]:
+    if not getattr(proposal, "is_election", False):
+        return None
+    tid = getattr(proposal, "election_title_id", None)
+    if tid is None:
+        return None
+    title = db.get(models.OrgTitle, tid)
+    return title.name if title else None
+
+
+def _election_candidates(proposal: models.Proposal, db: Session) -> list[str]:
+    if not getattr(proposal, "is_election", False):
+        return []
+    rows = db.query(models.ElectionCandidacy).filter(
+        models.ElectionCandidacy.proposal_id == proposal.id,
+        models.ElectionCandidacy.status == "declared",
+    ).order_by(models.ElectionCandidacy.declared_at).all()
+    return [r.user_id for r in rows]
 
 
 def _cosign_weight(proposal: models.Proposal, db: Session) -> int:
@@ -2013,6 +2037,29 @@ def advance_proposal(
         details={"proposal_id": proposal.id, "old_status": old_status, "new_status": next_status},
         ip_address=request.client.host if request.client else None,
     )
+
+    # Phase 48 Stage 1 — close→assign-title hook. When an election's
+    # voting closes (passed/failed), finalize_election determines the
+    # winner per D6 and assigns the title via the Phase 47 path.
+    # Wrapped in try/except so a hook failure is logged but does not
+    # roll back the proposal status transition (the close still
+    # happened; we surface the failure for follow-up rather than
+    # leaving the proposal stuck in voting).
+    if getattr(proposal, "is_election", False) and next_status in ("passed", "failed"):
+        try:
+            from elections import finalize_election
+            ip = request.client.host if request.client else None
+            finalize_election(
+                db, proposal,
+                actor_id=current_user.id,
+                ip_address=ip,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception(
+                "election finalize hook raised for proposal %s; the "
+                "close still happened but no winner was installed",
+                proposal.id,
+            )
 
     db.commit()
     db.refresh(proposal)

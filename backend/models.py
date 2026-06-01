@@ -620,6 +620,19 @@ class Proposal(Base):
     cosign_expires_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True, index=True,
     )
+    # Phase 48 Stage 1 — election subtype (D1). When ``is_election=True``,
+    # this proposal fills the target ``OrgTitle`` (and its optionally
+    # bound platform role) on voting close. ``election_title_id`` is
+    # the title that will be filled by the winner(s). The candidate set
+    # lives in ``election_candidacies``. Non-election proposals carry
+    # ``is_election=False`` and ``election_title_id=None`` — the existing
+    # proposal behavior is byte-identical.
+    is_election: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0",
+    )
+    election_title_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("org_titles.id"), nullable=True, index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now, nullable=False)
 
@@ -1737,4 +1750,51 @@ class OrgTitleAssignment(Base):
 
     title: Mapped["OrgTitle"] = relationship(
         "OrgTitle", back_populates="assignments",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 48 Stage 1 — Elections (proposal subtype + candidacy)
+# ---------------------------------------------------------------------------
+
+class ElectionCandidacy(Base):
+    """Phase 48 Stage 1 — one self-nomination on an election proposal.
+
+    D5: candidacy is self-nomination only — no draft-nominating other
+    people. The user_id is the candidate themselves; the row records
+    their declaration during the nomination window. ``status='declared'``
+    is the active state; ``status='withdrawn'`` allows the FE to show a
+    history (we soft-delete by status rather than hard-delete to keep an
+    audit-friendly trail), but the active-candidates query filters on
+    ``status='declared'``.
+
+    The ballot for the election (the candidate set used by the tally) is
+    the set of users with ``status='declared'`` at voting-open time.
+    Withdrawals after voting opens are out of scope for this stage.
+    """
+    __tablename__ = "election_candidacies"
+    __table_args__ = (
+        UniqueConstraint(
+            "proposal_id", "user_id",
+            name="uq_election_candidacies_proposal_user",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    proposal_id: Mapped[str] = mapped_column(
+        String, ForeignKey("proposals.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String(length=16), nullable=False, default="declared",
+        server_default="declared",
+    )
+    declared_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
+    )
+    withdrawn_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True,
     )
