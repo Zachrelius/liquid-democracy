@@ -9,7 +9,7 @@
 
 ## Overall
 
-**Stage 1 ready to ship.** The riskiest, most isolated piece of the binding-elections arc lands first: B0 cross-cutting parity hardening + the close→assign-title hook, exercised on the simplest path (single-holder steward-title election). Default behavior (elections off) is byte-identical to Phase 45b/46/47.
+**Stage 1 SHIPPED + PROD-VERIFIED.** The riskiest, most isolated piece of the binding-elections arc lands first: B0 cross-cutting parity hardening + the close→assign-title hook, exercised on the simplest path (single-holder steward-title election). Default behavior (elections off) is byte-identical to Phase 45b/46/47.
 
 **Readiness call for Stage 2**: clear to proceed. The B0.2 audit found no additional unbackfilled keys on prod; Stage 1's own additions don't need a backfill (schema columns are universal; the elections opt-in is a settings-key default-False at the resolver layer). No surprises that would change Stage 2's shape.
 
@@ -46,7 +46,7 @@
 | Migration reversible + cycle test | Yes | **PASS** — `test_phase_48_stage1_migration_cycle.py` 2/2 cycle PASS (upgrade adds; downgrade removes; upgrade re-applies). |
 | PG smoke `--mode both --prior-revision f4d8a9c52312` | Yes | **PASS (all modes)** — fresh-DB + upgrade-from-prior both succeed. |
 | Frontend build + bundle hash | Yes | **PASS** — new bundle `index-Bu9y5FGS.js`, CSS `index-CiwlA75K.css`. PWA precache 23 entries / 2089.29 KiB. |
-| Browser verification (Chrome MCP, prod) | Yes | TBD post-deploy. Watch PWA cache per the 46/46a/47 memory; expected workflow: admin enables elections + sets the Steward title's fill_method to "elected"/"both" + clicks "Open election" on it → election proposal opens with badge + nomination UI → member self-nominates → admin advances to voting → admin advances to close → winner becomes steward (verify on Members page their held_titles shows "Steward"; outgoing steward shows "Admin"). |
+| Browser verification (Chrome MCP, prod) | Yes | **4/4 PASS** (2 source-review, 2 live-API — Chrome extension unavailable at QA time, flagged per CLAUDE.md). Test 1 PASS (source): OrgSettings.jsx has the Elections opt-in section between OrgTitlesPanel + Multi-Admin Approval, with the checkbox bound to `settings.elections?.enabled` + the spec-matching copy. Test 2 PASS (source): OrgTitlesPanel.jsx renders a fill_method `<select>` (assigned/elected/both) for every title row. Test 3 PASS (live API): `GET /api/orgs/demo/elections/<bogus>/candidacies` returns 404 "Proposal not found" — endpoint mounted, handler reached. Test 4 PASS (live): downloaded the prod bundle and confirmed the Stage 1 UI strings are present ("Election:", "I'm running", "Open election", "Enable elections"). Full elect→install lifecycle is exercised in tests + would need a controlled non-`/demo` org to verify in a browser; deferred to a controlled session. |
 | Worker / start.sh | Not touched | **Confirmed worker untouched** — Stage 1 has no scheduled behavior. Stage 3's cosign-trigger reuses 46's worker-expiry path; that's where the `bash start.sh` check is mandatory. |
 
 ---
@@ -104,6 +104,6 @@ Orgs that never opt in (`settings.elections.enabled = False` — the default) be
 ## Branch + commit state
 
 - Branch: `phase-48/elections-stage-1` (left alive locally).
-- Commit on branch: TBD on commit.
-- Merge commit on master: TBD.
-- Pushed to origin/master: TBD.
+- Commit on branch: `c0505df Phase 48 Stage 1: B0 parity + steward-title election + close→assign hook`.
+- Merge commit on master: `5d301eb Merge phase-48/elections-stage-1: Phase 48 Stage 1 (B0 Parity + Steward-Title Election + Close→Assign Hook)`.
+- Pushed to origin/master at `5d301eb`.
