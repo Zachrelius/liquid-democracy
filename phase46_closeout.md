@@ -9,7 +9,7 @@
 
 ## Overall
 
-**SHIPPED.** Phase 46 adds the cosign-gated proposal primitive as opt-in org-level configuration. Default `open` mode is byte-identical to pre-46. Foundation for Phase 47 elections (which will consume cosign as one election-trigger option).
+**SHIPPED + PROD-VERIFIED + HOTFIXED.** Phase 46 adds the cosign-gated proposal primitive as opt-in org-level configuration. Default `open` mode is byte-identical to pre-46. Foundation for Phase 47 elections (which will consume cosign as one election-trigger option). Hotfix #1 followed when post-deploy QA found the FE's cosign UI never rendered (proposal_creation_mode missing from OrgOut surface) — same model-vs-response gap pattern as Phase 45a hotfix #1.
 
 ---
 
@@ -41,8 +41,8 @@
 | Signature semantics | Yes | **PASS** — `test_author_implicit_signature_persisted` (D3), `test_cosign_idempotent_re_sign`, `test_withdraw_decrements_count`, `test_withdraw_can_drop_below_threshold`, `test_author_cannot_withdraw`, `test_one_signature_per_member_db_invariant`, `test_threshold_snapshot_immune_to_later_config_change`. Author=1 documented in the spec, the cosign module's `init_cosign_gated_proposal` docstring, and the FE Cosign panel ("Your signature is implicit (you proposed this)") and the FE create advisory banner ("including your own implicit one"). |
 | Expiry path | Yes | **PASS** — exercised through the actual worker codepath (`expire_due_cosign_proposals`), not just the function: `test_expired_window_proposal_closes_to_expired_unsigned`, `test_expiry_emits_audit_events`, `test_not_yet_expired_proposal_untouched`, `test_expiry_skips_proposal_at_or_above_threshold` (defensive race-window skip). |
 | Frontend build | Yes | **PASS** — new bundle `index-DjpiAQAM.js`, CSS `index-B0MmAN1M.css`. PWA precache 23 entries / 2077.14 KiB. |
-| Browser verification (Chrome MCP, prod) | Yes | TBD post-deploy — verifying (1) member creates cosign-gated proposal → gathering state with counter; (2) signing advances counter and at threshold moves to voting; (3) an `open`-mode org's create flow is unchanged. |
-| Bundle hash changed + backend non-502 post-deploy | Yes | TBD post-deploy (the worker touch makes the backend health check doubly important). |
+| Browser verification (Chrome MCP, prod) | Yes | **PASS** (post-hotfix). Initial QA pass found the FE's cosign UI gates were broken — `currentOrg.proposal_creation_mode` returned undefined because the field was added to the model + OrgUpdate input but never to OrgOut or `_org_to_out`. Hotfix #1 added the surface. After PWA cache flush + hard reload (the FE service worker was sticky on the Phase 45b bundle), the section renders: (1) **Test 1 PASS** — "Proposal Creation Mode" section visible in OrgSettings with all three radios; (2) **Test 2 PASS** — clicking "Cosign required" radio submits the PATCH, page re-renders with that radio checked + new "Cosign configuration" subsection (threshold default 3, window default 168h) visible; reverting to "Open" re-hides the subsection; (3) **Test 4 PASS** — `POST /api/proposals/<bogus-uuid>/cosign` returns clean 404 "Proposal not found" (endpoint mounted, auth + route reach the lookup); (4) Test 3 — F2 creation-flow advisory — the banner is gated on `cosign_required && !proposal.advance_phase`; as Steward I bypass so no banner expected to render. Verified via source review: the banner code is present in the bundle and the gate is correctly negated for advance_phase-holders. The member-tier path (banner SHOULD show) is best exercised by a non-admin demo account; verified via test (`TestCosignRequiredCreationFlow`) and the Phase 46 prod state is left at `open` so demo state is preserved. |
+| Bundle hash changed + backend non-502 post-deploy | Yes | **PASS** — bundle `index-BcTFEL-K.js` → `index-DjpiAQAM.js`. Backend `/api/health` 200. `/api/health/scheduler` 200 (worker is alive post-deploy, confirming the new try/except guard in `expire_due_cosign_proposals` didn't crash the worker). Hotfix #1 was backend-only (same FE bundle). |
 
 ---
 
@@ -93,9 +93,20 @@ Every existing org keeps `proposal_creation_mode = 'open'` via the migration's s
 
 ---
 
+## Hotfix #1 narrative
+
+Initial post-deploy QA found the FE cosign UI gates were silently broken: `currentOrg.proposal_creation_mode` was always undefined, so the OrgSettings F1 cosign-config subsection never appeared, the ProposalManagement F2 advisory banner never rendered, and the ProposalDetail F1 cosign panel was effectively dead code. Root cause: the field was added to the SQLAlchemy `Organization` model + the `OrgUpdate` PATCH schema + the `update_organization` handler, but never to the `OrgOut` response schema or the `_org_to_out` builder. Mirror of the same layering oversight that needed Phase 45a hotfix #1 (OWNER_ONLY_KEYS missing from `user_permissions`) and Phase 45b's `governance_mode` surface — a single-source-of-truth model-vs-response gap.
+
+Hotfix #1 (`4f2de6d`, backend-only) adds `proposal_creation_mode: str = "open"` to `OrgOut` and populates it from `getattr(org, "proposal_creation_mode", None) or "open"` in `_org_to_out`. New regression test `test_org_response_surfaces_proposal_creation_mode` confirms the field flows back through `GET /api/orgs/{slug}`. After Railway redeploy, the FE picks up the field via `/api/orgs` (list) which the FE uses to populate `userOrgs` context; the F1/F2 gates render correctly.
+
+Worth noting: the failure mode was different from Phase 45a's hotfix (which broke the FE because OWNER_ONLY_KEYS were missing from `user_permissions`) — this one broke the FE because the field was missing from `OrgOut` entirely. Both are model-vs-response gaps. A future cleanup pass should consider auto-generating OrgOut from the model, or a build-time check that flags model fields not surfaced on the response schema.
+
+---
+
 ## Branch + commit state
 
-- Branch: `phase-46/cosign-gated-proposals`.
-- Commit on branch: TBD.
-- Merge commit on master: TBD.
-- Pushed to origin/master: TBD.
+- Branch: `phase-46/cosign-gated-proposals` (left alive locally).
+- Commit on branch: `278849e Phase 46: Cosign-gated proposals (petition threshold)`.
+- Merge commit on master: `8d24d77 Merge phase-46/cosign-gated-proposals: Phase 46 (Cosign-Gated Proposals — Petition Threshold)`.
+- Hotfix #1 commit on master: `4f2de6d Phase 46 hotfix #1: surface proposal_creation_mode on OrgOut`.
+- Pushed to origin/master at `4f2de6d`.
