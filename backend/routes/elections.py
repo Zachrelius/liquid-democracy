@@ -136,7 +136,12 @@ def open_election(
             ),
         )
 
-    # Phase 48 Stage 3 — validate trigger source per D4.
+    # Phase 48 Stage 3 + Phase 49 — validate trigger source per D4 /
+    # Phase 49 D2. 'scheduled' is internal-only — the tick's
+    # ``open_due_term_elections`` calls ``open_election_via_service``
+    # (the in-process entry point) rather than this HTTP route, so an
+    # external client can't open a scheduled election by passing
+    # trigger='scheduled' through the API.
     if body.trigger not in ("admin_direct", "member_cosign"):
         raise HTTPException(
             status_code=400,
@@ -249,6 +254,7 @@ def open_election(
         is_election=True,
         election_title_id=title.id,
         election_slate_mode=body.slate_mode,
+        election_trigger=body.trigger,
     )
     db.add(proposal)
     db.flush()

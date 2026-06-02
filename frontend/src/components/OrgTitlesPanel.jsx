@@ -152,6 +152,53 @@ export default function OrgTitlesPanel({ orgSlug }) {
     }
   }
 
+  async function handleSetTerm(title) {
+    // Phase 49 — prompt for term length in days. Empty / 0 / cancel
+    // clears the term (back to Phase 48 elected-until-challenged).
+    const current = title.term_length_days ?? '';
+    const raw = window.prompt(
+      `Term length for "${title.name}" in days (blank or 0 to clear, e.g. 365 for ~1 year):`,
+      current,
+    );
+    if (raw === null) return; // cancel
+    const trimmed = raw.trim();
+    let term = 0;
+    if (trimmed === '') {
+      term = 0;
+    } else {
+      const n = parseInt(trimmed, 10);
+      if (!Number.isFinite(n) || n < 0) {
+        toast.error('Term length must be a non-negative integer (days).');
+        return;
+      }
+      term = n;
+    }
+    let leadTime = title.election_lead_time_days ?? 7;
+    if (term > 0) {
+      const leadRaw = window.prompt(
+        `Lead time in days before term-end to open the election (default 7):`,
+        String(title.election_lead_time_days || 7),
+      );
+      if (leadRaw === null) return;
+      const lt = parseInt(leadRaw.trim(), 10);
+      if (Number.isFinite(lt) && lt >= 1) leadTime = lt;
+    }
+    try {
+      await api.patch(`/api/orgs/${orgSlug}/titles/${title.id}`, {
+        term_length_days: term,
+        election_lead_time_days: leadTime,
+      });
+      toast.success(
+        term > 0
+          ? `Term set to ${term} days for ${title.name}`
+          : `Term cleared for ${title.name}`,
+      );
+      await refresh();
+    } catch (e) {
+      toast.error(e.message || 'Failed to update term');
+    }
+  }
+
   async function handleAssign(title) {
     if (!assignTargetId) return;
     try {
@@ -215,6 +262,20 @@ export default function OrgTitlesPanel({ orgSlug }) {
                       {' · '}
                       Held by {t.holder_count}
                     </div>
+                    {/* Phase 49 — surface term + next election when set.
+                        Empty when no term — Phase 48 "elected-until-
+                        challenged" behavior is preserved silently. */}
+                    {t.term_length_days != null && (
+                      <div className="text-xs text-purple-700 mt-0.5">
+                        Term: {t.term_length_days} days
+                        {t.next_election_due_at && (
+                          <>
+                            {' · '}
+                            Next election: {new Date(t.next_election_due_at).toLocaleDateString()}
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-2 flex-wrap">
                     {/* Phase 48 Stage 1 — fill_method selector (admin
@@ -237,6 +298,19 @@ export default function OrgTitlesPanel({ orgSlug }) {
                         className="text-xs px-2 py-1 border border-purple-300 text-purple-700 rounded hover:bg-purple-50"
                       >
                         Open election
+                      </button>
+                    )}
+                    {/* Phase 49 — term config. Available on any
+                        electable title (system + custom). System
+                        titles can have terms — the resolution path
+                        is uniform through finalize_election. */}
+                    {(t.fill_method === 'elected' || t.fill_method === 'both') && (
+                      <button
+                        onClick={() => handleSetTerm(t)}
+                        className="text-xs px-2 py-1 border border-purple-300 text-purple-700 rounded hover:bg-purple-50"
+                        title="Set fixed term (auto-scheduled re-election)"
+                      >
+                        Term…
                       </button>
                     )}
                     {!t.is_system && (

@@ -642,6 +642,17 @@ class Proposal(Base):
         String(length=16), nullable=False,
         default="fill_vacancies", server_default="fill_vacancies",
     )
+    # Phase 49 — record which trigger opened this election so the
+    # close hook (``finalize_election``) can decide whether to
+    # advance the title's ``next_election_due_at`` (only scheduled
+    # elections advance the calendar; off-cycle admin/cosign
+    # elections leave the schedule fixed per B4). NULL for non-
+    # election proposals + for Stage 1/2 elections that pre-existed
+    # this column (the server_default 'admin_direct' is conservative
+    # since pre-Stage-3 only the admin-direct path existed).
+    election_trigger: Mapped[Optional[str]] = mapped_column(
+        String(length=16), nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now, nullable=False)
 
@@ -1711,6 +1722,23 @@ class OrgTitle(Base):
     )
     display_order: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0",
+    )
+    # Phase 49 — fixed-term scheduled re-election (D1, D4, D6).
+    # term_length_days NULL => no term => Phase 48 "elected-until-
+    # challenged" behavior preserved. Setting it opts the title into
+    # the `scheduled` trigger path; ``next_election_due_at`` tracks
+    # when the next scheduled election should open (advanced on
+    # resolution per D6). ``election_lead_time_days`` is how far
+    # before ``next_election_due_at`` the tick opens the election so
+    # the vote concludes around term-end (D4).
+    term_length_days: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True,
+    )
+    election_lead_time_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=7, server_default="7",
+    )
+    next_election_due_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_now, nullable=False,

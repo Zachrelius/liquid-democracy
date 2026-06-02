@@ -1948,6 +1948,7 @@ export default function OrgSettings() {
                 {[
                   ['admin_direct', 'Admin/steward direct', 'Admins and stewards can open an election immediately for any electable title.'],
                   ['member_cosign', 'Member cosign petition', 'Any member can open a petition; the election advances to voting when the cosign threshold is met.'],
+                  ['scheduled', 'Scheduled / fixed-term', 'Titles with a configured term auto-open an election when the term is due. Set a term on the title to opt that specific seat in.'],
                 ].map(([key, label, hint]) => {
                   const sources = settings.elections?.trigger_sources;
                   const list = Array.isArray(sources) ? sources : ['admin_direct'];

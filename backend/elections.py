@@ -19,16 +19,27 @@ same voting/eligibility/tally machinery; the new surface is narrow:
 
 Per D2 the role + governance.py floor are untouched; per D6 the
 zero/one-candidate corner cases are handled at the close hook.
+
+Phase 49 — scheduled / fixed-term elections (the D11 deferred item).
+Adds ``open_due_term_elections(db, now)`` for the digest tick + B4
+advancement of ``OrgTitle.next_election_due_at`` in ``finalize_
+election`` for scheduled-trigger resolutions. Off-cycle elections do
+NOT advance the schedule (B4 decision); the calendar cadence is
+fixed regardless of mid-term challenges.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import logging
 from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 import models
+
+
+log = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -54,7 +65,13 @@ def elections_enabled(org: models.Organization) -> bool:
 # ---------------------------------------------------------------------------
 
 _DEFAULT_TRIGGER_SOURCES = ("admin_direct",)
-VALID_TRIGGER_SOURCES = frozenset({"admin_direct", "member_cosign"})
+# Phase 49 D2 — ``scheduled`` is the third trigger source: a fixed-
+# term clock auto-opens an election when ``next_election_due_at -
+# election_lead_time_days <= now``. Opt-in per title (D1) AND per
+# org (must be in ``settings.elections.trigger_sources``) per D2.
+VALID_TRIGGER_SOURCES = frozenset(
+    {"admin_direct", "member_cosign", "scheduled"},
+)
 
 
 def trigger_sources(org: models.Organization) -> list[str]:
@@ -248,6 +265,18 @@ def finalize_election(
         return {"resolved": "failed", "reason": "org_not_found"}
 
     candidates = active_candidacies(db, proposal.id)
+
+    # Phase 49 B4 — advance the title's scheduled clock on scheduled-
+    # trigger resolutions. The advancement happens for every scheduled
+    # outcome (no_election hold-over, single winner, multi winner) so
+    # the calendar cadence is maintained even when the incumbent
+    # holds over. Off-cycle (admin_direct / member_cosign) elections
+    # leave ``next_election_due_at`` untouched per B4. Done BEFORE
+    # the winner-install branches so the schedule advances even if a
+    # downstream install errors out — the next tick must NOT re-open
+    # an election whose schedule already cycled.
+    if getattr(proposal, "election_trigger", None) == "scheduled":
+        _advance_schedule_for_title(db, title)
 
     if len(candidates) == 0:
         # D6 zero candidates → expire without changing the seat.
@@ -726,3 +755,264 @@ def _resolve_single_winner(
     # Defensive fallback: the first declared candidate wins. This is
     # explicit + testable; Stage 2 replaces it with a full tally path.
     return candidates[0].user_id
+
+
+# ---------------------------------------------------------------------------
+# Phase 49 — Scheduled / fixed-term election trigger
+# ---------------------------------------------------------------------------
+
+def _advance_schedule_for_title(
+    db: Session, title: models.OrgTitle,
+) -> None:
+    """Advance ``title.next_election_due_at`` by ``term_length_days``.
+
+    Called from ``finalize_election`` when ``proposal.election_trigger
+    == 'scheduled'`` (B4). The advancement is unconditional on the
+    election outcome — hold-over (no candidates), uncontested win,
+    contested win all advance the schedule by the same step so the
+    calendar cadence is preserved.
+
+    If the title has no term configured (term_length_days NULL) or
+    no current next-due (next_election_due_at NULL) the function is
+    a no-op — both are defensive cases (the tick only opens
+    scheduled elections for titles with both set, so this shouldn't
+    fire in practice).
+    """
+    if title.term_length_days is None or title.next_election_due_at is None:
+        return
+    step = timedelta(days=int(title.term_length_days))
+    title.next_election_due_at = title.next_election_due_at + step
+
+
+def _has_open_election_for_title(db: Session, title_id: str) -> bool:
+    """D5 idempotency guard. True iff there's a Proposal currently
+    targeting this title that is NOT in a terminal state. Pre-voting
+    (draft / deliberation) + voting all count as "open."
+
+    Closed states (passed / failed / expired_unsigned) do NOT count,
+    so a resolved scheduled election doesn't block the next one once
+    the title's clock advances past the next-due threshold.
+    """
+    open_statuses = ("draft", "deliberation", "voting")
+    return (
+        db.query(models.Proposal.id)
+        .filter(
+            models.Proposal.is_election == True,  # noqa: E712
+            models.Proposal.election_title_id == title_id,
+            models.Proposal.status.in_(open_statuses),
+        )
+        .first()
+        is not None
+    )
+
+
+def _resolve_system_actor_for_org(
+    db: Session, org: models.Organization,
+) -> Optional[str]:
+    """Pick an actor_id to attribute the scheduled-trigger election to.
+
+    Audit + proposal-creator semantics expect a User. The scheduled
+    trigger has no human actor — pick the current top-tier governor
+    (the steward in single_steward mode, any admin in admin_council).
+    Falls back to None if the org somehow has no governors (the
+    no-governors org will already be in a recovery state per Phase
+    45b B4; the system shouldn't be scheduling elections on it).
+
+    This is a least-surprise default: the audit log shows the
+    governance-tier holder as the proposal author, which is the
+    natural "on behalf of leadership" attribution.
+    """
+    from governance import governing_role_key
+    target_key = governing_role_key(org)
+    memberships = (
+        db.query(models.OrgMembership)
+        .filter(
+            models.OrgMembership.org_id == org.id,
+            models.OrgMembership.status == "active",
+        )
+        .all()
+    )
+    for m in memberships:
+        if m.role_id is None:
+            continue
+        role = db.get(models.Role, m.role_id)
+        if role is not None and role.system_key == target_key:
+            user = db.get(models.User, m.user_id)
+            if user is not None and user.is_active:
+                return user.id
+    return None
+
+
+def _open_scheduled_election(
+    db: Session, org: models.Organization, title: models.OrgTitle,
+    *, now: datetime,
+) -> Optional[str]:
+    """Open a scheduled-trigger election for ``title``.
+
+    Sets ``election_trigger='scheduled'`` so ``finalize_election`` can
+    advance the schedule on resolution (B4). The proposal lifecycle
+    is identical to an admin-direct election: enters ``deliberation``
+    immediately as the nomination window, then advances to voting +
+    close along the normal path. The tick does NOT advance the
+    proposal — that's handled by the existing voting-end worker.
+
+    Returns the new proposal id on success or None if the open is
+    skipped (e.g. no actor available + the org is in a recovery
+    state).
+    """
+    from audit_utils import log_audit_event
+
+    actor_id = _resolve_system_actor_for_org(db, org)
+    if actor_id is None:
+        log.warning(
+            "open_due_term_elections: no governor available to attribute "
+            "scheduled election to for org=%s title=%s; skipping",
+            org.id, title.id,
+        )
+        return None
+
+    # Sensible default windows; tick-driven elections use the org's
+    # default deliberation + voting day settings if present, falling
+    # back to platform defaults that match the admin-direct path.
+    settings = org.settings or {}
+    deliberation_days = float(
+        settings.get("default_deliberation_days", 3.0),
+    )
+    voting_days = float(settings.get("default_voting_days", 7.0))
+
+    proposal = models.Proposal(
+        title=f"Election: {title.name}",
+        body=(
+            f"Scheduled election for the '{title.name}' title. "
+            f"Term expiring around "
+            f"{title.next_election_due_at.isoformat() if title.next_election_due_at else 'soon'}; "
+            "the incumbent must self-nominate to defend the seat."
+        ),
+        author_id=actor_id,
+        org_id=org.id,
+        voting_method="ranked_choice",
+        num_winners=max(1, title.max_holders or 1) if title.cardinality_mode == "multi" else 1,
+        status="deliberation",
+        deliberation_start=now,
+        deliberation_days=deliberation_days,
+        voting_days=voting_days,
+        pass_threshold=settings.get("default_pass_threshold", 0.50) if settings else 0.50,
+        quorum_threshold=settings.get("default_quorum_threshold", 0.40) if settings else 0.40,
+        is_election=True,
+        election_title_id=title.id,
+        election_slate_mode="fill_vacancies",
+        election_trigger="scheduled",
+    )
+    db.add(proposal)
+    db.flush()
+    log_audit_event(
+        db,
+        action="election.opened",
+        target_type="proposal",
+        target_id=proposal.id,
+        actor_id=actor_id,
+        details={
+            "org_id": org.id,
+            "title_id": title.id,
+            "title_name": title.name,
+            "bound_role": title.bound_role,
+            "trigger": "scheduled",
+            "deliberation_days": deliberation_days,
+            "voting_days": voting_days,
+            "next_election_due_at": (
+                title.next_election_due_at.isoformat()
+                if title.next_election_due_at else None
+            ),
+        },
+    )
+    return proposal.id
+
+
+def open_due_term_elections(
+    db: Session, *, now: Optional[datetime] = None,
+) -> dict:
+    """Phase 49 B3 — open scheduled-trigger elections for titles whose
+    term clock is due.
+
+    A title is "due" when:
+      * It has a term configured (``term_length_days`` IS NOT NULL).
+      * It has ``next_election_due_at`` set.
+      * ``next_election_due_at - election_lead_time_days <= now``
+        (D4 lead-time alignment so the vote concludes around term-end).
+      * The org has ``scheduled`` in ``settings.elections.trigger_
+        sources`` AND ``elections.enabled = True`` (the two-gate
+        check from D2 + Phase 48 D3).
+      * No election proposal currently targets the title (D5
+        idempotency).
+
+    The tick calls this wrapped in try/except (like the
+    halfway-deadline check); a per-title failure is logged + counted
+    and the function continues so one bad title doesn't break the
+    batch.
+
+    Returns ``{"opened": N, "skipped_idempotent": N, "skipped_
+    not_eligible": N, "errors": N}`` for the tick report.
+    """
+    counts = {
+        "opened": 0,
+        "skipped_idempotent": 0,
+        "skipped_not_eligible": 0,
+        "errors": 0,
+    }
+    now = (now or datetime.now(timezone.utc)).replace(tzinfo=None) if now else _now()
+    if isinstance(now, datetime) and now.tzinfo is not None:
+        now = now.astimezone(timezone.utc).replace(tzinfo=None)
+
+    titles = (
+        db.query(models.OrgTitle)
+        .filter(
+            models.OrgTitle.term_length_days.isnot(None),
+            models.OrgTitle.next_election_due_at.isnot(None),
+        )
+        .all()
+    )
+    for title in titles:
+        try:
+            org = db.get(models.Organization, title.org_id)
+            if org is None:
+                counts["skipped_not_eligible"] += 1
+                continue
+            # Two-gate org check per D2.
+            if not elections_enabled(org):
+                counts["skipped_not_eligible"] += 1
+                continue
+            if not trigger_source_enabled(org, "scheduled"):
+                counts["skipped_not_eligible"] += 1
+                continue
+            if not title_is_electable(title):
+                counts["skipped_not_eligible"] += 1
+                continue
+            # Due-ness check (D4 lead-time alignment).
+            lead = timedelta(days=int(title.election_lead_time_days or 7))
+            if (title.next_election_due_at - lead) > now:
+                counts["skipped_not_eligible"] += 1
+                continue
+            # D5 idempotency.
+            if _has_open_election_for_title(db, title.id):
+                counts["skipped_idempotent"] += 1
+                continue
+            pid = _open_scheduled_election(db, org, title, now=now)
+            if pid is None:
+                counts["errors"] += 1
+                continue
+            counts["opened"] += 1
+        except Exception:  # noqa: BLE001
+            log.exception(
+                "open_due_term_elections: per-title failure (title=%s); continuing",
+                title.id,
+            )
+            counts["errors"] += 1
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+    if counts["opened"] > 0:
+        # Persist the new proposals + audit rows. (Rollback cases above
+        # bail before this commit.)
+        db.commit()
+    return counts
