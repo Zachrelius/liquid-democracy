@@ -88,15 +88,33 @@ def auth_for(db: Session):
 
 def _make_org(
     db: Session, slug: str, *,
-    proposal_creation_mode: str = "open",
+    proposal_creation_mode: str = "open",  # legacy interface for back-compat
     cosign_config: dict | None = None,
 ) -> models.Organization:
+    """Phase 49a Cluster B remapped the legacy 3-way
+    ``proposal_creation_mode`` to the boolean
+    ``settings.allow_cosign_petition``. This test helper keeps the
+    old kwarg name for back-compat with the existing test suite —
+    callers pass 'open' / 'cosign_required' / 'admin_only' and the
+    helper translates to the new model:
+
+      * ``open`` / ``admin_only`` → toggle False (the same default-
+        behavior as pre-46 once member-tier ``proposal.create``
+        grants are respected).
+      * ``cosign_required`` → toggle True (members without
+        ``proposal.create`` route through cosign).
+
+    The ``_setup_org`` helper below mirrors the mode → member-grant
+    semantics so each old mode's effective test fixture state is
+    preserved.
+    """
     settings: dict = {
         "default_deliberation_days": 1,
         "default_voting_days": 7,
         "default_pass_threshold": 0.50,
         "default_quorum_threshold": 0.40,
         "allowed_voting_methods": ["binary"],
+        "allow_cosign_petition": (proposal_creation_mode == "cosign_required"),
     }
     if cosign_config is not None:
         settings["cosign"] = cosign_config
@@ -106,7 +124,6 @@ def _make_org(
         description="",
         join_policy="open",
         settings=settings,
-        proposal_creation_mode=proposal_creation_mode,
     )
     db.add(org)
     db.flush()
@@ -146,7 +163,19 @@ def _setup_org(
     cosign_threshold: int = 3,
     cosign_expiry_hours: int = 168,
 ):
-    """Steward + 2 admins + 5 members. Members have proposal.create granted."""
+    """Steward + 2 admins + 5 members.
+
+    Phase 49a Cluster B — the member-tier ``proposal.create`` grant
+    is now mode-dependent in the test fixtures, mirroring the
+    migration mapping that revokes ``proposal.create`` from member
+    role for orgs that were in cosign_required / admin_only modes:
+
+      * ``open``: members hold ``proposal.create`` → create directly.
+      * ``cosign_required``: members do NOT hold ``proposal.create``
+        + the toggle is on → cosign-gathering.
+      * ``admin_only``: members do NOT hold ``proposal.create`` +
+        the toggle is off → 403.
+    """
     cfg = {"threshold": cosign_threshold, "expiry_hours": cosign_expiry_hours}
     org = _make_org(db, slug, proposal_creation_mode=mode, cosign_config=cfg)
     steward = make_user(db, f"{slug}-steward")
@@ -156,7 +185,8 @@ def _setup_org(
     make_org_membership(db, org_id=org.id, user_id=admin.id, role="admin")
     for m in members:
         make_org_membership(db, org_id=org.id, user_id=m.id, role="member")
-    _grant_member_proposal_create(db, org)
+    if mode == "open":
+        _grant_member_proposal_create(db, org)
     db.commit()
     return org, steward, admin, members
 
@@ -208,19 +238,19 @@ class TestOpenModeRegression:
         assert r.status_code == 201, r.text
         assert r.json()["is_cosign_gated"] is False
 
-    def test_org_response_surfaces_proposal_creation_mode(
+    def test_org_response_surfaces_allow_cosign_petition(
         self, client: TestClient, db: Session, auth_for,
     ):
-        """Hotfix #1: the FE's cosign-required UI gates on
-        currentOrg.proposal_creation_mode. The field must surface on the
-        OrgOut response.
-        """
+        """Phase 49a Cluster B replacement for the Phase 46 hotfix
+        regression: the FE's cosign-petition UI now gates on
+        ``currentOrg.allow_cosign_petition``. The field must surface
+        on the OrgOut response."""
         org, steward, admin, members = _setup_org(
             db, "p46modesurface", mode="cosign_required",
         )
         r = client.get(f"/api/orgs/{org.slug}", headers=auth_for(steward))
         assert r.status_code == 200
-        assert r.json()["proposal_creation_mode"] == "cosign_required"
+        assert r.json()["allow_cosign_petition"] is True
 
 
 # ===========================================================================
@@ -334,7 +364,11 @@ class TestAdminOnlyMode:
             json=_create_proposal_body(),
         )
         assert r.status_code == 403
-        assert "admin_only" in r.json()["detail"]
+        # Phase 49a Cluster B — the gate's 403 message is now
+        # permission-shaped (the mode-name "admin_only" has been
+        # removed from user-facing copy). Still a 403; member
+        # without ``proposal.create`` + toggle off → blocked.
+        assert "permission" in r.json()["detail"].lower()
 
     def test_admin_creates_normally_in_admin_only_mode(
         self, client: TestClient, db: Session, auth_for,

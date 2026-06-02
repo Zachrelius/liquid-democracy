@@ -64,9 +64,12 @@ _MUST_SURFACE_FIELDS: list[str] = [
     "created_at",
     # Phase 45b — governance mode (single_steward / admin_council).
     "governance_mode",
-    # Phase 46 — proposal creation gating tier (open / cosign_required /
-    # admin_only). The Phase 46 hotfix added this surface.
-    "proposal_creation_mode",
+    # Phase 49a Cluster B — replaced the legacy
+    # ``proposal_creation_mode`` 3-way enum with the per-org boolean
+    # ``allow_cosign_petition``. The FE reads this off ``currentOrg``
+    # to decide whether to render the cosign-petition entry point for
+    # users without ``proposal.create``.
+    "allow_cosign_petition",
 ]
 
 # The Phase 45a hotfix surfaces OWNER_ONLY_KEYS via user_permissions
@@ -147,13 +150,16 @@ class TestOrgOutSurfaceContract:
         out = _org_to_out(org, db, steward.id)
         assert out.governance_mode == "single_steward"
 
-    def test_proposal_creation_mode_default_value(self, db: Session):
-        """Phase 46 regression — same pattern as governance_mode. The
-        column has server_default 'open'; the serializer must emit it."""
+    def test_allow_cosign_petition_default_value(self, db: Session):
+        """Phase 49a Cluster B regression — replaces the legacy
+        proposal_creation_mode default-value check. The new toggle
+        lives in settings (no column); the serializer should default
+        to False when unset, preserving the pre-49a "open" effective
+        behavior (members without ``proposal.create`` get 403)."""
         from routes.organizations import _org_to_out
         org, steward = _make_org_with_steward(db)
         out = _org_to_out(org, db, steward.id)
-        assert out.proposal_creation_mode == "open"
+        assert out.allow_cosign_petition is False
 
     def test_steward_user_permissions_includes_owner_only_keys(
         self, db: Session,

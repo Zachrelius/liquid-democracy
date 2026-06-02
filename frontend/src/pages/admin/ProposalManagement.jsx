@@ -121,15 +121,16 @@ function OptionsEditor({ options, onChange }) {
 
 function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onCancel }) {
   const toast = useToast();
-  // Phase 46 F2 — creation-flow awareness. When the org is in
-  // cosign_required mode AND the caller can't bypass (no
-  // proposal.advance_phase permission), surface advisory copy so the
-  // user understands their proposal will gather signatures before going
-  // to a vote.
+  // Cluster B (49a) — creation-flow awareness. The legacy 3-way
+  // proposal_creation_mode collapsed into permission + toggle:
+  // members lacking ``proposal.create`` can still file a petition
+  // when ``allow_cosign_petition`` is on. Surface advisory copy so
+  // those members know their proposal will gather signatures before
+  // going to a vote.
   const { currentOrg } = useOrg();
-  const cosignRequired = (currentOrg?.proposal_creation_mode || 'open') === 'cosign_required';
-  const canBypassCosign = useHasPermission('proposal.advance_phase');
-  const showCosignAdvisory = cosignRequired && !canBypassCosign;
+  const cosignPetitionAllowed = !!currentOrg?.allow_cosign_petition;
+  const canCreateDirectly = useHasPermission('proposal.create');
+  const showCosignAdvisory = cosignPetitionAllowed && !canCreateDirectly;
   const cosignCfg = currentOrg?.settings?.cosign || {};
   const cosignThreshold = cosignCfg.threshold ?? 3;
   const cosignWindowHours = cosignCfg.expiry_hours ?? 168;

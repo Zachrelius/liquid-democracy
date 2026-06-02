@@ -1316,22 +1316,10 @@ class OrgUpdate(BaseModel):
     description: Optional[str] = None
     join_policy: Optional[str] = None
     settings: Optional[dict] = None
-    # Phase 46 — proposal creation gating tier (B1). When None, the field
-    # is left unchanged; when set, validated against the known tiers in
-    # cosign.VALID_MODES.
-    proposal_creation_mode: Optional[str] = None
-
-    @field_validator("proposal_creation_mode")
-    @classmethod
-    def validate_creation_mode(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
-        if v not in ("open", "cosign_required", "admin_only"):
-            raise ValueError(
-                "proposal_creation_mode must be one of "
-                "'open', 'cosign_required', 'admin_only'"
-            )
-        return v
+    # Phase 49a Cluster B — `proposal_creation_mode` was replaced
+    # by the boolean `settings.allow_cosign_petition`. Admins set
+    # the toggle via the standard `settings` PATCH path (it lives
+    # inside the JSONB blob rather than as a top-level column).
 
     @field_validator("join_policy")
     @classmethod
@@ -1516,9 +1504,11 @@ class OrgOut(BaseModel):
     # Phase 45b — per-org governance mode. Defaults to 'single_steward'
     # so untouched orgs surface the today-behavior value.
     governance_mode: str = "single_steward"
-    # Phase 46 — per-org proposal creation gating tier. Defaults to
-    # 'open' so untouched orgs surface the pre-46 value.
-    proposal_creation_mode: str = "open"
+    # Phase 49a Cluster B — replaces the legacy `proposal_creation_
+    # mode` 3-way enum. When False (default), members without
+    # `proposal.create` get 403; when True, they can initiate via
+    # cosign-gathering instead.
+    allow_cosign_petition: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 

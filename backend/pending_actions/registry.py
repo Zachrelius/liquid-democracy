@@ -350,6 +350,47 @@ def _validate_org_delete(
         )
 
 
+def _validate_approval_config_change(
+    payload: dict, db: Session, org: models.Organization, actor: models.User,
+) -> None:
+    """Phase 49a A1 — validate a proposed multi-admin approval config.
+
+    Payload must include ``new_config`` (a dict matching the shape
+    ``multi_admin_approval`` is stored under in ``Organization.settings``).
+    The dict is sanitized via the settings module's
+    ``normalize_config_input`` before being applied at execution
+    time; we only validate the basic shape + that the change is
+    actually weakening (otherwise the PATCH route would have applied
+    it directly, so a non-weakening change reaching the pending-action
+    flow is a contract violation worth surfacing).
+    """
+    from . import settings as p44_settings
+
+    new_config = payload.get("new_config")
+    if not isinstance(new_config, dict):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "org.approval_config_change requires 'new_config' to be "
+                "an object with the multi_admin_approval shape."
+            ),
+        )
+    current = (org.settings or {}).get("multi_admin_approval", {})
+    if not isinstance(current, dict):
+        current = {}
+    normalized = p44_settings.normalize_config_input(new_config)
+    if not p44_settings.is_weakening_change(current, normalized):
+        # Defensive — non-weakening should have applied directly.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Proposed multi_admin_approval change does not weaken "
+                "the current configuration; apply it directly via PATCH "
+                "rather than the approval workflow."
+            ),
+        )
+
+
 def _validate_governance_mode_revert(
     payload: dict, db: Session, org: models.Organization, actor: models.User,
 ) -> None:
@@ -572,6 +613,42 @@ def execute_org_delete(db: Session, org: models.Organization) -> None:
     db.delete(org)
 
 
+def execute_approval_config_change(
+    db: Session,
+    org: models.Organization,
+    new_config: dict,
+    *,
+    actor_id: Optional[str] = None,
+) -> dict:
+    """Phase 49a A1 — apply a ratified multi_admin_approval config
+    change. Mirrors the body of the PATCH route's direct path but as
+    a standalone callable invoked by the ratification executor.
+
+    Returns the applied (normalized) config for audit + response use.
+    """
+    from . import settings as p44_settings
+    from audit_utils import log_audit_event
+
+    normalized = p44_settings.normalize_config_input(new_config)
+    settings = dict(org.settings or {})
+    old_block = settings.get("multi_admin_approval", {})
+    settings["multi_admin_approval"] = normalized
+    org.settings = settings
+    log_audit_event(
+        db,
+        action="org.approval_config_changed",
+        target_type="organization",
+        target_id=org.id,
+        actor_id=actor_id,
+        details={
+            "old": old_block if isinstance(old_block, dict) else {},
+            "new": normalized,
+            "via": "multi_admin_approval",
+        },
+    )
+    return normalized
+
+
 def execute_governance_mode_revert(
     db: Session,
     org: models.Organization,
@@ -766,6 +843,21 @@ def _exec_org_delete(
     execute_org_delete(db, org)
 
 
+def _exec_approval_config_change(
+    db: Session, action: "models.PendingAdminAction", actor_user: models.User,
+) -> None:
+    """Phase 49a A1 — ratified executor for multi_admin_approval
+    weakening changes."""
+    org = db.get(models.Organization, action.org_id)
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    new_config = action.payload.get("new_config", {})
+    execute_approval_config_change(
+        db, org, new_config,
+        actor_id=actor_user.id if actor_user else None,
+    )
+
+
 def _exec_governance_mode_revert(
     db: Session, action: "models.PendingAdminAction", actor_user: models.User,
 ) -> None:
@@ -899,6 +991,47 @@ def _preview_org_delete(
         ),
         "destructive": "high",
         "target": {"type": "organization", "id": action.org_id, "name": name},
+    }
+
+
+def _preview_approval_config_change(
+    action: "models.PendingAdminAction", db: Session,
+) -> dict[str, Any]:
+    """Phase 49a A1 — preview for a weakening multi_admin_approval
+    config change. Surfaces the specific weakening transitions so
+    approvers can see what's being disarmed."""
+    org = db.get(models.Organization, action.org_id)
+    name = org.name if org else "(unknown org)"
+    new_config = action.payload.get("new_config", {}) or {}
+    current = (
+        (org.settings or {}).get("multi_admin_approval", {})
+        if org is not None else {}
+    )
+    if not isinstance(current, dict):
+        current = {}
+
+    summary_parts: list[str] = []
+    if bool(current.get("enabled", False)) and not bool(new_config.get("enabled", False)):
+        summary_parts.append("Disable multi-admin approval entirely")
+    cur_t = current.get("thresholds", {}) if isinstance(current.get("thresholds"), dict) else {}
+    new_t = new_config.get("thresholds", {}) if isinstance(new_config.get("thresholds"), dict) else {}
+    for k in cur_t.keys() | new_t.keys():
+        cv = cur_t.get(k)
+        nv = new_t.get(k)
+        if cv is not None and nv is not None and isinstance(cv, int) and isinstance(nv, int) and nv < cv:
+            summary_parts.append(f"Lower threshold for '{k}' from {cv} to {nv}")
+        if cv is not None and nv is None:
+            summary_parts.append(f"Remove explicit threshold for '{k}' (falls back to platform default)")
+    return {
+        "label": "Weaken multi-admin approval",
+        "summary": (
+            "; ".join(summary_parts) if summary_parts
+            else f"Apply approval-config change to \"{name}\""
+        ),
+        "destructive": "high",
+        "target": {"type": "organization", "id": action.org_id, "name": name},
+        "current_config": current,
+        "proposed_config": new_config,
     }
 
 
@@ -1038,5 +1171,21 @@ register(ActionDefinition(
     payload_validator=_validate_governance_mode_revert,
     executor=_exec_governance_mode_revert,
     preview_builder=_preview_governance_mode_revert,
+    admin_or_steward_only=True,
+))
+
+# Phase 49a A1 — weakening the approval config itself routes through
+# the very approval workflow being weakened. Approver set is "any
+# admin or steward" (the same tier that can configure org settings)
+# to close the disarm-then-act escape hatch. admin_or_steward_only
+# avoids needing a new permission key + a backfill migration.
+register(ActionDefinition(
+    action_type="org.approval_config_change",
+    required_permission_key=None,
+    summary_label="Change multi-admin approval config",
+    approver_set_resolver=_admins_of,
+    payload_validator=_validate_approval_config_change,
+    executor=_exec_approval_config_change,
+    preview_builder=_preview_approval_config_change,
     admin_or_steward_only=True,
 ))
