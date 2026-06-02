@@ -1744,6 +1744,57 @@ def create_join_request(
     return schemas.JoinRequestOut(status="pending", member_id=membership.id)
 
 
+@router.post("/{org_slug}/leave")
+def leave_organization(
+    org_slug: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 50 — self-service leave-org.
+
+    Auth required. The caller leaves their own active membership; no
+    target user id (you can only leave for yourself).
+
+    Outcomes:
+      * 404 if the org doesn't exist.
+      * 400 if the caller isn't an active member.
+      * 409 ``transfer_required`` if the caller's departure would
+        leave the org without a governor (sole steward in
+        single_steward mode; last admin in admin_council mode). The
+        body carries the mode + a human-readable detail so the FE
+        can render the inline transfer-first step (D2). The
+        membership is NOT deleted in this case — the caller has to
+        complete the transfer first, then re-call this endpoint.
+      * 200 on success. Custom titles revoked, outgoing org-scoped
+        delegations cleaned, membership hard-deleted, ``org.left``
+        audit emitted.
+
+    Reuses the existing floor (``governance.count_active_governors``),
+    the Phase 47 title-assignment table, and the audit infrastructure.
+    The core logic lives in ``org_leave.leave_org`` so a future
+    account-deletion path can loop it across the user's orgs.
+    """
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug,
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    from org_leave import leave_org, TransferRequired
+    ip = request.client.host if request.client else None
+    try:
+        result = leave_org(
+            db, org, current_user, ip_address=ip,
+        )
+    except TransferRequired as e:
+        # Surface the structured payload as a 409 so the FE can render
+        # the inline transfer-first flow per D2.
+        raise HTTPException(status_code=409, detail=e.to_dict())
+    db.commit()
+    return result
+
+
 @router.delete("/{org_slug}/join-request", status_code=204)
 def cancel_join_request(
     org_slug: str,
