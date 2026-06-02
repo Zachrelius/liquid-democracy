@@ -294,6 +294,18 @@ export default function OrgSettings() {
   const [loadingTransferMembers, setLoadingTransferMembers] = useState(false);
   const [savingTransfer, setSavingTransfer] = useState(false);
 
+  // Phase 50 — Leave organization flow state. Two-step per D2: the
+  // first click on Leave shows an informed-confirm dialog naming
+  // what's lost; the second click submits. When the backend returns
+  // 409 transfer_required (sole-governor case), the confirm dialog
+  // is replaced with an inline "transfer first" picker that calls
+  // the existing /transfer-stewardship endpoint, then the user
+  // re-clicks Leave to complete.
+  const [leaveStage, setLeaveStage] = useState('idle'); // 'idle' | 'confirm' | 'transfer_required'
+  const [leaveTransferTargetId, setLeaveTransferTargetId] = useState('');
+  const [leaveTransferMembers, setLeaveTransferMembers] = useState([]);
+  const [leavingNow, setLeavingNow] = useState(false);
+
   // Phase 17 F1 — Tie Resolution section state.
   //
   // Staged locally so the steward can pick + cancel without persisting.
@@ -542,6 +554,75 @@ export default function OrgSettings() {
       toast.error(e.message || 'Failed to transfer stewardship');
     } finally {
       setSavingTransfer(false);
+    }
+  }
+
+  // Phase 50 — Leave organization. Reuses the existing
+  // /transfer-stewardship endpoint when the backend says
+  // transfer_required (sole-governor case).
+  async function loadLeaveTransferMembers() {
+    try {
+      const r = await api.get(`/api/orgs/${currentOrg.slug}/members`);
+      const list = Array.isArray(r) ? r : (r?.members || []);
+      setLeaveTransferMembers(
+        list.filter(m => m.status !== 'pending' && m.user_id !== currentOrg?.user_id),
+      );
+    } catch (e) {
+      toast.error('Failed to load members for handoff');
+    }
+  }
+
+  async function submitLeave() {
+    setLeavingNow(true);
+    try {
+      await api.post(`/api/orgs/${currentOrg.slug}/leave`, {});
+      toast.success(`You've left ${currentOrg.name}.`);
+      setLeaveStage('idle');
+      await refreshOrgs();
+      // The user is no longer a member — redirect to the org list.
+      window.location.href = '/orgs';
+    } catch (e) {
+      // 409 transfer_required — switch to the inline transfer flow.
+      const status = e?.status || e?.response?.status;
+      const detail = e?.detail || e?.response?.data?.detail || {};
+      if (status === 409 && detail?.error === 'transfer_required') {
+        setLeaveStage('transfer_required');
+        if (leaveTransferMembers.length === 0) {
+          await loadLeaveTransferMembers();
+        }
+        toast.error(detail.detail || 'You need to hand off leadership first.');
+      } else {
+        toast.error(e.message || 'Failed to leave organization');
+      }
+    } finally {
+      setLeavingNow(false);
+    }
+  }
+
+  async function handleLeaveTransferThenRetry() {
+    if (!leaveTransferTargetId) return;
+    const target = leaveTransferMembers.find(
+      m => m.user_id === leaveTransferTargetId,
+    );
+    const targetLabel = target ? (target.display_name || target.username) : 'this member';
+    setLeavingNow(true);
+    try {
+      await api.post(`/api/orgs/${currentOrg.slug}/transfer-stewardship`, {
+        target_user_id: leaveTransferTargetId,
+      });
+      toast.success(
+        `Stewardship transferred to ${targetLabel}. Click Leave again to ` +
+        'complete your departure.',
+      );
+      await refreshOrgs();
+      // Per D2 — two-step. After the transfer the leave button is
+      // unblocked but the user clicks it again deliberately.
+      setLeaveStage('confirm');
+      setLeaveTransferTargetId('');
+    } catch (e) {
+      toast.error(e.message || 'Failed to transfer stewardship');
+    } finally {
+      setLeavingNow(false);
     }
   }
 
@@ -2388,6 +2469,112 @@ export default function OrgSettings() {
           </div>
         </section>
       )}
+
+      {/* Phase 50 — Leave Organization. Available to ANY active
+          member (this is not an admin-only action). The informed-
+          confirm dialog (D5) names what's lost — membership, held
+          titles, and org-scoped delegations — and the inline
+          transfer-first flow (D2) handles the sole-governor case. */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+          Leave organization
+        </h2>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+          {leaveStage === 'idle' && (
+            <>
+              <p className="text-sm text-gray-700">
+                Leaving means losing access to <strong>{currentOrg.name}</strong>'s proposals, members,
+                and any role you hold here. If you're the only top leader,
+                you'll be asked to hand off first.
+              </p>
+              <button
+                onClick={() => setLeaveStage('confirm')}
+                className="text-sm px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Leave organization…
+              </button>
+            </>
+          )}
+          {leaveStage === 'confirm' && (
+            <>
+              <p className="text-sm text-gray-700">
+                You're about to leave <strong>{currentOrg.name}</strong>. Here's what happens:
+              </p>
+              <ul className="text-xs text-gray-600 list-disc pl-5 space-y-1">
+                <li>Your membership ends. You lose access to this organization's proposals, members list, and admin surfaces (if any).</li>
+                <li>Any titles you hold in this organization (e.g. office or council seat) are revoked.</li>
+                <li>Any delegations you've made within this organization are cleaned up.</li>
+                <li>Other members who delegate to you in this organization will fall back to direct voting (the engine handles this automatically).</li>
+              </ul>
+              <p className="text-xs text-gray-500">
+                You can rejoin later if the org's join policy allows it.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={submitLeave}
+                  disabled={leavingNow}
+                  className="text-sm px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  {leavingNow ? 'Leaving…' : 'Confirm and leave'}
+                </button>
+                <button
+                  onClick={() => setLeaveStage('idle')}
+                  disabled={leavingNow}
+                  className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
+          {leaveStage === 'transfer_required' && (
+            <>
+              <p className="text-sm text-gray-700">
+                You're the only top leader of <strong>{currentOrg.name}</strong>. To leave, hand off
+                stewardship to another active member first. Then come back and
+                click Leave again to complete your departure.
+              </p>
+              <p className="text-xs text-gray-500">
+                The successor takes the seat as the interim Steward, subject to
+                the normal election / handoff processes the organization uses.
+              </p>
+              <label className="block text-xs text-gray-600">
+                New Steward
+              </label>
+              <select
+                value={leaveTransferTargetId}
+                onChange={e => setLeaveTransferTargetId(e.target.value)}
+                className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              >
+                <option value="">Select a member…</option>
+                {leaveTransferMembers
+                  .filter(m => m.role !== 'steward')
+                  .map(m => (
+                    <option key={m.user_id} value={m.user_id}>
+                      {m.display_name || m.username} ({m.role})
+                    </option>
+                  ))}
+              </select>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleLeaveTransferThenRetry}
+                  disabled={!leaveTransferTargetId || leavingNow}
+                  className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                >
+                  {leavingNow ? 'Transferring…' : 'Transfer stewardship'}
+                </button>
+                <button
+                  onClick={() => { setLeaveStage('idle'); setLeaveTransferTargetId(''); }}
+                  disabled={leavingNow}
+                  className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </section>
 
       {/* Danger Zone — Phase 45a F1 — permission-driven gate (recon GAP-5).
           org.delete is an OWNER_ONLY_KEY today; the permission check
