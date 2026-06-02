@@ -45,6 +45,11 @@ class _TitleCreateBody(BaseModel):
     max_holders: Optional[int] = None
     fill_method: str = "assigned"
     display_order: int = 0
+    # Phase 49 — fixed-term scheduled re-election (D1, D4).
+    # None / 0 / negative => no term (Phase 48 elected-until-
+    # challenged behavior preserved).
+    term_length_days: Optional[int] = None
+    election_lead_time_days: Optional[int] = None
 
 
 class _TitleUpdateBody(BaseModel):
@@ -54,6 +59,12 @@ class _TitleUpdateBody(BaseModel):
     max_holders: Optional[int] = None
     fill_method: Optional[str] = None
     display_order: Optional[int] = None
+    # Phase 49 — term fields are PATCH-able. Setting term_length_days
+    # to None or 0 clears the term (and the next-due timestamp); a
+    # positive value sets/updates the term and recomputes
+    # next_election_due_at on the server when newly set or changed.
+    term_length_days: Optional[int] = None
+    election_lead_time_days: Optional[int] = None
 
 
 class _TitleAssignBody(BaseModel):
@@ -71,6 +82,10 @@ class _TitleOut(BaseModel):
     is_system: bool
     display_order: int
     holder_count: int
+    # Phase 49 — term-config surface.
+    term_length_days: Optional[int]
+    election_lead_time_days: int
+    next_election_due_at: Optional[str]
 
     @classmethod
     def from_orm(cls, db: Session, title: models.OrgTitle) -> "_TitleOut":
@@ -85,6 +100,12 @@ class _TitleOut(BaseModel):
             is_system=title.is_system,
             display_order=title.display_order,
             holder_count=assignment_count(db, title.id),
+            term_length_days=title.term_length_days,
+            election_lead_time_days=title.election_lead_time_days,
+            next_election_due_at=(
+                title.next_election_due_at.isoformat()
+                if title.next_election_due_at else None
+            ),
         )
 
 
@@ -192,6 +213,17 @@ def create_title(
                 ),
             )
 
+    # Phase 49 — accept term config at create time. Setting a term
+    # (positive term_length_days) computes next_election_due_at from
+    # now so the schedule clock starts immediately. Lead-time defaults
+    # to the model server_default (7) when not specified.
+    term_length: Optional[int] = None
+    if body.term_length_days is not None and int(body.term_length_days) > 0:
+        term_length = int(body.term_length_days)
+    lead_time = 7
+    if body.election_lead_time_days is not None and int(body.election_lead_time_days) > 0:
+        lead_time = int(body.election_lead_time_days)
+
     title = models.OrgTitle(
         org_id=org.id,
         name=body.name.strip(),
@@ -200,7 +232,14 @@ def create_title(
         max_holders=body.max_holders,
         fill_method=body.fill_method,
         display_order=body.display_order,
+        term_length_days=term_length,
+        election_lead_time_days=lead_time,
     )
+    if term_length is not None:
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        title.next_election_due_at = (
+            _dt.now(_tz.utc).replace(tzinfo=None) + _td(days=term_length)
+        )
     db.add(title)
     db.flush()
     log_audit_event(
@@ -264,13 +303,48 @@ def update_title(
         title.fill_method = body.fill_method
     if body.display_order is not None:
         title.display_order = body.display_order
+    # Phase 49 — term-config updates.
+    # term_length_days=None means "no change" (Pydantic Optional);
+    # term_length_days=0 OR a negative value means "clear the term"
+    # (cancels scheduled re-elections). A positive value sets/updates
+    # the term and recomputes next_election_due_at from now.
+    if body.term_length_days is not None:
+        new_term = int(body.term_length_days)
+        if new_term <= 0:
+            title.term_length_days = None
+            title.next_election_due_at = None
+        else:
+            old_term = title.term_length_days
+            title.term_length_days = new_term
+            # Only (re)compute next-due if the term actually changed
+            # OR if it was previously unset. This avoids resetting the
+            # clock on a no-op PATCH that just touches other fields.
+            if old_term != new_term or title.next_election_due_at is None:
+                from datetime import (
+                    datetime as _dt, timedelta as _td, timezone as _tz,
+                )
+                title.next_election_due_at = (
+                    _dt.now(_tz.utc).replace(tzinfo=None) + _td(days=new_term)
+                )
+    if body.election_lead_time_days is not None:
+        new_lead = int(body.election_lead_time_days)
+        if new_lead < 1:
+            new_lead = 1
+        title.election_lead_time_days = new_lead
     log_audit_event(
         db,
         action="title.updated",
         target_type="org_title",
         target_id=title.id,
         actor_id=current_user.id,
-        details={"org_id": org.id, "name": title.name},
+        details={
+            "org_id": org.id, "name": title.name,
+            "term_length_days": title.term_length_days,
+            "next_election_due_at": (
+                title.next_election_due_at.isoformat()
+                if title.next_election_due_at else None
+            ),
+        },
         ip_address=request.client.host if request.client else None,
     )
     db.commit()

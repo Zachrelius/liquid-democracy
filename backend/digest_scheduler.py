@@ -843,6 +843,27 @@ async def run_one_tick(
         except Exception:  # noqa: BLE001
             pass
 
+    # Phase 49 B3 — scheduled / fixed-term election trigger. Cheap when
+    # no titles have term clocks set (the default for any org that
+    # didn't opt in). Per-title try/except inside the helper isolates
+    # bad titles; this outer try/except guards against catastrophic
+    # failure poisoning the rest of the tick.
+    counts["scheduled_elections_opened"] = 0
+    try:
+        from elections import open_due_term_elections
+        sched_counts = open_due_term_elections(db, now=now)
+        counts["scheduled_elections_opened"] = sched_counts.get("opened", 0)
+        counts["scheduled_elections_idempotent_skips"] = (
+            sched_counts.get("skipped_idempotent", 0)
+        )
+        counts["scheduled_elections_errors"] = sched_counts.get("errors", 0)
+    except Exception:  # noqa: BLE001
+        log.exception("digest tick: open_due_term_elections failed")
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
     # Single user-set query — small enough at v1 scale to iterate in
     # Python. Phase 13.3: we no longer slice by ``digest_cadence`` (that
     # column is gone); aggregate_for_user filters by per-event channel
