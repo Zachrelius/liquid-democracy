@@ -266,6 +266,14 @@ def _wipe_demo_orgs(db: Session, demo_orgs: list[models.Organization]) -> int:
             .delete(synchronize_session=False)
         )
         rows_wiped += n_ptopics or 0
+        # Phase 49b — cosign signatures FK to Proposal; wipe before Proposal
+        # so the bulk delete is safe on Postgres.
+        n_csigs = (
+            db.query(models.ProposalCosignature)
+            .filter(models.ProposalCosignature.proposal_id.in_(proposal_ids))
+            .delete(synchronize_session=False)
+        )
+        rows_wiped += n_csigs or 0
 
     # Proposals
     if proposal_ids:
@@ -342,6 +350,33 @@ def _wipe_demo_orgs(db: Session, demo_orgs: list[models.Organization]) -> int:
         .delete(synchronize_session=False)
     )
     rows_wiped += n_topics or 0
+
+    # Phase 49b — custom (non-system) Phase 47 titles + their
+    # assignments. System titles (Steward, Admin) stay because they're
+    # backfilled by Phase 47's migration on org creation and are
+    # uneditable/undeletable per spec D6 — wiping them would leave the
+    # org without the label layer until a new migration run. Custom
+    # titles (e.g. Cedar Hollow's President / Secretary / Treasurer)
+    # are bible-seeded each reset so the wipe must clear them first.
+    custom_title_ids = [
+        t.id for t in db.query(models.OrgTitle).filter(
+            models.OrgTitle.org_id.in_(org_ids),
+            models.OrgTitle.is_system == False,  # noqa: E712
+        ).all()
+    ]
+    if custom_title_ids:
+        n_assigns = (
+            db.query(models.OrgTitleAssignment)
+            .filter(models.OrgTitleAssignment.title_id.in_(custom_title_ids))
+            .delete(synchronize_session=False)
+        )
+        rows_wiped += n_assigns or 0
+        n_titles = (
+            db.query(models.OrgTitle)
+            .filter(models.OrgTitle.id.in_(custom_title_ids))
+            .delete(synchronize_session=False)
+        )
+        rows_wiped += n_titles or 0
 
     # Org memberships (this wipes BOTH demo users and real users who joined a
     # demo org). Real User rows themselves are NOT deleted.

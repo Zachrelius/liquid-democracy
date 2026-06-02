@@ -30,6 +30,8 @@ from .schema import (
     PersonaDelegationSpec,
     SubOrg,
     OrgBible,
+    TitleSeed,
+    CosignPetitionSeed,
 )
 
 
@@ -71,9 +73,14 @@ RECENT_HISTORY = """\
 # -----------------------------------------------------------------------------
 
 MEMBERS = [
+    # Phase 49b — Janet promoted to platform_role='steward' so the demo
+    # daily reset preserves the President→Steward binding the
+    # showcase relies on. (Prior state on prod also has her as
+    # steward, so this aligns the bible with the live data and
+    # avoids the seed pipeline demoting her each reset.)
     Member(user_id='hoa_janet', display_name='Janet Reilly',
            quick_login=True, is_cross_org=True, role='President',
-           notification_preset='high', platform_role='admin'),
+           notification_preset='high', platform_role='steward'),
     Member(user_id='hoa_brenda', display_name='Brenda Okafor',
            quick_login=True, role='Secretary',
            notification_preset='high', platform_role='moderator'),
@@ -2016,6 +2023,73 @@ CEDAR_COURT_CONDOS = SubOrg(
 # OrgBible assembly
 # -----------------------------------------------------------------------------
 
+# Phase 49b — promote the HOA's text-titles to real Phase 47 titles +
+# enable governance-feature showcases.
+#
+# B1 — title seeds.
+#   President  → binds steward (Janet, who IS the current steward).
+#   Secretary  → binds admin   (Brenda, bumped from moderator).
+#   Treasurer  → binds admin   (Linda, bumped from moderator).
+#
+# B2 — Treasurer is marked elected so the "Open Election" affordance
+# is live in the demo. President stays assigned so the top-of-org
+# doesn't churn each reset (per the spec's "leave President stable"
+# recommendation). Org-level elections.enabled=True via the
+# elections_enabled OrgBible flag below.
+#
+# B3 — A live cosign-petition proposal seeded with the author + two
+# additional signers (well below the 5-signature threshold) so the
+# gathering UI shows "3 of 5 signatures · 2 more needed."
+HOA_TITLES = [
+    TitleSeed(
+        name='President',
+        bound_role='steward',
+        cardinality_mode='single',
+        fill_method='assigned',
+        holder_user_id='hoa_janet',
+        display_order=1,
+    ),
+    TitleSeed(
+        name='Secretary',
+        bound_role='admin',
+        cardinality_mode='single',
+        fill_method='assigned',
+        holder_user_id='hoa_brenda',
+        display_order=2,
+    ),
+    TitleSeed(
+        name='Treasurer',
+        bound_role='admin',
+        cardinality_mode='single',
+        fill_method='elected',
+        holder_user_id='hoa_linda',
+        display_order=3,
+    ),
+]
+
+
+HOA_COSIGN_PETITION = CosignPetitionSeed(
+    title='Petition: Add bike rack at the pool entrance',
+    body=(
+        "I'd like the board to consider installing a covered bike rack "
+        "near the pool entrance — there are 10-12 bikes on a typical "
+        "summer weekend leaning against the fence, and the fence has "
+        "started bowing in one section. A six-position rack near the "
+        "entrance would solve it and the budget could come from the "
+        "small-projects line.\n\n"
+        "If five neighbors co-sign this, it'll go to the board for "
+        "a vote at the next meeting."
+    ),
+    author_user_id='hoa_tomas',
+    # Two named co-signers BELOW the 5-signature threshold so the
+    # gathering UI is visible to demo visitors.
+    signer_user_ids=['hoa_diane', 'hoa_ron'],
+    cosign_threshold=5,
+    cosign_expiry_hours=168,  # 7 days
+    topic_names=['Pool & Recreation'],
+)
+
+
 HOA_BIBLE = OrgBible(
     slug='demo-cedar-hollow',
     display_name='Cedar Hollow HOA',
@@ -2045,6 +2119,11 @@ HOA_BIBLE = OrgBible(
     follows=FOLLOWS,
     private_delegations=PRIVATE_DELEGATIONS,
     persona_delegations=PERSONA_DELEGATIONS,
+    # Phase 49b — governance showcase.
+    titles=HOA_TITLES,
+    cosign_petition=HOA_COSIGN_PETITION,
+    allow_cosign_petition=True,
+    elections_enabled=True,
 )
 
 

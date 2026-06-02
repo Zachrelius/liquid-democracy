@@ -1220,11 +1220,20 @@ def seed_org_from_bible(
         db.add(org)
         db.flush()
         seed_default_roles_for_org(db, org.id)
+        # Phase 49b — seed the Phase 47 system titles (Steward, Admin)
+        # alongside the default roles so the label layer is present from
+        # the first reset cycle. Idempotent: ``seed_system_titles_for_
+        # org`` upserts.
+        from org_titles import seed_system_titles_for_org
+        seed_system_titles_for_org(db, org.id)
     else:
         org.name = bible.display_name
         org.description = bible.charter
         org.is_demo = True
         org.is_demo_resetting = False
+        # Ensure system titles exist on resets too (idempotent).
+        from org_titles import seed_system_titles_for_org
+        seed_system_titles_for_org(db, org.id)
 
     # Phase 29 C1 + C5: bible-controlled cosmetics. Both go through
     # Organization.settings so no schema migration is needed.
@@ -1265,6 +1274,23 @@ def seed_org_from_bible(
             if mapped not in normalized:
                 normalized.append(mapped)
         settings["allowed_voting_methods"] = normalized
+
+    # Phase 49b — bible-driven org-level flags that the title/cosign
+    # showcase depends on. Setting these in settings keeps the seed
+    # idempotent across resets without a schema change.
+    if getattr(bible, "elections_enabled", None) is not None:
+        elec_cfg = dict(settings.get("elections") or {})
+        elec_cfg["enabled"] = bool(bible.elections_enabled)
+        # Default trigger_sources include 'admin_direct' so the Open
+        # Election button is wired immediately. 'member_cosign' is
+        # added when allow_cosign_petition is True (the natural pair).
+        triggers = list(elec_cfg.get("trigger_sources") or ["admin_direct"])
+        if getattr(bible, "allow_cosign_petition", None) and "member_cosign" not in triggers:
+            triggers.append("member_cosign")
+        elec_cfg["trigger_sources"] = triggers
+        settings["elections"] = elec_cfg
+    if getattr(bible, "allow_cosign_petition", None) is not None:
+        settings["allow_cosign_petition"] = bool(bible.allow_cosign_petition)
 
     org.settings = settings
 
@@ -1453,6 +1479,167 @@ def seed_org_from_bible(
         bible_uid_to_user=bible_uid_to_user,
         topics_by_name=topics_by_name,
     )
+
+    # ---- 5.6 Phase 49b — bible-declared Phase 47 titles -------------------
+    # Creates ``OrgTitle`` rows + assigns holders. For bound-role
+    # titles we bump the holder's membership role_id to at least the
+    # bound tier (the seed runs OUTSIDE a request context, so we
+    # don't route through routes/org_titles.py's _apply_bound_role_for_
+    # assign — the bump semantics are equivalent, the floor is
+    # checked manually below). System titles (Steward, Admin) are
+    # untouched — they're a label layer over the existing role per
+    # Phase 47 D6.
+    bible_titles = getattr(bible, "titles", None) or []
+    for tseed in bible_titles:
+        existing = db.query(models.OrgTitle).filter_by(
+            org_id=org.id, name=tseed.name,
+        ).first()
+        if existing is None:
+            title = models.OrgTitle(
+                org_id=org.id,
+                name=tseed.name,
+                bound_role=tseed.bound_role,
+                cardinality_mode=tseed.cardinality_mode,
+                fill_method=tseed.fill_method,
+                display_order=tseed.display_order,
+                term_length_days=tseed.term_length_days,
+                election_lead_time_days=tseed.election_lead_time_days,
+                is_system=False,
+            )
+            if tseed.term_length_days and tseed.term_length_days > 0:
+                title.next_election_due_at = (
+                    datetime.utcnow() + timedelta(days=int(tseed.term_length_days))
+                )
+            db.add(title)
+            db.flush()
+        else:
+            existing.bound_role = tseed.bound_role
+            existing.cardinality_mode = tseed.cardinality_mode
+            existing.fill_method = tseed.fill_method
+            existing.display_order = tseed.display_order
+            existing.term_length_days = tseed.term_length_days
+            existing.election_lead_time_days = tseed.election_lead_time_days
+            title = existing
+
+        if tseed.holder_user_id:
+            holder = bible_uid_to_user.get(tseed.holder_user_id)
+            if holder is None:
+                log.warning(
+                    "seed_pipeline: title %r holder %r not found in bible_uid_to_user; skipping assignment",
+                    tseed.name, tseed.holder_user_id,
+                )
+                continue
+            assignment = db.query(models.OrgTitleAssignment).filter_by(
+                title_id=title.id, user_id=holder.id,
+            ).first()
+            if assignment is None:
+                db.add(models.OrgTitleAssignment(
+                    title_id=title.id, user_id=holder.id,
+                ))
+            # Bound-role bump: if the title binds a role and the holder
+            # currently holds a lower tier, bump them. Tier order:
+            # member < moderator < admin < steward. We only ever bump
+            # UP — the seed never demotes (avoids accidentally
+            # violating the floor on a steward currently bound to a
+            # custom title).
+            if tseed.bound_role:
+                m = db.query(models.OrgMembership).filter_by(
+                    org_id=org.id, user_id=holder.id, status="active",
+                ).first()
+                if m is not None and m.role_id is not None:
+                    current_role = db.get(models.Role, m.role_id)
+                    target_role = db.query(models.Role).filter_by(
+                        org_id=org.id, system_key=tseed.bound_role,
+                    ).first()
+                    tier_order = {"member": 0, "moderator": 1, "admin": 2, "steward": 3}
+                    cur_tier = tier_order.get(
+                        getattr(current_role, "system_key", "member"), 0,
+                    )
+                    target_tier = tier_order.get(tseed.bound_role, 0)
+                    if target_tier > cur_tier and target_role is not None:
+                        m.role_id = target_role.id
+        db.flush()
+
+    # ---- 5.7 Phase 49b — bible-declared cosign-petition seed --------------
+    # Creates a Proposal in deliberation status with is_cosign_gated=True
+    # + N ProposalCosignature rows (sub-threshold) so a demo visitor
+    # sees the cosign-gathering UI in action.
+    cosign_seed = getattr(bible, "cosign_petition", None)
+    if cosign_seed is not None:
+        author = bible_uid_to_user.get(cosign_seed.author_user_id)
+        if author is None:
+            log.warning(
+                "seed_pipeline: cosign_petition author %r not found; skipping",
+                cosign_seed.author_user_id,
+            )
+        else:
+            # Idempotency — if an existing proposal with this title
+            # exists for this org, refresh its fields rather than
+            # creating a duplicate.
+            existing_petition = db.query(models.Proposal).filter_by(
+                org_id=org.id, title=cosign_seed.title,
+            ).first()
+            now = datetime.utcnow()
+            if existing_petition is None:
+                petition = models.Proposal(
+                    title=cosign_seed.title,
+                    body=cosign_seed.body,
+                    author_id=author.id,
+                    org_id=org.id,
+                    voting_method="binary",
+                    num_winners=1,
+                    status="deliberation",
+                    deliberation_start=now,
+                    deliberation_days=7,
+                    voting_days=7,
+                    pass_threshold=0.50,
+                    quorum_threshold=0.40,
+                    is_cosign_gated=True,
+                    cosign_threshold_snapshot=cosign_seed.cosign_threshold,
+                    cosign_expires_at=now + timedelta(hours=cosign_seed.cosign_expiry_hours),
+                )
+                db.add(petition)
+                db.flush()
+            else:
+                petition = existing_petition
+                petition.body = cosign_seed.body
+                petition.is_cosign_gated = True
+                petition.cosign_threshold_snapshot = cosign_seed.cosign_threshold
+                petition.cosign_expires_at = now + timedelta(hours=cosign_seed.cosign_expiry_hours)
+                petition.status = "deliberation"
+            # Attach the requested topics (if any).
+            for tname in cosign_seed.topic_names:
+                topic = topics_by_name.get(tname)
+                if topic is None:
+                    continue
+                existing_pt = db.query(models.ProposalTopic).filter_by(
+                    proposal_id=petition.id, topic_id=topic.id,
+                ).first()
+                if existing_pt is None:
+                    db.add(models.ProposalTopic(
+                        proposal_id=petition.id, topic_id=topic.id,
+                    ))
+            # Author's implicit first signature.
+            author_sig = db.query(models.ProposalCosignature).filter_by(
+                proposal_id=petition.id, user_id=author.id,
+            ).first()
+            if author_sig is None:
+                db.add(models.ProposalCosignature(
+                    proposal_id=petition.id, user_id=author.id,
+                ))
+            # Additional signers.
+            for sig_uid in cosign_seed.signer_user_ids:
+                signer = bible_uid_to_user.get(sig_uid)
+                if signer is None or signer.id == author.id:
+                    continue
+                existing_sig = db.query(models.ProposalCosignature).filter_by(
+                    proposal_id=petition.id, user_id=signer.id,
+                ).first()
+                if existing_sig is None:
+                    db.add(models.ProposalCosignature(
+                        proposal_id=petition.id, user_id=signer.id,
+                    ))
+            db.flush()
 
     # ---- 6. Proposals (PROPOSALS + DRAFTS) -------------------------------
     proposals_by_bible_id: dict[str, "models.Proposal"] = {}
