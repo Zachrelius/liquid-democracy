@@ -239,11 +239,13 @@ def _org_to_out(
         # Phase 45b — surface the governance mode so the FE can render
         # the mode-aware controls (F1 switch, F2 conditional UI).
         governance_mode=org.governance_mode or "single_steward",
-        # Phase 46 — surface the proposal creation gating tier so the
-        # FE can render the mode selector (OrgSettings F1) + the
-        # creation-flow advisory (ProposalManagement F2) + the
-        # cosign-required check in the Proposal form.
-        proposal_creation_mode=getattr(org, "proposal_creation_mode", None) or "open",
+        # Phase 49a Cluster B — surface the simplified cosign-petition
+        # toggle so the FE renders the single boolean control + the
+        # ProposalForm cosign hint when relevant. Replaces the legacy
+        # 3-way proposal_creation_mode enum.
+        allow_cosign_petition=bool(
+            (org.settings or {}).get("allow_cosign_petition", False)
+        ) if org.settings else False,
     )
 
 
@@ -513,9 +515,9 @@ def update_organization(
         org.description = body.description
     if body.join_policy is not None:
         org.join_policy = body.join_policy
-    if body.proposal_creation_mode is not None:
-        # Phase 46 — value is validated by the Pydantic field validator.
-        org.proposal_creation_mode = body.proposal_creation_mode
+    # Phase 49a Cluster B — `proposal_creation_mode` body field
+    # removed; the new control is `settings.allow_cosign_petition`,
+    # handled by the generic settings-merge below.
     if body.settings is not None:
         # Phase 46 — validate cosign config shape before merge so a bad
         # value fails the whole PATCH cleanly (matches the existing
@@ -605,6 +607,56 @@ def update_organization(
                         "Steward role transferability cannot be disabled."
                     ),
                 )
+
+        # Phase 49a A1 — multi_admin_approval lockdown. Weakening
+        # changes to the approval config (disable, threshold decrease,
+        # known wrapped-action removal) must themselves be ratified
+        # through the approval workflow they're trying to disarm. First-
+        # enable (false→true) + strengthening + window-only changes
+        # still apply directly. The check pops the multi_admin_approval
+        # block out of the patch BEFORE the merge so the rest of the
+        # settings still apply directly; the multi_admin_approval block
+        # is then either re-injected (if non-weakening) or routed to a
+        # pending action (if weakening + currently enabled).
+        approval_submitted_action = None
+        if "multi_admin_approval" in body.settings:
+            from pending_actions import (
+                engine as _p44_engine, settings as _p44_settings,
+            )
+            proposed_block = body.settings.pop("multi_admin_approval")
+            normalized_proposed = _p44_settings.normalize_config_input(proposed_block)
+            current_block = (org.settings or {}).get("multi_admin_approval", {})
+            if not isinstance(current_block, bool) and not isinstance(current_block, dict):
+                current_block = {}
+            currently_enabled = (
+                isinstance(current_block, dict)
+                and bool(current_block.get("enabled", False))
+            )
+            is_weakening = (
+                isinstance(current_block, dict)
+                and _p44_settings.is_weakening_change(current_block, normalized_proposed)
+            )
+            if currently_enabled and is_weakening:
+                # Route through the approval workflow being weakened.
+                # Note: submit_pending_action calls
+                # _validate_approval_config_change which re-checks
+                # weakness — defensive double-check.
+                ip = request.client.host if request.client else None
+                result = _p44_engine.submit_pending_action(
+                    db, org, current_user, "org.approval_config_change",
+                    {"new_config": normalized_proposed},
+                    ip_address=ip,
+                )
+                # If executed_directly returns True the action was
+                # auto-ratified (e.g. threshold==1 + initiator-counts);
+                # in that case the executor already wrote the new config.
+                # Otherwise the action is pending — config unchanged.
+                if not result.executed_directly:
+                    approval_submitted_action = result.pending_action
+            else:
+                # Strengthening / first-enable / window-only change OR
+                # any change while disabled — apply directly.
+                body.settings["multi_admin_approval"] = normalized_proposed
 
         # Diff BEFORE merging so we capture the actual transition.
         sm_diff = diff_stable_result_settings(org.settings, body.settings)
@@ -2508,12 +2560,16 @@ def create_org_proposal(
                 ),
             )
     else:
-        # Parent-org-scoped: gated by 'proposal.create' permission.
-        if not has_permission(db, current_user.id, org.id, "proposal.create"):
-            raise HTTPException(
-                status_code=403,
-                detail="You do not have permission to create proposals in this organization.",
-            )
+        # Parent-org-scoped: the gating decision (direct vs cosign-
+        # gated vs 403) is handled by ``gate_proposal_creation``
+        # below. Phase 49a Cluster B removed the standalone
+        # ``proposal.create``-permission check here — the gate now
+        # owns the decision: hold ``proposal.create`` → direct;
+        # else if ``allow_cosign_petition=True`` → cosign-gated;
+        # else 403. Combining the two checks into one gate removes
+        # the prior conflict where mode + permission-key gave
+        # subtly-different answers depending on path.
+        pass
 
     from routes.proposals import _validate_proposal_creation, _create_proposal_options
     # Pass the sub-org (when present) so the voting-method allowlist resolves

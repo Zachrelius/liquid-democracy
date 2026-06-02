@@ -431,6 +431,11 @@ def _execute_now(
         if _user_role_system_key(db, initiator.id, org.id) != "steward":
             _resolve_failed(db, pending, "initiator_no_longer_authorized", actor.id, ip_address)
             return
+    elif getattr(defn, "admin_or_steward_only", False):
+        from role_permissions import _user_role_system_key
+        if _user_role_system_key(db, initiator.id, org.id) not in ("admin", "steward"):
+            _resolve_failed(db, pending, "initiator_no_longer_authorized", actor.id, ip_address)
+            return
     else:
         from role_permissions import has_permission
         if not has_permission(

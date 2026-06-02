@@ -97,8 +97,10 @@ def _make_org(
                 "threshold": cosign_threshold,
                 "expiry_hours": cosign_expiry_hours,
             },
+            # Phase 49a Cluster B — toggle replaces the legacy
+            # ``proposal_creation_mode='cosign_required'`` column.
+            "allow_cosign_petition": True,
         },
-        proposal_creation_mode="cosign_required",
     )
     db.add(org)
     db.flush()
@@ -152,7 +154,11 @@ def _setup_petition(
     make_org_membership(db, org_id=org.id, user_id=admin.id, role="admin")
     for m in members:
         make_org_membership(db, org_id=org.id, user_id=m.id, role="member")
-    _grant_member_proposal_create(db, org)
+    # Phase 49a Cluster B — DON'T grant member ``proposal.create``
+    # here. Under the new model the cosign-petition path is reserved
+    # for members WITHOUT that grant (with the toggle on); granting
+    # it would route them to direct creation and skip the cosign
+    # state these tests are exercising.
     db.commit()
     return org, steward, admin, members
 

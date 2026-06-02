@@ -34,6 +34,11 @@ DEFAULT_THRESHOLDS: dict[str, int] = {
     "org.delete": 2,
     # Phase 48 Stage 3 D12 — council→single_steward revert.
     "org.governance_mode_revert": 2,
+    # Phase 49a A1 — weakening the multi-admin approval config itself
+    # (disable, threshold decrease, wrapped-action removal). The
+    # disarm-then-act escape hatch is closed by gating the disarm under
+    # the very approval the admin is trying to disable.
+    "org.approval_config_change": 2,
 }
 
 DEFAULT_WINDOW_HOURS: int = 72
@@ -94,6 +99,73 @@ def is_action_wrapped(org: models.Organization, action_type: str) -> bool:
         return False
     from .registry import is_known_action_type
     return is_known_action_type(action_type)
+
+
+def is_weakening_change(current: dict, proposed: dict) -> bool:
+    """Phase 49a A2 — return True iff ``proposed`` weakens the
+    multi-admin-approval guarantee relative to ``current``.
+
+    Weakening transitions:
+      * ``enabled`` flips from True to False.
+      * ANY known-action ``thresholds[k]`` is lowered.
+      * ANY known wrapped action is REMOVED from ``thresholds``
+        (since the absent key falls back to the platform default,
+        which could be lower than the current explicit threshold).
+
+    Strengthening transitions (NOT weakening):
+      * ``enabled`` flips from False to True (first-enable per A3).
+      * ANY threshold is raised.
+      * A new wrapped action key is ADDED (defensively considered
+        non-weakening even though the registry currently registers
+        all action types statically — defensive against future
+        action-type adds via config).
+
+    Neutral (NOT weakening):
+      * ``window_hours`` changes in either direction. The spec
+        explicitly excludes window changes from the gated list
+        (longer window doesn't relax the threshold; shorter window
+        doesn't rush ratifiers below the threshold either, since
+        the threshold itself is the gate). If org operators want
+        to gate window changes too, that's a follow-up.
+
+    Both inputs are expected to be sanitized via
+    ``normalize_config_input`` first; this function is tolerant of
+    missing/extra keys but does NOT itself normalize — pass the
+    sanitized inputs.
+    """
+    current_enabled = bool(current.get("enabled", False))
+    proposed_enabled = bool(proposed.get("enabled", False))
+    if current_enabled and not proposed_enabled:
+        return True
+
+    current_thresholds = (
+        current.get("thresholds", {})
+        if isinstance(current.get("thresholds"), dict) else {}
+    )
+    proposed_thresholds = (
+        proposed.get("thresholds", {})
+        if isinstance(proposed.get("thresholds"), dict) else {}
+    )
+
+    for action_type, current_val in current_thresholds.items():
+        if not isinstance(current_val, int):
+            continue
+        if action_type not in proposed_thresholds:
+            # Removed — falls back to DEFAULT_THRESHOLDS which may be
+            # lower than the current explicit value.
+            default_val = DEFAULT_THRESHOLDS.get(action_type)
+            if isinstance(default_val, int) and default_val < current_val:
+                return True
+            # If default >= current, removal isn't weakening on its
+            # own (the platform default holds the line), but a
+            # follow-up patch could lower the default — defensive
+            # treatment: just don't consider it weakening here.
+            continue
+        proposed_val = proposed_thresholds[action_type]
+        if isinstance(proposed_val, int) and proposed_val < current_val:
+            return True
+
+    return False
 
 
 def normalize_config_input(raw: Optional[dict]) -> dict:

@@ -130,7 +130,11 @@ def test_phase_46_upgrade_adds_everything():
         assert "proposal_creation_mode" not in _columns(db_url, "organizations")
         assert "is_cosign_gated" not in _columns(db_url, "proposals")
 
-        _run_alembic(db_url, "upgrade", "head")
+        # Phase 49a Cluster B dropped the proposal_creation_mode column at
+        # revision b9c2e0f43215; upgrade to Phase 46's own revision here
+        # so the test stays scoped to "Phase 46's add" rather than tracking
+        # downstream removals.
+        _run_alembic(db_url, "upgrade", _PHASE_46_REVISION)
         assert "proposal_cosignatures" in _tables(db_url)
         assert "proposal_creation_mode" in _columns(db_url, "organizations")
         for c in ("is_cosign_gated", "cosign_threshold_snapshot", "cosign_expires_at"):
@@ -157,7 +161,11 @@ def test_phase_46_upgrade_downgrade_upgrade_cycle():
         assert "proposal_creation_mode" not in _columns(db_url, "organizations")
         assert "is_cosign_gated" not in _columns(db_url, "proposals")
 
-        _run_alembic(db_url, "upgrade", "head")
+        # Phase 49a Cluster B dropped the proposal_creation_mode column at
+        # revision b9c2e0f43215; upgrade to Phase 46's own revision here
+        # so the test stays scoped to "Phase 46's add" rather than tracking
+        # downstream removals.
+        _run_alembic(db_url, "upgrade", _PHASE_46_REVISION)
         assert "proposal_cosignatures" in _tables(db_url)
         assert "proposal_creation_mode" in _columns(db_url, "organizations")
     finally:
@@ -177,7 +185,9 @@ def test_phase_46_org_default_value_is_open():
     db_url = f"sqlite:///{path}"
     try:
         _build_pre_46_schema(db_url)
-        _run_alembic(db_url, "upgrade", "head")
+        # Same fix as above — stay at Phase 46's revision so the
+        # column still exists when we read it back.
+        _run_alembic(db_url, "upgrade", _PHASE_46_REVISION)
 
         engine = sa.create_engine(db_url)
         try:

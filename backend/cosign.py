@@ -1,30 +1,36 @@
 """Phase 46 — Cosign-gated proposals (petition threshold).
 
-Per-org ``proposal_creation_mode`` (Phase 46 B1) has three values:
+Phase 49a Cluster B simplified the gating decision: the legacy
+three-way ``Organization.proposal_creation_mode`` column (open /
+cosign_required / admin_only) was replaced with the single per-org
+boolean ``settings.allow_cosign_petition``. The new model:
 
-  * ``open`` (default — pre-46 behavior preserved): any holder of
-    ``proposal.create`` creates proposals that go live immediately.
-  * ``cosign_required`` (opt-in): a member-tier creator's proposal
-    enters the cosign-gathering state (``deliberation`` status with
-    ``is_cosign_gated=True``); the proposal advances to ``voting`` when
-    the signature count reaches the threshold (D2/D3). Holders of
-    ``proposal.advance_phase`` create normally (the mode is a floor
-    for ordinary members, not a ceiling on admins).
-  * ``admin_only``: only callers holding ``proposal.advance_phase`` can
-    create. Members (no advance permission) get 403.
+  * Holders of the ``proposal.create`` permission create directly
+    (subject to the existing deliberation flow).
+  * Users without ``proposal.create`` AND with
+    ``allow_cosign_petition=True`` → cosign-gathering state.
+  * Otherwise: 403.
 
-The cosign config lives in ``Organization.settings.cosign`` as::
+This pulls the creation-authority decision back to the permission
+matrix (one source of truth) and reduces cosign to "is there a
+petition path for everyone else." The cosign machinery itself —
+signature collection, weighted threshold, expiry window — is
+unchanged from the original Phase 46 design.
+
+The cosign config still lives in ``Organization.settings.cosign``::
 
     {
       "threshold": 3,         # minimum signatures including the author (D3)
       "expiry_hours": 168,    # gathering window in hours (default 7 days)
     }
 
-The threshold + expiry are snapshotted onto the Proposal row at create
-time so later org-config changes don't move the goalposts mid-petition.
+The threshold + expiry are snapshotted onto the Proposal row at
+create time so later org-config changes don't move the goalposts
+mid-petition.
 
-Phase 47 (elections) will consume this module as one election-trigger
-option but must not couple it (D5). Keep the API proposal-type-agnostic.
+The original Phase 46 D5 "elections must not couple to cosign"
+invariant still holds — Phase 48 reuses this machinery as one
+election-trigger option without coupling to it.
 """
 from __future__ import annotations
 
@@ -37,6 +43,11 @@ from sqlalchemy.orm import Session
 import models
 
 
+# Phase 49a Cluster B — legacy mode constants kept as MODULE-level
+# names for back-compat with any test fixture or external import that
+# may still reference them. The constants are NOT consumed by
+# ``gate_proposal_creation`` anymore; the gate decides via the
+# permission matrix + ``settings.allow_cosign_petition``.
 OPEN = "open"
 COSIGN_REQUIRED = "cosign_required"
 ADMIN_ONLY = "admin_only"
@@ -51,12 +62,34 @@ _MIN_THRESHOLD = 1
 _MIN_EXPIRY_HOURS = 1
 
 
+def allow_cosign_petition(org: Optional[models.Organization]) -> bool:
+    """Phase 49a Cluster B — read the org's allow_cosign_petition
+    toggle. Default False (members without ``proposal.create`` get
+    403 — matches the pre-49a ``open`` and ``admin_only`` default
+    behavior given the standing per-role grants).
+    """
+    if org is None:
+        return False
+    settings = getattr(org, "settings", None) or {}
+    if not isinstance(settings, dict):
+        return False
+    return bool(settings.get("allow_cosign_petition", False))
+
+
 def mode_of(org: Optional[models.Organization]) -> str:
-    """Read the org's proposal_creation_mode. Defaults to OPEN if the
-    field is missing or invalid (defensive — the column is NOT NULL with
-    server_default, but test fixtures may bypass it)."""
+    """Legacy helper — derive a Phase-46-style mode label from the
+    Phase-49a state. Kept for any read-only call site that hasn't
+    been switched; the gating decision itself no longer routes
+    through this string. Maps to ``cosign_required`` when the
+    toggle is on, ``open`` otherwise. (The original ``admin_only``
+    mode collapsed into ``open`` under the new model — neither
+    grants the member tier ``proposal.create`` by default.)
+    """
     if org is None:
         return OPEN
+    if allow_cosign_petition(org):
+        return COSIGN_REQUIRED
+    # Defensive — pre-49a fixtures may still set the column directly.
     mode = getattr(org, "proposal_creation_mode", None)
     if mode in VALID_MODES:
         return mode
@@ -129,24 +162,41 @@ def caller_can_bypass_cosign(
 def gate_proposal_creation(
     db: Session, user_id: str, org: models.Organization,
 ) -> str:
-    """Return one of:
-      - 'direct': the proposal goes live (standard flow).
-      - 'cosign_gated': the proposal enters cosign gathering.
-    Raises HTTPException(403) when ``admin_only`` mode blocks the caller.
+    """Phase 49a Cluster B — simplified gating decision.
+
+    Returns one of:
+      * ``'direct'``: the proposal goes live (standard flow).
+      * ``'cosign_gated'``: the proposal enters cosign gathering.
+
+    Decision tree:
+      1. If the caller holds ``proposal.create`` → direct.
+      2. Else if the org has ``settings.allow_cosign_petition=True``
+         → cosign_gated.
+      3. Else: raises HTTPException(403).
+
+    The 403 message is intentionally permission-shaped rather than
+    naming a mode (no leaked admin_only label) — the new model
+    treats the permission matrix as the source of truth.
+
+    Note: the upstream HTTP route already checks
+    ``has_permission(user, 'proposal.create')`` and 403s before
+    calling this gate (see ``routes/organizations.py::create_org_
+    proposal``). The 403 inside this helper is therefore a defensive
+    backstop that fires only when a future call site bypasses the
+    upstream check; in normal flow the gate either returns
+    ``'direct'`` (permission present) or ``'cosign_gated'`` (toggle
+    on) without raising.
     """
-    mode = mode_of(org)
-    if mode == OPEN:
+    from role_permissions import has_permission
+    if has_permission(db, user_id, org.id, "proposal.create"):
         return "direct"
-    if mode == COSIGN_REQUIRED:
-        return "direct" if caller_can_bypass_cosign(db, user_id, org) else "cosign_gated"
-    # ADMIN_ONLY
-    if caller_can_bypass_cosign(db, user_id, org):
-        return "direct"
+    if allow_cosign_petition(org):
+        return "cosign_gated"
     raise HTTPException(
         status_code=403,
         detail=(
-            "This organization only allows admins/moderators to create "
-            "proposals (proposal_creation_mode='admin_only')."
+            "You do not have permission to create proposals in this "
+            "organization."
         ),
     )
 

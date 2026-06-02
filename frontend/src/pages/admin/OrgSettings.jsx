@@ -1817,55 +1817,52 @@ export default function OrgSettings() {
         </div>
       </section>
 
-      {/* Proposal Creation Mode — Phase 46 F1. Three tiers:
-          - open (today's behavior): proposal.create-holders create proposals
-            that go live immediately.
-          - cosign_required: member-tier creators' proposals enter cosign
-            gathering; advance when the threshold is met. Admins create
-            directly.
-          - admin_only: only proposal.advance_phase-holders create. */}
+      {/* Cluster B (49a) — replaced the legacy 3-way creation-mode
+          selector with the single "allow cosign petition" toggle. The
+          permission matrix decides who creates directly (holders of
+          "Create proposals"); the toggle decides whether members
+          who lack that permission may instead initiate via cosigned
+          petition. */}
       {canEditOrgSettings && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            Proposal Creation Mode
+            Proposal creation
           </h2>
           <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
             <p className="text-sm text-gray-600">
-              Choose how proposals come into being. <strong>Open</strong> is the default — any holder of <em>Create proposals</em> creates a live proposal. <strong>Cosign required</strong> makes member-created proposals gather signatures before going to a vote (admins still create directly). <strong>Admin only</strong> restricts creation to admins/moderators.
+              Who can create a proposal depends on the <em>Create proposals</em> permission in your role matrix. The toggle below opens an alternative path for everyone else: a petition that goes live once enough members co-sign.
             </p>
-            <div className="space-y-2">
-              {[
-                {value: 'open', label: 'Open', desc: 'Any proposal-creator goes live immediately.'},
-                {value: 'cosign_required', label: 'Cosign required', desc: 'Members gather signatures first; admins create directly.'},
-                {value: 'admin_only', label: 'Admin only', desc: 'Only admins/moderators can create.'},
-              ].map(opt => (
-                <label key={opt.value} className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="proposalCreationMode"
-                    value={opt.value}
-                    checked={(currentOrg?.proposal_creation_mode || 'open') === opt.value}
-                    onChange={async () => {
-                      try {
-                        await api.patch(`/api/orgs/${currentOrg.slug}`, {
-                          proposal_creation_mode: opt.value,
-                        });
-                        await refreshOrgs();
-                        toast.success(`Creation mode set to "${opt.label}"`);
-                      } catch (e) {
-                        toast.error(e.message || 'Failed to update mode');
-                      }
-                    }}
-                    className="mt-0.5 accent-[var(--brand-accent)]"
-                  />
-                  <div>
-                    <div className="text-sm font-medium text-gray-700">{opt.label}</div>
-                    <div className="text-xs text-gray-500">{opt.desc}</div>
-                  </div>
-                </label>
-              ))}
-            </div>
-            {(currentOrg?.proposal_creation_mode || 'open') === 'cosign_required' && (
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!currentOrg?.allow_cosign_petition}
+                onChange={async (e) => {
+                  try {
+                    await api.patch(`/api/orgs/${currentOrg.slug}`, {
+                      settings: { allow_cosign_petition: e.target.checked },
+                    });
+                    await refreshOrgs();
+                    toast.success(
+                      e.target.checked
+                        ? 'Members can now initiate proposals by petition.'
+                        : 'Members without proposal-creation permission can no longer initiate proposals.',
+                    );
+                  } catch (err) {
+                    toast.error(err.message || 'Failed to update setting');
+                  }
+                }}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <div className="text-sm font-medium text-gray-700">
+                  Allow members without proposal-creation permission to start proposals by gathering co-signatures
+                </div>
+                <div className="text-xs text-gray-500">
+                  When on, a member without the <em>Create proposals</em> permission can still file a proposal as a petition. It goes live once the co-signature threshold is met within the gathering window. When off, only members with the <em>Create proposals</em> permission can file.
+                </div>
+              </div>
+            </label>
+            {!!currentOrg?.allow_cosign_petition && (
               <div className="border-t border-gray-200 pt-4 space-y-3">
                 <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Cosign configuration</h3>
                 <div className="flex flex-wrap gap-4">
@@ -1883,7 +1880,16 @@ export default function OrgSettings() {
                     />
                   </label>
                   <label className="text-sm space-y-1">
-                    <span className="block text-xs text-gray-600">Gathering window (hours)</span>
+                    <span className="block text-xs text-gray-600">
+                      Gathering window (hours)
+                      {/* Cluster D — secondary-unit hint so admins can
+                          glance the equivalent days without doing math. */}
+                      {settings.cosign?.expiry_hours > 23 && (
+                        <span className="ml-1 text-gray-400">
+                          ({(settings.cosign.expiry_hours / 24).toFixed(settings.cosign.expiry_hours % 24 === 0 ? 0 : 1)} days)
+                        </span>
+                      )}
+                    </span>
                     <input
                       type="number"
                       min={1}
@@ -1991,8 +1997,8 @@ export default function OrgSettings() {
                     className="mt-0.5 accent-[var(--brand-accent)]"
                   />
                   <div>
-                    <div className="text-sm text-gray-700">Allow elected revert (admin_council mode)</div>
-                    <div className="text-xs text-gray-500">When on, the council can elect a Steward, which atomically flips the org back to single-steward governance + installs the winner. Off keeps Phase 47's strict separation between the two modes.</div>
+                    <div className="text-sm text-gray-700">Let the admin team elect a single top leader</div>
+                    <div className="text-xs text-gray-500">When on, if the admin team holds an election for a Steward seat, the winner becomes the org's single top leader (and the team-of-admins arrangement ends). When off, the admin team has no path to convert back to a single-leader setup through an election.</div>
                   </div>
                 </label>
               </div>
@@ -2059,7 +2065,19 @@ export default function OrgSettings() {
                 ))}
               </div>
               <label className="text-sm block">
-                <span className="block text-gray-700 mb-1">Expiry window (hours)</span>
+                <span className="block text-gray-700 mb-1">
+                  Expiry window (hours)
+                  {/* Cluster D — secondary-unit hint so admins can
+                      glance the equivalent days for the common case
+                      where the window is set in whole days. */}
+                  {(settings.multi_admin_approval?.window_hours ?? 72) > 23 && (
+                    <span className="ml-1 text-gray-400">
+                      ({((settings.multi_admin_approval?.window_hours ?? 72) / 24).toFixed(
+                        ((settings.multi_admin_approval?.window_hours ?? 72) % 24 === 0) ? 0 : 1,
+                      )} days)
+                    </span>
+                  )}
+                </span>
                 <input
                   type="number"
                   min={1}
@@ -2072,7 +2090,7 @@ export default function OrgSettings() {
                   className="w-28 border border-gray-300 rounded px-2 py-1 text-sm"
                 />
                 <span className="block text-xs text-gray-400 mt-1">
-                  Submitted actions expire if not ratified in this window. Defaults to 72 hours.
+                  Submitted actions expire if not ratified in this window. Defaults to 72 hours (3 days).
                 </span>
               </label>
             </div>
@@ -2226,39 +2244,39 @@ export default function OrgSettings() {
           from. */}
       {(canSwitchToCouncil || canRevertToSingle) && (
         <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Governance Mode</h2>
+          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Top leadership</h2>
           <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
             <div>
               <p className="text-sm text-gray-700">
-                Current mode: <strong>{governanceMode === 'admin_council' ? 'Admin Council' : 'Single Steward'}</strong>
+                Currently: <strong>{governanceMode === 'admin_council' ? 'A team of admins, no single top leader' : 'A single top leader (Steward)'}</strong>
               </p>
               <p className="text-xs text-gray-500 mt-1">
                 {governanceMode === 'admin_council'
-                  ? 'Authority is held collectively by the admin tier. No single top officer.'
-                  : 'A single Steward holds top authority. This is the default model.'}
+                  ? 'Top authority is shared by every admin. There is no single top officer; any active admin can act with full authority.'
+                  : 'The Steward is the single top officer. Every other role is below the Steward. This is the default setup.'}
               </p>
             </div>
             {canSwitchToCouncil && (
               <div className="space-y-2">
                 <p className="text-sm text-gray-600">
-                  Switch to admin-council mode: you become an Admin alongside
-                  any existing admins. There will be no Steward. Reversible.
+                  Switch to a team of admins with no single top leader. You become an
+                  admin alongside any existing admins; there will no longer be a Steward.
+                  Reversible.
                 </p>
                 <button
                   onClick={handleSwitchToCouncil}
                   disabled={savingGovernanceMode}
                   className="text-sm px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
                 >
-                  {savingGovernanceMode ? 'Switching…' : 'Switch to Admin Council'}
+                  {savingGovernanceMode ? 'Switching…' : 'Switch to team of admins'}
                 </button>
               </div>
             )}
             {canRevertToSingle && (
               <div className="space-y-2">
                 <p className="text-sm text-gray-600">
-                  Revert to single-steward mode: pick an admin (or yourself)
-                  to claim the Steward seat. The remaining admins keep their
-                  role.
+                  Switch back to a single top leader. Pick an admin (or yourself) to
+                  become the new Steward; the remaining admins keep their role.
                 </p>
                 {revertMembers.length === 0 && !loadingRevertMembers ? (
                   <button
@@ -2289,7 +2307,7 @@ export default function OrgSettings() {
                       disabled={savingGovernanceMode}
                       className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
                     >
-                      {savingGovernanceMode ? 'Reverting…' : 'Revert to Single Steward'}
+                      {savingGovernanceMode ? 'Switching…' : 'Switch back to a single top leader'}
                     </button>
                   </>
                 )}

@@ -77,23 +77,20 @@ class Organization(Base):
     # drives the directory cards and the per-org demo-login validation.
     # Real orgs leave NULL.
     personas: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
-    # Phase 46 — per-org proposal-creation gating tier (B1). Three values:
-    #   - ``open`` (default; today's behavior): members with proposal.create
-    #     create proposals that go live immediately.
-    #   - ``cosign_required``: a member-tier creator's proposal enters the
-    #     cosign-gathering state (deliberation status + is_cosign_gated=True)
-    #     and only advances to voting when the cosign threshold is met.
-    #     Admins / users holding proposal.create above the baseline create
-    #     normally (mode is a floor for ordinary members, not a ceiling).
-    #   - ``admin_only``: only proposal.create-holders can create.
-    # Default + server_default 'open' so untouched orgs behave byte-for-byte
-    # as pre-46. Cosign threshold + expiry-window live in
-    # ``Organization.settings.cosign`` per D1/D2.
-    proposal_creation_mode: Mapped[str] = mapped_column(
-        String(length=32), nullable=False,
-        default="open", server_default="open",
-        index=True,
-    )
+    # Phase 49a Cluster B — replaced the legacy three-way
+    # ``proposal_creation_mode`` column (open / cosign_required /
+    # admin_only) with the single ``settings.allow_cosign_petition``
+    # boolean. The new model:
+    #
+    #   * Users holding ``proposal.create`` create directly.
+    #   * Users without ``proposal.create`` AND
+    #     ``allow_cosign_petition=True`` → cosign-gated path.
+    #   * Otherwise: 403.
+    #
+    # See ``backend/migrations/versions/b9c2e0f43215_phase_49a_*.py``
+    # for the data-migration mapping that preserves each org's
+    # effective behavior. The column itself is dropped in that
+    # migration — no model field here.
     # Phase 45b — per-org governance mode (B1). Two values:
     #   - ``single_steward`` (default; today's behavior): exactly one
     #     Steward seat always exists; OWNER_ONLY_KEYS + STEWARD_LOCKED
