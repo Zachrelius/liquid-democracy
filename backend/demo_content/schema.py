@@ -50,6 +50,30 @@ class Member:
 
 
 @dataclass
+class TitleSeed:
+    """Phase 49b — bible-declared Phase 47 title seeded into the org.
+
+    Resolves to an ``OrgTitle`` row + (when ``holder_user_id`` is set)
+    an ``OrgTitleAssignment`` row via the seed pipeline. ``bound_role``
+    drives the title's role-binding semantics; when set, the holder's
+    role is bumped to at least the bound tier (the existing Phase 47
+    assignment path).
+    """
+    name: str                                       # display name, e.g. "President"
+    bound_role: Optional[
+        Literal['steward', 'admin', 'moderator', 'member']
+    ] = None
+    cardinality_mode: Literal['single', 'multi'] = 'single'
+    fill_method: Literal['assigned', 'elected', 'both'] = 'assigned'
+    holder_user_id: Optional[str] = None            # bible-internal uid; resolved via bible_uid_to_user
+    display_order: int = 0
+    # Phase 49 term knobs — opt-in. Setting term_length_days makes the
+    # title participate in the scheduled-trigger path.
+    term_length_days: Optional[int] = None
+    election_lead_time_days: int = 7
+
+
+@dataclass
 class TopicVisibility:
     topic: str
     # Phase 30.3 D1 — followers_only added between private and public.
@@ -287,6 +311,47 @@ class OrgBible:
     # seed helper is strict: every delegated topic must also appear in
     # the matching topic_precedence list.
     persona_delegations: list[PersonaDelegationSpec] = field(default_factory=list)
+    # Phase 49b — bible-declared Phase 47 titles. Empty by default for
+    # back-compat with bibles that don't promote text-roles to real
+    # titles yet. The seed pipeline creates ``OrgTitle`` rows + assigns
+    # them via the Phase 47 path so bound roles flow through the
+    # standard machinery (45a/45b floor + atomic-swap semantics).
+    titles: list[TitleSeed] = field(default_factory=list)
+    # Phase 49b B3 — bible-declared cosign-petition proposal that lives
+    # in cosign-gathering state at seed time so a demo visitor sees the
+    # signature UI in action. Mutually exclusive with normal Proposals
+    # only by intent — the field carries a single proposal-shaped
+    # tuple. None disables.
+    cosign_petition: Optional["CosignPetitionSeed"] = None
+    # Phase 49b B3 toggle — whether the seed sets
+    # ``settings.allow_cosign_petition = True`` for this org. The
+    # cosign-petition seed assumes this is True; leave None to leave
+    # the toggle untouched.
+    allow_cosign_petition: Optional[bool] = None
+    # Phase 49b B2 — whether the seed flips
+    # ``settings.elections.enabled = True`` so the elections UI is live
+    # for the demo. None leaves the setting untouched.
+    elections_enabled: Optional[bool] = None
+
+
+@dataclass
+class CosignPetitionSeed:
+    """Phase 49b B3 — bible-declared mid-flight cosign petition.
+
+    Resolves to a Proposal in ``deliberation`` status with
+    ``is_cosign_gated=True``, plus a configurable number of
+    ``ProposalCosignature`` rows from named demo personas (BELOW the
+    threshold so the gathering UI is visible). The author is the
+    first listed signer; additional ``signer_user_ids`` add real
+    cosigners.
+    """
+    title: str
+    body: str
+    author_user_id: str
+    signer_user_ids: list[str] = field(default_factory=list)
+    cosign_threshold: int = 5
+    cosign_expiry_hours: int = 168
+    topic_names: list[str] = field(default_factory=list)
 
 
 # =============================================================================
