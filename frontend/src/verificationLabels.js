@@ -10,12 +10,17 @@
  * copy change is a one-file edit.
  */
 
+// Long labels intentionally spell out what was verified (a government
+// ID was confirmed for the account) so the badge doesn't overclaim —
+// we don't currently check that the user's display name matches the
+// ID name, only that the ID is valid + linked to this account. A
+// future phase may add a display-name-match option (see backlog).
 export const VERIFICATION_STATE_LABELS = {
   email_only: 'Email only (no extra verification)',
-  identity: 'Identity verified',
-  identity_unique: 'Identity verified — unique person',
-  address_on_id: 'Identity verified — address on ID',
-  residency_verified: 'Identity verified — residency confirmed',
+  identity: 'Identity verified — a government ID was confirmed for this account',
+  identity_unique: 'Identity verified — a government ID was confirmed for this account, and this ID has not been used on another account',
+  address_on_id: 'Identity verified — a government ID was confirmed for this account, with an address on it',
+  residency_verified: 'Identity verified — residency confirmed against a government ID for this account',
 };
 
 export const VERIFICATION_STATE_SHORT_LABELS = {
