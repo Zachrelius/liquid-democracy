@@ -22,6 +22,7 @@ is consumed and discarded.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -284,6 +285,24 @@ async def didit_webhook(
 
     if not isinstance(payload, dict):
         return {"ok": False, "reason": "malformed_payload"}
+
+    # Phase 52c — emit a single structured log line carrying the
+    # PII-safe skeleton of this payload so 52d can fix the mapper
+    # against ground truth instead of guesses. The redactor's
+    # allow-list is the load-bearing PII boundary; see
+    # verification_provider.redact_payload. This is pure
+    # instrumentation — NO state writes are gated on it; if logging
+    # itself raises (unlikely), the receiver continues to apply the
+    # decision normally so live verification is never blocked by the
+    # capture path.
+    try:
+        skeleton = verification_provider.redact_payload(payload)
+        logger.info(
+            "didit_webhook_payload_capture skeleton=%s",
+            json.dumps(skeleton, default=str, sort_keys=True),
+        )
+    except Exception as e:  # noqa: BLE001 — instrumentation must never break the receiver
+        logger.warning("didit_webhook_payload_capture failed: %s", e)
 
     webhook_type = str(payload.get("webhook_type") or payload.get("event") or "")
     session_id = (

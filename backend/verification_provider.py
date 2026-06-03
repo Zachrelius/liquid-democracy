@@ -41,6 +41,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from typing import Any, Optional
 
@@ -342,3 +343,107 @@ def map_decision_to_state(decision: dict) -> dict:
         "verification_nullifier": nullifier,
         "verification_attestation_id": attestation_id,
     }
+
+
+# ---------------------------------------------------------------------------
+# Phase 52c — PII-safe payload redactor
+# ---------------------------------------------------------------------------
+#
+# Captures the STRUCTURE of a Didit decision payload (keys + key-paths
+# + status enums + opaque ids) without persisting any of the raw PII
+# fields the hybrid pattern forbids (document images, selfies, names,
+# addresses, document numbers, birthdates). The strategy is an
+# allow-list:
+#
+#   * Known status enum values are kept verbatim (so we can see
+#     ``face_search.status == approved``).
+#   * Opaque ids / handles that look like UUIDs / hex tokens / nullifier
+#     handles (alnum+dash+underscore, ≥16 chars, no spaces) are kept —
+#     they carry the dedup primitive we need to confirm the mapper
+#     against.
+#   * Booleans, numbers, nulls — kept (they're typically scores / flags
+#     / counts).
+#   * Every other string is REPLACED with ``"<str:N>"`` where N is the
+#     original length. This reveals the KEY (and the fact that a string
+#     sits there) without revealing the VALUE — exactly what the mapper
+#     correction in Phase 52d needs to read the real shape.
+#   * Unrecognized types fall through to ``"<typename>"`` — fail-closed.
+#
+# This is the single load-bearing PII-safety primitive of Phase 52c;
+# the gating test ``test_phase_52c_payload_capture.py::TestRedactor``
+# proves it.
+
+# Status-like enum values we recognize as safe to keep. Lower-cased
+# for comparison; original case preserved on output.
+_SAFE_ENUM_VALUES: frozenset[str] = frozenset({
+    # Decision / feature statuses.
+    "approved", "declined", "review", "pending", "in_progress",
+    "in_review", "passed", "failed", "skipped", "expired", "cancelled",
+    "canceled", "rejected", "completed", "initiated", "created",
+    "updated", "open", "closed", "success", "error", "ok",
+    # Boolean-like strings some payloads carry as strings.
+    "true", "false", "yes", "no",
+    # Match / liveness verdicts.
+    "match", "no_match", "live", "spoof", "uncertain",
+    # Verification status flags.
+    "verified", "unverified",
+    # Known webhook_type values we've already observed in prod
+    # (status.updated emitted by Didit during the 52a round-trip).
+    "session.opened", "session.completed", "session.created",
+    "status.updated", "decision.completed", "session.declined",
+    "session.approved",
+})
+
+# Opaque-id pattern: alnum + dash + underscore + dot, length ≥ 16. This
+# matches UUIDs (with or without dashes), hex tokens, and the kind of
+# slug-like handle the nullifier is documented to be. Spaces / commas /
+# at-signs / @-style email tokens are explicitly NOT matched, so an
+# email or human name longer than 16 chars still redacts.
+_OPAQUE_ID_RE = re.compile(r"^[A-Za-z0-9._\-]+$")
+_OPAQUE_ID_MIN_LEN = 16
+
+# Recursion guard. Real Didit payloads are ≤ a few levels deep; anything
+# beyond this is either pathological or malicious, and the redactor
+# treats it as ``"<truncated>"``.
+_MAX_DEPTH = 20
+
+
+def _redact_string(s: str) -> str:
+    """Single-string allow-list decision. Pure (no side effects)."""
+    stripped = s.strip()
+    if not stripped:
+        return ""
+    # Known status / enum value.
+    if stripped.lower() in _SAFE_ENUM_VALUES:
+        return stripped
+    # Opaque id / handle / nullifier-like token.
+    if len(stripped) >= _OPAQUE_ID_MIN_LEN and _OPAQUE_ID_RE.match(stripped):
+        return stripped
+    # Could be PII — emit type + length only.
+    return f"<str:{len(s)}>"
+
+
+def redact_payload(value: Any, _depth: int = 0) -> Any:
+    """Walk a Didit decision payload and return a PII-safe skeleton.
+
+    See module-level note. Caller (the webhook receiver) hands the
+    parsed JSON dict here AFTER signature verification; the return
+    value is JSON-safe and goes into a single structured log line.
+    """
+    if _depth > _MAX_DEPTH:
+        return "<truncated>"
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        return _redact_string(value)
+    if isinstance(value, dict):
+        return {
+            str(k): redact_payload(v, _depth=_depth + 1)
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [redact_payload(item, _depth=_depth + 1) for item in value]
+    # Unknown type — type label only.
+    return f"<{type(value).__name__}>"
