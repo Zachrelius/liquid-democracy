@@ -363,6 +363,89 @@ def check_role_grant_floor(user, org, role_system_key: str) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Phase 52a — demo_stub tightening (C-DEMO)
+# ---------------------------------------------------------------------------
+#
+# ``demo_stub`` provenance must only ever sit on accounts that exist
+# solely in the demo world. The instant a user holds any non-demo
+# org membership, they cannot receive (or keep) ``demo_stub``. Phase
+# 52b counts and Phase 53 billing rely on "demo_stub means never
+# real" — a stub leaking onto a real account would distort both.
+#
+# Two enforcement points:
+#   * ``ensure_demo_stub_writable`` — called from any path that's
+#     about to stamp ``demo_stub`` on a user. Raises 422 if the user
+#     has any real-org membership.
+#   * ``ensure_can_join_real_org`` — called from the join paths to
+#     block a ``demo_stub`` account from joining a non-demo org.
+#     Demo personas shouldn't be joining real orgs anyway; blocking
+#     keeps the demo world sealed.
+
+
+def _user_has_real_org_membership(user, db) -> bool:
+    """True iff ``user`` holds at least one ``OrgMembership`` in an
+    org whose ``is_demo`` is False (or NULL). Uses an inline import
+    of ``models`` to avoid circular import at module load.
+    """
+    import models
+    from sqlalchemy import select
+    rows = db.execute(
+        select(models.Organization.is_demo)
+        .join(
+            models.OrgMembership,
+            models.OrgMembership.org_id == models.Organization.id,
+        )
+        .where(models.OrgMembership.user_id == user.id),
+    ).all()
+    for (is_demo,) in rows:
+        if not is_demo:
+            return True
+    return False
+
+
+def ensure_demo_stub_writable(user, db) -> None:
+    """Raise ``HTTPException(422)`` if ``user`` cannot legitimately
+    receive ``demo_stub`` provenance — i.e. if they have any
+    membership in a real (non-``is_demo``) org. The only legitimate
+    callers are the demo-seed pipeline (writing onto demo-only
+    accounts it owns) and the backdoor when an operator explicitly
+    asks for ``demo_stub`` on a demo-only user. Backdoor writes of
+    real provenances are unaffected.
+    """
+    from fastapi import HTTPException
+    if _user_has_real_org_membership(user, db):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Cannot stamp demo_stub on a user with a real-org membership. "
+                "demo_stub is reserved for accounts that exist only in the "
+                "demo world."
+            ),
+        )
+
+
+def ensure_can_join_real_org(user, org) -> None:
+    """Block a ``demo_stub`` account from joining a non-demo org.
+    Called from every join path AFTER the membership-floor check
+    (so the verification structured-403 wins when both fire). No-op
+    when the target org is itself a demo org or the user is not on
+    ``demo_stub`` provenance.
+    """
+    from fastapi import HTTPException
+    if getattr(org, "is_demo", False):
+        return
+    if getattr(user, "verification_provenance", None) != PROV_DEMO_STUB:
+        return
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "Demo accounts cannot join real organizations. Sign in with a "
+            "non-demo account to join this organization."
+        ),
+    )
+
+
 def check_vote_floor_for_proposal(user, proposal) -> None:
     """Raises 403 if ``proposal`` carries a ``verification_floor`` and
     ``user`` doesn't satisfy it. No-op when the proposal has no gate

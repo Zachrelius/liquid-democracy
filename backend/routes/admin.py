@@ -454,6 +454,11 @@ def set_user_verification_state(
 
     user.verification_state = body.state
     user.verification_jurisdiction = jurisdiction
+    # Phase 52a — the backdoor stamps ``backdoor`` provenance, not
+    # ``demo_stub``. The C-DEMO tightening (verification.
+    # ensure_demo_stub_writable) gates only ``demo_stub`` writes and
+    # is enforced at the seed-pipeline + any demo_stub setter; the
+    # platform-admin backdoor is unaffected.
     user.verification_provenance = "backdoor"
     user.verification_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
 

@@ -1875,3 +1875,40 @@ class ElectionCandidacy(Base):
     withdrawn_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True,
     )
+
+
+class VerificationSession(Base):
+    """Phase 52a — bookkeeping for in-flight Didit verification
+    sessions. One row per session, keyed by ``provider_session_id``
+    so the webhook receiver can resolve session → user and dedupe
+    replays by ``(provider_session_id, webhook_type_last)``.
+
+    No raw PII / document images / selfies stored. The decision
+    payload from Didit is consumed by ``verification_provider.
+    map_decision_to_state`` and discarded; only the derived state
+    + nullifier + attestation id land on the ``users`` row.
+    """
+
+    __tablename__ = "verification_sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    provider_session_id: Mapped[str] = mapped_column(
+        String(length=128), nullable=False, unique=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String(length=32), nullable=False,
+        default="initiated", server_default="initiated",
+    )
+    webhook_type_last: Mapped[Optional[str]] = mapped_column(
+        String(length=64), nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, onupdate=_now, nullable=False,
+    )

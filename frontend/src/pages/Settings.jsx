@@ -10,6 +10,117 @@ import { useConfirm } from '../components/ConfirmDialog';
 import AccessHistory from '../components/AccessHistory';
 import { Link } from 'react-router-dom';
 
+/**
+ * Phase 52a — verification section with the real Didit "Start
+ * verification" CTA. Shows current status + provenance; hides the
+ * CTA when the user is already at the strongest state we can
+ * produce from Didit (address_on_id) since re-verifying buys
+ * nothing. Disclosure copy returned by the backend is rendered
+ * verbatim BEFORE the redirect.
+ */
+function VerificationSection({ user }) {
+  const [starting, setStarting] = useState(false);
+  const [pendingDisclosure, setPendingDisclosure] = useState(null);
+  const [pendingUrl, setPendingUrl] = useState(null);
+  const [err, setErr] = useState('');
+
+  const state = user?.verification_state || 'email_only';
+  // Don't show the CTA once the user is already verified at our
+  // strongest state.
+  const showStartCta = state === 'email_only' || state === 'identity' || state === 'identity_unique';
+
+  async function handleStart() {
+    setStarting(true);
+    setErr('');
+    try {
+      const resp = await api.post('/api/verification/session', {});
+      setPendingDisclosure(resp.consent_disclosure || '');
+      setPendingUrl(resp.session_url);
+    } catch (e) {
+      setErr(e?.message || 'Could not start verification.');
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  function handleProceed() {
+    if (pendingUrl) {
+      window.location.href = pendingUrl;
+    }
+  }
+
+  function handleCancel() {
+    setPendingDisclosure(null);
+    setPendingUrl(null);
+  }
+
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Identity verification</h2>
+      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-2">
+        <div className="flex items-baseline gap-3">
+          <span className="text-xs text-gray-500">Status</span>
+          <span className="text-sm text-gray-700">{labelForState(state)}</span>
+        </div>
+        {user?.verification_jurisdiction && (
+          <div className="flex items-baseline gap-3">
+            <span className="text-xs text-gray-500">Jurisdiction</span>
+            <span className="text-sm text-gray-700">{user.verification_jurisdiction}</span>
+          </div>
+        )}
+        {user?.verification_provenance && user.verification_provenance !== 'none' && (
+          <div className="flex items-baseline gap-3">
+            <span className="text-xs text-gray-500">Source</span>
+            <span className="text-sm text-gray-700">
+              {VERIFICATION_PROVENANCE_LABELS[user.verification_provenance] || user.verification_provenance}
+            </span>
+          </div>
+        )}
+        <p className="text-xs text-gray-500 pt-2">
+          Some organizations may require identity verification to join, hold a role, or cast a vote on certain proposals.
+        </p>
+
+        {pendingDisclosure ? (
+          <div className="mt-3 border-t border-gray-200 pt-3 space-y-3">
+            <p className="text-sm text-gray-700">{pendingDisclosure}</p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleProceed}
+                className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
+              >
+                Continue to identity provider
+              </button>
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : showStartCta ? (
+          <div className="mt-3 border-t border-gray-200 pt-3">
+            <button
+              type="button"
+              onClick={handleStart}
+              disabled={starting}
+              className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+            >
+              {starting ? 'Starting…' : 'Start verification'}
+            </button>
+            {err && (
+              <p className="text-xs text-red-600 mt-2">{err}</p>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+
 const POLICY_OPTIONS = [
   {
     value: 'require_approval',
@@ -259,41 +370,14 @@ export default function Settings() {
         </div>
       </section>
 
-      {/* Phase 51 — read-only verification status. Phase 52 adds
-          the enforcement layer (organizations can require a floor at
-          join, role-grant, and per-vote); this page still has no
-          "verify now" action because the real provider integration
-          lands in Phase 52a. Labels come from
+      {/* Phase 51 — read-only verification status; Phase 52a adds the
+          real Didit-backed "Start verification" path. The CTA opens a
+          hosted Didit session (modal preferred, redirect fallback) and
+          relies on the webhook to update the user record; the FE
+          re-reads on next load. Labels come from
           ``../verificationLabels`` so any future copy change is a
           one-file edit. */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Identity verification</h2>
-        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-2">
-          <div className="flex items-baseline gap-3">
-            <span className="text-xs text-gray-500">Status</span>
-            <span className="text-sm text-gray-700">
-              {labelForState(user?.verification_state)}
-            </span>
-          </div>
-          {user?.verification_jurisdiction && (
-            <div className="flex items-baseline gap-3">
-              <span className="text-xs text-gray-500">Jurisdiction</span>
-              <span className="text-sm text-gray-700">{user.verification_jurisdiction}</span>
-            </div>
-          )}
-          {user?.verification_provenance && user.verification_provenance !== 'none' && (
-            <div className="flex items-baseline gap-3">
-              <span className="text-xs text-gray-500">Source</span>
-              <span className="text-sm text-gray-700">
-                {VERIFICATION_PROVENANCE_LABELS[user.verification_provenance] || user.verification_provenance}
-              </span>
-            </div>
-          )}
-          <p className="text-xs text-gray-500 pt-2">
-            Some organizations may require identity verification to join, hold a role, or cast a vote on certain proposals. Verification options will become available in a future update.
-          </p>
-        </div>
-      </section>
+      <VerificationSection user={user} />
 
       {/* Section: Follow Preferences */}
       <section className="space-y-3">
