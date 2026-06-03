@@ -19,6 +19,8 @@ from copy import deepcopy
 from datetime import datetime
 from typing import Any, Optional
 
+from pydantic import BaseModel
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
@@ -359,6 +361,120 @@ def make_admin(
         },
         ip_address=request.client.host if request.client else None,
     )
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+# ---------------------------------------------------------------------------
+# Phase 51 — Guarded verification-state backdoor (platform-admin only)
+# ---------------------------------------------------------------------------
+#
+# So the state model + (Phase 52) enforcement can be tested before a
+# real Persona integration exists, this endpoint sets a user's
+# verification record. It is platform-admin only — verification is a
+# platform-level trust primitive, not an org-delegable one. The
+# provenance is stamped as ``backdoor`` so any future-phase code that
+# distinguishes real-from-stub verifications (enforcement, billing,
+# audit surfaces) treats this record as the ops override path the
+# spec calls out as "not throwaway."
+
+class _VerificationStateBody(BaseModel):
+    state: str
+    jurisdiction: Optional[str] = None
+
+
+@router.post(
+    "/users/{user_id}/verification-state",
+    response_model=schemas.UserOut,
+)
+def set_user_verification_state(
+    user_id: str,
+    body: _VerificationStateBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_admin),
+):
+    """Phase 51 §6 — set ``users.verification_state`` (and optionally
+    ``verification_jurisdiction``) for a target user with provenance
+    ``backdoor``.
+
+    Validates:
+      * ``state`` is one of ``verification.ORDER``.
+      * Jurisdiction-presence consistency: a state at
+        ``address_on_id`` or higher requires a non-empty
+        ``jurisdiction``; lower states must NOT carry one (we ignore +
+        clear any leftover jurisdiction so the row stays consistent
+        with the state's claim).
+
+    Sets ``verification_updated_at = now`` and audits via the standard
+    ``AuditLog`` pattern (action ``user.verification_state_set``).
+    Phase 52's Persona integration will share this endpoint's
+    response-shape + audit semantics; the backdoor itself persists
+    as the platform-admin / ops override path.
+    """
+    from verification import (
+        VALID_STATES, ORDER, jurisdiction_required_for,
+        ADDRESS_ON_ID,
+    )
+    from datetime import datetime, timezone
+
+    if body.state not in VALID_STATES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown verification state {body.state!r}. "
+                f"Allowed: {list(ORDER)}."
+            ),
+        )
+    jurisdiction = body.jurisdiction.strip() if isinstance(body.jurisdiction, str) else None
+    if jurisdiction == "":
+        jurisdiction = None
+    if jurisdiction_required_for(body.state) and not jurisdiction:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"State {body.state!r} requires a non-empty "
+                "jurisdiction (e.g. a US state code)."
+            ),
+        )
+    if not jurisdiction_required_for(body.state) and jurisdiction:
+        # A lower-tier state doesn't carry a jurisdiction claim. Drop
+        # the input so the persisted row stays consistent (instead
+        # of silently storing a misleading value).
+        jurisdiction = None
+
+    user = db.get(models.User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    old_state = user.verification_state
+    old_provenance = user.verification_provenance
+    old_jurisdiction = user.verification_jurisdiction
+
+    user.verification_state = body.state
+    user.verification_jurisdiction = jurisdiction
+    user.verification_provenance = "backdoor"
+    user.verification_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    log_audit_event(
+        db,
+        action="user.verification_state_set",
+        target_type="user",
+        target_id=user.id,
+        actor_id=current_user.id,
+        details={
+            "username": user.username,
+            "old_state": old_state,
+            "new_state": body.state,
+            "old_provenance": old_provenance,
+            "new_provenance": "backdoor",
+            "old_jurisdiction": old_jurisdiction,
+            "new_jurisdiction": jurisdiction,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+
     db.commit()
     db.refresh(user)
     return user

@@ -258,6 +258,59 @@ export default function Settings() {
         </div>
       </section>
 
+      {/* Phase 51 — read-only verification status. No "verify now"
+          action in this phase (nothing to verify against — Persona
+          integration lands in Phase 52). Plain-language labels: the
+          backend state codes never appear in the rendered copy,
+          consistent with the Phase 49a C2 "no internal-name leakage
+          in user-visible strings" rule. */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Identity verification</h2>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-2">
+          <div className="flex items-baseline gap-3">
+            <span className="text-xs text-gray-500">Status</span>
+            <span className="text-sm text-gray-700">
+              {(() => {
+                const s = user?.verification_state || 'email_only';
+                const labels = {
+                  email_only: 'Email only (no identity verification on file)',
+                  identity: 'Identity verified',
+                  identity_unique: 'Identity verified — unique person',
+                  address_on_id: 'Identity verified — address on ID confirmed',
+                  residency_verified: 'Identity verified — residency confirmed',
+                };
+                return labels[s] || labels.email_only;
+              })()}
+            </span>
+          </div>
+          {user?.verification_jurisdiction && (
+            <div className="flex items-baseline gap-3">
+              <span className="text-xs text-gray-500">Jurisdiction</span>
+              <span className="text-sm text-gray-700">{user.verification_jurisdiction}</span>
+            </div>
+          )}
+          {user?.verification_provenance && user.verification_provenance !== 'none' && (
+            <div className="flex items-baseline gap-3">
+              <span className="text-xs text-gray-500">Source</span>
+              <span className="text-sm text-gray-700">
+                {(() => {
+                  const p = user.verification_provenance;
+                  const labels = {
+                    persona: 'Verified via our identity provider',
+                    demo_stub: 'Demo stub (not a real verification)',
+                    backdoor: 'Set by a platform administrator',
+                  };
+                  return labels[p] || p;
+                })()}
+              </span>
+            </div>
+          )}
+          <p className="text-xs text-gray-500 pt-2">
+            Identity verification is not yet required anywhere on the platform. Organizations will be able to opt into it in a future update.
+          </p>
+        </div>
+      </section>
+
       {/* Section: Follow Preferences */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Follow & Delegation Preferences</h2>

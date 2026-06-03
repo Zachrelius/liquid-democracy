@@ -411,7 +411,17 @@ def _ensure_user(
     *,
     is_admin: bool = False,
 ) -> "models.User":
-    """Find-or-create a User by username. Persists with a dummy password."""
+    """Find-or-create a User by username. Persists with a dummy password.
+
+    Phase 51 — every demo persona (named + filler) gets a stub
+    verification record stamped via ``_stamp_demo_verification`` so
+    Phase 52's verification-gated flows can be exercised in the demo
+    world without any real Persona integration. The ``demo_stub``
+    provenance marker is load-bearing: Phase 52 enforcement and
+    Phase 53 billing MUST treat ``demo_stub`` as "not a real
+    verification" and never count it toward the free pool or bill
+    for it.
+    """
     import models
     from auth import hash_password
 
@@ -419,6 +429,7 @@ def _ensure_user(
         models.User.username == username,
     ).first()
     if user:
+        _stamp_demo_verification(user)
         return user
     user = models.User(
         username=username,
@@ -430,7 +441,38 @@ def _ensure_user(
     )
     db.add(user)
     db.flush()
+    _stamp_demo_verification(user)
     return user
+
+
+def _stamp_demo_verification(user: "models.User") -> None:
+    """Phase 51 §7 — stamp the demo verification stub on a demo user.
+
+    Sets ``verification_state='identity_unique'`` (the realistic
+    Persona-passing baseline a real demo would hit),
+    ``verification_provenance='demo_stub'`` (the load-bearing marker
+    distinguishing this from a real Persona record), and
+    ``verification_jurisdiction='DEMO'`` (a sentinel that's
+    intentionally NOT a real US state code so it can't be mistaken
+    for a real verification at a real jurisdiction).
+
+    Idempotent across resets: re-stamping is cheap + safe. Only
+    refreshes if the existing record is already a demo stub (or
+    unset); never overwrites a real verification (defensive against
+    a future where a demo persona somehow accrued a real persona
+    record).
+    """
+    from datetime import datetime, timezone
+
+    current_prov = getattr(user, "verification_provenance", None) or "none"
+    if current_prov in ("none", "demo_stub"):
+        user.verification_state = "identity_unique"
+        user.verification_provenance = "demo_stub"
+        user.verification_jurisdiction = "DEMO"
+        if user.verification_updated_at is None:
+            user.verification_updated_at = (
+                datetime.now(timezone.utc).replace(tzinfo=None)
+            )
 
 
 def _stamp_notification_preset(

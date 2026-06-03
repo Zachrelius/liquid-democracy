@@ -424,6 +424,36 @@ class User(Base):
     delegate_handle: Mapped[Optional[str]] = mapped_column(
         String, nullable=True, unique=True, index=True,
     )
+    # Phase 51 — verification state model. Foundation pass: no
+    # enforcement is wired against these columns yet (that's Phase
+    # 52). ``verification.py`` is the source of truth for the
+    # ordered state list + subsumption logic. Provenance ("none" /
+    # "persona" / "demo_stub" / "backdoor") distinguishes real-from-
+    # stub verifications so demo + audit + (Phase 53) billing
+    # surfaces stay honest. The nullifier intentionally has NO
+    # ``UniqueConstraint`` here — re-verification semantics live in
+    # Phase 52 and the constraint reasoning belongs alongside them.
+    verification_state: Mapped[str] = mapped_column(
+        String(length=32), nullable=False,
+        default="email_only", server_default="email_only",
+        index=True,
+    )
+    verification_jurisdiction: Mapped[Optional[str]] = mapped_column(
+        String(length=16), nullable=True,
+    )
+    verification_attestation_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True,
+    )
+    verification_nullifier: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True, index=True,
+    )
+    verification_provenance: Mapped[str] = mapped_column(
+        String(length=16), nullable=False,
+        default="none", server_default="none",
+    )
+    verification_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
     proposals: Mapped[list["Proposal"]] = relationship("Proposal", back_populates="author")

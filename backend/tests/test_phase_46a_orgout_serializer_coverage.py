@@ -231,3 +231,92 @@ class TestSerializerCatchesARegression:
     def test_owner_only_keys_are_named_explicitly(self):
         assert "org.delete" in _OWNER_ONLY_KEYS_STEWARD_MUST_HAVE
         assert "org.transfer_stewardship" in _OWNER_ONLY_KEYS_STEWARD_MUST_HAVE
+
+
+# ---------------------------------------------------------------------------
+# Phase 51 — UserOut surface contract.
+# ---------------------------------------------------------------------------
+#
+# Same guard, applied to ``UserOut``. New verification-related fields
+# added to ``models.User`` must be surfaced on ``UserOut`` (or
+# deliberately excluded — see ``_USER_OUT_INTERNAL_VERIFICATION_FIELDS``
+# below). The reactive-hotfix pattern from Phase 45a/46 (model column
+# added but FE-facing schema not updated) is exactly the class this
+# guard prevents.
+#
+# To add a new ``UserOut`` field:
+#   1. Add the column to ``models.User``.
+#   2. Add the field to ``schemas.UserOut`` with a sensible default.
+#   3. Append the field key to ``_USER_OUT_MUST_SURFACE_FIELDS`` below.
+
+_USER_OUT_MUST_SURFACE_FIELDS: list[str] = [
+    # Phase 12 base.
+    "id",
+    "username",
+    "display_name",
+    "email",
+    "email_verified",
+    "is_admin",
+    "user_type",
+    "delegation_strategy",
+    "default_follow_policy",
+    "avatar_url",
+    "created_at",
+    # Phase 51 — verification state surface (the four fields the FE
+    # is allowed to see; the internal ``verification_attestation_id``
+    # + ``verification_nullifier`` stay platform-internal).
+    "verification_state",
+    "verification_jurisdiction",
+    "verification_provenance",
+    "verification_updated_at",
+]
+
+# Phase 51 — fields that EXIST on ``models.User`` for verification
+# but MUST NOT appear on any client-facing schema. Documented here so
+# a future "why are these missing?" investigation lands on the rule.
+_USER_OUT_INTERNAL_VERIFICATION_FIELDS: list[str] = [
+    "verification_attestation_id",
+    "verification_nullifier",
+]
+
+
+class TestUserOutSurfaceContract:
+    """Parallel coverage for ``UserOut`` mirroring the OrgOut surface
+    test. Every entry in ``_USER_OUT_MUST_SURFACE_FIELDS`` must
+    serialize through; every entry in
+    ``_USER_OUT_INTERNAL_VERIFICATION_FIELDS`` must NOT serialize
+    through (defense in depth against accidental nullifier leakage)."""
+
+    def test_all_must_surface_fields_present_on_user_out(self, db: Session):
+        from schemas import UserOut
+        org, steward = _make_org_with_steward(db)
+        out = UserOut.model_validate(steward).model_dump()
+        missing = [k for k in _USER_OUT_MUST_SURFACE_FIELDS if k not in out]
+        assert not missing, (
+            f"UserOut is missing FE-facing field(s): {missing}. "
+            f"Add the field to schemas.UserOut and append the key to "
+            f"_USER_OUT_MUST_SURFACE_FIELDS in this test file."
+        )
+
+    def test_internal_verification_fields_never_leak(self, db: Session):
+        from schemas import UserOut
+        org, steward = _make_org_with_steward(db)
+        out = UserOut.model_validate(steward).model_dump()
+        leaked = [k for k in _USER_OUT_INTERNAL_VERIFICATION_FIELDS if k in out]
+        assert not leaked, (
+            f"UserOut leaks internal verification field(s): {leaked}. "
+            f"These are cross-org correlation primitives — never "
+            f"serialize them to the client."
+        )
+
+    def test_verification_state_default_is_email_only(self, db: Session):
+        """A fresh user — no verification ever performed — must
+        surface ``verification_state='email_only'``. Establishes the
+        default-value contract for Phase 52's enforcement layer."""
+        from schemas import UserOut
+        org, steward = _make_org_with_steward(db)
+        out = UserOut.model_validate(steward)
+        assert out.verification_state == "email_only"
+        assert out.verification_provenance == "none"
+        assert out.verification_jurisdiction is None
+        assert out.verification_updated_at is None

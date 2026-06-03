@@ -108,6 +108,17 @@ class UserOut(BaseModel):
     # who haven't uploaded an avatar (frontend renders an initials fallback).
     avatar_url: Optional[str] = None
     created_at: datetime
+    # Phase 51 — verification state, jurisdiction, provenance, and
+    # last-updated timestamp. These four fields are safe to surface to
+    # the client and drive the read-only "Verification: …" display
+    # plus the Phase 52 "verify now" prompts. The internal
+    # ``verification_attestation_id`` and ``verification_nullifier``
+    # are NOT exposed — they're cross-org correlation primitives that
+    # must stay platform-internal.
+    verification_state: str = "email_only"
+    verification_jurisdiction: Optional[str] = None
+    verification_provenance: str = "none"
+    verification_updated_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 
