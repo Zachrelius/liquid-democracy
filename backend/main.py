@@ -250,6 +250,14 @@ app.include_router(votes.rationale_router)
 # endpoint at /api/admin/demo/reset. See backend/routes/demo_reset.py for the
 # scope boundary (single endpoint, reuses run_demo_reset_if_due force=True).
 app.include_router(demo_reset.router)
+# Phase 52a — verification session initiation + Didit webhook receiver.
+# Session endpoint authenticated by JWT; webhook endpoint authenticated
+# by HMAC-SHA256 signature + X-Timestamp freshness. Until
+# DIDIT_WEBHOOK_SECRET is set in env, the webhook fails closed (401)
+# on every payload — the intended "build receiver first, surface URL
+# to Z, set secret, then smoke" sequence.
+from routes import verification as verification_routes
+app.include_router(verification_routes.router)
 
 
 # ---------------------------------------------------------------------------

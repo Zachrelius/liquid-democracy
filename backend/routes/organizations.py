@@ -1684,8 +1684,9 @@ def create_join_request(
     # branches so an unverified user can't queue a pending request
     # that would only be approvable into an active row violating
     # the floor.
-    from verification import check_membership_floor_for_join
+    from verification import check_membership_floor_for_join, ensure_can_join_real_org
     check_membership_floor_for_join(current_user, org)
+    ensure_can_join_real_org(current_user, org)
 
     # Resolve the Member role (defensive seed for legacy orgs).
     member_role_id = _resolve_role_id_by_system_key(db, org.id, "member")
@@ -1926,8 +1927,9 @@ def request_join(
     # branches: an unverified user shouldn't be able to file a
     # pending request either, since approving them would create the
     # active row that the floor prohibits.
-    from verification import check_membership_floor_for_join
+    from verification import check_membership_floor_for_join, ensure_can_join_real_org
     check_membership_floor_for_join(current_user, org)
+    ensure_can_join_real_org(current_user, org)
 
     # Phase 12 — defensively seed preset roles for the org if missing
     # (production orgs are seeded at create time and via the migration; this
@@ -2238,8 +2240,10 @@ def accept_invitation(
     if inv_org is not None:
         from verification import (
             check_membership_floor_for_join, check_role_grant_floor,
+            ensure_can_join_real_org,
         )
         check_membership_floor_for_join(current_user, inv_org)
+        ensure_can_join_real_org(current_user, inv_org)
         inv_system_key_for_check = _INV_ROLE_TO_SYSTEM_KEY.get(inv.role, inv.role)
         if inv_system_key_for_check and inv_system_key_for_check != "member":
             check_role_grant_floor(

@@ -65,7 +65,7 @@ export function ctaCopyForVerificationRequired(detail) {
     role: 'hold this role in this organization',
     vote: 'cast a vote on this proposal',
   }[detail.scope] || 'continue';
-  return `To ${scopeCopy}, your account needs: ${floorLabel}${jurisdictionSuffix}. Verification options will become available in a future update.`;
+  return `To ${scopeCopy}, your account needs: ${floorLabel}${jurisdictionSuffix}. Open Settings to start verification.`;
 }
 
 /**
