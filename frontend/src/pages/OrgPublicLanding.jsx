@@ -10,6 +10,11 @@ import Nav from '../components/Nav';
 import EmailVerificationBanner from '../components/EmailVerificationBanner';
 import renderMarkdown from '../utils/renderMarkdown';
 import { urlFor } from '../utils/urls';
+// Phase 52 Stage 1 — structured-403 verification_required handling.
+import {
+  extractVerificationRequiredDetail,
+  ctaCopyForVerificationRequired,
+} from '../verificationLabels';
 
 /**
  * Phase 14 F2 — public org landing page (the splash at bare /{slug}).
@@ -168,7 +173,11 @@ export default function OrgPublicLanding() {
       // and the user's org list (so member/pending state updates).
       await Promise.all([fetchPublic(), refreshOrgs()]);
     } catch (err) {
-      toast.error(err?.message || 'Couldn’t complete that action.');
+      // Phase 52 Stage 1 — surface verification_required with the
+      // plain-language CTA copy rather than the raw error code.
+      const vDetail = extractVerificationRequiredDetail(err);
+      const cta = vDetail ? ctaCopyForVerificationRequired(vDetail) : null;
+      toast.error(cta || err?.message || 'Couldn’t complete that action.');
     } finally {
       setActionInFlight(false);
     }

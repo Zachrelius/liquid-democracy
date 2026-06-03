@@ -680,6 +680,19 @@ class Proposal(Base):
     election_trigger: Mapped[Optional[str]] = mapped_column(
         String(length=16), nullable=True,
     )
+    # Phase 52 (Stage 52) — per-proposal verification gate. NULL =
+    # no gate (today's behavior; the additive-layer invariant is
+    # that an ungated proposal is byte-for-byte unchanged). Non-null
+    # = floor required to cast a *direct* vote on this proposal.
+    # ``verification_jurisdiction`` is optional; consistency vs the
+    # floor (jurisdiction_required_for) is enforced at the route
+    # layer, not the DB, so historical rows don't fail any check.
+    verification_floor: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True,
+    )
+    verification_jurisdiction: Mapped[Optional[str]] = mapped_column(
+        String(length=16), nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now, nullable=False)
 

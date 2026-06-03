@@ -36,6 +36,12 @@ import MyVoteRationaleBox from '../components/MyVoteRationaleBox';
 import { colorForOption } from '../components/voteFlowGraphUtils';
 import renderMarkdown from '../utils/renderMarkdown';
 import { urlFor } from '../utils/urls';
+// Phase 52 Stage 1 — verification floor labels + structured-403 helpers.
+import {
+  labelForState,
+  ctaCopyForVerificationRequired,
+  extractVerificationRequiredDetail,
+} from '../verificationLabels';
 
 /**
  * Phase 9 Session 4 — pol.is URL detection in proposal bodies.
@@ -427,7 +433,12 @@ function VoteStatusBox({ myVote, proposalId, onVoteChange, emailVerified }) {
       setShowButtons(false);
       onVoteChange();
     } catch (e) {
-      setErr(e.message);
+      // Phase 52 Stage 1 — surface the structured-403
+      // verification_required payload with the plain-language CTA copy
+      // rather than the raw "verification_required" error string.
+      const vDetail = extractVerificationRequiredDetail(e);
+      const cta = vDetail ? ctaCopyForVerificationRequired(vDetail) : null;
+      setErr(cta || e.message);
     } finally {
       setCasting(false);
     }
@@ -1195,6 +1206,11 @@ export default function ProposalDetail() {
   // carries is_cosign_gated + cosign_threshold_snapshot + count + the
   // viewer's signed state; the panel renders a counter + Sign/Withdraw.
   const [cosignBusy, setCosignBusy] = useState(false);
+  // Phase 52 Stage 1 — verification weight breakdown. Only fetched for
+  // gated proposals; renders a transparency panel showing how much
+  // delegated weight was dropped because delegators didn't meet the
+  // floor.
+  const [verificationWeight, setVerificationWeight] = useState(null);
 
   const fetchData = useCallback(async () => {
     // Phase 25 F3 — clear stale error before re-fetch so the Retry
@@ -1232,6 +1248,19 @@ export default function ProposalDetail() {
           const dels = await api.get(`/api/orgs/${linkOrg.slug}/delegations`);
           setDelegations(dels);
         } catch {/* ignore — branch will simply not fire */}
+      }
+
+      // Phase 52 Stage 1 — verification weight transparency. Only
+      // meaningful when the proposal has a verification floor; the
+      // endpoint returns proposal_is_gated=false otherwise. Best-effort;
+      // failure just hides the panel.
+      if (prop && prop.verification_floor) {
+        try {
+          const vw = await api.get(`/api/proposals/${id}/verification-weight`);
+          setVerificationWeight(vw);
+        } catch {/* panel is optional — don't fail the page */}
+      } else {
+        setVerificationWeight(null);
       }
     } catch (e) {
       setError(e.message || 'Failed to load proposal');
@@ -1549,6 +1578,18 @@ export default function ProposalDetail() {
               {proposal.topics?.map(pt => (
                 <TopicBadge key={pt.topic_id} topic={pt.topic} relevance={pt.relevance} />
               ))}
+              {/* Phase 52 Stage 1 — verification floor badge. Renders
+                  only when the proposal has a non-NULL floor, so
+                  ungated proposals look exactly as before. */}
+              {proposal.verification_floor && (
+                <span
+                  title={`Requires: ${labelForState(proposal.verification_floor)}${proposal.verification_jurisdiction ? ` (${proposal.verification_jurisdiction})` : ''}`}
+                  className="text-xs bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-full font-medium"
+                >
+                  Verification required: {labelForState(proposal.verification_floor)}
+                  {proposal.verification_jurisdiction ? ` (${proposal.verification_jurisdiction})` : ''}
+                </span>
+              )}
             </div>
             <h1 className="text-2xl font-bold text-[var(--brand-primary)] leading-tight mb-2">
               {proposal.title}
@@ -1971,6 +2012,43 @@ export default function ProposalDetail() {
               ) : (
                 <ResultsPanel tally={tally} proposal={proposal} />
               )}
+            </div>
+          )}
+
+          {/* Phase 52 Stage 1 — verification weight transparency.
+              Only renders for gated proposals. Shows how much
+              delegated weight was dropped because the delegator
+              didn't meet the floor (or the full headline figure when
+              the org has chosen to let unverified weight carry). */}
+          {verificationWeight && verificationWeight.proposal_is_gated && (
+            <div className="bg-white border border-amber-200 rounded-xl p-5">
+              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+                Verification weight
+              </h3>
+              <dl className="text-sm space-y-1.5">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-gray-500">Headline delegated count</dt>
+                  <dd className="font-medium text-gray-800">{verificationWeight.headline_delegated_count}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-gray-500">Effective delegated count</dt>
+                  <dd className="font-medium text-gray-800">{verificationWeight.effective_delegated_count}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-gray-500">Gated out (below floor)</dt>
+                  <dd className={`font-medium ${verificationWeight.gated_out_count > 0 ? 'text-amber-700' : 'text-gray-800'}`}>
+                    {verificationWeight.gated_out_count}
+                  </dd>
+                </div>
+              </dl>
+              <p className="text-xs text-gray-500 mt-3">
+                Floor: {labelForState(verificationWeight.floor)}
+                {verificationWeight.jurisdiction ? ` (${verificationWeight.jurisdiction})` : ''}
+                {' · '}
+                {verificationWeight.delegation_carries_unverified_weight
+                  ? 'Unverified delegated weight still carries on this proposal.'
+                  : 'Delegated weight from members below the floor is dropped from this tally.'}
+              </p>
             </div>
           )}
 

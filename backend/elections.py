@@ -519,8 +519,26 @@ def _apply_election_winner(
     apply uniformly. For system titles (Steward, Admin) we bypass the
     routes-level direct-assign block — the close hook IS the assigner
     per spec D6 — but still flow through the role-update path so the
-    45a/45b atomic swap fires."""
+    45a/45b atomic swap fires.
+
+    Phase 52 Stage 1 — verification + the title-vs-role-bind split.
+    When a bound-role title's winner fails the Phase 52 role floor,
+    ``_apply_bound_role_for_assign`` raises ``HTTPException(403)``.
+    Per the spec's recommended handling ("title granted but role-bind
+    held, rather than silently dropping the election result"), the
+    title row is granted first; the role-bind is then attempted in a
+    try/except that converts a verification failure into an audit
+    event (``election.winner_verification_required``). The election
+    is considered resolved + the winner holds the title (its label
+    layer surfaces on the FE), but the bound role isn't bumped until
+    they verify — at which point a manual title-reassign or admin
+    role-change closes the loop. Other HTTPException types (mode
+    mismatches, floor violations, etc.) re-raise so the calling
+    ``finalize_election`` loop records them in ``failures`` as
+    before.
+    """
     from audit_utils import log_audit_event
+    from fastapi import HTTPException
     from org_titles import grant_title
     # Import the route-level helpers we want to reuse. They mutate
     # role rows via the 45a/45b path and emit audits.
@@ -537,14 +555,10 @@ def _apply_election_winner(
             host = ip_address
     shim = _ShimReq()
 
-    if title.bound_role:
-        _apply_bound_role_for_assign(
-            db, org, winner, title.bound_role, shim,
-        )
-
-    # Record the assignment row for non-system titles. System titles
-    # are derived from the role at response-build time per Phase 47
-    # D6 — no assignment row needed (and grant_title would reject).
+    # Phase 52 — grant the title row FIRST so a verification block on
+    # the bound role doesn't silently drop the election outcome. For
+    # system titles (Steward, Admin) there's no title row to grant;
+    # they're role-derived. Skip the grant in that case.
     if not title.is_system:
         grant_title(db, title, winner.id, actor_id)
         log_audit_event(
@@ -562,6 +576,47 @@ def _apply_election_winner(
             },
             ip_address=ip_address,
         )
+
+    if title.bound_role:
+        try:
+            _apply_bound_role_for_assign(
+                db, org, winner, title.bound_role, shim,
+            )
+        except HTTPException as e:
+            # Distinguish verification failure (recoverable: title
+            # holds, role-bind held) from other failures (re-raise so
+            # the caller records them).
+            detail = e.detail
+            is_verification_failure = (
+                e.status_code == 403
+                and isinstance(detail, dict)
+                and detail.get("error") == "verification_required"
+            )
+            if not is_verification_failure:
+                raise
+            log_audit_event(
+                db,
+                action="election.winner_verification_required",
+                target_type="org_title",
+                target_id=title.id,
+                actor_id=actor_id,
+                details={
+                    "org_id": org.id,
+                    "title_name": title.name,
+                    "bound_role": title.bound_role,
+                    "user_id": winner.id,
+                    "required_floor": detail.get("floor"),
+                    "required_jurisdiction": detail.get("jurisdiction"),
+                    "trigger": "election_close",
+                    "note": (
+                        "Title granted but role-bind held pending "
+                        "winner verification. After the winner "
+                        "verifies, an admin can re-trigger the "
+                        "role-bind via title reassignment."
+                    ),
+                },
+                ip_address=ip_address,
+            )
 
 
 def _resolve_winners(

@@ -434,6 +434,23 @@ def _apply_bound_role_for_assign(
 
     current_key = membership_role_system_key(target_membership)
 
+    # Phase 52 Stage 1 — verification role-grant gate. The check
+    # goes BEFORE any role-id write (and before the steward atomic-
+    # swap demote below). If the target fails verification, the
+    # function raises HTTPException(403) with a structured payload;
+    # the caller (manual assign route OR the election close hook)
+    # decides how to surface it. The election close hook in
+    # ``elections.finalize_election`` catches the 403, records a
+    # ``title.assigned`` audit with reason="verification_required",
+    # and leaves the existing role-holder unchanged — the
+    # governance floor invariant is preserved by construction.
+    # Skip the check when the target already holds the bound role
+    # at or above the required tier (no-op assignment doesn't need
+    # to re-verify).
+    if current_key != bound_role:
+        from verification import check_role_grant_floor
+        check_role_grant_floor(target_user, org, bound_role)
+
     # Steward binding has special handling per D7.
     if bound_role == "steward":
         if mode_of(org) == ADMIN_COUNCIL:

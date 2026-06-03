@@ -138,6 +138,19 @@ async def cast_vote(
             detail="Please verify your email before voting.",
         )
 
+    # Phase 52 Stage 1 — verification per-vote floor gate. If the
+    # proposal carries ``verification_floor``, the caller must
+    # satisfy it to cast a *direct* vote. Runs BEFORE the org-
+    # membership eligibility check so an org-member who fails
+    # verification gets the structured "verification_required"
+    # detail rather than the generic "not eligible" string (the
+    # eligibility helper also narrows by verification floor for
+    # gated proposals — Cluster C4 — so they'd be filtered out of
+    # the eligible set too; this check ensures the FE renders the
+    # right CTA). No-op when the proposal has no gate.
+    from verification import check_vote_floor_for_proposal
+    check_vote_floor_for_proposal(current_user, proposal)
+
     # Phase 10.1: eligibility check. Pre-fix, parent-org members could vote on
     # sub-org proposals they weren't members of, and cross-org users could
     # vote on any proposal whose ID they knew. The new gate uses the same
