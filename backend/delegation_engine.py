@@ -1163,6 +1163,27 @@ def eligible_voter_ids_for_proposal(
         backend tests construct proposals without an org for unit-test
         convenience and rely on this semantic. Real production rows always
         have an org_id since Phase 4.
+
+    Phase 52 Stage 1 — verification-gated proposals additionally
+    narrow the set per the locked delegation fork (default No):
+
+      * If the proposal has no ``verification_floor`` → today's
+        behavior, byte-for-byte.
+      * If the proposal IS gated AND the org has
+        ``verification_delegation_carries_weight=False`` (the
+        default) → the set is intersected with users who satisfy the
+        proposal's floor. Unverified users are dropped from the set,
+        which propagates through the existing Phase 10.1 chain-
+        resolution machinery: their direct ballots aren't loaded
+        into ``direct_ballots``, so a delegate resolving to them gets
+        ``None`` and ``chain_behavior`` fires. NO parallel tally
+        path; the fork rides the eligibility filter the cross-scope-
+        leak fix already established.
+      * If the proposal IS gated AND the org has flipped the setting
+        to True → the set is NOT narrowed at the eligibility layer.
+        Verified delegates can carry their unverified principals'
+        weight; the C3 direct-cast block still keeps unverified
+        users from voting directly.
     """
     sub_org_id = getattr(proposal, "sub_org_id", None)
     if sub_org_id:
@@ -1170,21 +1191,50 @@ def eligible_voter_ids_for_proposal(
             models.SubOrgMembership.sub_org_id == sub_org_id,
             models.SubOrgMembership.status == "active",
         ).all()
-        return {r.user_id for r in rows}
+        ids = {r.user_id for r in rows}
+    else:
+        org_id = getattr(proposal, "org_id", None)
+        if org_id:
+            rows = db.query(models.OrgMembership.user_id).filter(
+                models.OrgMembership.org_id == org_id,
+                models.OrgMembership.status == "active",
+            ).all()
+            ids = {r.user_id for r in rows}
+        else:
+            # Defensive fallback: pre-multi-tenancy rows / unit-test
+            # fixtures with no org context. Preserves the legacy
+            # "all users" semantic so tests that don't set up org
+            # membership rows continue to work.
+            rows = db.query(models.User.id).all()
+            ids = {r.id for r in rows}
 
-    org_id = getattr(proposal, "org_id", None)
-    if org_id:
-        rows = db.query(models.OrgMembership.user_id).filter(
-            models.OrgMembership.org_id == org_id,
-            models.OrgMembership.status == "active",
-        ).all()
-        return {r.user_id for r in rows}
-
-    # Defensive fallback: pre-multi-tenancy rows / unit-test fixtures with
-    # no org context. Preserves the legacy "all users" semantic so tests that
-    # don't set up org membership rows continue to work.
-    rows = db.query(models.User.id).all()
-    return {r.id for r in rows}
+    # Phase 52 Stage 1 — verification fork. Narrow the eligible set
+    # when the proposal is gated AND the org's delegation-carries-
+    # weight setting is False (default).
+    floor = getattr(proposal, "verification_floor", None)
+    if floor:
+        org_id_for_setting = getattr(proposal, "org_id", None)
+        carries = False
+        if org_id_for_setting:
+            org_row = db.get(models.Organization, org_id_for_setting)
+            if org_row is not None:
+                from verification import (
+                    delegation_carries_unverified_weight,
+                )
+                carries = delegation_carries_unverified_weight(org_row)
+        if not carries and ids:
+            jurisdiction = getattr(
+                proposal, "verification_jurisdiction", None,
+            )
+            from verification import user_satisfies_floor
+            users = db.query(models.User).filter(
+                models.User.id.in_(ids),
+            ).all()
+            ids = {
+                u.id for u in users
+                if user_satisfies_floor(u, floor, jurisdiction)
+            }
+    return ids
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,8 @@ import { useConfirm } from '../../components/ConfirmDialog';
 import LinkedPolisesPicker from '../../components/LinkedPolisesPicker';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
+// Phase 52 Stage 1 — shared verification state label tables.
+import { VERIFICATION_STATE_OPTIONS } from '../../verificationLabels';
 
 // Phase 16 F1 — format a day-count for display. Whole numbers render as
 // integers ("3 days"); fractional values keep up to two decimal places so
@@ -195,6 +197,10 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
   // value lives on `currentOrg.settings`.
   const requirePolis = orgSettings?.require_polis_for_new_proposals === true;
   const [linkedPolisIds, setLinkedPolisIds] = useState([]);
+  // Phase 52 Stage 1 — per-proposal verification floor. Default
+  // empty → backend serializes as NULL → ungated (today's behavior).
+  const [verificationFloor, setVerificationFloor] = useState('');
+  const [verificationJurisdiction, setVerificationJurisdiction] = useState('');
   // Phase 32.2 F1 — three new deliberation-engagement override toggles,
   // now mode-aware. The Phase 32.2 migration replaced the four boolean
   // default fields with enum modes (`always_off` / `default_off` /
@@ -313,6 +319,15 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
       }
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
+      }
+      // Phase 52 Stage 1 — verification floor + optional jurisdiction.
+      // Only include when explicitly set; an unset value lets the
+      // backend leave the column NULL (the ungated default).
+      if (verificationFloor) {
+        payload.verification_floor = verificationFloor;
+        if (verificationJurisdiction.trim()) {
+          payload.verification_jurisdiction = verificationJurisdiction.trim();
+        }
       }
       // Phase 20 — only send the override when org allows it AND the choice
       // diverges from the org default; otherwise let null inherit. The wire
@@ -489,6 +504,52 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
           )}
         </div>
       )}
+
+      {/* Phase 52 Stage 1 — per-proposal verification floor. Empty value
+          means no extra verification required (today's behavior). Picking
+          a non-empty floor gates the vote at cast-time; delegated weight
+          from voters who don't meet the floor is also dropped unless the
+          org's "delegation carries unverified weight" setting is on. */}
+      <div className="border border-gray-200 rounded-lg p-4 bg-gray-50/50 space-y-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            Identity verification required to vote
+          </label>
+          <select
+            value={verificationFloor}
+            onChange={e => setVerificationFloor(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+          >
+            {VERIFICATION_STATE_OPTIONS.map(opt => (
+              <option key={opt.value || 'none'} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-500 mt-1">
+            Leave default to keep this proposal open to all members. A
+            higher floor restricts who can cast a vote (or delegate
+            weight that counts) on this proposal.
+          </p>
+        </div>
+        {(verificationFloor === 'address_on_id' || verificationFloor === 'residency_verified') && (
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Jurisdiction (optional)
+            </label>
+            <input
+              type="text"
+              value={verificationJurisdiction}
+              onChange={e => setVerificationJurisdiction(e.target.value)}
+              placeholder="e.g. US-CA, GB-LND"
+              maxLength={16}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Restrict to voters whose verified address matches this
+              jurisdiction. Leave blank to accept any verified address.
+            </p>
+          </div>
+        )}
+      </div>
 
       {inScopeTopics.length > 0 && (
         <div>

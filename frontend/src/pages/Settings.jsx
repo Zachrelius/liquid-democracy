@@ -3,6 +3,7 @@ import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 import api from '../api';
 import { resizeImageFile } from '../utils/imageResize';
+import { labelForState, VERIFICATION_PROVENANCE_LABELS } from '../verificationLabels';
 import Avatar from '../components/Avatar';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
@@ -258,29 +259,20 @@ export default function Settings() {
         </div>
       </section>
 
-      {/* Phase 51 — read-only verification status. No "verify now"
-          action in this phase (nothing to verify against — Persona
-          integration lands in Phase 52). Plain-language labels: the
-          backend state codes never appear in the rendered copy,
-          consistent with the Phase 49a C2 "no internal-name leakage
-          in user-visible strings" rule. */}
+      {/* Phase 51 — read-only verification status. Phase 52 adds
+          the enforcement layer (organizations can require a floor at
+          join, role-grant, and per-vote); this page still has no
+          "verify now" action because the real provider integration
+          lands in Phase 52a. Labels come from
+          ``../verificationLabels`` so any future copy change is a
+          one-file edit. */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Identity verification</h2>
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-2">
           <div className="flex items-baseline gap-3">
             <span className="text-xs text-gray-500">Status</span>
             <span className="text-sm text-gray-700">
-              {(() => {
-                const s = user?.verification_state || 'email_only';
-                const labels = {
-                  email_only: 'Email only (no identity verification on file)',
-                  identity: 'Identity verified',
-                  identity_unique: 'Identity verified — unique person',
-                  address_on_id: 'Identity verified — address on ID confirmed',
-                  residency_verified: 'Identity verified — residency confirmed',
-                };
-                return labels[s] || labels.email_only;
-              })()}
+              {labelForState(user?.verification_state)}
             </span>
           </div>
           {user?.verification_jurisdiction && (
@@ -293,20 +285,12 @@ export default function Settings() {
             <div className="flex items-baseline gap-3">
               <span className="text-xs text-gray-500">Source</span>
               <span className="text-sm text-gray-700">
-                {(() => {
-                  const p = user.verification_provenance;
-                  const labels = {
-                    persona: 'Verified via our identity provider',
-                    demo_stub: 'Demo stub (not a real verification)',
-                    backdoor: 'Set by a platform administrator',
-                  };
-                  return labels[p] || p;
-                })()}
+                {VERIFICATION_PROVENANCE_LABELS[user.verification_provenance] || user.verification_provenance}
               </span>
             </div>
           )}
           <p className="text-xs text-gray-500 pt-2">
-            Identity verification is not yet required anywhere on the platform. Organizations will be able to opt into it in a future update.
+            Some organizations may require identity verification to join, hold a role, or cast a vote on certain proposals. Verification options will become available in a future update.
           </p>
         </div>
       </section>

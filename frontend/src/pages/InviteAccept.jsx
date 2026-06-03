@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import api, { setTokens } from '../api';
+// Phase 52 Stage 1 — structured-403 verification_required copy.
+import {
+  extractVerificationRequiredDetail,
+  ctaCopyForVerificationRequired,
+} from '../verificationLabels';
 
 /**
  * Phase 9.7 W3 — invitation acceptance page.
@@ -200,7 +205,9 @@ export default function InviteAccept() {
                 navigate('/orgs');
               }
             } catch (err) {
-              setSubmitError(err?.message || 'Failed to accept invitation.');
+              const vDetail = extractVerificationRequiredDetail(err);
+              const cta = vDetail ? ctaCopyForVerificationRequired(vDetail) : null;
+              setSubmitError(cta || err?.message || 'Failed to accept invitation.');
             } finally {
               setSubmitting(false);
             }

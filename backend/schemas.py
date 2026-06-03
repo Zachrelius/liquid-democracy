@@ -378,6 +378,13 @@ class ProposalCreate(BaseModel):
     edit_lockout_fraction: Optional[float] = Field(
         default=None, ge=0.0, le=1.0,
     )
+    # Phase 52 Stage 1 — per-proposal verification gate. NULL =
+    # ungated (today's behavior). When set to a valid floor, casting
+    # a direct vote requires the user satisfy it; the tally side
+    # narrows the eligible set per the org's
+    # ``verification_delegation_carries_weight`` setting.
+    verification_floor: Optional[str] = None
+    verification_jurisdiction: Optional[str] = None
 
     @field_validator("voting_method")
     @classmethod
@@ -527,6 +534,14 @@ class ProposalOut(BaseModel):
     # Withdraw accordingly). Null when the request is anonymous / has
     # no auth context.
     viewer_has_cosigned: Optional[bool] = None
+
+    # Phase 52 Stage 1 — per-proposal verification gate.
+    # ``verification_floor`` is null for ungated proposals (today's
+    # behavior). FE keys the "this proposal requires verification"
+    # banner + the disabled "Cast vote" button + the "your delegation
+    # didn't carry" surface on these two fields.
+    verification_floor: Optional[str] = None
+    verification_jurisdiction: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

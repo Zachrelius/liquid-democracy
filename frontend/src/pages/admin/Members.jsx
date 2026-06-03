@@ -8,6 +8,11 @@ import { useConfirm } from '../../components/ConfirmDialog';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
 import PendingActionsBanner from '../../components/PendingActionsBanner';
+// Phase 52 Stage 1 — structured-403 verification_required copy.
+import {
+  extractVerificationRequiredDetail,
+  ctaCopyForVerificationRequired,
+} from '../../verificationLabels';
 
 function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, perms, confirm }) {
   const { canChangeRole, canSuspend, canRemove } = perms;
@@ -195,7 +200,9 @@ export default function Members() {
       toast.success('Role updated');
       load();
     } catch (e) {
-      toast.error(e.message);
+      const vDetail = extractVerificationRequiredDetail(e);
+      const cta = vDetail ? ctaCopyForVerificationRequired(vDetail) : null;
+      toast.error(cta || e.message);
     }
   }
 

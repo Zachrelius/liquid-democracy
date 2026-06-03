@@ -314,6 +314,10 @@ def _build_proposal_out(
         election_title_id=getattr(proposal, "election_title_id", None),
         election_title_name=_election_title_name(proposal, db),
         election_candidates=_election_candidates(proposal, db),
+        # Phase 52 Stage 1 — per-proposal verification gate. NULL =
+        # ungated; non-null = floor required to cast direct vote.
+        verification_floor=getattr(proposal, "verification_floor", None),
+        verification_jurisdiction=getattr(proposal, "verification_jurisdiction", None),
     )
 
 
@@ -2460,6 +2464,115 @@ def get_results(
         time_series=time_series,
         sustained_majority=sm_status,
     )
+
+
+@router.get("/{proposal_id}/verification-weight")
+def my_verification_weight(
+    proposal_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 52 Stage 1 — transparency surface for the caller's
+    delegated weight on a verification-gated proposal.
+
+    Surfaces the difference between:
+      * ``headline_delegated_count`` — total active org-scoped
+        delegations TO the caller for this proposal's org (the
+        "headline" weight a delegate would normally see).
+      * ``effective_delegated_count`` — the subset of those
+        delegators who are in the eligible-voter set for this
+        specific proposal (i.e. who satisfy the verification floor
+        when one applies AND the org's delegation-carries-weight
+        setting is False; equal to ``headline`` when the proposal
+        isn't gated OR the org opted into Yes).
+      * ``gated_out_count`` — the principals whose weight didn't
+        carry because they don't satisfy the floor.
+
+    Honest-by-construction transparency: without this surface the
+    weight evaporation reads as a bug in QA. The FE renders
+    "Effective weight here: 12 of 40 — 28 of your delegators aren't
+    verified for this vote" from these counts.
+
+    Returns a 404 for an unknown proposal. ``proposal_is_gated`` and
+    ``delegation_carries_unverified_weight`` are also exposed so
+    the FE can decide which copy to render (no client-side guess at
+    the gating state).
+    """
+    proposal = _proposal_or_404(proposal_id, db)
+    org_id = getattr(proposal, "org_id", None)
+    floor = getattr(proposal, "verification_floor", None)
+    jurisdiction = getattr(proposal, "verification_jurisdiction", None)
+    org = db.get(models.Organization, org_id) if org_id else None
+    from verification import (
+        delegation_carries_unverified_weight, user_satisfies_floor,
+    )
+    org_carries = (
+        delegation_carries_unverified_weight(org) if org is not None else False
+    )
+
+    # Delegators TO the caller scoped to this proposal's org. Topic
+    # scoping (org-wide vs topic-specific) is honored by the
+    # ``Delegation.topic_id`` join: a delegation with topic_id IN
+    # this proposal's topics OR NULL (org-wide) counts.
+    if org_id is None:
+        # Pre-multi-tenancy / unit-test rows — no org-scoped
+        # delegation, return zeros.
+        return {
+            "headline_delegated_count": 0,
+            "effective_delegated_count": 0,
+            "gated_out_count": 0,
+            "proposal_is_gated": False,
+            "delegation_carries_unverified_weight": False,
+            "floor": None,
+            "jurisdiction": None,
+        }
+
+    proposal_topic_ids = [
+        pt.topic_id for pt in db.query(models.ProposalTopic).filter(
+            models.ProposalTopic.proposal_id == proposal.id,
+        ).all()
+    ]
+    from sqlalchemy import or_ as _or_
+    q = db.query(models.Delegation).filter(
+        models.Delegation.org_id == org_id,
+        models.Delegation.delegate_id == current_user.id,
+    )
+    if proposal_topic_ids:
+        q = q.filter(
+            _or_(
+                models.Delegation.topic_id.is_(None),
+                models.Delegation.topic_id.in_(proposal_topic_ids),
+            )
+        )
+    else:
+        q = q.filter(models.Delegation.topic_id.is_(None))
+    delegations = q.all()
+    delegator_ids = {d.delegator_id for d in delegations}
+
+    headline = len(delegator_ids)
+    if not floor or org_carries or not delegator_ids:
+        effective = headline
+        gated_out = 0
+    else:
+        users = db.query(models.User).filter(
+            models.User.id.in_(delegator_ids),
+        ).all()
+        passing = {
+            u.id for u in users
+            if user_satisfies_floor(u, floor, jurisdiction)
+        }
+        effective = len(passing)
+        gated_out = headline - effective
+
+    return {
+        "headline_delegated_count": headline,
+        "effective_delegated_count": effective,
+        "gated_out_count": gated_out,
+        "proposal_is_gated": bool(floor),
+        "delegation_carries_unverified_weight": bool(org_carries),
+        "floor": floor,
+        "jurisdiction": jurisdiction,
+    }
 
 
 @router.get("/{proposal_id}/my-vote", response_model=schemas.MyVoteStatus)

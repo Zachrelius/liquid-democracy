@@ -59,9 +59,16 @@ PROV_NONE = "none"
 PROV_PERSONA = "persona"
 PROV_DEMO_STUB = "demo_stub"
 PROV_BACKDOOR = "backdoor"
+# Phase 52 — Didit replaced Persona as the real provider (per
+# id_verification_research.md §12 addendum). ``PROV_PERSONA`` is
+# kept defined-but-unused so existing import sites + audit
+# downstream stay byte-for-byte; zero existing rows carry
+# ``"persona"`` (confirmed via prod SELECT DISTINCT). Real
+# verifications produced from Phase 52a onward stamp ``"didit"``.
+PROV_DIDIT = "didit"
 
 VALID_PROVENANCES: frozenset[str] = frozenset({
-    PROV_NONE, PROV_PERSONA, PROV_DEMO_STUB, PROV_BACKDOOR,
+    PROV_NONE, PROV_PERSONA, PROV_DEMO_STUB, PROV_BACKDOOR, PROV_DIDIT,
 })
 
 
@@ -205,3 +212,174 @@ def jurisdiction_required_for(state: str) -> bool:
     backdoor setter (Phase 51 §6) + Phase 52 setters validate input
     consistency against this rule."""
     return state in (ADDRESS_ON_ID, RESIDENCY_VERIFIED)
+
+
+# ---------------------------------------------------------------------------
+# Phase 52 Stage 1 — the gate predicate (single chokepoint)
+# ---------------------------------------------------------------------------
+
+def user_satisfies_floor(
+    user,
+    floor: Optional[str],
+    jurisdiction: Optional[str] = None,
+) -> bool:
+    """Return True iff ``user`` satisfies a verification gate at
+    ``(floor, jurisdiction)``.
+
+    One chokepoint for every enforcement point (join, role-grant,
+    per-vote, delegation-eligibility narrowing). Never reimplement
+    ``subsumes`` at the call site — funnel through this helper.
+
+    Resolution rules:
+
+      * ``floor`` of None / empty / ``email_only`` → satisfied by
+        everyone (no gate). This is the load-bearing "ungated
+        behaves byte-for-byte as pre-arc" contract: a None floor
+        returns True without inspecting the user at all.
+      * Otherwise: delegate to ``subsumes(user.verification_state,
+        user.verification_jurisdiction, floor, jurisdiction)``.
+
+    User shape: any object exposing ``verification_state`` +
+    ``verification_jurisdiction`` attributes (the ORM ``User`` row
+    is the canonical caller, but tests can pass a SimpleNamespace
+    shim).
+    """
+    if floor is None or floor == "" or floor == EMAIL_ONLY:
+        return True
+    current_state = getattr(user, "verification_state", None) or EMAIL_ONLY
+    current_jurisdiction = getattr(user, "verification_jurisdiction", None)
+    return subsumes(current_state, current_jurisdiction, floor, jurisdiction)
+
+
+# ---------------------------------------------------------------------------
+# Phase 52 Stage 1 — delegation-fork org setting (C4)
+# ---------------------------------------------------------------------------
+
+SETTING_DELEGATION_CARRIES_WEIGHT = "verification_delegation_carries_weight"
+
+
+def delegation_carries_unverified_weight(org) -> bool:
+    """Return True iff the org has opted in to the "Yes — delegated
+    weight from unverified principals carries on a gated proposal"
+    setting. Defaults False (the locked decision: "default No").
+
+    Same defaults-if-absent posture as ``get_org_verification_
+    floor``. An org that has never touched the setting reads False —
+    the additive-layer invariant means ungated proposals are
+    unchanged regardless of this flag.
+    """
+    settings = getattr(org, "settings", None) or {}
+    if not isinstance(settings, dict):
+        return False
+    return bool(settings.get(SETTING_DELEGATION_CARRIES_WEIGHT, False))
+
+
+# ---------------------------------------------------------------------------
+# Phase 52 Stage 1 — structured 403 payload
+# ---------------------------------------------------------------------------
+
+def verification_required_payload(
+    floor: str,
+    jurisdiction: Optional[str] = None,
+    scope: Optional[str] = None,
+) -> dict:
+    """Structured detail body the route layer raises as the 403 detail
+    so the FE renders a "verify to {join/vote/hold-role}" prompt
+    without parsing prose. ``scope`` is one of "membership" / "role"
+    / "vote" — the FE keys CTA copy on it.
+    """
+    return {
+        "error": "verification_required",
+        "floor": floor,
+        "jurisdiction": jurisdiction,
+        "scope": scope,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 52 Stage 1 — enforcement helpers (raise structured 403)
+# ---------------------------------------------------------------------------
+#
+# Each helper:
+#   * Resolves the relevant floor via the shipped Phase 51 helpers
+#     (``get_org_verification_floor`` for membership + role; the
+#     ``Proposal.verification_floor`` column for per-vote).
+#   * Calls ``user_satisfies_floor``; if it returns False, raises
+#     ``HTTPException(status_code=403, detail=verification_required_
+#     payload(...))``.
+#
+# These are the only call sites the rest of the codebase should use
+# for verification enforcement — keeping the "one chokepoint" rule
+# the spec calls out. Re-implementing the rank/floor logic at a
+# route is a regression and should be caught in review.
+
+
+def check_membership_floor_for_join(user, org) -> None:
+    """Raises 403 if ``user`` doesn't satisfy ``org``'s membership
+    floor. No-op when the org has no floor set (default for every
+    org). Called by every join path that creates a new
+    ``OrgMembership`` row for the caller.
+    """
+    from fastapi import HTTPException
+    floor, jurisdiction = get_org_verification_floor(org, "membership")
+    if user_satisfies_floor(user, floor, jurisdiction):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=verification_required_payload(
+            floor=floor, jurisdiction=jurisdiction, scope="membership",
+        ),
+    )
+
+
+def check_role_grant_floor(user, org, role_system_key: str) -> None:
+    """Raises 403 if ``user`` doesn't satisfy the floor required to
+    hold ``role_system_key`` in ``org``. Called by every role-mutation
+    path: ``change_member_role``, ``transfer_stewardship``,
+    ``change_governance_mode`` (successor branch), and the Phase 47
+    title-assign ``_apply_bound_role_for_assign`` before any role-id
+    write.
+
+    Cardinality-floor interaction (governance.py):
+    The verification block prevents the *mutation*, not the existing
+    role-holder. The existing holder keeps their role, so the
+    governance-floor count_active_governors invariant is preserved
+    by construction — verification can never strand an org with zero
+    governors because the block aborts before any demote happens.
+    This is why the check goes at the TOP of every role-mutation
+    path, before any role-id write.
+    """
+    from fastapi import HTTPException
+    floor, jurisdiction = get_org_verification_floor(
+        org, "role", role_key=role_system_key,
+    )
+    if user_satisfies_floor(user, floor, jurisdiction):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=verification_required_payload(
+            floor=floor, jurisdiction=jurisdiction, scope="role",
+        ),
+    )
+
+
+def check_vote_floor_for_proposal(user, proposal) -> None:
+    """Raises 403 if ``proposal`` carries a ``verification_floor`` and
+    ``user`` doesn't satisfy it. No-op when the proposal has no gate
+    set (``verification_floor IS NULL`` — today's behavior for every
+    pre-Phase-52 row). Called from the vote-cast route at the start
+    of the handler, before any ``Vote`` row is written.
+    """
+    from fastapi import HTTPException
+    floor = getattr(proposal, "verification_floor", None)
+    if not floor:
+        return
+    jurisdiction = getattr(proposal, "verification_jurisdiction", None)
+    if user_satisfies_floor(user, floor, jurisdiction):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail=verification_required_payload(
+            floor=floor, jurisdiction=jurisdiction, scope="vote",
+        ),
+    )

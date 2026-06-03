@@ -2088,6 +2088,87 @@ export default function OrgSettings() {
         </section>
       )}
 
+      {/* Phase 52 Stage 1 — verification gates. Each of the three
+          floors lives in ``settings`` so this is a generic settings
+          PATCH (no dedicated endpoint). Defaults are unset → no
+          gate → byte-for-byte today's behavior. Backend state codes
+          do NOT appear in the dropdown copy (Phase 49a C2 rule). */}
+      {canEditOrgSettings && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Identity verification gates
+          </h2>
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+            <p className="text-sm text-gray-600">
+              Optionally require members to verify their identity before joining, holding a role, or casting a vote. Leave any setting on "No verification required" to keep the existing behavior. Identity-verification options for members will become available in a future update.
+            </p>
+
+            <label className="text-sm space-y-1 block">
+              <span className="block text-xs text-gray-600">Required to join this organization</span>
+              <select
+                value={settings.verification_membership_floor || ''}
+                onChange={e => updateSetting('verification_membership_floor', e.target.value || null)}
+                className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              >
+                <option value="">No verification required (default)</option>
+                <option value="identity">Identity verified</option>
+                <option value="identity_unique">Identity verified — unique person</option>
+                <option value="address_on_id">Identity verified — address on ID</option>
+                <option value="residency_verified">Identity verified — residency confirmed</option>
+              </select>
+              {(settings.verification_membership_floor === 'address_on_id'
+                  || settings.verification_membership_floor === 'residency_verified') && (
+                <input
+                  type="text"
+                  value={settings.verification_membership_jurisdiction || ''}
+                  onChange={e => updateSetting('verification_membership_jurisdiction', e.target.value || null)}
+                  placeholder="Jurisdiction (e.g. US state code)"
+                  className="mt-2 w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              )}
+            </label>
+
+            <div className="space-y-2">
+              <p className="text-xs text-gray-600 font-medium">Required to hold a role</p>
+              {['admin', 'moderator', 'steward'].map(roleKey => (
+                <label key={roleKey} className="text-sm flex items-center gap-3">
+                  <span className="capitalize text-xs text-gray-600 w-20">{roleKey}</span>
+                  <select
+                    value={(settings.verification_role_floors || {})[roleKey] || ''}
+                    onChange={e => updateSetting('verification_role_floors', {
+                      ...(settings.verification_role_floors || {}),
+                      [roleKey]: e.target.value || undefined,
+                    })}
+                    className="flex-1 max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  >
+                    <option value="">No verification required</option>
+                    <option value="identity">Identity verified</option>
+                    <option value="identity_unique">Identity verified — unique person</option>
+                    <option value="address_on_id">Identity verified — address on ID</option>
+                    <option value="residency_verified">Identity verified — residency confirmed</option>
+                  </select>
+                </label>
+              ))}
+            </div>
+
+            <label className="flex items-start gap-3 cursor-pointer pt-2 border-t border-gray-200">
+              <input
+                type="checkbox"
+                checked={!!settings.verification_delegation_carries_weight}
+                onChange={e => updateSetting('verification_delegation_carries_weight', e.target.checked)}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <p className="text-sm text-gray-700">Let unverified members' delegated weight count via verified delegates</p>
+                <p className="text-xs text-gray-500">
+                  Default (off): on a proposal that requires verification, only verified members count — both their direct votes and the votes their verified delegates would cast on their behalf. When on, a verified delegate can carry an unverified member's delegated weight on a gated proposal (the unverified member still can't cast directly).
+                </p>
+              </div>
+            </label>
+          </div>
+        </section>
+      )}
+
       {/* Multi-Admin Approval — Phase 44 F1. Opt-in N-of-M ratification
           over four destructive admin actions: remove member, delete topic,
           edit permissions, delete org. Defaults to OFF; every org behaves

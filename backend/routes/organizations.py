@@ -771,6 +771,13 @@ def transfer_stewardship(
             detail="You cannot transfer stewardship to yourself.",
         )
 
+    # Phase 52 Stage 1 — verification role-grant gate. Target user
+    # must satisfy the steward floor; otherwise the swap aborts +
+    # the existing steward keeps the role (governance floor
+    # preserved naturally).
+    from verification import check_role_grant_floor
+    check_role_grant_floor(target_user, org, "steward")
+
     # Resolve the Admin + Steward role ids for this org.
     steward_role_id = _resolve_role_id_by_system_key(db, org.id, "steward")
     admin_role_id = _resolve_role_id_by_system_key(db, org.id, "admin")
@@ -923,6 +930,12 @@ def change_governance_mode(
             status_code=400,
             detail="Successor must currently hold the Admin role.",
         )
+
+    # Phase 52 Stage 1 — verification role-grant gate. Successor
+    # becomes Steward; must satisfy that role's floor. Existing
+    # admin tier remains unchanged on block.
+    from verification import check_role_grant_floor
+    check_role_grant_floor(successor_user, org, "steward")
 
     # Phase 48 Stage 3 D12 — direct council→single_steward revert
     # requires multi-admin sign-off when Phase 44 is enabled for the
@@ -1114,11 +1127,22 @@ def change_member_role(
                     status_code=400,
                     detail="Cannot demote the last admin of this organization.",
                 )
+    new_system_key = _INV_ROLE_TO_SYSTEM_KEY.get(body.role, body.role)
     new_role_id = _resolve_role_id_by_system_key(
-        db, org.id, _INV_ROLE_TO_SYSTEM_KEY.get(body.role, body.role),
+        db, org.id, new_system_key,
     )
     if new_role_id is None:
         raise HTTPException(status_code=400, detail=f"Unknown role '{body.role}'")
+    # Phase 52 Stage 1 — verification role-grant gate. Block the
+    # mutation when the target user doesn't satisfy the floor for
+    # the destination role. Existing role-holder keeps their role on
+    # block; the governance-floor invariant is preserved by
+    # construction (no demote happens). The check goes BEFORE the
+    # role_id write.
+    from verification import check_role_grant_floor
+    target_user = db.get(models.User, m.user_id)
+    if target_user is not None:
+        check_role_grant_floor(target_user, org, new_system_key)
     m.role_id = new_role_id
     db.commit()
     db.refresh(m)
@@ -1655,6 +1679,14 @@ def create_join_request(
                 status_code=409, detail="Your request is already pending.",
             )
 
+    # Phase 52 Stage 1 — verification membership floor gate. Same
+    # rationale as the legacy ``/join`` route: applies to BOTH
+    # branches so an unverified user can't queue a pending request
+    # that would only be approvable into an active row violating
+    # the floor.
+    from verification import check_membership_floor_for_join
+    check_membership_floor_for_join(current_user, org)
+
     # Resolve the Member role (defensive seed for legacy orgs).
     member_role_id = _resolve_role_id_by_system_key(db, org.id, "member")
     if member_role_id is None:
@@ -1885,6 +1917,17 @@ def request_join(
             raise HTTPException(status_code=409, detail="Already a member")
         if existing.status == "pending_approval":
             raise HTTPException(status_code=409, detail="Join request already pending")
+
+    # Phase 52 Stage 1 — verification membership floor gate. Raises
+    # 403 with structured detail when the org has set a floor and
+    # the caller doesn't satisfy it. No-op for the default-config
+    # case (every org pre-Phase-52 + every org that doesn't opt
+    # in). Applies to BOTH the open-join and approval-required
+    # branches: an unverified user shouldn't be able to file a
+    # pending request either, since approving them would create the
+    # active row that the floor prohibits.
+    from verification import check_membership_floor_for_join
+    check_membership_floor_for_join(current_user, org)
 
     # Phase 12 — defensively seed preset roles for the org if missing
     # (production orgs are seeded at create time and via the migration; this
@@ -2183,6 +2226,25 @@ def accept_invitation(
             status_code=401,
             detail="Please register or log in first, then use this invitation link"
         )
+
+    # Phase 52 Stage 1 — verification membership floor gate. Even an
+    # invited user has to satisfy the org's membership floor; an
+    # invitation is who-can-join-at-all, the verification floor is
+    # the qualification bar. Both must pass. Also gate against the
+    # *role* floor (invitations can target a role above member, e.g.
+    # admin invitations — the target user must qualify for that role
+    # too).
+    inv_org = db.get(models.Organization, inv.org_id)
+    if inv_org is not None:
+        from verification import (
+            check_membership_floor_for_join, check_role_grant_floor,
+        )
+        check_membership_floor_for_join(current_user, inv_org)
+        inv_system_key_for_check = _INV_ROLE_TO_SYSTEM_KEY.get(inv.role, inv.role)
+        if inv_system_key_for_check and inv_system_key_for_check != "member":
+            check_role_grant_floor(
+                current_user, inv_org, inv_system_key_for_check,
+            )
 
     # Check if already a member
     existing = db.query(models.OrgMembership).filter(
@@ -2773,6 +2835,51 @@ def create_org_proposal(
         initial_status = "draft"
         now_at_create = None
 
+    # Phase 52 Stage 1 — validate the per-proposal verification gate
+    # inputs against the shipped Phase 51 state list + the
+    # jurisdiction-presence consistency rule. Done HERE (at proposal
+    # creation) so a malformed gate fails the whole POST cleanly
+    # rather than being a silent NULL at write time.
+    if body.verification_floor is not None:
+        from verification import (
+            VALID_STATES, ORDER, jurisdiction_required_for, EMAIL_ONLY,
+        )
+        if body.verification_floor not in VALID_STATES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Unknown verification_floor {body.verification_floor!r}. "
+                    f"Allowed: {list(ORDER)}."
+                ),
+            )
+        # Normalize blank jurisdiction → None for the
+        # presence-consistency check.
+        _jur = body.verification_jurisdiction
+        _jur = _jur.strip() if isinstance(_jur, str) else None
+        if _jur == "":
+            _jur = None
+        if jurisdiction_required_for(body.verification_floor) and not _jur:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"verification_floor {body.verification_floor!r} "
+                    "requires a non-empty verification_jurisdiction."
+                ),
+            )
+        if not jurisdiction_required_for(body.verification_floor) and _jur:
+            # Drop misleading input (mirrors the backdoor setter's
+            # behavior — lower-tier floors don't carry a
+            # jurisdiction claim).
+            body.verification_jurisdiction = None
+        else:
+            body.verification_jurisdiction = _jur
+        # ``email_only`` as a floor is a no-op (the gate predicate
+        # returns True for everyone). Normalize to NULL so the
+        # ungated path is the canonical "no gate" representation.
+        if body.verification_floor == EMAIL_ONLY:
+            body.verification_floor = None
+            body.verification_jurisdiction = None
+
     proposal = models.Proposal(
         title=body.title,
         body=body.body,
@@ -2807,6 +2914,11 @@ def create_org_proposal(
         allow_pre_voting=body.allow_pre_voting,
         show_votes_during_deliberation=body.show_votes_during_deliberation,
         edit_lockout_fraction=body.edit_lockout_fraction,
+        # Phase 52 Stage 1 — per-proposal verification gate. Validated
+        # against ``VALID_STATES`` + jurisdiction-presence consistency
+        # right above ``models.Proposal(...)``.
+        verification_floor=body.verification_floor,
+        verification_jurisdiction=body.verification_jurisdiction,
     )
     db.add(proposal)
     db.flush()
