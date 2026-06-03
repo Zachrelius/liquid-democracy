@@ -38,6 +38,7 @@ import OrgSelector from './pages/OrgSelector';
 import CreateOrg from './pages/CreateOrg';
 import SetupWizard from './pages/SetupWizard';
 import OrgSettings from './pages/admin/OrgSettings';
+import LeaveOrg from './pages/LeaveOrg';
 // Phase 12 Stage 2 — role-permissions matrix page (Cluster F).
 import RolePermissionsPage from './pages/admin/RolePermissionsPage';
 import Members from './pages/admin/Members';
@@ -370,6 +371,19 @@ export default function App() {
             <ProtectedRoute>
               <OrgProvider>
                 <OrgScopedLayout><DelegateProfile /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 50 — member-accessible Leave-org page. ProtectedRoute
+            only (no admin gate) so any active member can find the
+            control via the Nav user-menu link. */}
+        <Route
+          path="/:org_slug/leave"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><LeaveOrg /></OrgScopedLayout>
               </OrgProvider>
             </ProtectedRoute>
           }

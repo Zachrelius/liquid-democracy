@@ -557,6 +557,18 @@ export default function Nav() {
                       My Delegate Page
                     </Link>
                   )}
+                  {/* Phase 50 — member-accessible Leave Org control. Visible
+                      to any signed-in member viewing an org (parent OR sub
+                      — the backend endpoint dispatches by slug). */}
+                  {currentOrg && (
+                    <Link
+                      to={`/${currentOrg.slug}/leave`}
+                      onClick={() => setMenuOpen(false)}
+                      className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100"
+                    >
+                      Leave {currentOrg.name}…
+                    </Link>
+                  )}
                   <Link
                     to="/settings"
                     onClick={() => setMenuOpen(false)}
