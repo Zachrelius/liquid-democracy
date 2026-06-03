@@ -394,13 +394,40 @@ _SAFE_ENUM_VALUES: frozenset[str] = frozenset({
     "session.approved",
 })
 
-# Opaque-id pattern: alnum + dash + underscore + dot, length ≥ 16. This
-# matches UUIDs (with or without dashes), hex tokens, and the kind of
-# slug-like handle the nullifier is documented to be. Spaces / commas /
-# at-signs / @-style email tokens are explicitly NOT matched, so an
-# email or human name longer than 16 chars still redacts.
+# Opaque-id pattern: alnum + dash + underscore + dot, length ≥ 16.
+# This matches UUIDs (with or without dashes), hex tokens, and the
+# kind of slug-like handle Didit uses for nullifiers / session ids.
+# Spaces / commas / @-symbols are NOT matched, so emails or names
+# longer than 16 chars still redact.
+#
+# Pattern alone is not enough: real document numbers (driver's
+# licenses, passport numbers, alien registration numbers) can also
+# look like alnum-dash strings of ≥16 chars. To stay fail-closed, an
+# opaque-id-shaped value is only kept when the KEY it sits under is
+# on the safe-key allow-list (``_SAFE_ID_KEYS``). Any other ≥16-char
+# alnum string redacts to ``<str:N>`` like normal PII.
 _OPAQUE_ID_RE = re.compile(r"^[A-Za-z0-9._\-]+$")
 _OPAQUE_ID_MIN_LEN = 16
+
+# Keys whose VALUE we trust to keep verbatim when it has the opaque-
+# id shape. Add to this set only when a Phase 52c/52d capture has
+# revealed a new dedup-related key whose value is genuinely an opaque
+# handle — never add a key that could carry PII (a document_number /
+# license_number / passport_number / etc.). Comparison is
+# case-insensitive on the lowercased key.
+_SAFE_ID_KEYS: frozenset[str] = frozenset({
+    "session_id",
+    "provider_session_id",
+    "attestation_id",
+    "id",                  # Top-level didit id
+    "nullifier",
+    "identity_handle",
+    "identity_id",
+    "face_search_id",
+    "dedup_id",
+    "request_id",
+    "transaction_id",
+})
 
 # Recursion guard. Real Didit payloads are ≤ a few levels deep; anything
 # beyond this is either pathological or malicious, and the redactor
@@ -408,27 +435,47 @@ _OPAQUE_ID_MIN_LEN = 16
 _MAX_DEPTH = 20
 
 
-def _redact_string(s: str) -> str:
-    """Single-string allow-list decision. Pure (no side effects)."""
+def _redact_string(s: str, *, key: Optional[str] = None) -> str:
+    """Single-string allow-list decision. Pure (no side effects).
+
+    ``key`` is the dict key (if any) the string sits under. An
+    opaque-id-shaped value only survives when ``key`` is on the
+    ``_SAFE_ID_KEYS`` allow-list — without this gate, real document
+    numbers (which are alnum + dash + ≥16 chars) leak through. See
+    the canary leak that drove the 52c hotfix.
+    """
     stripped = s.strip()
     if not stripped:
         return ""
     # Known status / enum value.
     if stripped.lower() in _SAFE_ENUM_VALUES:
         return stripped
-    # Opaque id / handle / nullifier-like token.
-    if len(stripped) >= _OPAQUE_ID_MIN_LEN and _OPAQUE_ID_RE.match(stripped):
+    # Opaque id / handle / nullifier-like token. Only kept when the
+    # parent key is on the safe-key allow-list.
+    if (
+        key is not None
+        and key.lower() in _SAFE_ID_KEYS
+        and len(stripped) >= _OPAQUE_ID_MIN_LEN
+        and _OPAQUE_ID_RE.match(stripped)
+    ):
         return stripped
     # Could be PII — emit type + length only.
     return f"<str:{len(s)}>"
 
 
-def redact_payload(value: Any, _depth: int = 0) -> Any:
+def redact_payload(value: Any, _depth: int = 0, _key: Optional[str] = None) -> Any:
     """Walk a Didit decision payload and return a PII-safe skeleton.
 
     See module-level note. Caller (the webhook receiver) hands the
     parsed JSON dict here AFTER signature verification; the return
     value is JSON-safe and goes into a single structured log line.
+
+    The ``_key`` argument carries the dict key the value sits under
+    so :func:`_redact_string` can apply the safe-key allow-list
+    rule. Top-level values have ``_key=None`` and will never be
+    treated as opaque ids (which is fine — top-level strings in
+    Didit payloads are status / type strings handled by the enum
+    allow-list).
     """
     if _depth > _MAX_DEPTH:
         return "<truncated>"
@@ -437,13 +484,16 @@ def redact_payload(value: Any, _depth: int = 0) -> Any:
     if isinstance(value, (int, float)):
         return value
     if isinstance(value, str):
-        return _redact_string(value)
+        return _redact_string(value, key=_key)
     if isinstance(value, dict):
         return {
-            str(k): redact_payload(v, _depth=_depth + 1)
+            str(k): redact_payload(v, _depth=_depth + 1, _key=str(k))
             for k, v in value.items()
         }
     if isinstance(value, (list, tuple)):
-        return [redact_payload(item, _depth=_depth + 1) for item in value]
+        # List items inherit the parent key (so a list of session_ids
+        # under a "session_ids" key still passes through, but a list
+        # of document numbers under "document_numbers" still redacts).
+        return [redact_payload(item, _depth=_depth + 1, _key=_key) for item in value]
     # Unknown type — type label only.
     return f"<{type(value).__name__}>"

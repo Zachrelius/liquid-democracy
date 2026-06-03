@@ -247,6 +247,42 @@ class TestRedactor:
         assert skeleton["x"].startswith("<")
         assert "Custom" in skeleton["x"]
 
+    def test_document_number_shape_does_not_leak_via_opaque_id_path(self):
+        """Real document numbers are alnum + dash + ≥16 chars — the
+        same surface shape as a nullifier. The redactor must NOT pass
+        them through just because they look like opaque ids. This is
+        the canary that drove the 52c hotfix: a captured prod webhook
+        showed ``CANARY-DOC-NUM-987`` leaking because the early
+        redactor didn't gate opaque-id passthrough on the parent key.
+        Document numbers' keys are NOT on the safe-key allow-list, so
+        they must redact like any other PII string."""
+        skeleton = verification_provider.redact_payload({
+            "document_number": "AB1234567CDEFGHIJ",
+            "license_number": "DL-987654321-XYZ-ABCD",
+            "passport_number": "P1234567890ABCDEFGH",
+            "alien_registration_number": "ARN-0000-1111-2222-3333",
+            "document_id": "DOC-LONG-OPAQUE-ID-XYZ",
+        })
+        for v in skeleton.values():
+            assert v.startswith("<str:"), f"Document-number leak: {v}"
+
+    def test_safe_id_keys_still_pass_opaque_handles_through(self):
+        """The dedup-relevant keys we DO want preserved continue to
+        pass through. This is the value 52d depends on — a real
+        nullifier emitted under ``nullifier`` or ``identity_handle``
+        must arrive in the capture intact."""
+        skeleton = verification_provider.redact_payload({
+            "session_id": "61ea6065-5cd2-45a8-8f18-8d87fa9e8f9e",
+            "nullifier": "null_abc12345_def67890",
+            "identity_handle": "handle_xyzabcdef123456789",
+            "face_search_id": "fs_aabbccddeeff00112233",
+        })
+        # All four should survive verbatim (no <str:N> placeholder).
+        for k, v in skeleton.items():
+            assert "<str:" not in v, (
+                f"Expected key {k!r} to pass through but got {v!r}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # C1/C3 — capture fires on the receiver path; behavior unchanged
