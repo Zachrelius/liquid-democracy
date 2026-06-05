@@ -113,13 +113,49 @@ def create_verification_session(
             detail="Could not start verification. Please try again.",
         )
 
-    session_row = models.VerificationSession(
-        user_id=current_user.id,
-        provider_session_id=result["session_id"],
-        status="initiated",
-    )
-    db.add(session_row)
-    db.commit()
+    # Phase 52e Stage 1 hotfix — Didit returns the SAME session_id
+    # for back-to-back create-session calls from the same vendor_data
+    # while a session is still in-flight (its server-side recognition
+    # of "you already have an open session for this user"). Our
+    # ``provider_session_id`` carries a unique constraint, so a naive
+    # INSERT on the second call hits a UniqueViolation → 500. Real
+    # users abandon verifications (camera issue, interruption) and
+    # come back; they must get a clean retry, not a 500.
+    #
+    # Idempotency: look up by ``provider_session_id`` first. If the
+    # row already exists AND it's for this same user, reuse it
+    # (refresh ``updated_at`` so the bookkeeping reflects the most
+    # recent attempt). If somehow the same session id maps to a
+    # DIFFERENT user, refuse — that's a vendor_data scoping break
+    # at Didit's side and the safe action is to surface, not to
+    # silently re-point.
+    existing_row = db.execute(
+        select(models.VerificationSession).where(
+            models.VerificationSession.provider_session_id == result["session_id"],
+        ),
+    ).scalars().first()
+    if existing_row is not None:
+        if existing_row.user_id != current_user.id:
+            logger.warning(
+                "verification_session: session_id %s already exists for a "
+                "DIFFERENT user (%s vs current %s). Refusing to reassign.",
+                result["session_id"], existing_row.user_id, current_user.id,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="Could not start verification. Please try again.",
+            )
+        existing_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        db.commit()
+        session_row = existing_row
+    else:
+        session_row = models.VerificationSession(
+            user_id=current_user.id,
+            provider_session_id=result["session_id"],
+            status="initiated",
+        )
+        db.add(session_row)
+        db.commit()
 
     log_audit_event(
         db,

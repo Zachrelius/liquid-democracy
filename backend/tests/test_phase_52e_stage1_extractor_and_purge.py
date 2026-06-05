@@ -88,6 +88,13 @@ def client(db: Session) -> Iterator[TestClient]:
 def _env(monkeypatch):
     monkeypatch.setenv("DIDIT_WEBHOOK_SECRET", "test_secret_value")
     monkeypatch.setenv("VERIFICATION_HASH_PEPPER", "TEST_DUMMY_PEPPER_PHASE_52E_S1")
+    # Reset the create-session limiter between tests so per-test
+    # 5/minute budget doesn't bleed across the suite.
+    try:
+        from routes.verification import limiter as _ver_limiter
+        _ver_limiter.reset()
+    except Exception:
+        pass
     yield
 
 
@@ -507,3 +514,100 @@ class TestPurgeCandidatePathFallback:
         monkeypatch.setattr(httpx, "Client", _StubClient)
         ok = verification_provider.delete_session("sess_xyz")
         assert ok is False
+
+
+# ===========================================================================
+# Stage 1 hotfix — POST /api/verification/session idempotency
+# ===========================================================================
+#
+# Background (2026-06-05): Z's grounding re-verify hit a 500 because
+# Didit returns the SAME session_id for back-to-back create-session
+# calls from the same vendor_data while a session is still in-flight.
+# Our ``provider_session_id`` carries a unique constraint, so the
+# second INSERT raised IntegrityError → 500. Real users abandon
+# verifications (camera issue, interruption) and re-click Start; the
+# correct behavior is to recognize the same session and reuse the
+# bookkeeping row, NOT to fail with a 500.
+
+
+class TestSessionCreateIdempotency:
+    def _auth_headers(self, user: models.User):
+        import auth as auth_utils
+        token = auth_utils.create_access_token(user.id)
+        return {"Authorization": f"Bearer {token}"}
+
+    def test_repeated_create_session_returns_same_session_no_duplicate_row(
+        self, client: TestClient, db: Session, monkeypatch,
+    ):
+        SAME_SESSION_ID = "duplicate-session-aaaaaaaaaaaaaaaa"
+        SAME_SESSION_URL = "https://verify.didit.example/dup"
+
+        def _stub_create(user_id):
+            return {"session_id": SAME_SESSION_ID, "session_url": SAME_SESSION_URL}
+        monkeypatch.setattr(verification_provider, "create_session", _stub_create)
+
+        user = make_user(db, "alice")
+        headers = self._auth_headers(user)
+
+        r1 = client.post("/api/verification/session", json={}, headers=headers)
+        assert r1.status_code == 200
+        assert r1.json()["session_id"] == SAME_SESSION_ID
+
+        # Second click — must NOT 500, must reuse the existing row.
+        r2 = client.post("/api/verification/session", json={}, headers=headers)
+        assert r2.status_code == 200, (
+            f"Second create should reuse, not raise 500. Got: {r2.text}"
+        )
+        assert r2.json()["session_id"] == SAME_SESSION_ID
+
+        rows = db.query(models.VerificationSession).filter_by(
+            provider_session_id=SAME_SESSION_ID,
+        ).all()
+        assert len(rows) == 1
+        assert rows[0].user_id == user.id
+
+    def test_repeated_create_session_distinct_ids_creates_two_rows(
+        self, client: TestClient, db: Session, monkeypatch,
+    ):
+        counter = {"n": 0}
+        def _stub_create(user_id):
+            counter["n"] += 1
+            return {
+                "session_id": f"unique-session-{counter['n']:030d}",
+                "session_url": f"https://verify.didit.example/{counter['n']}",
+            }
+        monkeypatch.setattr(verification_provider, "create_session", _stub_create)
+
+        user = make_user(db, "bob")
+        headers = self._auth_headers(user)
+        client.post("/api/verification/session", json={}, headers=headers)
+        client.post("/api/verification/session", json={}, headers=headers)
+
+        rows = db.query(models.VerificationSession).filter_by(user_id=user.id).all()
+        assert len(rows) == 2
+
+    def test_collision_across_different_users_refused(
+        self, client: TestClient, db: Session, monkeypatch,
+    ):
+        SAME_SESSION_ID = "cross-user-collision-aaaaaaaaaaaaaaaa"
+        def _stub_create(user_id):
+            return {"session_id": SAME_SESSION_ID, "session_url": "https://x"}
+        monkeypatch.setattr(verification_provider, "create_session", _stub_create)
+
+        alice = make_user(db, "alice")
+        bob = make_user(db, "bob")
+        r1 = client.post(
+            "/api/verification/session", json={},
+            headers=self._auth_headers(alice),
+        )
+        assert r1.status_code == 200
+
+        r2 = client.post(
+            "/api/verification/session", json={},
+            headers=self._auth_headers(bob),
+        )
+        assert r2.status_code in (502, 500)
+        row = db.query(models.VerificationSession).filter_by(
+            provider_session_id=SAME_SESSION_ID,
+        ).one()
+        assert row.user_id == alice.id
