@@ -1497,6 +1497,33 @@ class OrgPublicOut(BaseModel):
     join_policy: str
 
 
+class ExploreOrgCard(BaseModel):
+    """Phase 55 — one card on the public org discovery page (/explore).
+
+    Minimal, public-safe projection — deliberately distinct from OrgOut and
+    NOT subject to the OrgOut _MUST_SURFACE_FIELDS serializer-coverage test
+    (this schema intentionally omits settings, user_permissions, governance_mode,
+    and all other internal fields). The endpoint is unauthenticated; only the
+    fields a card needs to render are exposed. Branding reuses the public-shape
+    OrgPublicBrandingOut (primary_color + accent_color only — no logo flag,
+    since logo_url surfaces directly on the card).
+    """
+    slug: str
+    name: str
+    description: str
+    governance_type: Optional[str] = None
+    join_policy: str
+    member_count: int
+    logo_url: Optional[str] = None
+    branding: OrgPublicBrandingOut = OrgPublicBrandingOut()
+
+
+class ExploreResponse(BaseModel):
+    """Phase 55 — response envelope for GET /api/orgs/explore."""
+    orgs: list[ExploreOrgCard]
+    count: int
+
+
 class JoinRequestOut(BaseModel):
     """Phase 14 B3 — POST /api/orgs/{slug}/join-request response."""
     status: str  # 'pending' or 'active'

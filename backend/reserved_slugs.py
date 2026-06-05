@@ -8,11 +8,15 @@ checked against this set on creation.
 
 RESERVED_SLUGS = {
     "admin", "api", "app", "assets", "auth", "blog", "delegates", "demo",
-    "docs", "forgot-password", "help", "info", "invite", "login", "logout",
-    "o", "orgs", "pricing", "privacy", "public", "register",
+    "docs", "explore", "forgot-password", "help", "info", "invite", "login",
+    "logout", "o", "orgs", "pricing", "privacy", "public", "register",
     "reset-password", "security", "settings", "setup", "signup", "static",
     "support", "terms", "test", "tests", "uploads", "verify-email", "why",
 }
 # Phase 19 G1: 'delegates' added to reserve the per-org delegate browse URL
 # `/{slug}/delegates`. Without this, a user could claim handle `delegates`
 # (or an org slug `delegates`) and collide with the browse URL.
+# Phase 55: 'explore' added to reserve the public org discovery URL
+# `/explore`. Belt-and-suspenders with the route-table precedence (the
+# public router's fixed `/explore` is registered before `/{slug}`), so an
+# org can never claim the slug and collide.

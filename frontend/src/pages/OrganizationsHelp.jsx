@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import HelpBackLink from '../components/HelpBackLink';
 
 /**
@@ -25,6 +26,19 @@ export default function OrganizationsHelp() {
           The four join policies, what each means for visitors, and how to set up a public landing page.
         </p>
       </div>
+
+      <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Finding public organizations</h2>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          The <Link to="/explore" className="text-[var(--brand-accent)] font-medium hover:underline">Explore</Link> page lists every public organization on the platform. An organization appears there when its join policy is set to <em>Invite only (public)</em>, <em>Approval required</em>, or <em>Open</em> — the three policies that have a public landing page. Organizations set to <em>Invite only (private)</em> stay hidden from the index (and from direct-URL probes).
+        </p>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          Search the list by name or description, and sort by recent activity or member count. Click any card to land on that organization&apos;s public splash, where you can join (or request to join) depending on its policy.
+        </p>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          The platform&apos;s demo organizations live separately at <Link to="/demo" className="text-[var(--brand-accent)] font-medium hover:underline">/demo</Link>. Demo orgs reset daily and never appear on the Explore page — they&apos;re a sandbox, not a real community.
+        </p>
+      </section>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
         <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Every org has a slug-based URL</h2>

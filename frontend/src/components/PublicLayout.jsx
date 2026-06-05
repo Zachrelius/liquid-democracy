@@ -25,6 +25,10 @@ export default function PublicLayout({ children }) {
             >
               GitHub
             </a>
+            {/* Phase 55 — discovery entry point in the public footer. */}
+            <Link to="/explore" className="hover:text-[var(--brand-accent)] hover:underline">
+              Explore
+            </Link>
             {/* Phase 43 Cluster H — surface Help in the only public chrome. */}
             <Link to="/help" className="hover:text-[var(--brand-accent)] hover:underline">
               Help

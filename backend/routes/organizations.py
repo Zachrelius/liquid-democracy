@@ -1611,6 +1611,165 @@ def get_demo_directory(
 
 
 # ============================================================================
+# Phase 55 — Public org discovery endpoint (NO AUTH)
+# ============================================================================
+#
+# Surfaces the directory of discoverable public orgs at /explore. Filters:
+# join_policy != 'invite_only_secret' (secret orgs stay hidden, mirroring
+# the Phase 14 404-for-secret posture), is_demo=False (demo orgs live at
+# /demo, not /explore), parent_org_id IS NULL (sub-orgs are not standalone
+# discoverable). Search across name + description (case-insensitive).
+# Sorts: members (DESC member_count) or activity (DESC most-recent proposal
+# created_at, NULLS LAST). Default: activity. Cap 200 (no pagination v1).
+#
+# Projection is deliberately minimal — does NOT expose settings,
+# user_permissions, governance_mode, member identities, or any per-user
+# fields. See schemas.ExploreOrgCard.
+
+# Phase 55 — defensive cap to avoid pathological payload growth before
+# pagination ships. With a handful of public orgs at launch this is far
+# above the realistic ceiling; when the platform grows past it the
+# follow-up is to add cursor pagination, not bump the constant.
+EXPLORE_RESULT_CAP = 200
+
+
+@public_org_router.get("/explore", response_model=schemas.ExploreResponse)
+def get_explore_orgs(
+    response: Response,
+    q: Optional[str] = Query(default=None),
+    sort: str = Query(default="activity"),
+    db: Session = Depends(get_db),
+):
+    """Phase 55 — list discoverable public orgs for the /explore page.
+
+    No auth required; logged-in callers get the same response. The
+    projection is intentionally small and public-safe — see
+    schemas.ExploreOrgCard.
+
+    Filters (all required, applied as AND):
+      * join_policy != 'invite_only_secret' — secret orgs are hidden.
+      * is_demo == False — demo orgs live at /demo.
+      * parent_org_id IS NULL — sub-orgs are not independently discoverable.
+
+    Search: when ``q`` is provided, matches case-insensitively against
+    name OR description. Empty/absent q returns the full discoverable set.
+
+    Sort:
+      * 'members' — descending member_count, then name ASC.
+      * 'activity' (default) — descending most-recent proposal
+        created_at, NULLS LAST (orgs with zero proposals sort last),
+        then name ASC.
+
+    Unknown ``sort`` values fall back to the default ('activity') rather
+    than 400'ing — keeps the public endpoint forgiving against typo'd
+    bookmarks. The result set is capped at EXPLORE_RESULT_CAP=200 (no
+    pagination in v1).
+
+    Caching: ``Cache-Control: max-age=60``. Data changes slowly
+    (member counts and proposal recency shift gradually); a brief
+    cache absorbs burst traffic on the discovery page without staleness
+    becoming user-visible. Mirrors the /demo endpoint's posture.
+    """
+    # Grouped aggregates avoid N+1: one subquery for member counts,
+    # one for activity recency. Both LEFT JOIN onto the org query so
+    # orgs with zero members or zero proposals still appear (with 0
+    # count and NULL activity respectively).
+    member_count_subq = (
+        db.query(
+            models.OrgMembership.org_id.label("org_id"),
+            func.count(models.OrgMembership.id).label("member_count"),
+        )
+        .filter(models.OrgMembership.status == "active")
+        .group_by(models.OrgMembership.org_id)
+        .subquery()
+    )
+    activity_subq = (
+        db.query(
+            models.Proposal.org_id.label("org_id"),
+            func.max(models.Proposal.created_at).label("last_proposal_at"),
+        )
+        .group_by(models.Proposal.org_id)
+        .subquery()
+    )
+
+    base = (
+        db.query(
+            models.Organization,
+            func.coalesce(member_count_subq.c.member_count, 0).label("mc"),
+            activity_subq.c.last_proposal_at.label("la"),
+        )
+        .outerjoin(
+            member_count_subq,
+            member_count_subq.c.org_id == models.Organization.id,
+        )
+        .outerjoin(
+            activity_subq,
+            activity_subq.c.org_id == models.Organization.id,
+        )
+        .filter(models.Organization.join_policy != "invite_only_secret")
+        .filter(models.Organization.is_demo.is_(False))
+        .filter(models.Organization.parent_org_id.is_(None))
+    )
+
+    if q:
+        # Case-insensitive substring match on either name or description.
+        # ``ilike`` is PG-native and translates to LIKE-with-LOWER on
+        # SQLite via SQLAlchemy. Description column may be NULL on some
+        # rows — the OR with the name match keeps the filter correct in
+        # that case (NULL ilike returns NULL/false, which doesn't bias
+        # the overall predicate against name-only matches).
+        like = f"%{q}%"
+        from sqlalchemy import or_
+        base = base.filter(
+            or_(
+                models.Organization.name.ilike(like),
+                models.Organization.description.ilike(like),
+            )
+        )
+
+    if sort == "members":
+        base = base.order_by(
+            func.coalesce(member_count_subq.c.member_count, 0).desc(),
+            models.Organization.name.asc(),
+        )
+    else:
+        # Default + unknown sort param both fall through to 'activity'.
+        # ``coalesce(last_proposal_at, <epoch>)`` is the cross-dialect
+        # NULLS-LAST pattern (SQLite doesn't support PG's NULLS LAST
+        # modifier directly); a sentinel epoch sorts before any real
+        # timestamp under DESC, putting zero-proposal orgs at the end.
+        epoch_sentinel = datetime(1970, 1, 1)
+        base = base.order_by(
+            func.coalesce(
+                activity_subq.c.last_proposal_at, epoch_sentinel,
+            ).desc(),
+            models.Organization.name.asc(),
+        )
+
+    rows = base.limit(EXPLORE_RESULT_CAP).all()
+
+    cards: list[schemas.ExploreOrgCard] = []
+    for org, mc, _la in rows:
+        branding_dict = (org.settings or {}).get("branding") or {}
+        cards.append(schemas.ExploreOrgCard(
+            slug=org.slug,
+            name=org.name,
+            description=org.description or "",
+            governance_type=org.governance_type,
+            join_policy=org.join_policy,
+            member_count=int(mc or 0),
+            logo_url=branding_dict.get("logo_url"),
+            branding=schemas.OrgPublicBrandingOut(
+                primary_color=branding_dict.get("primary_color"),
+                accent_color=branding_dict.get("accent_color"),
+            ),
+        ))
+
+    response.headers["Cache-Control"] = "max-age=60"
+    return schemas.ExploreResponse(orgs=cards, count=len(cards))
+
+
+# ============================================================================
 # Phase 14 B3 — Public join-request endpoint (consolidates two paths)
 # ============================================================================
 

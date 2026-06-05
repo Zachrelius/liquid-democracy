@@ -730,3 +730,88 @@ the answer is UI disambiguation (show slug everywhere, or add a
 parent-org indicator to the display), not a uniqueness constraint
 (which would require admin tooling to resolve collisions on
 existing orgs and would break the realistic-naming property).
+
+## Public Org Discovery (Phase 55, 2026-06-05)
+
+### What's exposed without authentication
+
+`GET /api/orgs/explore` is a new unauthenticated endpoint that
+returns a minimal projection for non-secret, non-demo, top-level
+organizations. The endpoint complements the Phase 14 per-org
+public-landing endpoint (`/api/orgs/{slug}/public`) — it adds an
+index of discoverable orgs that visitors can browse without
+holding a slug in advance.
+
+Per-card fields:
+
+- `slug`, `name`, `description` (the existing public-card fields
+  already exposed via the per-org public endpoint).
+- `governance_type` (the optional human-readable label, e.g.
+  "Civic Advocacy Group" — same field shown on `/demo` directory
+  cards).
+- `join_policy` (so the card can hint at how a visitor would join).
+- `member_count` (active-membership integer; no member identities).
+- `logo_url`, `branding.primary_color`, `branding.accent_color`
+  (visual treatment so the card matches the splash).
+
+The projection is deliberately distinct from the internal `OrgOut`
+schema. It does NOT expose `settings`, `user_permissions`,
+`governance_mode`, member lists, or any per-user fields. The
+Phase 46a `_MUST_SURFACE_FIELDS` serializer-coverage test guards
+`OrgOut`; `ExploreOrgCard` is intentionally a minimal projection
+and is NOT subject to that allow-list — adding new fields here
+requires explicit opt-in via the schema, not a backfill.
+
+### Member counts but not member identities
+
+The card surfaces an active-membership integer (computed via a
+grouped aggregate to avoid N+1) so visitors can gauge org scale.
+It never exposes member usernames, emails, display names, roles,
+or membership statuses. Pending and inactive memberships are
+explicitly excluded from the count (Phase 55 B3 #18 test pins this).
+
+### What's hidden from `/explore`
+
+- **`invite_only_secret` orgs.** Mirrors the Phase 14 404-for-secret
+  posture: secret orgs are indistinguishable from non-existent ones.
+  An unauthenticated probe of `/api/orgs/explore` cannot tell whether
+  a given slug belongs to a secret org or doesn't exist, exactly as
+  the per-org public endpoint returns 404 for both cases.
+- **Demo orgs (`is_demo=True`).** They have their own directory at
+  `/demo`. Mixing them on `/explore` would dilute both surfaces.
+- **Sub-orgs (`parent_org_id IS NOT NULL`).** Top-level only; sub-orgs
+  are not independently discoverable. Respects the multi-tenancy
+  model — a sub-org's context belongs to its parent.
+
+### Search input — no SQL injection risk
+
+The `q` query parameter is passed to SQLAlchemy's `Column.ilike()`
+with the value embedded in an `f"%{q}%"` Python f-string. SQLAlchemy
+parameterizes the pattern argument; the `%` wildcards are part of
+the bound string parameter, not concatenated into SQL. ILIKE pattern
+metacharacters in user input (e.g., a literal `%` or `_`) broaden the
+match by design — there is no privilege escalation surface here, only
+slightly noisier search results, which is acceptable for a public
+discovery endpoint.
+
+### Caching posture
+
+`Cache-Control: max-age=60` matches the `/demo` endpoint. Data
+changes slowly (member counts and proposal recency shift gradually);
+a brief cache absorbs burst traffic without staleness becoming
+user-visible. No server-side caching layer; per-request DB queries
+under a defensive 200-row cap.
+
+### Deferred (out of scope for Phase 55)
+
+- **Pagination.** With a handful of public orgs at launch, a single
+  capped response is sufficient. The defensive cap (200) avoids a
+  pathological payload; pagination is a separate small follow-up if
+  the platform scales past it.
+- **Org-level tags / categories.** Filter is name + description only.
+  A tag system is a real future feature, deliberately routed to the
+  feature-request org for community signal rather than built here.
+- **SEO / sitemap.** Consistent with Phase 14's posture — no robots.txt
+  or sitemap entries for `/explore`. Browsers default to indexing what
+  they crawl; the platform doesn't actively help discovery via search
+  engines.
