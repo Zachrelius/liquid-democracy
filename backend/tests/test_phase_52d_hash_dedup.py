@@ -378,18 +378,23 @@ class TestDocumentNumberHardBlock:
         return row
 
     def _payload(self, session_id: str, *, doc_number: str = "X9876543") -> dict:
+        # Phase 52e E1 — payload uses the REAL captured-shape (plural
+        # id_verifications array). 52d's documented-singular shape
+        # produced no hashes against the real extractor, so the
+        # collision tests now use the plural form.
         return {
             "session_id": session_id,
             "webhook_type": "session.completed",
             "decision": {
                 "session_id": session_id,
-                "id_verification": {
+                "status": "Approved",
+                "id_verifications": [{
                     "status": "Approved",
                     "first_name": "Alice",
                     "last_name": "Robertson",
                     "document_number": doc_number,
                     "date_of_birth": "1985-03-14",
-                },
+                }],
             },
         }
 
@@ -476,10 +481,16 @@ class TestDocumentNumberHardBlock:
         db.commit()
 
         # Alice re-verifies — same document, new session, more parsed
-        # data (an address this time).
+        # data (an address this time). Phase 52e plural-array shape;
+        # the parsed_address.region carries the residency state which
+        # E1's _extract_jurisdiction normalizes.
         self._seed_session(db, alice, "sess_reverify")
         payload = self._payload("sess_reverify", doc_number="X9876543")
-        payload["decision"]["id_verification"]["address_state"] = "CA"
+        payload["decision"]["id_verifications"][0]["parsed_address"] = {
+            "street_1": "1 Main St", "city": "Anytown",
+            "region": "California", "postal_code": "94000",
+            "country": "US",
+        }
         body = json.dumps(payload).encode()
         r = client.post(
             "/api/webhooks/didit",
@@ -506,18 +517,20 @@ class TestDocumentNumberHardBlock:
 
 class TestPurgeWiring:
     def _payload(self, session_id: str) -> dict:
+        # Phase 52e E1 — plural id_verifications shape (real path).
         return {
             "session_id": session_id,
             "webhook_type": "session.completed",
             "decision": {
                 "session_id": session_id,
-                "id_verification": {
+                "status": "Approved",
+                "id_verifications": [{
                     "status": "Approved",
                     "first_name": "Alice",
                     "last_name": "Robertson",
                     "document_number": "X9876543",
                     "date_of_birth": "1985-03-14",
-                },
+                }],
             },
         }
 

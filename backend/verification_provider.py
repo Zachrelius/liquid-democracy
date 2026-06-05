@@ -75,23 +75,58 @@ _US_STATE_CODES = frozenset({
     "DC",
 })
 
+# Phase 52e E1 — full-name → 2-letter code map for the
+# ``parsed_address.region`` path Didit emits (e.g.
+# ``"Massachusetts"`` → ``"MA"``). The 2026-06-05 captured payload
+# put the holder's residency as the FULL state name string under
+# ``decision.id_verifications[0].parsed_address.region``; the
+# previous 2-letter-only normalize_jurisdiction returned None for
+# this and the rung never escalated to ``address_on_id``.
+_US_STATE_NAME_TO_CODE = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT",
+    "delaware": "DE", "district of columbia": "DC", "florida": "FL",
+    "georgia": "GA", "hawaii": "HI", "idaho": "ID", "illinois": "IL",
+    "indiana": "IN", "iowa": "IA", "kansas": "KS", "kentucky": "KY",
+    "louisiana": "LA", "maine": "ME", "maryland": "MD",
+    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN",
+    "mississippi": "MS", "missouri": "MO", "montana": "MT",
+    "nebraska": "NE", "nevada": "NV", "new hampshire": "NH",
+    "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+    "north carolina": "NC", "north dakota": "ND", "ohio": "OH",
+    "oklahoma": "OK", "oregon": "OR", "pennsylvania": "PA",
+    "rhode island": "RI", "south carolina": "SC", "south dakota": "SD",
+    "tennessee": "TN", "texas": "TX", "utah": "UT", "vermont": "VT",
+    "virginia": "VA", "washington": "WA", "west virginia": "WV",
+    "wisconsin": "WI", "wyoming": "WY",
+}
+
 
 def normalize_jurisdiction(raw: Optional[str]) -> Optional[str]:
     """Coerce a Didit-supplied region value to our canonical US-state
-    two-letter code. Returns None for anything not on the allow-list
-    (international addresses, missing values, malformed input). The
-    gate predicate compares jurisdictions by exact-string equality
-    (``verification.subsumes`` rule 2), so this is the load-bearing
-    normalization point — values written here MUST match values an
-    org admin enters when setting a jurisdiction floor.
+    two-letter code. Accepts either a 2-letter code (``"CA"``) or a
+    full state name (``"California"``, case-insensitive); returns
+    None for international, malformed, or unrecognized values.
+
+    The gate predicate compares jurisdictions by exact-string
+    equality (``verification.subsumes`` rule 2), so this is the
+    load-bearing normalization point — values written here MUST
+    match values an org admin enters when setting a jurisdiction
+    floor. The OrgSettings UI uses a 2-letter-code picker so admin
+    input is constrained to the canonical form.
     """
     if not isinstance(raw, str):
         return None
-    s = raw.strip().upper()
+    s = raw.strip()
     if not s:
         return None
-    if s in _US_STATE_CODES:
-        return s
+    upper = s.upper()
+    if upper in _US_STATE_CODES:
+        return upper
+    # Full state name — case-insensitive lookup.
+    code = _US_STATE_NAME_TO_CODE.get(s.lower())
+    if code:
+        return code
     return None
 
 
@@ -151,44 +186,103 @@ def create_session(user_id: str) -> dict[str, str]:
 
 def delete_session(session_id: str) -> bool:
     """Tell Didit to delete a verification session after we've
-    extracted the OCR fields we need to hash. Returns True on success.
+    extracted the OCR fields we need to hash. Returns True ONLY on a
+    confirmed 2xx delete; False on anything else (including the
+    404-but-session-still-retained case from the 52d round-trip).
+
+    **Phase 52e E1b — 404 is NOT success.** Z confirmed in the Didit
+    portal (2026-06-05) that session ``66a70eb2`` is still fully
+    retained even though our DELETE call got a 404. The 52d version
+    treated non-2xx as failure but had no candidate-path fallback;
+    the v2 here tries multiple plausible endpoints from a comma-
+    separated env list, so an operator can extend the candidate set
+    once the Didit rep confirms the exact endpoint without a code
+    deploy.
 
     Fail-toward-keeping the verification: callers MUST NOT condition
-    the user's verification record on this returning True. A failed
-    delete is logged + retried later (or swept) — we never lose a
-    valid identity verification because Didit's cleanup endpoint
-    flaked.
+    the user's verification record on this returning True. A False
+    return logs + records ``purge_failed`` on the bookkeeping row,
+    surfacing the failure for a retry sweep rather than swallowing it.
 
-    The Didit deletion endpoint path is read from
-    ``DIDIT_SESSION_DELETE_PATH`` env, defaulting to the documented
-    ``/v3/session/{id}/`` (verified at integration time during Phase
-    52e's real-payload pass). The provider seam keeps everything
-    Didit-specific isolated to this module.
+    Env:
+      * ``DIDIT_SESSION_DELETE_PATHS`` — comma-separated path
+        templates. Each ``{id}`` is replaced with the session id.
+        Defaults to a list of plausible candidates; the rep's
+        confirmation gets prepended via a single env update once
+        known.
+      * ``DIDIT_SESSION_DELETE_PATH`` (legacy single-path) is honored
+        as the FIRST candidate when set, so the existing prod env
+        setting continues to work and a single-path override remains
+        an option.
     """
     try:
         api_key = _require_env("DIDIT_API_KEY")
     except RuntimeError:
         logger.warning("delete_session: DIDIT_API_KEY unset; cannot purge")
         return False
-    path_template = os.environ.get(
-        "DIDIT_SESSION_DELETE_PATH",
+
+    # Build candidate path list: legacy single env first (if set),
+    # then DIDIT_SESSION_DELETE_PATHS (comma-separated), then the
+    # built-in defaults. Dedupe while preserving order.
+    candidates: list[str] = []
+    legacy = os.environ.get("DIDIT_SESSION_DELETE_PATH")
+    if legacy:
+        candidates.append(legacy)
+    plural = os.environ.get("DIDIT_SESSION_DELETE_PATHS")
+    if plural:
+        candidates.extend([p.strip() for p in plural.split(",") if p.strip()])
+    candidates.extend([
         "/session/{id}/",
-    )
-    url = f"{DIDIT_API_BASE}{path_template.format(id=session_id)}"
+        "/sessions/{id}/",
+        "/session/{id}",
+        "/sessions/{id}",
+        "/v3/session/{id}/",          # absolute paths (override base)
+        "/v3/sessions/{id}/",
+    ])
+    seen: set[str] = set()
+    unique_candidates: list[str] = []
+    for p in candidates:
+        if p not in seen:
+            seen.add(p)
+            unique_candidates.append(p)
+
     headers = {"x-api-key": api_key}
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            r = client.delete(url, headers=headers)
+    last_status: Optional[int] = None
+    for path in unique_candidates:
+        # If the candidate is an absolute path starting with /v3, use
+        # the host as-is; otherwise concatenate with DIDIT_API_BASE.
+        if path.startswith("/v3/"):
+            host = DIDIT_API_BASE.rsplit("/v3", 1)[0]
+            url = f"{host}{path.format(id=session_id)}"
+        else:
+            url = f"{DIDIT_API_BASE}{path.format(id=session_id)}"
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                r = client.delete(url, headers=headers)
+        except Exception as e:  # noqa: BLE001 — purge must never raise to caller
+            logger.warning("delete_session: %s -> %s", path, e)
+            continue
+        last_status = r.status_code
         if 200 <= r.status_code < 300:
+            logger.info(
+                "delete_session: confirmed delete via %s for %s (%s)",
+                path, session_id, r.status_code,
+            )
             return True
+        # 404 is NOT success: Z confirmed via the Didit portal that
+        # a 404'd session can still be fully retained. Try the next
+        # candidate; if all fail, return False.
         logger.warning(
-            "delete_session: Didit returned %s for %s",
-            r.status_code, session_id,
+            "delete_session: %s returned %s for %s",
+            path, r.status_code, session_id,
         )
-        return False
-    except Exception as e:  # noqa: BLE001 — purge must never raise to caller
-        logger.warning("delete_session: %s", e)
-        return False
+    logger.warning(
+        "delete_session: all candidate endpoints failed for %s "
+        "(last status=%s). Session may still be retained at Didit; "
+        "schedule a retry / surface to ops.",
+        session_id, last_status,
+    )
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -243,33 +337,75 @@ def verify_webhook(
 
 
 def _extract_jurisdiction(decision: dict) -> Optional[str]:
-    """Best-effort extraction of a coarse jurisdiction from Didit's
-    decision payload, normalized via :func:`normalize_jurisdiction`.
+    """Phase 52e E1 — extract the holder's residency jurisdiction
+    (a US two-letter state code) from a Didit decision payload,
+    normalized via :func:`normalize_jurisdiction`.
 
-    Didit's ``decision`` shape (from §12 + their docs) carries a
-    parsed address under ``id_verification`` / ``id_doc`` /
-    ``extracted_fields`` depending on workflow version. We probe the
-    common keys and bail to None on anything we don't recognize —
-    None means the state never escalates to ``address_on_id``.
+    The real payload (captured 2026-06-05) carries the parsed address
+    at ``decision.id_verifications[0].parsed_address``:
+      * ``parsed_address.region`` — full state name string (e.g.
+        ``"Massachusetts"``). This is the HOLDER's residence — what
+        ``address_on_id`` means.
+      * ``parsed_address.country`` — 2-char country code (e.g.
+        ``"US"``); we don't currently use it but record it for the
+        provider-swap seam.
+
+    NOT used as jurisdiction:
+      * ``id_verifications[0].issuing_state`` (3-char code) — that's
+        the document's ISSUING authority, not residence.
+      * ``id_verifications[0].address`` / ``formatted_address``
+        (free-text strings) — region is parsed structurally and is
+        more stable.
+
+    Returns the normalized two-letter code or None. None means the
+    state ladder doesn't escalate to ``address_on_id`` (the safe
+    failure direction — a non-US or unrecognized region misses
+    rather than over-claims).
+
+    Legacy back-compat candidates (the singular ``id_verification``
+    paths the 52d-shipped extractor probed) are KEPT as fallbacks
+    so a future Custom KYC workflow variant that uses the singular
+    shape doesn't break. They run last; the real plural path takes
+    precedence.
     """
+    if not isinstance(decision, dict):
+        return None
+
     candidates: list[Any] = []
-    iv = decision.get("id_verification") if isinstance(decision, dict) else None
-    if isinstance(iv, dict):
+
+    # Phase 52e — REAL path from the 2026-06-05 captured manifest.
+    iv_list = decision.get("id_verifications")
+    if isinstance(iv_list, list) and iv_list:
+        first = iv_list[0]
+        if isinstance(first, dict):
+            pa = first.get("parsed_address")
+            if isinstance(pa, dict):
+                v = pa.get("region")
+                if v is not None:
+                    candidates.append(v)
+
+    # Legacy back-compat — the 52d-shipped singular probes. Real
+    # workflows don't currently emit this shape, but a future
+    # Custom KYC variant or a different provider might. Kept so
+    # a swap is "rewrite this module," not "and also fix the
+    # extractor in every route."
+    iv_singular = decision.get("id_verification")
+    if isinstance(iv_singular, dict):
         for key in ("address_state", "region", "state", "subdivision"):
-            v = iv.get(key)
+            v = iv_singular.get(key)
             if v is not None:
                 candidates.append(v)
-        addr = iv.get("address")
+        addr = iv_singular.get("address")
         if isinstance(addr, dict):
             for key in ("state", "region", "subdivision"):
                 v = addr.get(key)
                 if v is not None:
                     candidates.append(v)
-    # Some payload variants put extracted fields at top level
     for key in ("address_state", "state", "subdivision"):
-        v = decision.get(key) if isinstance(decision, dict) else None
+        v = decision.get(key)
         if v is not None:
             candidates.append(v)
+
     for c in candidates:
         normalized = normalize_jurisdiction(c if isinstance(c, str) else None)
         if normalized:
