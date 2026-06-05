@@ -90,8 +90,13 @@ def client(db: Session) -> Iterator[TestClient]:
 def _webhook_secret(monkeypatch):
     """Default test env: webhook secret is configured. Individual
     tests that need the "no secret" posture remove it via
-    ``monkeypatch.delenv``."""
+    ``monkeypatch.delenv``.
+
+    Phase 52d additionally requires VERIFICATION_HASH_PEPPER so
+    ``_apply_decision`` can compute hashes — fail-closed without it.
+    """
     monkeypatch.setenv("DIDIT_WEBHOOK_SECRET", "test_secret_value")
+    monkeypatch.setenv("VERIFICATION_HASH_PEPPER", "TEST_DUMMY_PEPPER_PHASE_52A")
     yield
 
 
@@ -131,11 +136,18 @@ def _make_org(db: Session, slug: str, *, is_demo: bool = False) -> models.Organi
 # ===========================================================================
 
 class TestMapDecisionToState:
+    """Phase 52d swapped the dedup SOURCE from Didit's 1:N face search
+    to our-side document-hash dedup. The mapper no longer reads any
+    ``face_search`` block; uniqueness is supplied by the webhook
+    handler via ``doc_number_unique=`` after a hash lookup. These
+    tests cover what the mapper still owns: address → jurisdiction
+    extraction + the ordinal state ladder. The richer precedence /
+    dead-code tests live in ``test_phase_52d_hash_dedup.py``."""
+
     def test_unrecognized_payload_returns_email_only(self):
         result = verification_provider.map_decision_to_state({})
         assert result["verification_state"] == verification.EMAIL_ONLY
         assert result["verification_jurisdiction"] is None
-        assert result["verification_nullifier"] is None
         assert result["verification_attestation_id"] is None
 
     def test_declined_decision_returns_email_only(self):
@@ -145,31 +157,7 @@ class TestMapDecisionToState:
         })
         assert result["verification_state"] == verification.EMAIL_ONLY
 
-    def test_id_approved_with_no_dedup_no_address_returns_identity(self):
-        result = verification_provider.map_decision_to_state({
-            "session_id": "sess_abc",
-            "id_verification": {"status": "Approved"},
-        })
-        assert result["verification_state"] == verification.IDENTITY
-        assert result["verification_jurisdiction"] is None
-        assert result["verification_nullifier"] is None
-        assert result["verification_attestation_id"] == "sess_abc"
-
-    def test_id_approved_with_1n_dedup_returns_identity_unique(self):
-        result = verification_provider.map_decision_to_state({
-            "session_id": "sess_dedup",
-            "id_verification": {"status": "Approved"},
-            "face_search": {
-                "status": "Approved",
-                "identity_handle": "null_abc123",
-            },
-        })
-        assert result["verification_state"] == verification.IDENTITY_UNIQUE
-        assert result["verification_nullifier"] == "null_abc123"
-
     def test_id_approved_with_address_returns_address_on_id(self):
-        # Address presence trumps dedup in the state ladder per
-        # verification.ORDER (address_on_id > identity_unique).
         result = verification_provider.map_decision_to_state({
             "session_id": "sess_addr",
             "id_verification": {
@@ -193,16 +181,15 @@ class TestMapDecisionToState:
     def test_unrecognized_jurisdiction_does_not_escalate(self):
         # Non-US-state addresses come back as None jurisdiction; the
         # state must NOT escalate to address_on_id (a jurisdiction-
-        # less address_on_id record could never satisfy a gate).
+        # less address_on_id record could never satisfy a gate). Without
+        # doc_number_unique=True, state stays at IDENTITY.
         result = verification_provider.map_decision_to_state({
             "id_verification": {
                 "status": "Approved",
                 "address_state": "ontario",
             },
         })
-        assert result["verification_state"] in (
-            verification.IDENTITY, verification.IDENTITY_UNIQUE,
-        )
+        assert result["verification_state"] == verification.IDENTITY
         assert result["verification_jurisdiction"] is None
 
     def test_overall_approved_back_compat(self):
@@ -311,6 +298,11 @@ class TestWebhookReceiver:
         assert r.status_code == 401
 
     def test_approved_decision_writes_record(self, client: TestClient, db: Session):
+        # Phase 52d — the dedup SOURCE is now our-side document-hash,
+        # not Didit's 1:N face search. The mapper no longer reads a
+        # face_search block; uniqueness comes from doc_number_hash
+        # not colliding. The richer doc-hash + state-write tests live
+        # in test_phase_52d_hash_dedup.py.
         user = make_user(db, "alice")
         self._seed_session(db, user, "sess_approve")
         payload = {
@@ -321,10 +313,6 @@ class TestWebhookReceiver:
                 "id_verification": {
                     "status": "Approved",
                     "address_state": "CA",
-                },
-                "face_search": {
-                    "status": "Approved",
-                    "identity_handle": "null_alice_1",
                 },
             },
         }
@@ -339,7 +327,6 @@ class TestWebhookReceiver:
         assert user.verification_state == verification.ADDRESS_ON_ID
         assert user.verification_jurisdiction == "CA"
         assert user.verification_provenance == verification.PROV_DIDIT
-        assert user.verification_nullifier == "null_alice_1"
         assert user.verification_attestation_id == "sess_approve"
 
     def test_declined_decision_leaves_state_untouched(self, client: TestClient, db: Session):
@@ -403,57 +390,14 @@ class TestWebhookReceiver:
 # ===========================================================================
 # C-NULLIFIER — collision handling
 # ===========================================================================
-
-class TestNullifierCollision:
-    def test_collision_leaves_second_user_unchanged(self, client: TestClient, db: Session):
-        # User A already verified with nullifier "null_shared".
-        alice = make_user(db, "alice")
-        alice.verification_state = verification.IDENTITY_UNIQUE
-        alice.verification_provenance = verification.PROV_DIDIT
-        alice.verification_nullifier = "null_shared"
-        alice.verification_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        db.commit()
-
-        bob = make_user(db, "bob")
-        bob_session = models.VerificationSession(
-            user_id=bob.id,
-            provider_session_id="sess_collide",
-            status="initiated",
-        )
-        db.add(bob_session); db.commit()
-        original_state = bob.verification_state
-
-        payload = {
-            "session_id": "sess_collide",
-            "webhook_type": "session.completed",
-            "decision": {
-                "id_verification": {"status": "Approved"},
-                "face_search": {
-                    "status": "Approved",
-                    "identity_handle": "null_shared",
-                },
-            },
-        }
-        body = json.dumps(payload).encode("utf-8")
-        r = client.post(
-            "/api/webhooks/didit",
-            content=body,
-            headers={**_sign(body), "Content-Type": "application/json"},
-        )
-        assert r.status_code == 200
-        # Bob's account untouched.
-        db.refresh(bob)
-        assert bob.verification_state == original_state
-        assert bob.verification_nullifier is None
-        assert bob.verification_provenance != verification.PROV_DIDIT
-        # Audit row written.
-        audit = (
-            db.query(models.AuditLog)
-            .filter_by(action="verification.nullifier_collision", target_id=bob.id)
-            .first()
-        )
-        assert audit is not None
-        assert audit.details.get("collided_with_user_id") == alice.id
+#
+# Phase 52d retired the Didit-1:N nullifier model in favor of our-side
+# document-hash dedup. The collision behavior (and its side-effect
+# tests — different-user blocked + same-user idempotent) now lives in
+# ``test_phase_52d_hash_dedup.py::TestDocumentNumberHardBlock``. No
+# Phase 52a-shape collision test remains here; the audit-action name
+# changed (``verification.duplicate_document``) and the trigger field
+# is ``doc_number_hash``, not ``verification_nullifier``.
 
 
 # ===========================================================================

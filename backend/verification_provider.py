@@ -145,6 +145,53 @@ def create_session(user_id: str) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Phase 52d — D4: session purge (process-and-purge)
+# ---------------------------------------------------------------------------
+
+
+def delete_session(session_id: str) -> bool:
+    """Tell Didit to delete a verification session after we've
+    extracted the OCR fields we need to hash. Returns True on success.
+
+    Fail-toward-keeping the verification: callers MUST NOT condition
+    the user's verification record on this returning True. A failed
+    delete is logged + retried later (or swept) — we never lose a
+    valid identity verification because Didit's cleanup endpoint
+    flaked.
+
+    The Didit deletion endpoint path is read from
+    ``DIDIT_SESSION_DELETE_PATH`` env, defaulting to the documented
+    ``/v3/session/{id}/`` (verified at integration time during Phase
+    52e's real-payload pass). The provider seam keeps everything
+    Didit-specific isolated to this module.
+    """
+    try:
+        api_key = _require_env("DIDIT_API_KEY")
+    except RuntimeError:
+        logger.warning("delete_session: DIDIT_API_KEY unset; cannot purge")
+        return False
+    path_template = os.environ.get(
+        "DIDIT_SESSION_DELETE_PATH",
+        "/session/{id}/",
+    )
+    url = f"{DIDIT_API_BASE}{path_template.format(id=session_id)}"
+    headers = {"x-api-key": api_key}
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.delete(url, headers=headers)
+        if 200 <= r.status_code < 300:
+            return True
+        logger.warning(
+            "delete_session: Didit returned %s for %s",
+            r.status_code, session_id,
+        )
+        return False
+    except Exception as e:  # noqa: BLE001 — purge must never raise to caller
+        logger.warning("delete_session: %s", e)
+        return False
+
+
+# ---------------------------------------------------------------------------
 # C-PROVIDER §2 — webhook signature verification
 # ---------------------------------------------------------------------------
 
@@ -250,54 +297,11 @@ def _decision_passed_id(decision: dict) -> bool:
     return iv_status == "approved" or overall == "approved"
 
 
-def _decision_passed_1n_dedup(decision: dict) -> bool:
-    """True iff the decision indicates a passed 1:N cross-user
-    biometric dedup (the IDENTITY_UNIQUE step).
-
-    The free tier's Face Match is per-session (does the selfie match
-    the document?) — not 1:N cross-user. Cross-user dedup typically
-    surfaces under a different feature key (``aml`` / ``face_search``
-    / ``identity_dedup``) when enabled. We probe the common keys and
-    return False if absent — that is the deferred-uniqueness path
-    when the workspace lacks the capability.
-    """
-    if not isinstance(decision, dict):
-        return False
-    for key in ("face_search", "identity_dedup", "biometric_dedup"):
-        block = decision.get(key)
-        if isinstance(block, dict):
-            status = str(block.get("status") or "").strip().lower()
-            if status == "approved":
-                return True
-    return False
-
-
-def _extract_nullifier(decision: dict) -> Optional[str]:
-    """Pull the opaque cross-user identity handle from Didit's payload
-    when available. Without 1:N dedup this returns None and the
-    nullifier column stays NULL — the uniqueness invariant only fires
-    on non-NULL values (partial index, see C-MIGRATION).
-    """
-    if not isinstance(decision, dict):
-        return None
-    for path in (
-        ("face_search", "identity_handle"),
-        ("face_search", "nullifier"),
-        ("identity_dedup", "nullifier"),
-        ("biometric_dedup", "nullifier"),
-    ):
-        cur: Any = decision
-        for key in path:
-            if not isinstance(cur, dict):
-                cur = None
-                break
-            cur = cur.get(key)
-        if isinstance(cur, str) and cur.strip():
-            return cur.strip()
-    return None
-
-
-def map_decision_to_state(decision: dict) -> dict:
+def map_decision_to_state(
+    decision: dict,
+    *,
+    doc_number_unique: bool = False,
+) -> dict:
     """Pure mapper from Didit's ``decision`` payload to our record
     fields. The single place where provider-specific response shape
     is interpreted.
@@ -309,28 +313,48 @@ def map_decision_to_state(decision: dict) -> dict:
         is not produced by this mapper.)
       * ``verification_jurisdiction`` — US-state two-letter code or
         None. Only set when state is ADDRESS_ON_ID.
-      * ``verification_nullifier`` — opaque handle or None. Only set
-        when 1:N dedup is available + approved.
       * ``verification_attestation_id`` — Didit's session id (for
         audit + record-keeping; never serialized to clients).
 
     Failure / declined / missing fields → EMAIL_ONLY with everything
     else None. The webhook handler treats EMAIL_ONLY as "do not write
     a real verification" (the user's existing state stays put).
+
+    Phase 52d — precedence fix + dedup-source swap. The state ladder
+    is **ordinal**: ``address_on_id`` (rung 3) subsumes
+    ``identity_unique`` (rung 2). The previous mapper wrongly treated
+    them as mutually exclusive (``if jurisdiction ...; elif dedup
+    ...; else identity``), so a passed ID with a parsed address
+    landed at ``address_on_id`` but lost the ``identity_unique``
+    rung. The fix: pick the highest satisfied rung.
+
+    Phase 52d also swaps the SOURCE of "unique": under the document-
+    hash dedup model, uniqueness comes from the platform-wide
+    ``doc_number_hash`` not colliding — NOT from a Didit 1:N face
+    search. Callers (the webhook handler) compute that result by
+    looking up the hashed doc number against existing users, then
+    pass ``doc_number_unique=True`` if the doc number is new on the
+    platform (so this user is eligible for the ``identity_unique``
+    rung).
+
+    Sequence of decisions encoded:
+      * ID check passed? → at least IDENTITY.
+      * Doc number unique (no platform-wide collision)? → at least
+        IDENTITY_UNIQUE.
+      * Jurisdiction parsed from address? → ADDRESS_ON_ID (subsumes
+        IDENTITY_UNIQUE regardless of doc-number uniqueness).
     """
     if not isinstance(decision, dict) or not _decision_passed_id(decision):
         return {
             "verification_state": EMAIL_ONLY,
             "verification_jurisdiction": None,
-            "verification_nullifier": None,
             "verification_attestation_id": None,
         }
     jurisdiction = _extract_jurisdiction(decision)
-    nullifier = _extract_nullifier(decision)
-    dedup_passed = _decision_passed_1n_dedup(decision)
+    # Ordinal pick: highest satisfied rung.
     if jurisdiction:
         state = ADDRESS_ON_ID
-    elif dedup_passed:
+    elif doc_number_unique:
         state = IDENTITY_UNIQUE
     else:
         state = IDENTITY
@@ -340,7 +364,6 @@ def map_decision_to_state(decision: dict) -> dict:
     return {
         "verification_state": state,
         "verification_jurisdiction": jurisdiction,
-        "verification_nullifier": nullifier,
         "verification_attestation_id": attestation_id,
     }
 
@@ -497,3 +520,88 @@ def redact_payload(value: Any, _depth: int = 0, _key: Optional[str] = None) -> A
         return [redact_payload(item, _depth=_depth + 1, _key=_key) for item in value]
     # Unknown type — type label only.
     return f"<{type(value).__name__}>"
+
+
+# ---------------------------------------------------------------------------
+# Phase 52d — D1: key-path manifest (PII-safe by construction)
+# ---------------------------------------------------------------------------
+#
+# A manifest is keys + value-types only — never any value-string. By
+# construction it cannot leak PII: there is no path through
+# ``key_path_manifest`` where a value-string ends up in the output.
+# This is stronger than the redactor's allow-list (the redactor emits
+# status enums + safe-key opaque ids verbatim; the manifest emits
+# NOTHING but key-paths + type labels).
+#
+# The use case is grounding Phase 52e: the 52c redactor showed WHERE
+# the OCR fields sit but redacted the string values to "<str:N>".
+# 52e needs the exact key paths from a real payload to wire the
+# hashing module's field extraction. The manifest gives 52e (and any
+# future provider swap) those paths without the team ever seeing a
+# value.
+
+
+def _type_label(value: Any) -> str:
+    """Short type label used in the manifest output. Strings collapse
+    to ``"str"`` regardless of value, integers to ``"int"``, etc.,
+    so the manifest reveals ZERO information about the actual leaf
+    contents.
+    """
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, str):
+        return "str"
+    if isinstance(value, (list, tuple)):
+        return "list"
+    if isinstance(value, dict):
+        return "dict"
+    return type(value).__name__
+
+
+def key_path_manifest(value: Any, *, _prefix: str = "", _depth: int = 0) -> dict[str, str]:
+    """Walk a Didit decision payload and return a flat mapping of
+    dotted key-paths → type labels.
+
+    Example:
+
+      input  = {"decision": {"id_verification": {"first_name": "Alice",
+                                                  "status": "Approved"}}}
+      output = {
+        "decision":                              "dict",
+        "decision.id_verification":              "dict",
+        "decision.id_verification.first_name":   "str",
+        "decision.id_verification.status":       "str",
+      }
+
+    Output is JSON-safe + PII-safe by construction (every value is one
+    of "dict" / "list" / "str" / "int" / "float" / "bool" / "null" /
+    "<typename>"). List indices are NOT enumerated — only the list
+    itself is emitted (so an arbitrarily-long PII-bearing list cannot
+    leak via a giant index manifest). The first list element's shape
+    can be reached via the manifest by walking a representative item;
+    that's left to the caller if needed.
+    """
+    if _depth > _MAX_DEPTH:
+        return {_prefix or "<root>": "<truncated>"}
+    out: dict[str, str] = {}
+    if _prefix:
+        out[_prefix] = _type_label(value)
+    if isinstance(value, dict):
+        if not _prefix:
+            out["<root>"] = "dict"
+        for k, v in value.items():
+            child = f"{_prefix}.{k}" if _prefix else str(k)
+            out.update(key_path_manifest(v, _prefix=child, _depth=_depth + 1))
+    elif isinstance(value, (list, tuple)) and value:
+        # Recurse into the FIRST item only (its shape is representative
+        # of the homogeneous-list case Didit uses; we don't enumerate
+        # indices to keep output bounded + PII-safe).
+        child = f"{_prefix}[0]" if _prefix else "[0]"
+        out.update(key_path_manifest(value[0], _prefix=child, _depth=_depth + 1))
+    return out

@@ -444,6 +444,15 @@ class User(Base):
     verification_attestation_id: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True,
     )
+    # Phase 51 / Phase 52a — verification_nullifier is now DEPRECATED.
+    # Phase 52d swapped the dedup model from Didit's 1:N nullifier to
+    # our-side document-hash dedup (see ``verification_hashing.py``),
+    # so this column is no longer written. It is kept (NOT dropped) to
+    # avoid the risk of dropping a partial-unique-indexed column on PG.
+    # A later cleanup pass can drop both the column and the
+    # ``ix_users_verification_nullifier_unique`` index. Nothing reads
+    # this field as of Phase 52d; ``doc_number_hash`` is the live
+    # platform-wide uniqueness invariant.
     verification_nullifier: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True, index=True,
     )
@@ -453,6 +462,30 @@ class User(Base):
     )
     verification_updated_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True,
+    )
+    # Phase 52d — document-hash dedup fields. See
+    # ``verification_hashing.compute_hashes`` for the inputs +
+    # normalization rules.
+    # ``doc_number_hash`` carries the platform-wide uniqueness
+    # invariant (partial-unique index emitted in migration
+    # ``f1a2b3c4d5e6``). The two name-based hashes are indexed for
+    # org-scoped lookup but NOT unique — name+DOB-alone false-collides
+    # at scale (birthday paradox), so it never drives an automatic
+    # action.
+    doc_number_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True, index=True,
+    )
+    name_dob_address_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True, index=True,
+    )
+    name_dob_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True, index=True,
+    )
+    # Two-tier strength: ``document_hash`` (v1, this phase) or
+    # ``biometric`` (architected, deferred). NULL until a unique-tier
+    # verification completes.
+    uniqueness_strength: Mapped[Optional[str]] = mapped_column(
+        String(length=16), nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
 
