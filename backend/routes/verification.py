@@ -38,6 +38,7 @@ import auth as auth_utils
 import models
 import verification
 import verification_hashing
+import verification_metering
 import verification_provider
 from audit_utils import log_audit_event
 from database import get_db
@@ -62,15 +63,28 @@ CONSENT_DISCLOSURE = (
 
 
 class _SessionCreateBody(BaseModel):
-    # Reserved for future fields (e.g. preferred locale). Empty body
-    # is accepted; the user is taken from the auth context.
-    pass
+    # Phase 52b — optional triggering org id. When the user arrives
+    # at "Start verification" via an org's gate (Phase 52e Mode 1 or
+    # Mode 2 prompts), the FE includes that org_id so per-org
+    # consumption can be recorded. Settings-initiated verifications
+    # without an org context leave it None (counted toward the
+    # shared pool but not attributed to any org).
+    org_id: Optional[str] = None
 
 
 class _SessionOut(BaseModel):
     session_url: str
     session_id: str
     consent_disclosure: str
+
+
+class _PoolUnavailableOut(BaseModel):
+    """Phase 52b B3 — structured response on empty-pool block.
+    Surfaces enough info for the FE to render the message with the
+    real reset date. The FE keys on ``error='pool_unavailable'``."""
+    error: str
+    reset_date: str
+    days_until_reset: int
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +106,29 @@ def create_verification_session(
     hosted-flow URL + an opaque session id + consent disclosure
     copy the FE shows immediately before redirecting / opening the
     Didit modal.
+
+    Phase 52b — the authoritative empty-pool hard stop. Checks
+    capacity BEFORE calling Didit. If the shared monthly free pool
+    is exhausted, returns 503 with a structured ``pool_unavailable``
+    body the FE renders as the "unavailable this month" message.
+    NO Didit session is created (no spend, fail-safe toward not
+    consuming).
     """
+    # Phase 52b B2 — capacity check at the authoritative gate.
+    # The gate-display check (FE) reads the same predicate via the
+    # /api/verification/pool-status endpoint, but the pool could
+    # empty between display and click; this is the real hard stop.
+    if not verification_metering.has_capacity(db):
+        status = verification_metering.capacity_status(db)
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "pool_unavailable",
+                "reset_date": status["reset_date"],
+                "days_until_reset": status["days_until_reset"],
+            },
+        )
+
     try:
         result = verification_provider.create_session(current_user.id)
     except RuntimeError as e:
@@ -146,6 +182,14 @@ def create_verification_session(
                 detail="Could not start verification. Please try again.",
             )
         existing_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        # Phase 52b — refresh the triggering org context if the user
+        # came back via a different gate. If body org_id is None this
+        # leaves the prior value intact (don't accidentally erase a
+        # known triggering org because the user re-clicked from
+        # Settings).
+        body_org_id = body.org_id if body is not None else None
+        if body_org_id and existing_row.triggering_org_id != body_org_id:
+            existing_row.triggering_org_id = body_org_id
         db.commit()
         session_row = existing_row
     else:
@@ -153,6 +197,10 @@ def create_verification_session(
             user_id=current_user.id,
             provider_session_id=result["session_id"],
             status="initiated",
+            # Phase 52b — capture the triggering org if the FE knows
+            # which gate sent the user here. Null when initiated from
+            # Settings without an org context.
+            triggering_org_id=(body.org_id if body is not None else None),
         )
         db.add(session_row)
         db.commit()
@@ -180,6 +228,83 @@ def create_verification_session(
 # ---------------------------------------------------------------------------
 # C-WEBHOOK — Didit signed webhook
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Phase 52b — pool status (B2 gate-display + B4 admin visibility)
+# ---------------------------------------------------------------------------
+
+
+class _PoolStatusOut(BaseModel):
+    """Light pool-status surface for the FE gate-display check.
+    Public (any authenticated user) — exposes only the boolean
+    capacity + reset date, not the actual count. Per-org breakdown
+    is the admin-only endpoint below."""
+    has_capacity: bool
+    reset_date: str
+    days_until_reset: int
+
+
+@router.get("/verification/pool-status", response_model=_PoolStatusOut)
+def get_pool_status(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 52b B2 call site 1 — gate-display check. Any
+    authenticated user can read this. The FE keys verification gates
+    + the "Start verification" button on ``has_capacity``: when
+    False, render the unavailable-this-month copy instead of a live
+    button.
+
+    Deliberately does NOT expose the actual used / cap count to
+    non-admins (that's the admin endpoint below) — a non-admin user
+    doesn't need to see the exact remaining count to decide whether
+    the gate is live.
+    """
+    status = verification_metering.capacity_status(db)
+    return _PoolStatusOut(
+        has_capacity=status["has_capacity"],
+        reset_date=status["reset_date"],
+        days_until_reset=status["days_until_reset"],
+    )
+
+
+class _AdminPoolStatusOut(BaseModel):
+    year_month: str
+    cap: int
+    used: int
+    remaining: int
+    has_capacity: bool
+    reset_date: str
+    days_until_reset: int
+    per_org: list[dict]
+
+
+@router.get(
+    "/admin/verification/pool-status",
+    response_model=_AdminPoolStatusOut,
+)
+def admin_get_pool_status(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_admin),
+):
+    """Phase 52b B4 — platform-admin read of pool consumption.
+    Returns shared total + per-org breakdown. Read-only. Reuses the
+    existing ``get_current_admin`` gate."""
+    status = verification_metering.capacity_status(db)
+    breakdown = verification_metering.per_org_breakdown(
+        db, year_month=status["year_month"],
+    )
+    return _AdminPoolStatusOut(
+        year_month=status["year_month"],
+        cap=status["cap"],
+        used=status["used"],
+        remaining=status["remaining"],
+        has_capacity=status["has_capacity"],
+        reset_date=status["reset_date"],
+        days_until_reset=status["days_until_reset"],
+        per_org=breakdown,
+    )
 
 
 async def _read_raw_body(request: Request) -> bytes:
@@ -414,6 +539,20 @@ def _apply_decision(
 
     session_row.status = "approved"
     session_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    # Phase 52b B1 — record consumption against the shared free pool.
+    # Only fires for ``didit`` provenance (the function rejects
+    # demo_stub and backdoor — Phase 51 forward-constraint). Same-user
+    # re-verifies that DO advance state count as a new consumption
+    # (Didit charged us for the session); the receiver's idempotency
+    # check prevents counting twice on a webhook replay.
+    verification_metering.record_consumption(
+        db,
+        user_id=target_user.id,
+        provenance=verification.PROV_DIDIT,
+        provider_session_id=session_row.provider_session_id,
+        org_id=session_row.triggering_org_id,
+    )
 
     log_audit_event(
         db,

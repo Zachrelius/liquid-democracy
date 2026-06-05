@@ -1910,6 +1910,49 @@ class ElectionCandidacy(Base):
     )
 
 
+class VerificationConsumption(Base):
+    """Phase 52b — append-only log of real Didit verifications
+    consumed against the shared monthly free pool.
+
+    One row per real completion. ``year_month`` ("YYYY-MM") keys the
+    monthly bucket — current-month total = ``COUNT(*) WHERE
+    year_month = current``, no cron / no worker / implicit reset on
+    the 1st. ``org_id`` is the triggering org (nullable — verifies
+    initiated from Settings without an org context come back NULL);
+    per-org rows give a future sub-allocation policy real data
+    without enforcing one now. ``demo_stub`` / ``backdoor``
+    provenance NEVER produces a row (Phase 51 forward-constraint;
+    enforced in ``verification_metering.record_consumption``).
+    """
+
+    __tablename__ = "verification_consumption"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    year_month: Mapped[str] = mapped_column(
+        String(length=7), nullable=False, index=True,
+    )
+    org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    provider_session_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True,
+    )
+    # Always "didit" today; captured anyway so a future provider swap
+    # makes per-provider attribution trivial.
+    provenance: Mapped[str] = mapped_column(
+        String(length=16), nullable=False,
+        default="didit", server_default="didit",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
+    )
+
+
 class VerificationSession(Base):
     """Phase 52a — bookkeeping for in-flight Didit verification
     sessions. One row per session, keyed by ``provider_session_id``
@@ -1938,6 +1981,15 @@ class VerificationSession(Base):
     )
     webhook_type_last: Mapped[Optional[str]] = mapped_column(
         String(length=64), nullable=True,
+    )
+    # Phase 52b — the triggering org id (if any) the user came from
+    # when starting this verification. Threaded through to the
+    # ``verification_consumption`` row at webhook approval so per-org
+    # consumption can be recorded. NULL when verification was
+    # initiated from Settings without an org context.
+    triggering_org_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True, index=True,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_now, nullable=False,
