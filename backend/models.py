@@ -551,6 +551,21 @@ class Topic(Base):
     # column was a same-value clone preserved for back-compat; Phase 33
     # drops it.
     color: Mapped[str] = mapped_column(String, nullable=False, default="#6366f1")
+    # Phase 56 — optional one-line description of what a topic is for.
+    # GUARD: this is NOT the resurrected Phase-33 `description` clone.
+    # `name` remains the canonical display name; `purpose` is a separate
+    # explanatory text shown as a subtitle in topic management + the
+    # proposal-creation picker. Never wire it into display-name fallback.
+    # Plain text on render (no markdown / HTML — XSS-safe by treating as
+    # text).
+    purpose: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Phase 56 — optional free-text label for grouping in pickers when an
+    # org enables `settings.topic_categories_enabled`. No validation
+    # beyond length (orgs name their own categories). Retained on the row
+    # when the toggle is OFF so re-enabling restores grouping.
+    category: Mapped[Optional[str]] = mapped_column(
+        String(length=80), nullable=True,
+    )
     org_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("organizations.id"), nullable=True, index=True)
     # Phase 8.5: NULL = parent-org-wide (default); non-NULL = scoped to that sub-org.
     sub_org_id: Mapped[Optional[str]] = mapped_column(

@@ -7,10 +7,15 @@ import { useConfirm } from '../../components/ConfirmDialog';
 import { useHasPermission } from '../../hooks/useHasPermission';
 import PendingActionsBanner from '../../components/PendingActionsBanner';
 
+// Phase 56 F1 — `var(--brand-primary)` and `var(--brand-accent)` removed.
+// The CSS-var swatches rendered fine but POSTed a non-hex value that the
+// backend hex-color validator (converged onto the branding regex in B2)
+// correctly rejects. The custom-color picker below covers any color a
+// steward might have reached for via those swatches.
 const PRESET_COLORS = [
   '#6366f1', '#8b5cf6', '#ec4899', '#ef4444', '#f97316',
   '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6',
-  'var(--brand-primary)', 'var(--brand-accent)', '#64748b', '#78716c',
+  '#64748b', '#78716c', '#1B3A5C', '#2E75B6',
 ];
 
 export default function Topics() {
@@ -141,19 +146,51 @@ export default function Topics() {
   }
 
   function ColorPicker({ value, onChange }) {
+    // Phase 56 F1 — a native `<input type="color">` sits beside the preset
+    // swatches so a steward can pick any hex (covers what the dropped
+    // var() swatches loosely gestured at). The native picker always emits
+    // `#RRGGBB`, so the backend validator (regex `^#(?:[0-9a-f]{3}|[0-9a-f]{6})$`)
+    // accepts the output by construction. The current selected color
+    // surfaces below the swatch row for visibility when a custom choice
+    // isn't one of the presets.
+    const isPreset = PRESET_COLORS.includes(value);
     return (
-      <div className="flex flex-wrap gap-2">
-        {PRESET_COLORS.map(c => (
-          <button
-            key={c}
-            type="button"
-            onClick={() => onChange(c)}
-            className={`w-7 h-7 rounded-full border-2 transition-all ${
-              value === c ? 'border-gray-800 scale-110' : 'border-transparent hover:border-gray-300'
+      <div>
+        <div className="flex flex-wrap items-center gap-2">
+          {PRESET_COLORS.map(c => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => onChange(c)}
+              className={`w-7 h-7 rounded-full border-2 transition-all ${
+                value === c ? 'border-gray-800 scale-110' : 'border-transparent hover:border-gray-300'
+              }`}
+              style={{ backgroundColor: c }}
+              aria-label={`Use color ${c}`}
+            />
+          ))}
+          <label
+            className={`relative inline-flex items-center justify-center w-7 h-7 rounded-full border-2 cursor-pointer transition-all ${
+              !isPreset ? 'border-gray-800 scale-110' : 'border-dashed border-gray-300 hover:border-gray-500'
             }`}
-            style={{ backgroundColor: c }}
-          />
-        ))}
+            style={!isPreset ? { backgroundColor: value } : { backgroundColor: 'white' }}
+            title="Pick a custom color"
+          >
+            <input
+              type="color"
+              value={value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#6366f1'}
+              onChange={e => onChange(e.target.value)}
+              className="absolute inset-0 opacity-0 cursor-pointer"
+              aria-label="Pick a custom color"
+            />
+            {isPreset && (
+              <span className="text-[10px] text-gray-500 leading-none select-none">+</span>
+            )}
+          </label>
+        </div>
+        <p className="mt-2 text-xs text-gray-400">
+          Selected: <span className="font-mono">{value || '—'}</span>
+        </p>
       </div>
     );
   }
