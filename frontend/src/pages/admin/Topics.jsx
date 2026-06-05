@@ -74,6 +74,50 @@ export default function Topics() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Phase 56 F3 / F4 hotfix — derive guidance + categoriesEnabled +
+  // groupedTopics BEFORE the early-return guards. The earlier placement
+  // (after the `if (!currentOrg)` / `if (loading)` returns) violated the
+  // rules of hooks: on the initial render `loading=true` short-circuited
+  // before `useMemo` ran, so a later render where `loading=false` called
+  // a hook that hadn't existed previously → React #310. Reading from
+  // possibly-null `currentOrg` is safe via optional chaining; the empty
+  // `topics` array on initial render makes the memo a no-op.
+  const topicGuidance =
+    typeof currentOrg?.settings?.topic_guidance === 'string'
+      ? currentOrg.settings.topic_guidance
+      : '';
+  const categoriesEnabled = !!currentOrg?.settings?.topic_categories_enabled;
+  const groupedTopics = useMemo(() => {
+    if (!categoriesEnabled) return null;
+    const groups = new Map();
+    for (const t of topics) {
+      const key = (t.category || '').trim();
+      const groupKey = key || '__uncategorized__';
+      if (!groups.has(groupKey)) groups.set(groupKey, []);
+      groups.get(groupKey).push(t);
+    }
+    const named = [...groups.entries()]
+      .filter(([k]) => k !== '__uncategorized__')
+      .sort(([a], [b]) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    const uncategorized = groups.get('__uncategorized__') || [];
+    const result = named.map(([label, items]) => ({
+      label,
+      items: items
+        .slice()
+        .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
+    }));
+    if (uncategorized.length > 0) {
+      result.push({
+        label: 'Uncategorized',
+        items: uncategorized
+          .slice()
+          .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
+        isUncategorized: true,
+      });
+    }
+    return result;
+  }, [categoriesEnabled, topics]);
+
   if (!currentOrg) return <div className="text-center py-16 text-gray-400">No organization selected</div>;
   if (loading) return (
     <div className="flex justify-center items-center py-20">
@@ -222,50 +266,6 @@ export default function Topics() {
       </div>
     );
   }
-
-  // Phase 56 F3 — org-level topic guidance, rendered at the top of the
-  // page when the steward has set it. Sourced from currentOrg.settings.
-  // Markdown supported (same renderer as intro_text / proposal bodies).
-  const topicGuidance =
-    typeof currentOrg?.settings?.topic_guidance === 'string'
-      ? currentOrg.settings.topic_guidance
-      : '';
-  // Phase 56 F4 — categories grouping is org-opt-in via a settings toggle.
-  const categoriesEnabled = !!currentOrg?.settings?.topic_categories_enabled;
-
-  // Phase 56 F4 — when categories are enabled, group the topic list by
-  // category (case-insensitive sort, "Uncategorized" trailing). When
-  // disabled the flat list reads exactly as before.
-  const groupedTopics = useMemo(() => {
-    if (!categoriesEnabled) return null;
-    const groups = new Map();
-    for (const t of topics) {
-      const key = (t.category || '').trim();
-      const groupKey = key || '__uncategorized__';
-      if (!groups.has(groupKey)) groups.set(groupKey, []);
-      groups.get(groupKey).push(t);
-    }
-    const named = [...groups.entries()]
-      .filter(([k]) => k !== '__uncategorized__')
-      .sort(([a], [b]) => a.toLowerCase().localeCompare(b.toLowerCase()));
-    const uncategorized = groups.get('__uncategorized__') || [];
-    const result = named.map(([label, items]) => ({
-      label,
-      items: items
-        .slice()
-        .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
-    }));
-    if (uncategorized.length > 0) {
-      result.push({
-        label: 'Uncategorized',
-        items: uncategorized
-          .slice()
-          .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
-        isUncategorized: true,
-      });
-    }
-    return result;
-  }, [categoriesEnabled, topics]);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
