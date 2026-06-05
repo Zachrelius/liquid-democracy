@@ -241,13 +241,31 @@ class TopicCreate(BaseModel):
     color: str = "#6366f1"
     # Phase 8.5: optional sub-org scope. NULL = parent-org-wide (default).
     sub_org_id: Optional[str] = None
+    # Phase 56 — optional purpose (plain text, max 500) and category
+    # (free-text label, max 80). Both default to None / NULL on the row.
+    # Purpose is NEVER used as a display-name fallback (Phase 33 guard).
+    purpose: Optional[str] = Field(default=None, max_length=500)
+    category: Optional[str] = Field(default=None, max_length=80)
 
     @field_validator("color")
     @classmethod
     def validate_color(cls, v: str) -> str:
-        if not v.startswith("#") or len(v) not in (4, 7):
-            raise ValueError("color must be a hex string like #abc or #aabbcc")
-        return v
+        # Phase 56 B2 — converge on the shared hex-regex validator used by
+        # branding so the topic color path rejects var() strings and other
+        # malformed shapes (the prior hand-rolled startswith('#') + length
+        # check wrongly accepted '#zzz' and rejected legitimate colors
+        # only because of the var(--brand-*) presets in the FE).
+        # The shared helper accepts None as "leave unchanged" — topic
+        # color is non-nullable with a default, so we forward None to it
+        # only when the caller explicitly clears the field (it won't,
+        # since the FE always sends a hex), and re-raise on None reaching
+        # the persistence layer.
+        validated = _validate_hex_color(v)
+        if validated is None:
+            raise ValueError(
+                "color must be a hex string in #RRGGBB or #RGB form"
+            )
+        return validated
 
 
 class TopicOut(BaseModel):
@@ -258,6 +276,11 @@ class TopicOut(BaseModel):
     # this to render scope badges; existing single-org clients receive None
     # everywhere and behave unchanged.
     sub_org_id: Optional[str] = None
+    # Phase 56 — optional purpose + category surface on every TopicOut so
+    # the FE can render subtitles and category grouping. Both NULL on
+    # existing topics; the FE handles None gracefully.
+    purpose: Optional[str] = None
+    category: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

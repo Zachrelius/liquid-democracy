@@ -547,6 +547,29 @@ def update_organization(
                     detail=f"{tkey} must be between 0.0 and 1.0 inclusive",
                 )
 
+        # Phase 56 B4 — topic_guidance + topic_categories_enabled
+        # validation. Same pre-merge fail-cleanly shape as the threshold
+        # validators above: a bad value short-circuits the whole PATCH.
+        if "topic_guidance" in body.settings:
+            tg = body.settings["topic_guidance"]
+            if tg is not None and not isinstance(tg, str):
+                raise HTTPException(
+                    status_code=400,
+                    detail="topic_guidance must be a string",
+                )
+            if isinstance(tg, str) and len(tg) > 5000:
+                raise HTTPException(
+                    status_code=400,
+                    detail="topic_guidance exceeds 5000-character maximum length",
+                )
+        if "topic_categories_enabled" in body.settings:
+            tce = body.settings["topic_categories_enabled"]
+            if not isinstance(tce, bool):
+                raise HTTPException(
+                    status_code=400,
+                    detail="topic_categories_enabled must be a boolean",
+                )
+
         # Phase 17 B5 — tie_resolution validation. Same pre-merge shape:
         # invalid method on either voting_method fails the whole PATCH
         # cleanly with HTTP 400. Unknown keys (e.g., a future
@@ -2609,6 +2632,12 @@ def create_org_topic(
         name=body.name,
         # Phase 33 D2 — Topic.description dropped.
         color=body.color,
+        # Phase 56 — optional purpose + category persist when supplied.
+        # Empty strings normalize to None so the column reads as NULL
+        # rather than as the empty literal (FE renders nothing for both
+        # but the data shape stays clean).
+        purpose=body.purpose or None,
+        category=body.category or None,
         org_id=org.id,
         sub_org_id=target_sub_org_id,
     )
@@ -2641,6 +2670,12 @@ def update_org_topic(
     topic.name = body.name
     # Phase 33 D2 — Topic.description column dropped.
     topic.color = body.color
+    # Phase 56 — purpose + category are persistable on PATCH. The PATCH
+    # body shape is TopicCreate (full-replacement semantics, not partial)
+    # so we mirror that: NULL when the caller sends None / empty, the
+    # supplied value otherwise.
+    topic.purpose = body.purpose or None
+    topic.category = body.category or None
     db.commit()
     db.refresh(topic)
     return topic

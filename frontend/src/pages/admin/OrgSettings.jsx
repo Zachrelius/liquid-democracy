@@ -21,6 +21,8 @@ import renderMarkdown from '../../utils/renderMarkdown';
 // client-side keeps the textarea + counter honest without round-tripping
 // every keystroke.
 const INTRO_TEXT_MAX = 5000;
+// Phase 56 F5 — topic guidance is markdown, same max as intro_text.
+const TOPIC_GUIDANCE_MAX = 5000;
 
 // Phase 20 — Stable Result Required (renamed from "sustained-majority").
 // Defaults mirror the backend's StableResultConfig defaults (see
@@ -276,6 +278,21 @@ export default function OrgSettings() {
   const [introText, setIntroText] = useState('');
   const [savingIntro, setSavingIntro] = useState(false);
 
+  // Phase 56 F5 — org topic guidance editor state. Persisted at
+  // Organization.settings.topic_guidance (markdown, max 5000 chars).
+  // The renderer is the same one intro_text uses. Saved via the generic
+  // PATCH /api/orgs/{slug} settings-merge so the backend's B4 length
+  // validator catches over-cap submits.
+  const [topicGuidance, setTopicGuidance] = useState('');
+  const [savingTopicGuidance, setSavingTopicGuidance] = useState(false);
+
+  // Phase 56 F4 — categories toggle. Boolean. When ON, topic management
+  // + proposal-creation pickers group by category; when OFF, flat list
+  // (but category values are retained on the rows so re-enabling
+  // restores grouping).
+  const [topicCategoriesEnabled, setTopicCategoriesEnabled] = useState(false);
+  const [savingTopicCategories, setSavingTopicCategories] = useState(false);
+
   // Phase 45b F1 — Governance Mode section state. The revert flow needs
   // the active members list to pick a successor; the switch-to-council
   // flow does not (the steward demotes themselves).
@@ -371,6 +388,11 @@ export default function OrgSettings() {
       // helper treats empty string as null, so we hydrate empty when the
       // field is missing/null.
       setIntroText(typeof s.intro_text === 'string' ? s.intro_text : '');
+      // Phase 56 F4 + F5 — topic guidance + categories toggle. Both live
+      // in settings JSON. Empty string for missing guidance; false for
+      // missing toggle.
+      setTopicGuidance(typeof s.topic_guidance === 'string' ? s.topic_guidance : '');
+      setTopicCategoriesEnabled(!!s.topic_categories_enabled);
 
       // Phase 17 F1 — Tie resolution lives at settings.tie_resolution
       // {approval, ranked_choice}. Hydrate from the org's stored values
@@ -744,6 +766,51 @@ export default function OrgSettings() {
       toast.error(err.message || 'Failed to save intro text');
     } finally {
       setSavingIntro(false);
+    }
+  }
+
+  async function handleSaveTopicGuidance() {
+    // Phase 56 F5 — save topic_guidance via PATCH /api/orgs/{slug}
+    // with a single-key settings merge. Backend's B4 validator
+    // enforces the 5000-char cap server-side; the defensive check here
+    // keeps a known-bad payload from even hitting the wire.
+    if (topicGuidance.length > TOPIC_GUIDANCE_MAX) {
+      toast.error(`Topic guidance is over the ${TOPIC_GUIDANCE_MAX}-character limit.`);
+      return;
+    }
+    setSavingTopicGuidance(true);
+    try {
+      await api.patch(`/api/orgs/${currentOrg.slug}`, {
+        settings: { topic_guidance: topicGuidance },
+      });
+      await refreshOrgs();
+      toast.success('Topic guidance saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save topic guidance');
+    } finally {
+      setSavingTopicGuidance(false);
+    }
+  }
+
+  async function handleSaveTopicCategoriesToggle(nextValue) {
+    // Phase 56 F4 — toggle save. Persist the new boolean and refresh.
+    // Toggling OFF does NOT clear category values on the existing topics
+    // — the backend simply hides grouping when the flag is false. Re-
+    // enabling restores grouping with the retained data.
+    setSavingTopicCategories(true);
+    try {
+      await api.patch(`/api/orgs/${currentOrg.slug}`, {
+        settings: { topic_categories_enabled: nextValue },
+      });
+      await refreshOrgs();
+      setTopicCategoriesEnabled(nextValue);
+      toast.success(
+        nextValue ? 'Topic categories enabled' : 'Topic categories disabled',
+      );
+    } catch (err) {
+      toast.error(err.message || 'Failed to update topic categories toggle');
+    } finally {
+      setSavingTopicCategories(false);
     }
   }
 
@@ -1321,6 +1388,96 @@ export default function OrgSettings() {
           </div>
         </section>
       )}
+
+      {/* Phase 56 F5 — Topic guidance editor. Markdown supported (same
+          renderer + sanitizer as intro_text). Surfaced at the top of
+          the topic-management page and as a hint in proposal-creation
+          topic pickers, so members creating new topics or picking
+          existing ones see the steward's intent. Page-level admin gate
+          already restricts visibility; no additional per-control gate. */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+          Topic guidance
+        </h2>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+          <p className="text-xs text-gray-500">
+            A short note shown at the top of the Topic Management page and
+            in proposal-creation pickers. Use it to explain your org&apos;s
+            approach to topics — what they&apos;re for, when to create a new
+            one, naming conventions. Markdown supported (same syntax as
+            proposal bodies). Hidden when empty.
+          </p>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Guidance</label>
+            <textarea
+              value={topicGuidance}
+              onChange={e => setTopicGuidance(e.target.value)}
+              maxLength={TOPIC_GUIDANCE_MAX}
+              rows={6}
+              placeholder="e.g. Topics group proposals by area. Keep them broad — 'Budget', 'Operations' — rather than tied to a single proposal."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-y"
+            />
+            <p className="mt-1 text-xs text-gray-400">
+              {topicGuidance.length} / {TOPIC_GUIDANCE_MAX} characters
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 mb-1">Preview</p>
+            {topicGuidance.trim() ? (
+              <div
+                className="prose text-[#2C3E50] text-sm leading-relaxed bg-gray-50 border border-gray-200 rounded-lg p-4"
+                dangerouslySetInnerHTML={{ __html: `<p>${renderMarkdown(topicGuidance)}</p>` }}
+              />
+            ) : (
+              <div className="text-xs text-gray-400 italic bg-gray-50 border border-gray-200 rounded-lg p-4">
+                Empty — no guidance shown on the topic-management page.
+              </div>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleSaveTopicGuidance}
+              disabled={savingTopicGuidance}
+              className="px-5 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+            >
+              {savingTopicGuidance ? 'Saving…' : 'Save topic guidance'}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Phase 56 F4 — Topic categories toggle. When ON, topics are
+          grouped by category in topic management + proposal-creation
+          pickers. When OFF, flat list (and category values on existing
+          rows are retained, so re-enabling restores grouping). */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+          Topic categories
+        </h2>
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={topicCategoriesEnabled}
+              disabled={savingTopicCategories}
+              onChange={e => handleSaveTopicCategoriesToggle(e.target.checked)}
+              className="mt-1 accent-[var(--brand-accent)]"
+            />
+            <div>
+              <p className="text-sm font-medium text-gray-800">
+                Group topics by category
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                When enabled, topics are grouped and sorted by their
+                category label in topic management and in proposal-creation
+                pickers. Topics keep their category labels even when this
+                is off — re-enabling restores grouping.
+              </p>
+            </div>
+          </label>
+        </div>
+      </section>
 
       {/* Voting Defaults — duration */}
       <section className="space-y-3">
