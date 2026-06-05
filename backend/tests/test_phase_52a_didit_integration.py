@@ -210,11 +210,16 @@ class TestJurisdictionNormalization:
     def test_two_letter_state_uppercased(self):
         assert verification_provider.normalize_jurisdiction("ca") == "CA"
 
-    def test_full_state_name_rejected(self):
-        # v1 vocabulary is two-letter codes only; full names fall to
-        # None so an org admin's "CA" floor isn't satisfied by a
-        # "California" claim (or vice versa).
-        assert verification_provider.normalize_jurisdiction("California") is None
+    def test_full_state_name_accepted_and_normalized(self):
+        # Phase 52e E1 — the captured-payload manifest revealed Didit
+        # emits full state names (e.g. "Massachusetts") under
+        # ``parsed_address.region``, so ``normalize_jurisdiction`` was
+        # extended to accept both 2-letter codes and full names and
+        # normalize to 2-letter. An org admin's "CA" floor IS now
+        # satisfied by a "California" claim via this normalization.
+        # The admin UI still presents the 2-letter-code picker so
+        # admin input stays canonical.
+        assert verification_provider.normalize_jurisdiction("California") == "CA"
 
     def test_country_code_rejected(self):
         assert verification_provider.normalize_jurisdiction("US") is None

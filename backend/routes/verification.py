@@ -152,59 +152,84 @@ async def _read_raw_body(request: Request) -> bytes:
 
 
 def _extract_ocr_fields(decision: dict) -> dict:
-    """Phase 52d D4 — extract the OCR fields the hashing module needs
-    from a Didit decision payload.
+    """Phase 52e E1 — extract OCR fields from a Didit decision payload.
 
-    Looks under ``id_verification`` (the Custom KYC shape observed in
-    Phase 52a/52c) and falls back to top-level. Returns a dict that
-    ``verification_hashing.compute_hashes`` can consume. Missing
-    keys come back absent — ``compute_hashes`` returns ``None`` for
-    any hash whose required fields aren't present.
+    REWRITTEN against the real payload captured in the 52d-grounding
+    Z re-verify (manifest at 2026-06-05). The 52d-shipped version
+    probed ``decision.id_verification`` (singular object) but Didit
+    actually emits ``decision.id_verifications`` (PLURAL ARRAY) — so
+    52d's extractor returned all-None on the real payload and Z's
+    row sat at ``identity`` with NULL hashes. This rewrite hits the
+    real paths.
 
-    The exact prod key paths are still grounded in Phase 52e (the
-    Z re-verify gives us the manifest). For 52d the extractor covers
-    the documented Didit shape + common variants; 52e tightens
-    against the real captured manifest if a key differs.
+    Real paths confirmed from the 2026-06-05 captured manifest
+    (the redacted skeleton emitted by ``redact_payload``):
+      * ``decision.id_verifications`` is a list of objects.
+      * The first element carries the OCR fields:
+        - ``document_number`` (str)
+        - ``first_name`` / ``last_name`` / ``full_name`` (str)
+        - ``date_of_birth`` (str, ISO-shape ``YYYY-MM-DD``)
+        - ``parsed_address`` (structured object — preferred for the
+          name+DOB+address hash because it's stable across re-
+          verifications)
+        - ``issuing_state`` (str, 3-char) is the document's ISSUING
+          authority, NOT the holder's residence — do NOT use for
+          jurisdiction. Use ``parsed_address.region``.
+
+    Returns a dict shaped exactly as ``verification_hashing.
+    compute_hashes`` expects. Missing array / element / sub-fields
+    all → None for that field; ``compute_hashes`` returns None for
+    any hash whose required fields aren't present. Fail-safe: empty
+    array, missing element, ``parsed_address`` null, decision
+    malformed — all → empty dict with None values, never a crash.
     """
     if not isinstance(decision, dict):
         return {}
-    iv = decision.get("id_verification")
-    if not isinstance(iv, dict):
-        iv = {}
 
-    def _first(*candidates):
-        for c in candidates:
-            if c not in (None, ""):
-                return c
+    id_verifications = decision.get("id_verifications")
+    iv: dict = {}
+    if isinstance(id_verifications, list) and id_verifications:
+        first = id_verifications[0]
+        if isinstance(first, dict):
+            iv = first
+
+    def _str_or_none(v):
+        if isinstance(v, str) and v.strip():
+            return v
         return None
 
-    document_number = _first(
-        iv.get("document_number"),
-        iv.get("document_id"),
-        iv.get("doc_number"),
-        decision.get("document_number"),
-    )
-    first_name = _first(
-        iv.get("first_name"),
-        iv.get("given_name"),
-        iv.get("given_names"),
-        decision.get("first_name"),
-    )
-    last_name = _first(
-        iv.get("last_name"),
-        iv.get("family_name"),
-        iv.get("surname"),
-        decision.get("last_name"),
-    )
-    date_of_birth = _first(
-        iv.get("date_of_birth"),
-        iv.get("dob"),
-        iv.get("birth_date"),
-        decision.get("date_of_birth"),
-    )
-    address = iv.get("address")
-    if not isinstance(address, dict):
-        address = None
+    document_number = _str_or_none(iv.get("document_number"))
+    first_name = _str_or_none(iv.get("first_name"))
+    last_name = _str_or_none(iv.get("last_name"))
+    date_of_birth = _str_or_none(iv.get("date_of_birth"))
+
+    # Structured address from parsed_address. Prefer structured over
+    # the freeform ``address`` / ``formatted_address`` strings — the
+    # parsed form is more stable across re-verifications, and
+    # ``normalize_address`` expects a dict with street/city/state/zip
+    # keys. Map Didit's keys to the hashing module's expected shape.
+    pa = iv.get("parsed_address")
+    address = None
+    if isinstance(pa, dict):
+        # Region is the holder's address state (full name string per
+        # the captured payload). ``normalize_address`` will upper-case
+        # + match against ``normalize_jurisdiction`` indirectly when
+        # the address is hashed; for the residency jurisdiction
+        # specifically, we extract via ``_extract_jurisdiction`` which
+        # already runs through ``normalize_jurisdiction``.
+        # Compose the dict in the shape ``normalize_address`` consumes.
+        address = {
+            "street": pa.get("street_1"),
+            "city": pa.get("city"),
+            "state": pa.get("region"),  # Didit's "region" = state name
+            "zip": pa.get("postal_code"),
+        }
+        # Drop the dict entirely if every component is missing —
+        # ``compute_hashes`` then returns None for the
+        # name_dob_address_hash, which is the correct fail-safe
+        # rather than hashing a dict full of Nones.
+        if not any(address.values()):
+            address = None
 
     return {
         "document_number": document_number,
@@ -464,8 +489,13 @@ async def didit_webhook(
         return {"ok": False, "reason": "unknown_session"}
 
     # Idempotency: same (session, webhook_type) twice is a no-op 200.
+    # Phase 52e — adds ``approved_purged`` + ``approved_purge_failed``
+    # so a replay after the purge step has run still dedupes (the
+    # state-write was the load-bearing action; the purge outcome
+    # doesn't change the verification record).
     if session_row.webhook_type_last == webhook_type and session_row.status in (
-        "approved", "declined", "collision_rejected",
+        "approved", "approved_purged", "approved_purge_failed",
+        "declined", "collision_rejected",
     ):
         return {"ok": True, "deduped": True}
 
@@ -527,21 +557,40 @@ async def didit_webhook(
         )
         db.commit()
 
-    # Phase 52d D4 — purge the Didit session after we've extracted
+    # Phase 52e E1b — purge the Didit session after we've extracted
     # what we need. Fail-toward-keeping-the-verification: a purge
     # error is logged but does NOT touch the already-committed user
     # record. demo_stub never reaches this branch (the helper
     # short-circuits on provenance check). The Didit response is
     # already 200 — the purge runs after the commit and the receiver
     # acks regardless.
+    #
+    # Phase 52e adds bookkeeping-row distinction: a confirmed-deleted
+    # session lands ``status = 'approved_purged'``; a delete that
+    # failed (including 404 — the 52d round-trip showed 404 does NOT
+    # mean "already deleted" on Didit's side) lands
+    # ``status = 'approved_purge_failed'``. A later sweep can find
+    # failed-purge rows and retry. The pre-purge ``approved`` status
+    # is still set so the idempotency replay path keeps working
+    # (status in the deduped-set).
     try:
         if session_row is not None and session_row.status == "approved":
             db.refresh(target_user)
             purged = _purge_session_best_effort(str(session_id), target_user)
+            session_row = db.get(
+                models.VerificationSession, session_row.id,
+            )
+            if session_row is not None:
+                session_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                session_row.status = (
+                    "approved_purged" if purged else "approved_purge_failed"
+                )
+                db.commit()
             if not purged:
                 logger.warning(
                     "didit_webhook: session purge unsuccessful for %s "
-                    "(verification record stands; retry later)",
+                    "(verification record stands; bookkeeping row marked "
+                    "approved_purge_failed for retry sweep)",
                     session_id,
                 )
     except Exception as e:  # noqa: BLE001 — purge must NEVER raise to the receiver
