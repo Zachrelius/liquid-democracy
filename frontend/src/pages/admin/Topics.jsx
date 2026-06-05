@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
@@ -6,6 +6,9 @@ import { useConfirm } from '../../components/ConfirmDialog';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
 import PendingActionsBanner from '../../components/PendingActionsBanner';
+// Phase 56 F3 — render org topic guidance (markdown) at the top of the
+// topic-management page. Same renderer used for proposal bodies / intro_text.
+import renderMarkdown from '../../utils/renderMarkdown';
 
 // Phase 56 F1 — `var(--brand-primary)` and `var(--brand-accent)` removed.
 // The CSS-var swatches rendered fine but POSTed a non-hex value that the
@@ -35,12 +38,17 @@ export default function Topics() {
   // Create form state
   const [newName, setNewName] = useState('');
   const [newColor, setNewColor] = useState('#6366f1');
+  // Phase 56 F2 + F4 — optional purpose + category on create + edit.
+  const [newPurpose, setNewPurpose] = useState('');
+  const [newCategory, setNewCategory] = useState('');
   // Phase 8.5 — scope selector. '' == parent-org-wide (sub_org_id null).
   const [newScope, setNewScope] = useState('');
 
   // Edit form state
   const [editName, setEditName] = useState('');
   const [editColor, setEditColor] = useState('#6366f1');
+  const [editPurpose, setEditPurpose] = useState('');
+  const [editCategory, setEditCategory] = useState('');
 
   // Phase 8.5 — sub-orgs available for the scope dropdown.
   const [subOrgs, setSubOrgs] = useState([]);
@@ -77,11 +85,19 @@ export default function Topics() {
     e.preventDefault();
     try {
       const payload = { name: newName, color: newColor };
+      // Phase 56 F2 + F4 — only send purpose / category when non-empty so
+      // the backend stores NULL rather than an empty literal.
+      const trimmedPurpose = newPurpose.trim();
+      const trimmedCategory = newCategory.trim();
+      if (trimmedPurpose) payload.purpose = trimmedPurpose;
+      if (trimmedCategory) payload.category = trimmedCategory;
       if (newScope) payload.sub_org_id = newScope;
       await api.post(`/api/orgs/${slug}/topics`, payload);
       toast.success('Topic created');
       setNewName('');
       setNewColor('#6366f1');
+      setNewPurpose('');
+      setNewCategory('');
       setNewScope('');
       setShowCreate(false);
       load();
@@ -108,7 +124,15 @@ export default function Topics() {
 
   async function handleUpdate(topicId) {
     try {
-      await api.patch(`/api/orgs/${slug}/topics/${topicId}`, { name: editName, color: editColor });
+      const payload = { name: editName, color: editColor };
+      const trimmedPurpose = editPurpose.trim();
+      const trimmedCategory = editCategory.trim();
+      // Phase 56 — PATCH semantics for purpose/category mirror the
+      // backend: send the value (even if empty) so a steward can
+      // explicitly clear a field by saving with the input blank.
+      payload.purpose = trimmedPurpose;
+      payload.category = trimmedCategory;
+      await api.patch(`/api/orgs/${slug}/topics/${topicId}`, payload);
       toast.success('Topic updated');
       setEditingId(null);
       load();
@@ -143,6 +167,10 @@ export default function Topics() {
     setEditingId(topic.id);
     setEditName(topic.name);
     setEditColor(topic.color);
+    // Phase 56 F2 + F4 — seed the edit form with the current purpose +
+    // category (or empty strings when null) so the inputs are editable.
+    setEditPurpose(topic.purpose || '');
+    setEditCategory(topic.category || '');
   }
 
   function ColorPicker({ value, onChange }) {
@@ -195,6 +223,50 @@ export default function Topics() {
     );
   }
 
+  // Phase 56 F3 — org-level topic guidance, rendered at the top of the
+  // page when the steward has set it. Sourced from currentOrg.settings.
+  // Markdown supported (same renderer as intro_text / proposal bodies).
+  const topicGuidance =
+    typeof currentOrg?.settings?.topic_guidance === 'string'
+      ? currentOrg.settings.topic_guidance
+      : '';
+  // Phase 56 F4 — categories grouping is org-opt-in via a settings toggle.
+  const categoriesEnabled = !!currentOrg?.settings?.topic_categories_enabled;
+
+  // Phase 56 F4 — when categories are enabled, group the topic list by
+  // category (case-insensitive sort, "Uncategorized" trailing). When
+  // disabled the flat list reads exactly as before.
+  const groupedTopics = useMemo(() => {
+    if (!categoriesEnabled) return null;
+    const groups = new Map();
+    for (const t of topics) {
+      const key = (t.category || '').trim();
+      const groupKey = key || '__uncategorized__';
+      if (!groups.has(groupKey)) groups.set(groupKey, []);
+      groups.get(groupKey).push(t);
+    }
+    const named = [...groups.entries()]
+      .filter(([k]) => k !== '__uncategorized__')
+      .sort(([a], [b]) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    const uncategorized = groups.get('__uncategorized__') || [];
+    const result = named.map(([label, items]) => ({
+      label,
+      items: items
+        .slice()
+        .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
+    }));
+    if (uncategorized.length > 0) {
+      result.push({
+        label: 'Uncategorized',
+        items: uncategorized
+          .slice()
+          .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
+        isUncategorized: true,
+      });
+    }
+    return result;
+  }, [categoriesEnabled, topics]);
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
       <PendingActionsBanner orgSlug={slug} actionType="topic.delete" />
@@ -210,6 +282,22 @@ export default function Topics() {
           </button>
         )}
       </div>
+
+      {/* Phase 56 F3 — org-level topic guidance. Hidden entirely when
+          empty so untouched orgs don't see a placeholder block. Markdown
+          renders via the existing sanitizing renderer (same one
+          intro_text uses). */}
+      {topicGuidance.trim() && (
+        <div className="border border-blue-100 bg-blue-50/40 rounded-xl p-4">
+          <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-2">
+            Topic guidance from your organization
+          </p>
+          <div
+            className="prose text-sm text-[#2C3E50] leading-relaxed"
+            dangerouslySetInnerHTML={{ __html: `<p>${renderMarkdown(topicGuidance)}</p>` }}
+          />
+        </div>
+      )}
 
       {/* Create Form */}
       {showCreate && (
@@ -244,6 +332,28 @@ export default function Topics() {
             </div>
           )}
           <div>
+            <label className="block text-xs text-gray-500 mb-1">Purpose (optional)</label>
+            <input
+              type="text"
+              value={newPurpose}
+              onChange={e => setNewPurpose(e.target.value)}
+              maxLength={500}
+              placeholder="A short one-liner explaining what this topic is for."
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Category (optional)</label>
+            <input
+              type="text"
+              value={newCategory}
+              onChange={e => setNewCategory(e.target.value)}
+              maxLength={80}
+              placeholder="A grouping label (e.g. 'Policy', 'Operations'). Only used when categories are enabled."
+              className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+            />
+          </div>
+          <div>
             <label className="block text-xs text-gray-500 mb-1">Color</label>
             <ColorPicker value={newColor} onChange={setNewColor} />
           </div>
@@ -266,101 +376,148 @@ export default function Topics() {
         </form>
       )}
 
-      {/* Topics List */}
+      {/* Topics List — flat when categories are disabled, grouped by
+          category (with a trailing "Uncategorized" group) when enabled.
+          Toggling categories OFF does NOT clear category values on the
+          rows; re-enabling restores grouping. */}
       <div className="space-y-3">
         {topics.length === 0 ? (
           <div className="text-center py-12 text-gray-400 text-sm">No topics yet. Create one to get started.</div>
-        ) : (
-          topics.map(t => (
-            <div key={t.id} className="bg-white border border-gray-200 rounded-xl p-4">
-              {editingId === t.id ? (
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">Name</label>
-                    <input
-                      type="text"
-                      value={editName}
-                      onChange={e => setEditName(e.target.value)}
-                      className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">Color</label>
-                    <ColorPicker value={editColor} onChange={setEditColor} />
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleUpdate(t.id)}
-                      className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)]"
-                    >
-                      Save
-                    </button>
-                    <button
-                      onClick={() => setEditingId(null)}
-                      className="text-xs px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span
-                      className="w-5 h-5 rounded-full flex-shrink-0"
-                      style={{ backgroundColor: t.color }}
-                    />
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium text-gray-800">{t.name}</p>
-                        {t.sub_org_id && (
-                          <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">
-                            {(subOrgs.find(s => s.id === t.sub_org_id)?.name) || 'sub-org'}
-                          </span>
-                        )}
-                      </div>
-                      {t.description && <p className="text-xs text-gray-400">{t.description}</p>}
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    {/* Phase 12.5 F2 — Promote (structural edit) gated on
-                        `topic.edit`; Edit on `topic.edit`; Deactivate on
-                        `topic.delete`. */}
-                    {t.sub_org_id && canEditTopic && (
-                      <button
-                        onClick={() => handlePromote(t)}
-                        className="text-xs text-[var(--brand-accent)] hover:underline"
-                        title="Make this topic visible to the whole parent org"
-                      >
-                        Promote to org-wide
-                      </button>
-                    )}
-                    {canEditTopic && (
-                      <button
-                        onClick={() => startEdit(t)}
-                        className="text-xs text-[var(--brand-accent)] hover:underline"
-                      >
-                        Edit
-                      </button>
-                    )}
-                    {canDeleteTopic && (
-                      <button
-                        // Phase 26 D1 — pass display name (description ||
-                        // name) to the confirm dialog so the user sees
-                        // the label they recognize.
-                        onClick={() => handleDeactivate(t.id, t.name)}
-                        className="text-xs text-red-500 hover:underline"
-                      >
-                        Deactivate
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
+        ) : categoriesEnabled && groupedTopics ? (
+          groupedTopics.map(group => (
+            <div key={group.label} className="space-y-2">
+              <h2
+                className={`text-xs font-semibold uppercase tracking-wide ${
+                  group.isUncategorized ? 'text-gray-400' : 'text-gray-500'
+                }`}
+              >
+                {group.label}
+              </h2>
+              {group.items.map(t => renderTopicCard(t))}
             </div>
           ))
+        ) : (
+          topics.map(t => renderTopicCard(t))
         )}
       </div>
     </div>
   );
+
+  function renderTopicCard(t) {
+    return (
+      <div key={t.id} className="bg-white border border-gray-200 rounded-xl p-4">
+        {editingId === t.id ? (
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Name</label>
+              <input
+                type="text"
+                value={editName}
+                onChange={e => setEditName(e.target.value)}
+                className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Purpose (optional)</label>
+              <input
+                type="text"
+                value={editPurpose}
+                onChange={e => setEditPurpose(e.target.value)}
+                maxLength={500}
+                placeholder="A short one-liner explaining what this topic is for."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Category (optional)</label>
+              <input
+                type="text"
+                value={editCategory}
+                onChange={e => setEditCategory(e.target.value)}
+                maxLength={80}
+                placeholder="A grouping label (e.g. 'Policy', 'Operations')."
+                className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Color</label>
+              <ColorPicker value={editColor} onChange={setEditColor} />
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleUpdate(t.id)}
+                className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)]"
+              >
+                Save
+              </button>
+              <button
+                onClick={() => setEditingId(null)}
+                className="text-xs px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span
+                className="w-5 h-5 rounded-full flex-shrink-0"
+                style={{ backgroundColor: t.color }}
+              />
+              <div>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-gray-800">{t.name}</p>
+                  {t.sub_org_id && (
+                    <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">
+                      {(subOrgs.find(s => s.id === t.sub_org_id)?.name) || 'sub-org'}
+                    </span>
+                  )}
+                </div>
+                {/* Phase 56 F2 — was dead `t.description` (column dropped
+                    in Phase 33). Now renders the optional `purpose`
+                    field as plain text (NOT via the markdown / HTML
+                    renderer — XSS-safe by treating as text). */}
+                {t.purpose && <p className="text-xs text-gray-400">{t.purpose}</p>}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              {/* Phase 12.5 F2 — Promote (structural edit) gated on
+                  `topic.edit`; Edit on `topic.edit`; Deactivate on
+                  `topic.delete`. */}
+              {t.sub_org_id && canEditTopic && (
+                <button
+                  onClick={() => handlePromote(t)}
+                  className="text-xs text-[var(--brand-accent)] hover:underline"
+                  title="Make this topic visible to the whole parent org"
+                >
+                  Promote to org-wide
+                </button>
+              )}
+              {canEditTopic && (
+                <button
+                  onClick={() => startEdit(t)}
+                  className="text-xs text-[var(--brand-accent)] hover:underline"
+                >
+                  Edit
+                </button>
+              )}
+              {canDeleteTopic && (
+                <button
+                  // Phase 56 — was an out-of-date Phase 26 comment
+                  // referencing `t.description` (Phase 33 dropped
+                  // that column); the confirm dialog has always
+                  // received `t.name` here, which remains canonical.
+                  onClick={() => handleDeactivate(t.id, t.name)}
+                  className="text-xs text-red-500 hover:underline"
+                >
+                  Deactivate
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 }

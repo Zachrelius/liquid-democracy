@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import useSubOrg from '../../useSubOrg';
@@ -9,6 +9,9 @@ import SubOrgErrorState from '../../components/SubOrgErrorState';
 import LinkedPolisesPicker from '../../components/LinkedPolisesPicker';
 // Phase 12.5 F2/F3 — per-control + threshold gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
+// Phase 56 F3 — markdown renderer reused for the topic-guidance hint in
+// the sub-org proposal-creation topic picker.
+import renderMarkdown from '../../utils/renderMarkdown';
 
 /**
  * Phase 8.5 — Sub-Org Proposals admin page.
@@ -148,6 +151,126 @@ function formatDays(value) {
 
 function pluralizeDays(value) {
   return Number(value) === 1 ? 'day' : 'days';
+}
+
+// Phase 56 F3 — collapsible org-guidance hint shown above the sub-org
+// topic picker. Hidden entirely when no guidance is set so untouched
+// orgs see no change.
+function SubOrgTopicGuidanceHint({ guidance }) {
+  const [open, setOpen] = useState(false);
+  const trimmed = (guidance || '').trim();
+  if (!trimmed) return null;
+  return (
+    <div className="mb-3 border border-blue-100 bg-blue-50/40 rounded-lg">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full px-3 py-2 flex items-center justify-between text-xs font-medium text-blue-800 hover:bg-blue-50/70 rounded-lg"
+      >
+        <span>Topic guidance from your organization</span>
+        <span className="text-blue-500">{open ? '−' : '+'}</span>
+      </button>
+      {open && (
+        <div
+          className="prose text-xs text-[#2C3E50] leading-relaxed px-3 pb-3"
+          dangerouslySetInnerHTML={{ __html: `<p>${renderMarkdown(trimmed)}</p>` }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Phase 56 F4 — sub-org variant of the proposal-creation topic picker
+// (no relevance slider; sub-org pickers use the implicit 1.0 weight).
+// Groups by category when the org enables the categories toggle.
+function SubOrgTopicPickerList({
+  topics,
+  subOrgName,
+  categoriesEnabled,
+  selectedTopics,
+  onToggle,
+}) {
+  const grouped = useMemo(() => {
+    if (!categoriesEnabled) return null;
+    const groups = new Map();
+    for (const t of topics) {
+      const key = (t.category || '').trim();
+      const groupKey = key || '__uncategorized__';
+      if (!groups.has(groupKey)) groups.set(groupKey, []);
+      groups.get(groupKey).push(t);
+    }
+    const named = [...groups.entries()]
+      .filter(([k]) => k !== '__uncategorized__')
+      .sort(([a], [b]) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    const uncategorized = groups.get('__uncategorized__') || [];
+    const result = named.map(([label, items]) => ({
+      label,
+      items: items
+        .slice()
+        .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
+    }));
+    if (uncategorized.length > 0) {
+      result.push({
+        label: 'Uncategorized',
+        items: uncategorized
+          .slice()
+          .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
+        isUncategorized: true,
+      });
+    }
+    return result;
+  }, [categoriesEnabled, topics]);
+
+  function renderRow(t) {
+    const sel = selectedTopics.find(s => s.topic_id === t.id);
+    return (
+      <label key={t.id} className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={!!sel}
+          onChange={() => onToggle(t.id)}
+          className="accent-[var(--brand-accent)]"
+        />
+        <span
+          className="inline-block w-3 h-3 rounded-full"
+          style={{ backgroundColor: t.color }}
+        />
+        <span className="text-sm text-gray-700">{t.name}</span>
+        {t.sub_org_id && (
+          <span className="text-[10px] uppercase text-blue-600">{subOrgName}</span>
+        )}
+        {t.purpose && (
+          <span className="text-xs text-gray-400">— {t.purpose}</span>
+        )}
+      </label>
+    );
+  }
+
+  if (categoriesEnabled && grouped) {
+    return (
+      <div className="space-y-3 max-h-48 overflow-y-auto">
+        {grouped.map(group => (
+          <div key={group.label} className="space-y-1">
+            <p
+              className={`text-[11px] font-semibold uppercase tracking-wide ${
+                group.isUncategorized ? 'text-gray-400' : 'text-gray-500'
+              }`}
+            >
+              {group.label}
+            </p>
+            <div className="space-y-1.5 pl-1">
+              {group.items.map(renderRow)}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1.5 max-h-48 overflow-y-auto">
+      {topics.map(renderRow)}
+    </div>
+  );
 }
 
 function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated, onCancel }) {
@@ -310,22 +433,17 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
           <label className="block text-xs text-gray-500 mb-2">
             Topics ({topics.length} in scope — parent-org-wide + {subOrg.name})
           </label>
-          <div className="space-y-1.5 max-h-48 overflow-y-auto">
-            {topics.map(t => {
-              const sel = selectedTopics.find(s => s.topic_id === t.id);
-              return (
-                <label key={t.id} className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={!!sel} onChange={() => toggleTopic(t.id)} className="accent-[var(--brand-accent)]" />
-                  <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: t.color }} />
-                  {/* Phase 26 D1 — description || name. */}
-                  <span className="text-sm text-gray-700">{t.name}</span>
-                  {t.sub_org_id && (
-                    <span className="text-[10px] uppercase text-blue-600">{subOrg.name}</span>
-                  )}
-                </label>
-              );
-            })}
-          </div>
+          {/* Phase 56 F3 — org-level topic guidance hint. */}
+          <SubOrgTopicGuidanceHint guidance={orgSettings?.topic_guidance} />
+          {/* Phase 56 F4 — group by category when the org has the
+              toggle on; otherwise the original flat list. */}
+          <SubOrgTopicPickerList
+            topics={topics}
+            subOrgName={subOrg.name}
+            categoriesEnabled={!!orgSettings?.topic_categories_enabled}
+            selectedTopics={selectedTopics}
+            onToggle={toggleTopic}
+          />
         </div>
       )}
 

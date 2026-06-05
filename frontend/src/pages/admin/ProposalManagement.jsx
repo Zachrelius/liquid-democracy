@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
@@ -6,6 +6,9 @@ import StatusBadge from '../../components/StatusBadge';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 import LinkedPolisesPicker from '../../components/LinkedPolisesPicker';
+// Phase 56 F3 — markdown renderer reused for the topic-guidance hint in
+// the proposal-creation topic picker.
+import renderMarkdown from '../../utils/renderMarkdown';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
 // Phase 52 Stage 1 — shared verification state label tables.
@@ -119,6 +122,143 @@ function OptionsEditor({ options, onChange }) {
       })}
     </div>
   );
+}
+
+// Phase 56 F3 — collapsible org-guidance hint shown above the
+// topic-picker. Hidden entirely when the org hasn't set any guidance,
+// so untouched orgs see no change. Default-collapsed to keep the
+// already-busy proposal form lean; one click opens the markdown body.
+function TopicGuidanceHint({ guidance }) {
+  const [open, setOpen] = useState(false);
+  const trimmed = (guidance || '').trim();
+  if (!trimmed) return null;
+  return (
+    <div className="mb-3 border border-blue-100 bg-blue-50/40 rounded-lg">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full px-3 py-2 flex items-center justify-between text-xs font-medium text-blue-800 hover:bg-blue-50/70 rounded-lg"
+      >
+        <span>Topic guidance from your organization</span>
+        <span className="text-blue-500">{open ? '−' : '+'}</span>
+      </button>
+      {open && (
+        <div
+          className="prose text-xs text-[#2C3E50] leading-relaxed px-3 pb-3"
+          dangerouslySetInnerHTML={{ __html: `<p>${renderMarkdown(trimmed)}</p>` }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Phase 56 F4 — proposal-creation topic picker, optionally grouped by
+// category when the org has `settings.topic_categories_enabled` on.
+// When the toggle is off, renders the flat list with the same shape
+// as the pre-Phase-56 picker (the spec's "no visible change for orgs
+// that don't opt in" guarantee).
+function TopicPickerList({
+  topics,
+  categoriesEnabled,
+  selectedTopics,
+  onToggle,
+  onRelevance,
+}) {
+  const grouped = useMemo(() => {
+    if (!categoriesEnabled) return null;
+    const groups = new Map();
+    for (const t of topics) {
+      const key = (t.category || '').trim();
+      const groupKey = key || '__uncategorized__';
+      if (!groups.has(groupKey)) groups.set(groupKey, []);
+      groups.get(groupKey).push(t);
+    }
+    const named = [...groups.entries()]
+      .filter(([k]) => k !== '__uncategorized__')
+      .sort(([a], [b]) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    const uncategorized = groups.get('__uncategorized__') || [];
+    const result = named.map(([label, items]) => ({
+      label,
+      items: items
+        .slice()
+        .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
+    }));
+    if (uncategorized.length > 0) {
+      result.push({
+        label: 'Uncategorized',
+        items: uncategorized
+          .slice()
+          .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())),
+        isUncategorized: true,
+      });
+    }
+    return result;
+  }, [categoriesEnabled, topics]);
+
+  function renderTopicRow(t) {
+    const sel = selectedTopics.find(s => s.topic_id === t.id);
+    return (
+      <div key={t.id} className="flex items-center gap-3">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={!!sel}
+            onChange={() => onToggle(t.id)}
+            className="accent-[var(--brand-accent)]"
+          />
+          <span
+            className="inline-block w-3 h-3 rounded-full"
+            style={{ backgroundColor: t.color }}
+          />
+          <span className="text-sm text-gray-700">{t.name}</span>
+          {t.sub_org_id && (
+            <span className="text-[10px] uppercase text-blue-600">scoped</span>
+          )}
+          {/* Phase 56 F2 — surface the purpose as a small subtitle so
+              the picker tells members what a topic is for. Plain text. */}
+          {t.purpose && (
+            <span className="text-xs text-gray-400">— {t.purpose}</span>
+          )}
+        </label>
+        {sel && (
+          <div className="flex items-center gap-2 ml-4">
+            <span className="text-xs text-gray-400">Relevance:</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(sel.relevance * 100)}
+              onChange={e => onRelevance(t.id, parseInt(e.target.value) / 100)}
+              className="w-24 accent-[var(--brand-accent)]"
+            />
+            <span className="text-xs text-gray-500 w-8">{Math.round(sel.relevance * 100)}%</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (categoriesEnabled && grouped) {
+    return (
+      <div className="space-y-3">
+        {grouped.map(group => (
+          <div key={group.label} className="space-y-1.5">
+            <p
+              className={`text-[11px] font-semibold uppercase tracking-wide ${
+                group.isUncategorized ? 'text-gray-400' : 'text-gray-500'
+              }`}
+            >
+              {group.label}
+            </p>
+            <div className="space-y-2 pl-1">
+              {group.items.map(renderTopicRow)}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return <div className="space-y-2">{topics.map(renderTopicRow)}</div>;
 }
 
 function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onCancel }) {
@@ -556,47 +696,18 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
           <label className="block text-xs text-gray-500 mb-2">
             Topics ({inScopeTopics.length} in scope)
           </label>
-          <div className="space-y-2">
-            {inScopeTopics.map(t => {
-              const sel = selectedTopics.find(s => s.topic_id === t.id);
-              return (
-                <div key={t.id} className="flex items-center gap-3">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={!!sel}
-                      onChange={() => toggleTopic(t.id)}
-                      className="accent-[var(--brand-accent)]"
-                    />
-                    <span
-                      className="inline-block w-3 h-3 rounded-full"
-                      style={{ backgroundColor: t.color }}
-                    />
-                    {/* Phase 26 D1 — display name reads description with
-                        fallback (demos prefix the name for scoping). */}
-                    <span className="text-sm text-gray-700">{t.name}</span>
-                    {t.sub_org_id && (
-                      <span className="text-[10px] uppercase text-blue-600">scoped</span>
-                    )}
-                  </label>
-                  {sel && (
-                    <div className="flex items-center gap-2 ml-4">
-                      <span className="text-xs text-gray-400">Relevance:</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={Math.round(sel.relevance * 100)}
-                        onChange={e => setRelevance(t.id, parseInt(e.target.value) / 100)}
-                        className="w-24 accent-[var(--brand-accent)]"
-                      />
-                      <span className="text-xs text-gray-500 w-8">{Math.round(sel.relevance * 100)}%</span>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          {/* Phase 56 F3 — org-level topic guidance hint. Collapsed by
+              default to keep the form lean; expandable when present. */}
+          <TopicGuidanceHint guidance={orgSettings?.topic_guidance} />
+          {/* Phase 56 F4 — group by category when the org has the
+              toggle on; otherwise render the flat list as before. */}
+          <TopicPickerList
+            topics={inScopeTopics}
+            categoriesEnabled={!!orgSettings?.topic_categories_enabled}
+            selectedTopics={selectedTopics}
+            onToggle={toggleTopic}
+            onRelevance={setRelevance}
+          />
         </div>
       )}
 
