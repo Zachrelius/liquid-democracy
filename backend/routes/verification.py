@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 import auth as auth_utils
 import models
 import verification
+import verification_hashing
 import verification_provider
 from audit_utils import log_audit_event
 from database import get_db
@@ -150,6 +151,70 @@ async def _read_raw_body(request: Request) -> bytes:
     return body if isinstance(body, (bytes, bytearray)) else b""
 
 
+def _extract_ocr_fields(decision: dict) -> dict:
+    """Phase 52d D4 — extract the OCR fields the hashing module needs
+    from a Didit decision payload.
+
+    Looks under ``id_verification`` (the Custom KYC shape observed in
+    Phase 52a/52c) and falls back to top-level. Returns a dict that
+    ``verification_hashing.compute_hashes`` can consume. Missing
+    keys come back absent — ``compute_hashes`` returns ``None`` for
+    any hash whose required fields aren't present.
+
+    The exact prod key paths are still grounded in Phase 52e (the
+    Z re-verify gives us the manifest). For 52d the extractor covers
+    the documented Didit shape + common variants; 52e tightens
+    against the real captured manifest if a key differs.
+    """
+    if not isinstance(decision, dict):
+        return {}
+    iv = decision.get("id_verification")
+    if not isinstance(iv, dict):
+        iv = {}
+
+    def _first(*candidates):
+        for c in candidates:
+            if c not in (None, ""):
+                return c
+        return None
+
+    document_number = _first(
+        iv.get("document_number"),
+        iv.get("document_id"),
+        iv.get("doc_number"),
+        decision.get("document_number"),
+    )
+    first_name = _first(
+        iv.get("first_name"),
+        iv.get("given_name"),
+        iv.get("given_names"),
+        decision.get("first_name"),
+    )
+    last_name = _first(
+        iv.get("last_name"),
+        iv.get("family_name"),
+        iv.get("surname"),
+        decision.get("last_name"),
+    )
+    date_of_birth = _first(
+        iv.get("date_of_birth"),
+        iv.get("dob"),
+        iv.get("birth_date"),
+        decision.get("date_of_birth"),
+    )
+    address = iv.get("address")
+    if not isinstance(address, dict):
+        address = None
+
+    return {
+        "document_number": document_number,
+        "first_name": first_name,
+        "last_name": last_name,
+        "date_of_birth": date_of_birth,
+        "address": address,
+    }
+
+
 def _apply_decision(
     db: Session,
     *,
@@ -158,18 +223,68 @@ def _apply_decision(
     session_row: models.VerificationSession,
     request: Request,
 ) -> None:
-    """Translate a Didit decision into our internal record fields and
-    write them to ``target_user``. Performs nullifier collision check
-    BEFORE the write — on collision the user row is untouched and an
-    audit event is written.
+    """Phase 52d D4 + D5 — translate a Didit decision into our
+    internal record fields, perform the document-number HARD BLOCK
+    against the platform-wide ``doc_number_hash`` uniqueness
+    invariant, and write the user record.
 
     Hybrid-pattern: only the derived fields land; the decision dict
-    is not persisted anywhere.
+    is not persisted anywhere; the Didit session is purged after
+    extraction (best-effort, fail-toward-keeping-the-verification —
+    see ``_purge_session_best_effort``).
+
+    Document-number hard block:
+      * If ``doc_number_hash`` is set AND already on a DIFFERENT
+        existing user → REJECT this write, leave target_user
+        unchanged, audit ``verification.duplicate_document``,
+        update bookkeeping row to ``collision_rejected``.
+      * If the existing user is the SAME user → idempotent re-verify:
+        proceed normally. (This is the critical correctness property
+        — a legitimate re-verify must not self-block.)
     """
-    mapped = verification_provider.map_decision_to_state(decision)
+    # Phase 52d D6 — fields the mapper used to read from a Didit 1:N
+    # block are gone; the mapper now derives "unique" from doc-number
+    # hash dedup. Compute hashes first so we can drive the mapper.
+    ocr_fields = _extract_ocr_fields(decision)
+    try:
+        hashes = verification_hashing.compute_hashes(ocr_fields)
+    except RuntimeError as e:
+        # Pepper missing in this environment — fail-closed at the
+        # config layer (52d invariant). We log + return a "config
+        # error" status on the bookkeeping row; the user's record is
+        # untouched. The webhook receiver returns 200 to Didit.
+        logger.warning(
+            "didit_webhook: pepper-missing, skipping hash + state write: %s", e,
+        )
+        session_row.status = "config_error"
+        session_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        return
+
+    doc_number_hash = hashes["doc_number_hash"]
+    name_dob_address_hash = hashes["name_dob_address_hash"]
+    name_dob_hash = hashes["name_dob_hash"]
+
+    # Pre-mapper collision lookup: is doc_number_hash on a DIFFERENT
+    # existing user? This is the platform-wide hard block, and it
+    # ALSO informs the mapper's uniqueness rung (no collision → the
+    # user IS unique on document; mapper can hand back
+    # IDENTITY_UNIQUE).
+    collided_with_user: Optional[models.User] = None
+    if doc_number_hash:
+        collided_with_user = db.execute(
+            select(models.User).where(
+                models.User.doc_number_hash == doc_number_hash,
+                models.User.id != target_user.id,
+            ),
+        ).scalars().first()
+
+    doc_number_unique = bool(doc_number_hash) and collided_with_user is None
+
+    mapped = verification_provider.map_decision_to_state(
+        decision, doc_number_unique=doc_number_unique,
+    )
     new_state = mapped["verification_state"]
     new_jurisdiction = mapped["verification_jurisdiction"]
-    new_nullifier = mapped["verification_nullifier"]
     new_attestation = mapped["verification_attestation_id"]
 
     if new_state == verification.EMAIL_ONLY:
@@ -192,34 +307,29 @@ def _apply_decision(
         )
         return
 
-    # Nullifier collision check — only when we have a non-NULL
-    # nullifier from the provider. If the SAME nullifier already sits
-    # on a DIFFERENT user, this is "one human, two accounts." Spec
-    # policy (locked Z-fork): reject the second; do not overwrite,
-    # do not merge; audit + leave the second account unchanged.
-    if new_nullifier:
-        existing = db.execute(
-            select(models.User).where(
-                models.User.verification_nullifier == new_nullifier,
-            ),
-        ).scalars().first()
-        if existing is not None and existing.id != target_user.id:
-            session_row.status = "collision_rejected"
-            session_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            log_audit_event(
-                db,
-                action="verification.nullifier_collision",
-                target_type="user",
-                target_id=target_user.id,
-                actor_id=target_user.id,
-                details={
-                    "provider": "didit",
-                    "provider_session_id": session_row.provider_session_id,
-                    "collided_with_user_id": existing.id,
-                },
-                ip_address=request.client.host if request.client else None,
-            )
-            return
+    # Phase 52d D5 — document-number hard block. Same hash on a
+    # different user is a "one human, two accounts" platform-wide
+    # block. Same user is idempotent re-verify, NOT a block — already
+    # handled by the ``id != target_user.id`` predicate in the
+    # collision lookup above.
+    if collided_with_user is not None:
+        session_row.status = "collision_rejected"
+        session_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        log_audit_event(
+            db,
+            action="verification.duplicate_document",
+            target_type="user",
+            target_id=target_user.id,
+            actor_id=target_user.id,
+            details={
+                "provider": "didit",
+                "provider_session_id": session_row.provider_session_id,
+                "collided_with_user_id": collided_with_user.id,
+                "tier": verification_hashing.UNIQUENESS_DOCUMENT_HASH,
+            },
+            ip_address=request.client.host if request.client else None,
+        )
+        return
 
     # Apply the verification onto the target user.
     old_state = target_user.verification_state
@@ -227,10 +337,19 @@ def _apply_decision(
 
     target_user.verification_state = new_state
     target_user.verification_jurisdiction = new_jurisdiction
-    target_user.verification_nullifier = new_nullifier
     target_user.verification_attestation_id = new_attestation
     target_user.verification_provenance = verification.PROV_DIDIT
     target_user.verification_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    # Phase 52d hash dedup write. ``doc_number_hash`` carries the
+    # platform-wide uniqueness invariant; the two name-based hashes
+    # support the Phase 52e org-scoped soft flag lookup.
+    if doc_number_hash:
+        target_user.doc_number_hash = doc_number_hash
+        target_user.uniqueness_strength = verification_hashing.UNIQUENESS_DOCUMENT_HASH
+    if name_dob_address_hash:
+        target_user.name_dob_address_hash = name_dob_address_hash
+    if name_dob_hash:
+        target_user.name_dob_hash = name_dob_hash
 
     session_row.status = "approved"
     session_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -249,9 +368,28 @@ def _apply_decision(
             "old_provenance": old_provenance,
             "new_provenance": verification.PROV_DIDIT,
             "jurisdiction": new_jurisdiction,
+            "uniqueness_strength": target_user.uniqueness_strength,
+            "doc_hash_written": bool(doc_number_hash),
         },
         ip_address=request.client.host if request.client else None,
     )
+
+
+def _purge_session_best_effort(session_id: str, target_user: models.User) -> bool:
+    """Phase 52d D4 — purge the Didit session after extraction.
+
+    Fail-toward-keeping the verification: a DELETE failure does NOT
+    affect the user's already-written verification record. Returns
+    True if Didit returned 2xx; False otherwise (the bookkeeping
+    row's ``status`` records it; a future sweep can retry).
+
+    demo_stub never reaches this path — the C-DEMO guard in the
+    webhook receiver ensures only real ``PROV_DIDIT`` provenance
+    rows ever call into the purge.
+    """
+    if getattr(target_user, "verification_provenance", None) != verification.PROV_DIDIT:
+        return False
+    return verification_provider.delete_session(session_id)
 
 
 @router.post("/webhooks/didit")
@@ -360,9 +498,11 @@ async def didit_webhook(
         session_row.webhook_type_last = webhook_type
         db.commit()
     except IntegrityError:
-        # Nullifier collision raced past our pre-check (unique index
-        # at DB layer caught it). Treat the same as the pre-check
-        # collision path — audit + leave existing state.
+        # Phase 52d D5 — doc_number_hash partial-unique index at the
+        # DB layer caught a collision our pre-check missed (race
+        # between two webhooks for two users with the same OCR doc
+        # number). Treat the same as the pre-check hard-block path:
+        # audit + leave existing state.
         db.rollback()
         session_row = db.get(
             models.VerificationSession, session_row.id,
@@ -373,7 +513,7 @@ async def didit_webhook(
             session_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         log_audit_event(
             db,
-            action="verification.nullifier_collision",
+            action="verification.duplicate_document",
             target_type="user",
             target_id=target_user.id,
             actor_id=target_user.id,
@@ -381,9 +521,30 @@ async def didit_webhook(
                 "provider": "didit",
                 "provider_session_id": str(session_id),
                 "race": True,
+                "tier": verification_hashing.UNIQUENESS_DOCUMENT_HASH,
             },
             ip_address=request.client.host if request.client else None,
         )
         db.commit()
+
+    # Phase 52d D4 — purge the Didit session after we've extracted
+    # what we need. Fail-toward-keeping-the-verification: a purge
+    # error is logged but does NOT touch the already-committed user
+    # record. demo_stub never reaches this branch (the helper
+    # short-circuits on provenance check). The Didit response is
+    # already 200 — the purge runs after the commit and the receiver
+    # acks regardless.
+    try:
+        if session_row is not None and session_row.status == "approved":
+            db.refresh(target_user)
+            purged = _purge_session_best_effort(str(session_id), target_user)
+            if not purged:
+                logger.warning(
+                    "didit_webhook: session purge unsuccessful for %s "
+                    "(verification record stands; retry later)",
+                    session_id,
+                )
+    except Exception as e:  # noqa: BLE001 — purge must NEVER raise to the receiver
+        logger.warning("didit_webhook: purge wrapper failed: %s", e)
 
     return {"ok": True}

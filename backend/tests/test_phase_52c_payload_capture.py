@@ -75,6 +75,13 @@ def client(db: Session) -> Iterator[TestClient]:
 @pytest.fixture(autouse=True)
 def _webhook_secret(monkeypatch):
     monkeypatch.setenv("DIDIT_WEBHOOK_SECRET", "test_secret_value")
+    # Phase 52d added a fail-closed hash pepper requirement in
+    # ``_apply_decision`` — without it the webhook receiver returns
+    # ``config_error`` and no state is written. The Phase 52c
+    # capture-fires test relies on a normal state write happening,
+    # so we set a dummy pepper for the test environment. (Real
+    # pepper is a sealed Railway var; the team never sees it.)
+    monkeypatch.setenv("VERIFICATION_HASH_PEPPER", "TEST_DUMMY_PEPPER_PHASE_52C")
     yield
 
 
