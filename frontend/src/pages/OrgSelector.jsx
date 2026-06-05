@@ -39,17 +39,19 @@ export default function OrgSelector() {
           <h1 className="text-2xl font-semibold text-[var(--brand-primary)] mb-3">
             You're not in any organizations yet
           </h1>
-          {/* Phase 14 F4 — empty-state copy expanded to acknowledge that
-              public organizations (open or approval_required policies) are
-              now joinable via direct URL. The previous copy implied
-              invitation was the only path; that was misleading once the
-              public landing page surface shipped. No new UI affordance is
-              added — the platform doesn't yet have a "browse public orgs"
-              page (deliberately deferred per spec) — but at least the copy
-              no longer steers users away from a real path. */}
+          {/* Phase 55 F3 — empty-state copy now points at /explore for the
+              browse path. Previously the copy mentioned "follow a public
+              organization's link" without a discovery surface; with Phase 55
+              there's a real browse page. */}
           <p className="text-sm text-gray-500 mb-8">
-            Create your own organization, follow a public organization&apos;s
-            link, or wait for an invitation.
+            Create your own organization,{' '}
+            <button
+              onClick={() => navigate('/explore')}
+              className="text-[var(--brand-accent)] font-medium hover:underline"
+            >
+              browse public organizations
+            </button>
+            , or wait for an invitation.
           </p>
           <button
             onClick={() => navigate('/orgs/create')}

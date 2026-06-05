@@ -82,6 +82,10 @@ import About from './pages/About';
 import Why from './pages/Why';
 import Security from './pages/Security';
 import Demo from './pages/Demo';
+// Phase 55 — public org discovery page at /explore. Lists the
+// discoverable public orgs (open / approval_required / invite_only_public)
+// excluding demo + sub-orgs, with search + sort.
+import OrgDiscovery from './pages/OrgDiscovery';
 // Phase 14 F2 — public org landing page; lives at the bare /{slug} URL and
 // renders the splash for non-members and members alike (no auto-redirect).
 import OrgPublicLanding from './pages/OrgPublicLanding';
@@ -220,6 +224,11 @@ export default function App() {
         <Route path="/why" element={<Why />} />
         <Route path="/security" element={<Security />} />
         <Route path="/demo" element={<Demo />} />
+        {/* Phase 55 — public org discovery page. Fixed segment; must
+            resolve before /:org_slug catch-all (route order below). The
+            'explore' slug is also in RESERVED_SLUGS so no org can claim
+            it and collide. */}
+        <Route path="/explore" element={<OrgDiscovery />} />
         <Route path="/privacy" element={<Privacy />} />
         <Route path="/terms" element={<Terms />} />
         {/* Phase 43 Cluster H — public help hub. */}

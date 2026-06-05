@@ -42,6 +42,13 @@ export default function Landing() {
             >
               Try the Demo
             </Link>
+            {/* Phase 55 — discovery entry point from the hero. */}
+            <Link
+              to="/explore"
+              className="inline-flex items-center justify-center px-6 py-3 bg-white text-[var(--brand-primary)] text-sm font-medium rounded-lg border border-gray-300 hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors w-full sm:w-auto"
+            >
+              Browse Organizations
+            </Link>
             <Link
               to="/about"
               className="inline-flex items-center justify-center px-6 py-3 bg-white text-[var(--brand-primary)] text-sm font-medium rounded-lg border border-gray-300 hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors w-full sm:w-auto"
