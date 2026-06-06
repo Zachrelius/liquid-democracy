@@ -10,6 +10,14 @@ Mirrors ``test_phase13_3_migration_cycle.py``'s shape:
   - Seeds Organization rows with each of the four pre/post values across
     cycles to verify the rename is correct AND that
     ``approval_required`` / ``open`` rows are untouched.
+
+Phase 57 fix: previously this test ran ``alembic upgrade head``, which
+worked when Phase 14 WAS head. Phase 57 rewrites those join_policy
+values onto a new three-value vocabulary at a later revision, so a
+naive ``upgrade head`` here would land at the post-Phase-57 state and
+break the Phase-14-specific value assertions. Pin the upgrade target
+to ``_PHASE_14_REVISION`` so these tests exercise exactly the Phase 14
+migration they were written for.
 """
 from __future__ import annotations
 
@@ -134,7 +142,7 @@ def test_phase14_upgrade_renames_invite_only_to_secret():
         oid = _seed_org(db_url, slug="legacy-secret", join_policy="invite_only")
         assert _join_policy(db_url, oid) == "invite_only"
 
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_14_REVISION)
 
         assert _join_policy(db_url, oid) == "invite_only_secret"
         # No rows left with the legacy value anywhere.
@@ -153,7 +161,7 @@ def test_phase14_upgrade_leaves_approval_required_unchanged():
     try:
         _build_pre_phase_14_schema(db_url)
         oid = _seed_org(db_url, slug="ar-org", join_policy="approval_required")
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_14_REVISION)
         assert _join_policy(db_url, oid) == "approval_required"
     finally:
         try:
@@ -169,7 +177,7 @@ def test_phase14_upgrade_leaves_open_unchanged():
     try:
         _build_pre_phase_14_schema(db_url)
         oid = _seed_org(db_url, slug="open-org", join_policy="open")
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_14_REVISION)
         assert _join_policy(db_url, oid) == "open"
     finally:
         try:
@@ -189,11 +197,11 @@ def test_phase14_upgrade_idempotent_no_op_on_rerun():
     try:
         _build_pre_phase_14_schema(db_url)
         oid = _seed_org(db_url, slug="idem-org", join_policy="invite_only")
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_14_REVISION)
         assert _join_policy(db_url, oid) == "invite_only_secret"
 
         # Re-run upgrade head — alembic no-ops since we're at head.
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_14_REVISION)
         assert _join_policy(db_url, oid) == "invite_only_secret"
     finally:
         try:
@@ -216,7 +224,7 @@ def test_phase14_upgrade_downgrade_upgrade_cycle():
         op_org = _seed_org(db_url, slug="open", join_policy="open")
 
         # 1. Upgrade head: invite_only -> invite_only_secret.
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_14_REVISION)
         assert _join_policy(db_url, legacy) == "invite_only_secret"
         assert _join_policy(db_url, ar) == "approval_required"
         assert _join_policy(db_url, op_org) == "open"
@@ -247,7 +255,7 @@ def test_phase14_upgrade_downgrade_upgrade_cycle():
         # 3. Re-upgrade head: invite_only -> invite_only_secret again
         # (both legacy and ar — ar lost its public distinction
         # in the downgrade and is now treated as a former-invite_only).
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_14_REVISION)
         assert _join_policy(db_url, legacy) == "invite_only_secret"
         assert _join_policy(db_url, ar) == "invite_only_secret"
         assert _join_policy(db_url, op_org) == "open"
@@ -277,7 +285,7 @@ def test_phase14_upgrade_mixed_population_counts():
         assert _count_with_policy(db_url, "approval_required") == 3
         assert _count_with_policy(db_url, "open") == 1
 
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_14_REVISION)
 
         assert _count_with_policy(db_url, "invite_only") == 0
         assert _count_with_policy(db_url, "invite_only_secret") == 2
