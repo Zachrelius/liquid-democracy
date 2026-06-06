@@ -1974,9 +1974,11 @@ def create_join_request(
     from verification import (
         check_membership_floor_for_join, ensure_can_join_real_org,
         check_membership_min_age_for_join,
+        check_membership_locality_for_join,
     )
     check_membership_floor_for_join(current_user, org)
     check_membership_min_age_for_join(current_user, org)
+    check_membership_locality_for_join(current_user, org)
     ensure_can_join_real_org(current_user, org)
 
     # Resolve the Member role (defensive seed for legacy orgs).
@@ -2252,9 +2254,11 @@ def request_join(
     from verification import (
         check_membership_floor_for_join, ensure_can_join_real_org,
         check_membership_min_age_for_join,
+        check_membership_locality_for_join,
     )
     check_membership_floor_for_join(current_user, org)
     check_membership_min_age_for_join(current_user, org)
+    check_membership_locality_for_join(current_user, org)
     ensure_can_join_real_org(current_user, org)
 
     # Phase 12 — defensively seed preset roles for the org if missing
@@ -2588,9 +2592,11 @@ def accept_invitation(
         from verification import (
             check_membership_floor_for_join, check_role_grant_floor,
             ensure_can_join_real_org, check_membership_min_age_for_join,
+            check_membership_locality_for_join,
         )
         check_membership_floor_for_join(current_user, inv_org)
         check_membership_min_age_for_join(current_user, inv_org)
+        check_membership_locality_for_join(current_user, inv_org)
         ensure_can_join_real_org(current_user, inv_org)
         inv_system_key_for_check = _INV_ROLE_TO_SYSTEM_KEY.get(inv.role, inv.role)
         if inv_system_key_for_check and inv_system_key_for_check != "member":

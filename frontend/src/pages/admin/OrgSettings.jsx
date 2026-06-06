@@ -2283,6 +2283,31 @@ export default function OrgSettings() {
                   className="mt-2 w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
                 />
               )}
+              {/* Phase 52i — city/locality residency gate. The city
+                  field is gated behind a state choice (jurisdiction);
+                  it's hashed WITH the state to disambiguate cross-
+                  state collisions (Springfield, MA ≠ Springfield,
+                  IL). The admin's text is the readable gate value,
+                  not user PII; only the member's city is hashed. */}
+              {(settings.verification_membership_floor === 'address_on_id'
+                  || settings.verification_membership_floor === 'residency_verified')
+                  && settings.verification_membership_jurisdiction && (
+                <input
+                  type="text"
+                  value={settings.verification_membership_locality || ''}
+                  onChange={e => updateSetting('verification_membership_locality', e.target.value || null)}
+                  placeholder="City (e.g. Boston) — leave blank for no city gate"
+                  className="mt-2 w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              )}
+              {(settings.verification_membership_floor === 'address_on_id'
+                  || settings.verification_membership_floor === 'residency_verified') && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {settings.verification_membership_jurisdiction
+                    ? "Optional: restrict membership to verified residents of a specific city within the chosen state. Match is exact; city names that span multiple states are disambiguated by the state above."
+                    : "Choose a state first to optionally add a city restriction."}
+                </p>
+              )}
             </label>
 
             <div className="space-y-2">

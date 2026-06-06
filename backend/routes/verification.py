@@ -541,6 +541,26 @@ def _apply_decision(
                 target_user.id, e,
             )
 
+    # Phase 52i — compute the city/locality hash from the same
+    # parsed_address that drives the name+DOB+address hash. The
+    # readable city is consumed here and discarded; only the hash
+    # is stored. State is included in the hash (cross-state
+    # disambiguation — Springfield, MA ≠ Springfield, IL).
+    address_dict = ocr_fields.get("address")
+    if isinstance(address_dict, dict):
+        try:
+            locality_hash = verification_hashing.compute_locality_hash(
+                address_dict.get("city"),
+                address_dict.get("state"),
+            )
+            if locality_hash:
+                target_user.verification_locality_hash = locality_hash
+        except Exception as e:  # noqa: BLE001 — never block the verification write on locality hash
+            logger.warning(
+                "locality hash derivation failed for user %s: %s",
+                target_user.id, e,
+            )
+
     session_row.status = "approved"
     session_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
