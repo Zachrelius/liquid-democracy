@@ -2322,6 +2322,44 @@ export default function OrgSettings() {
                 </p>
               </div>
             </label>
+
+            {/* Phase 52e Stage 2 E3 — require verification to be promoted
+                to a public_accepting delegate (the "verification to act"
+                gate for the delegate capability). */}
+            <label className="flex items-start gap-3 cursor-pointer pt-2 border-t border-gray-200">
+              <input
+                type="checkbox"
+                checked={!!settings.verification_required_for_public_delegate}
+                onChange={e => updateSetting('verification_required_for_public_delegate', e.target.checked)}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <p className="text-sm text-gray-700">Require verified members to be promoted to public delegate</p>
+                <p className="text-xs text-gray-500">
+                  Default (off): any member can submit for public-delegate promotion. When on, only members who satisfy this org's membership verification floor AND aren't currently flagged as a possible duplicate of another member can request public-delegate status.
+                </p>
+              </div>
+            </label>
+
+            {/* Phase 52e Stage 2 E4 — what to do when a high-confidence
+                name+DOB+address duplicate flag is raised against a
+                new applicant. */}
+            <div className="pt-2 border-t border-gray-200 space-y-1">
+              <label className="block text-xs font-medium text-gray-700">
+                Action on high-confidence duplicate flag
+              </label>
+              <select
+                value={settings.verification_high_confidence_flag_action || 'pending_approval'}
+                onChange={e => updateSetting('verification_high_confidence_flag_action', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              >
+                <option value="pending_approval">Block pending appeal (route to join-approval queue)</option>
+                <option value="review_only">Review only (admin notified; member joins as active)</option>
+              </select>
+              <p className="text-xs text-gray-500">
+                A high-confidence flag means a new applicant's verified name + date of birth + address matches an existing member of this org. The default routes the membership into the same approval queue you already use for join requests; "review only" creates the flag without changing the join, leaving the admin decision optional. Low-confidence flags (name + date of birth only) are always review-only — the math makes false matches near-certain at scale.
+              </p>
+            </div>
           </div>
         </section>
       )}

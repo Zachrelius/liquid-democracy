@@ -258,6 +258,9 @@ app.include_router(demo_reset.router)
 # to Z, set secret, then smoke" sequence.
 from routes import verification as verification_routes
 app.include_router(verification_routes.router)
+# Phase 52e Stage 2 E4 — org-scoped duplicate-flag adjudication.
+from routes import duplicate_flags as duplicate_flags_routes
+app.include_router(duplicate_flags_routes.router)
 
 
 # ---------------------------------------------------------------------------

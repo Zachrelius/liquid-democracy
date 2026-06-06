@@ -3,7 +3,7 @@ import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 import api from '../api';
 import { resizeImageFile } from '../utils/imageResize';
-import { labelForState, VERIFICATION_PROVENANCE_LABELS } from '../verificationLabels';
+import { labelForState, VERIFICATION_PROVENANCE_LABELS, UP_FRONT_ONE_IDENTITY_COPY } from '../verificationLabels';
 import Avatar from '../components/Avatar';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
@@ -101,7 +101,12 @@ function VerificationSection({ user }) {
             </div>
           </div>
         ) : showStartCta ? (
-          <div className="mt-3 border-t border-gray-200 pt-3">
+          <div className="mt-3 border-t border-gray-200 pt-3 space-y-2">
+            {/* Phase 52e Stage 2 E5 — up-front one-identity expectation
+                copy, shown before the user leaves for the verification
+                provider so the dedup-block case downstream isn't a
+                surprise. */}
+            <p className="text-xs text-gray-600">{UP_FRONT_ONE_IDENTITY_COPY}</p>
             <button
               type="button"
               onClick={handleStart}

@@ -1089,6 +1089,10 @@ def list_members(
     # Phase 47 B4 — resolve held titles for each member (system titles
     # from role + custom titles from org_title_assignments).
     from org_titles import held_titles_for_member
+    # Phase 52e Stage 2 E3 — derived per-org verified status. The
+    # predicate is evaluated per-member; it's a read against the org
+    # settings + user.verification_state + the OrgDuplicateFlag table.
+    import verification_flags
     result = []
     for m in memberships:
         user = db.get(models.User, m.user_id)
@@ -1106,6 +1110,7 @@ def list_members(
                 status=m.status,
                 joined_at=m.joined_at,
                 held_titles=held_titles_for_member(db, org.id, m.user_id, role_key),
+                is_org_verified=verification_flags.is_org_verified(user, org, db),
             ))
     return result
 
@@ -1876,7 +1881,35 @@ def create_join_request(
         seed_default_roles_for_org(db, org.id)
         member_role_id = _resolve_role_id_by_system_key(db, org.id, "member")
 
-    if org.join_policy == "open":
+    # Phase 52e Stage 2 E4 — evaluate org-scoped duplicate flags for
+    # this candidate against the org's current member population.
+    # Same-org only; cross-org matches are computed-but-ignored
+    # because this loop only runs against the org being joined.
+    # A high-confidence flag with the org's
+    # ``verification_high_confidence_flag_action`` set to
+    # ``pending_approval`` routes the membership into the existing
+    # approval queue regardless of ``join_policy``; otherwise the
+    # flag is created + audited but doesn't change routing (the
+    # admin handles it via the existing pending list / a future
+    # adjudication surface). Low-confidence flags are NEVER routing-
+    # changers — the birthday-paradox math means they'd wall
+    # innocents at scale.
+    import verification_flags
+    new_flags = verification_flags.evaluate_duplicate_flags_for_org(
+        db, candidate_user=current_user, org=org,
+        actor_id=current_user.id,
+        ip_address=request.client.host if request.client else None,
+    )
+    high_conf_match = any(
+        f.confidence == verification_flags.CONFIDENCE_HIGH for f in new_flags
+    )
+    flag_routes_to_pending = (
+        high_conf_match
+        and verification_flags.high_confidence_flag_action(org)
+            == verification_flags.ACTION_PENDING_APPROVAL
+    )
+
+    if org.join_policy == "open" and not flag_routes_to_pending:
         membership = models.OrgMembership(
             user_id=current_user.id,
             org_id=org.id,
@@ -2070,6 +2103,7 @@ def cancel_join_request(
 def request_join(
     org_slug: str,
     background_tasks: BackgroundTasks,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
@@ -2121,7 +2155,26 @@ def request_join(
         seed_default_roles_for_org(db, org.id)
         member_role_id = _resolve_role_id_by_system_key(db, org.id, "member")
 
-    if org.join_policy == "open":
+    # Phase 52e Stage 2 E4 — same duplicate-flag evaluation as the
+    # newer ``request_join`` path. Same-org only; high-confidence
+    # match + ``pending_approval`` setting routes to the existing
+    # approval queue regardless of ``join_policy``.
+    import verification_flags
+    new_flags = verification_flags.evaluate_duplicate_flags_for_org(
+        db, candidate_user=current_user, org=org,
+        actor_id=current_user.id,
+        ip_address=request.client.host if request.client else None,
+    )
+    high_conf_match = any(
+        f.confidence == verification_flags.CONFIDENCE_HIGH for f in new_flags
+    )
+    flag_routes_to_pending = (
+        high_conf_match
+        and verification_flags.high_confidence_flag_action(org)
+            == verification_flags.ACTION_PENDING_APPROVAL
+    )
+
+    if org.join_policy == "open" and not flag_routes_to_pending:
         membership = models.OrgMembership(
             user_id=current_user.id,
             org_id=org.id,
@@ -2431,6 +2484,16 @@ def accept_invitation(
             check_role_grant_floor(
                 current_user, inv_org, inv_system_key_for_check,
             )
+        # Phase 52e Stage 2 E4 — duplicate-flag evaluation on
+        # invitation-accept too. Invitations from an org admin don't
+        # bypass the dedup check; the admin invited a person, not an
+        # alternate identity.
+        import verification_flags
+        verification_flags.evaluate_duplicate_flags_for_org(
+            db, candidate_user=current_user, org=inv_org,
+            actor_id=current_user.id,
+            ip_address=request.client.host if request.client else None,
+        )
 
     # Check if already a member
     existing = db.query(models.OrgMembership).filter(

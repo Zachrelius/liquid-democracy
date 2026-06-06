@@ -802,6 +802,31 @@ def submit_public_accepting(
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
 
+    # Phase 52e Stage 2 E3 — verification-to-act gate for the
+    # public_delegate capability. When the org has enabled
+    # ``verification_required_for_public_delegate``, the candidate
+    # must satisfy the derived ``is_org_verified`` predicate
+    # (membership floor satisfied AND not currently the subject of
+    # an open high-confidence duplicate flag in this org). The
+    # check fires at submit-time, before any state mutation. Returns
+    # a structured 403 the FE renders as the verification-required
+    # prompt — same shape as the proposal-floor / role-grant gates.
+    import verification_flags
+    if verification_flags.verification_required_for_public_delegate(org):
+        if not verification_flags.is_org_verified(current_user, org, db):
+            from verification import (
+                get_org_verification_floor, verification_required_payload,
+            )
+            floor, jurisdiction = get_org_verification_floor(org, "membership")
+            raise HTTPException(
+                status_code=403,
+                detail=verification_required_payload(
+                    floor=floor or "identity",
+                    jurisdiction=jurisdiction,
+                    scope="role",
+                ),
+            )
+
     topic = _topic_in_org_or_404(db, topic_id, membership.org_id)
     dp = _get_or_create_delegate_profile(
         db, current_user.id, membership.org_id, topic.id,
