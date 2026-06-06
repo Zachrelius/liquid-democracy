@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any, Optional
-from pydantic import BaseModel, ConfigDict, field_validator, Field
+from pydantic import BaseModel, ConfigDict, field_validator, Field, model_validator
 import re
 import nh3
 import uuid as _uuid_mod
@@ -1320,11 +1320,121 @@ class PublicProfileOut(BaseModel):
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$")
 
 
+# Phase 57 — the new three-axis value vocabulary. The four old Phase 14
+# values still accepted for back-compat (FE / in-flight callers may not
+# have updated yet) but normalize to the new vocabulary on the way in.
+_PHASE_57_JOIN_POLICIES = {"open", "approval", "invite"}
+_PHASE_57_DISCOVERABILITIES = {"listed", "unlisted", "hidden"}
+_PHASE_57_ACTIVITY_VISIBILITIES = {"public", "members_only"}
+# Legacy → (new join_policy, implied discoverability). Mirrors the
+# migration b9c0d1e2f3a4 mapping exactly.
+_LEGACY_JOIN_POLICY_MAP = {
+    "open": ("open", "listed"),
+    "approval_required": ("approval", "listed"),
+    "invite_only_public": ("invite", "listed"),
+    "invite_only_secret": ("invite", "hidden"),
+}
+
+
+def _validate_join_policy_value(v: str) -> str:
+    """Accept BOTH the new vocabulary AND the four legacy Phase 14
+    values without normalizing the legacy value here — the field-level
+    validator returns the raw value through so a downstream model-level
+    validator can read both `join_policy` and `discoverability` in the
+    same pass and apply the legacy implied-discoverability default.
+
+    Legacy `invite_only` (the Phase-13.3 pre-rename literal) is still
+    rejected loudly for symmetry with the prior Phase 14 validator.
+    """
+    if v == "invite_only":
+        raise ValueError(
+            "join_policy 'invite_only' is no longer accepted; use one of "
+            "'open' / 'approval' / 'invite'."
+        )
+    if v in _LEGACY_JOIN_POLICY_MAP:
+        # Accept-as-is; the model-level normalizer handles the rewrite
+        # so it can co-update discoverability when the caller hasn't
+        # explicitly set it.
+        return v
+    if v not in _PHASE_57_JOIN_POLICIES:
+        raise ValueError(
+            "join_policy must be one of 'open', 'approval', 'invite'."
+        )
+    return v
+
+
+def _apply_legacy_join_policy_normalization(data: dict) -> dict:
+    """Phase 57 — read join_policy + discoverability together and
+    normalize legacy four-value join_policy strings onto the new
+    three-value vocabulary, filling in implied discoverability if the
+    caller hasn't explicitly set it. Also normalizes the incoherent
+    hidden+public combination to hidden+members_only per spec B3.
+
+    Mutates and returns the input dict so it's reusable from both
+    OrgCreate and OrgUpdate model_validators.
+    """
+    jp = data.get("join_policy")
+    if jp in _LEGACY_JOIN_POLICY_MAP:
+        new_jp, implied_disc = _LEGACY_JOIN_POLICY_MAP[jp]
+        data["join_policy"] = new_jp
+        if implied_disc is not None and not data.get("discoverability"):
+            data["discoverability"] = implied_disc
+    if data.get("discoverability") == "hidden":
+        # Incoherent combination: nobody can see the org, so activity
+        # visibility is moot. Force members_only server-side regardless
+        # of caller input.
+        data["activity_visibility"] = "members_only"
+    return data
+
+
+def normalize_access_axes_for_create_or_update(
+    join_policy: Optional[str],
+    discoverability: Optional[str],
+    activity_visibility: Optional[str],
+    legacy_join_policy_raw: Optional[str],
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """Phase 57 — co-validate the three access axes.
+
+    Returns the (possibly-normalized) triple. If ``legacy_join_policy_raw``
+    matches one of the four old Phase 14 values AND no explicit
+    ``discoverability`` was supplied, the implied discoverability from the
+    legacy mapping is filled in (so old in-flight clients still produce
+    the byte-for-byte same access posture as before).
+
+    The hidden + public combination is incoherent (nobody can see the
+    org at all, so the activity-visibility axis is moot). Per spec D6
+    + B3, it normalizes to (hidden, members_only) server-side.
+    """
+    if legacy_join_policy_raw in _LEGACY_JOIN_POLICY_MAP and not discoverability:
+        discoverability = _LEGACY_JOIN_POLICY_MAP[legacy_join_policy_raw][1]
+    if discoverability == "hidden":
+        activity_visibility = "members_only"
+    return join_policy, discoverability, activity_visibility
+
+
 class OrgCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     slug: str = Field(min_length=3, max_length=50)
     description: str = ""
-    join_policy: str = "approval_required"
+    # Phase 57 — default to 'approval'. The validator below accepts the
+    # four legacy values too and normalizes them onto the new vocabulary.
+    join_policy: str = "approval"
+    # Phase 57 — new axes; default to today's effective behavior
+    # (everything was listed except invite_only_secret; nothing exposed
+    # activity to non-members).
+    discoverability: Optional[str] = None
+    activity_visibility: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_join_policy(cls, data):
+        # Phase 57 — co-normalize join_policy + discoverability so a
+        # caller that sent a legacy 4-value join_policy literal also
+        # gets the implied discoverability filled in (preserving the
+        # pre-Phase-57 access posture byte-for-byte).
+        if isinstance(data, dict):
+            data = _apply_legacy_join_policy_normalization(data)
+        return data
 
     @field_validator("slug")
     @classmethod
@@ -1339,23 +1449,27 @@ class OrgCreate(BaseModel):
     @field_validator("join_policy")
     @classmethod
     def validate_join_policy(cls, v: str) -> str:
-        # Phase 14 B5 — accept the four post-rename values and reject the
-        # legacy 'invite_only' loud rather than silently storing an
-        # unrecognized string. The Phase 14 migration renamed existing
-        # rows to 'invite_only_secret'; clients that still send the old
-        # value need an explicit nudge.
-        if v == "invite_only":
+        return _validate_join_policy_value(v)
+
+    @field_validator("discoverability")
+    @classmethod
+    def validate_discoverability(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if v not in _PHASE_57_DISCOVERABILITIES:
             raise ValueError(
-                "join_policy 'invite_only' is no longer accepted; "
-                "use 'invite_only_secret' or 'invite_only_public' instead."
+                "discoverability must be one of 'listed', 'unlisted', 'hidden'."
             )
-        if v not in (
-            "invite_only_secret", "invite_only_public",
-            "approval_required", "open",
-        ):
+        return v
+
+    @field_validator("activity_visibility")
+    @classmethod
+    def validate_activity_visibility(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if v not in _PHASE_57_ACTIVITY_VISIBILITIES:
             raise ValueError(
-                "join_policy must be invite_only_secret, invite_only_public, "
-                "approval_required, or open"
+                "activity_visibility must be one of 'public', 'members_only'."
             )
         return v
 
@@ -1364,30 +1478,48 @@ class OrgUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     join_policy: Optional[str] = None
+    # Phase 57 — new access axes on update.
+    discoverability: Optional[str] = None
+    activity_visibility: Optional[str] = None
     settings: Optional[dict] = None
     # Phase 49a Cluster B — `proposal_creation_mode` was replaced
     # by the boolean `settings.allow_cosign_petition`. Admins set
     # the toggle via the standard `settings` PATCH path (it lives
     # inside the JSONB blob rather than as a top-level column).
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_join_policy(cls, data):
+        if isinstance(data, dict):
+            data = _apply_legacy_join_policy_normalization(data)
+        return data
+
     @field_validator("join_policy")
     @classmethod
     def validate_join_policy(cls, v: Optional[str]) -> Optional[str]:
-        # Phase 14 B5 — see OrgCreate for the value-set rationale.
         if v is None:
             return v
-        if v == "invite_only":
+        return _validate_join_policy_value(v)
+
+    @field_validator("discoverability")
+    @classmethod
+    def validate_discoverability(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if v not in _PHASE_57_DISCOVERABILITIES:
             raise ValueError(
-                "join_policy 'invite_only' is no longer accepted; "
-                "use 'invite_only_secret' or 'invite_only_public' instead."
+                "discoverability must be one of 'listed', 'unlisted', 'hidden'."
             )
-        if v not in (
-            "invite_only_secret", "invite_only_public",
-            "approval_required", "open",
-        ):
+        return v
+
+    @field_validator("activity_visibility")
+    @classmethod
+    def validate_activity_visibility(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if v not in _PHASE_57_ACTIVITY_VISIBILITIES:
             raise ValueError(
-                "join_policy must be invite_only_secret, invite_only_public, "
-                "approval_required, or open"
+                "activity_visibility must be one of 'public', 'members_only'."
             )
         return v
 
@@ -1518,6 +1650,12 @@ class OrgPublicOut(BaseModel):
     branding: OrgPublicBrandingOut = OrgPublicBrandingOut()
     intro_text: Optional[str] = None
     join_policy: str
+    # Phase 57 — surface activity_visibility on the public splash so
+    # the FE can render a public proposal panel when 'public'. The
+    # public endpoint is the SAME source of truth the unauth viewer
+    # sees, so including this here keeps the FE from doing a second
+    # API call to learn the access posture.
+    activity_visibility: str = "members_only"
 
 
 class ExploreOrgCard(BaseModel):
@@ -1559,6 +1697,15 @@ class OrgOut(BaseModel):
     slug: str
     description: str
     join_policy: str
+    # Phase 57 — three-axis access model. `join_policy` (above) is now
+    # repurposed to hold only the join semantics (open / approval /
+    # invite); discoverability + activity_visibility carry the orthogonal
+    # axes that used to be conflated inside `join_policy`. Both are
+    # surfaced on every OrgOut (and asserted via Phase 46a
+    # _MUST_SURFACE_FIELDS) so the FE can render the new access controls
+    # in OrgSettings + drive the public landing flow.
+    discoverability: str = "listed"
+    activity_visibility: str = "members_only"
     settings: dict = {}
     # Phase 34 — parent_org_id needs to surface so the FE can distinguish
     # sub-orgs from top-level orgs in the org switcher / Nav.jsx

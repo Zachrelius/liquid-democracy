@@ -15,7 +15,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from database import Base
 
@@ -39,7 +39,39 @@ class Organization(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     slug: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
     description: Mapped[str] = mapped_column(Text, default="")
-    join_policy: Mapped[str] = mapped_column(String, default="approval_required")  # invite_only, approval_required, open
+    # Phase 57 — repurposed to hold the new three-value join semantics
+    # (`open` / `approval` / `invite`). The four old values
+    # (`open` / `approval_required` / `invite_only_public` /
+    # `invite_only_secret`) were rewritten in migration b9c0d1e2f3a4 per:
+    #   open / approval_required → open / approval (with discoverability='listed')
+    #   invite_only_public       → invite (with discoverability='listed')
+    #   invite_only_secret       → invite (with discoverability='hidden')
+    # Test fixtures + in-flight callers that still pass an old literal are
+    # normalized transparently by the `_normalize_access_axes` validator
+    # below; old literals never reach the column.
+    join_policy: Mapped[str] = mapped_column(
+        String, nullable=False, default="approval", server_default="approval",
+    )
+    # Phase 57 — discoverability axis (how outsiders find the org).
+    # `listed`   — appears on /explore.
+    # `unlisted` — reachable at /{slug} by direct link only; not listed.
+    # `hidden`   — no public landing page; 404 to non-members.
+    # Drives Phase 55 /explore filter + Phase 14 public-landing 404 check.
+    discoverability: Mapped[str] = mapped_column(
+        String(length=16), nullable=False,
+        default="listed", server_default="listed",
+        index=True,
+    )
+    # Phase 57 — activity visibility axis (what non-members see beyond
+    # the splash). `public` exposes proposals / aggregate tallies /
+    # comments read-only to anonymous viewers; `members_only` keeps the
+    # current behavior (splash only, everything else gated).
+    # Individual delegate-vote visibility STILL routes through the
+    # Phase 30.3 `can_see_votes` gate — this column does NOT bypass it.
+    activity_visibility: Mapped[str] = mapped_column(
+        String(length=16), nullable=False,
+        default="members_only", server_default="members_only",
+    )
     settings: Mapped[Optional[dict]] = mapped_column(JSON, default=dict)  # org-specific defaults
     # Phase 8.5: nullable self-referential FK. NULL = parent org (top-level);
     # non-NULL = sub-org whose parent has parent_org_id IS NULL. Two-level
@@ -160,6 +192,41 @@ class Organization(Base):
         foreign_keys="OrgDelegateProfile.org_id",
         cascade="all, delete-orphan",
     )
+
+    # Phase 57 — compatibility shim that transparently normalizes the
+    # four old `join_policy` literals into the new (join_policy,
+    # discoverability) tuple. The validator is the load-bearing edge that
+    # keeps the ~95 test files + any in-flight FE clients still passing
+    # the old vocabulary working without a churn rewrite of every fixture.
+    #
+    # New callers that pass `discoverability` explicitly always win over
+    # the implied default; the validator only AUTO-sets it for legacy
+    # callers that haven't been updated yet.
+    @validates("join_policy")
+    def _normalize_join_policy_legacy(self, key, value):
+        # Map old four-value vocabulary → new three-value vocabulary +
+        # the discoverability that conserves the old behavior.
+        mapping = {
+            "open": ("open", None),
+            "approval_required": ("approval", None),
+            "invite_only_public": ("invite", "listed"),
+            "invite_only_secret": ("invite", "hidden"),
+        }
+        if value in mapping:
+            new_join, implied_disc = mapping[value]
+            # Don't clobber an explicitly-set discoverability — that
+            # comes up in tests that pass both values in the same
+            # constructor (kwarg order matters there; we only set if
+            # the column hasn't been written yet).
+            if implied_disc is not None:
+                current_disc = getattr(self, "discoverability", None)
+                # `discoverability` defaults to "listed" (server_default
+                # +Column default); treat the column-default value as
+                # "not yet explicitly set" so the legacy mapping wins.
+                if current_disc is None or current_disc == "listed":
+                    self.discoverability = implied_disc
+            return new_join
+        return value
 
 
 class Role(Base):

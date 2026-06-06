@@ -48,36 +48,38 @@ export default function OrganizationsHelp() {
       </section>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">The four join policies</h2>
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Three independent access axes (Phase 57)</h2>
         <p className="text-sm text-gray-700 leading-relaxed">
-          A steward (or admin with the right permission) sets the org's join policy in Org Settings. The four options span a spectrum from fully private to fully open:
+          Each organization configures three independent settings that together describe how outsiders relate to it. A steward (or admin with the right permission) sets each axis in <em>Org Settings → Access &amp; visibility</em>.
         </p>
-        <div className="text-sm text-gray-700 leading-relaxed space-y-3">
+        <div className="text-sm text-gray-700 leading-relaxed space-y-4">
           <div>
-            <p className="font-semibold">Invite only (private)</p>
-            <p>
-              The org is undiscoverable. Visiting <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">/{`{slug}`}</code> returns a not-found page — indistinguishable from a non-existent slug, so a scraper can't probe to see whether an org exists. Members join only via emailed invitations. <strong>Best for orgs that want full privacy.</strong>
-            </p>
+            <p className="font-semibold">1. Join policy — <span className="text-gray-500 font-normal">how people join</span></p>
+            <ul className="list-disc pl-6 mt-1 space-y-1">
+              <li><strong>Open</strong> — anyone with the link can join immediately.</li>
+              <li><strong>Approval</strong> — anyone can request; an admin approves each request.</li>
+              <li><strong>Invitation only</strong> — only invitees can join.</li>
+            </ul>
           </div>
           <div>
-            <p className="font-semibold">Invite only (public)</p>
-            <p>
-              The org has a public landing page that explains who it is — logo, name, description, optional longer intro — but visitors cannot join without an emailed invitation. The page shows "This organization is invite-only" in place of a join button. <strong>Best for orgs that want a recognizable presence on the platform but tightly controlled membership.</strong>
-            </p>
+            <p className="font-semibold">2. Discoverability — <span className="text-gray-500 font-normal">how outsiders find the org</span></p>
+            <ul className="list-disc pl-6 mt-1 space-y-1">
+              <li><strong>Listed</strong> — appears on <Link to="/explore" className="text-[var(--brand-accent)] font-medium hover:underline">/explore</Link> alongside other public orgs.</li>
+              <li><strong>Unlisted</strong> — reachable only by direct link. Best for a private group whose landing page you want to share via DM, WhatsApp, or email without showing up on the public directory.</li>
+              <li><strong>Hidden</strong> — no public landing page; <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">/{`{slug}`}</code> 404s for non-members. Indistinguishable from a non-existent slug, so a scraper can't probe.</li>
+            </ul>
           </div>
           <div>
-            <p className="font-semibold">Approval required</p>
-            <p>
-              Anyone visiting the public landing page can request to join. The request appears as a pending member to anyone in the org with the <em>approve member joins</em> permission (Stewards and Admins by default; configurable via the role-permissions matrix). Approve or deny via the admin members page. The requester gets a notification when their request is decided. <strong>Best for community orgs that want to vet new members but stay open to applications.</strong>
-            </p>
-          </div>
-          <div>
-            <p className="font-semibold">Open</p>
-            <p>
-              Anyone with the link can join immediately — no invitation, no approval. New members are added at the Member role and can immediately participate (vote, delegate, comment per the org's role-permission matrix). <strong>Best for fully-open communities and pilot orgs.</strong>
-            </p>
+            <p className="font-semibold">3. Activity visibility — <span className="text-gray-500 font-normal">what non-members see beyond the splash</span></p>
+            <ul className="list-disc pl-6 mt-1 space-y-1">
+              <li><strong>Members only</strong> — the default. Non-members see the splash only; proposals, tallies, comments are member-gated.</li>
+              <li><strong>Public read-only</strong> — anyone can read the proposal list, aggregate tallies, and comments. Posting / voting / commenting still requires membership. Individual delegate-vote visibility continues to follow each delegate&apos;s per-topic settings (delegate pages, Phase 30.3).</li>
+            </ul>
           </div>
         </div>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          The axes compose freely. Examples: <em>Approval + Listed + Public read-only</em> is a transparency-oriented civic org. <em>Invitation only + Unlisted + Members only</em> is a private working group shared by link. <em>Open + Listed + Members only</em> is a typical community pilot.
+        </p>
       </section>
 
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">

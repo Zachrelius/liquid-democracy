@@ -316,11 +316,11 @@ def browse_org_delegates(
             is not None
         )
     if not is_member:
-        # Non-members may only browse publicly-listed orgs. Secret orgs
-        # return 404 (matching the OrgPublicLanding pattern in routes/
-        # organizations.py:802) so endpoint existence doesn't leak the
-        # org's existence to unauthenticated probes.
-        if org.join_policy == "invite_only_secret":
+        # Non-members may only browse non-hidden orgs. Hidden orgs
+        # (Phase 57; was `invite_only_secret`) return 404 — matching the
+        # OrgPublicLanding pattern — so endpoint existence doesn't leak
+        # the org's existence to unauthenticated probes.
+        if org.discoverability == "hidden":
             raise HTTPException(status_code=404, detail="Organization not found")
 
     # ----- Find candidate user IDs: users with at least one

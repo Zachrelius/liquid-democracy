@@ -815,3 +815,98 @@ under a defensive 200-row cap.
   or sitemap entries for `/explore`. Browsers default to indexing what
   they crawl; the platform doesn't actively help discovery via search
   engines.
+
+
+## Three-Axis Org Access Model (Phase 57, 2026-06-06)
+
+### The model
+
+Phase 57 separates what was a single 4-value Phase 14 `join_policy`
+column into three independent axes on `Organization`:
+
+1. **`join_policy`** (repurposed) — how people join: `open` /
+   `approval` / `invite`.
+2. **`discoverability`** (new) — how outsiders find the org:
+   `listed` (on /explore) / `unlisted` (direct link only) /
+   `hidden` (404 to non-members).
+3. **`activity_visibility`** (new) — what non-members see beyond the
+   splash: `members_only` (default) / `public` (read-only proposal
+   list + aggregate tallies + comments).
+
+A separate fourth axis — the per-org verification gate (whose votes
+count) — is unchanged from the Phase 51–52i arc and sits adjacent in
+`OrgSettings.jsx`. Phase 57 explicitly does not touch it.
+
+### Migration value-rewrite
+
+The Phase 57 migration `b9c0d1e2f3a4` rewrites the four legacy values
+onto the new three-value vocabulary AND backfills the two new columns
+in a single batch UPDATE. Mapping:
+
+| OLD join_policy       | NEW join_policy | discoverability | activity_visibility |
+|-----------------------|-----------------|-----------------|---------------------|
+| open                  | open            | listed          | members_only        |
+| approval_required     | approval        | listed          | members_only        |
+| invite_only_public    | invite          | listed          | members_only        |
+| invite_only_secret    | invite          | hidden          | members_only        |
+
+The model retains a `@validates('join_policy')` normalizer that
+transparently rewrites legacy values to new ones (so in-flight FE
+clients and existing test fixtures keep working). The schema
+`OrgCreate` / `OrgUpdate` accept both vocabularies and normalize
+on the way in.
+
+### Hidden continues the Phase 14 secret-indistinguishability posture
+
+A `discoverability='hidden'` org behaves exactly as Phase 14's
+`invite_only_secret` did: `GET /api/orgs/{slug}/public` returns 404,
+the org is absent from `/explore`, the public-delegate browse 404s
+to non-members. The 404 response is identical to a non-existent slug
+so an unauthenticated probe cannot distinguish them.
+
+### Activity visibility does NOT bypass Phase 30.3 `can_see_votes`
+
+When `activity_visibility='public'`, non-members may read:
+- The proposal list (`GET /api/orgs/{slug}/public/proposals`)
+- Each proposal's body / options / status (`/{slug}/public/proposals/{id}`)
+- Aggregate tallies (`/results`) — never individual vote rows
+- Comments
+
+**Individual delegate-vote visibility still routes through the
+unchanged Phase 30.3 `can_see_votes` gate.** A delegate's per-topic
+visibility setting (`private` / `followers_only` / `public` /
+`public_accepting`) controls who sees individual votes, with the
+anonymous viewer treated as a non-follower. A member's vote on a
+private topic remains private to anonymous viewers regardless of the
+org's `activity_visibility`. This invariant is asserted directly by
+`test_phase_57_access_axes.py::test_phase_30_3_private_topic_vote_invariant_preserved`.
+
+### Participation is always member-gated
+
+`activity_visibility='public'` exposes READ surfaces only. Voting,
+commenting, write-ins, delegating, and proposal creation remain
+strictly member-gated at the member-scoped endpoints; the public
+sibling endpoints (in `public_org_router`) are GET-only.
+
+### Server-side normalization of incoherent combinations
+
+The `(hidden, public)` combination is incoherent (nobody can see the
+org at all, so the activity-visibility axis is moot). The schema layer
+normalizes this server-side to `(hidden, members_only)` regardless of
+caller input. Asserted by
+`test_hidden_plus_public_normalized_to_hidden_members_only`.
+
+### Deferred (out of scope for Phase 57)
+
+- **Per-proposal or per-topic public/private overrides.** Activity
+  visibility is org-level binary. Per-topic vote visibility already
+  exists via Phase 30.3 and is unchanged.
+- **Sub-org public activity.** The public surface is parent-org-only
+  in Phase 57. Sub-org proposals are excluded from the public list /
+  detail endpoints by design.
+- **SEO / robots / sitemap for the public activity panel.** Same posture
+  as the Phase 14 splash and Phase 55 /explore.
+- **Per-org activity-visibility audit log.** Settings changes are
+  captured by the existing org-update audit event chain; a finer-
+  grained event for activity-visibility flips is a future small follow-up.
+

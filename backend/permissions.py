@@ -428,12 +428,15 @@ def can_view_vote_rationale(
     if org is None:
         return False
 
-    # Publicly-listed orgs allow anonymous + non-member viewing.
-    # Mirror the Phase 14 ``public_org_router`` rule: org is "public"
-    # iff ``join_policy != 'invite_only_secret'`` (those secret orgs are
-    # designed to be indistinguishable from non-existent ones from an
-    # unauthenticated probe perspective).
-    if org.join_policy != "invite_only_secret":
+    # Phase 57 — was `join_policy != 'invite_only_secret'`; now keys
+    # on discoverability. Hidden orgs are indistinguishable from non-
+    # existent ones from an unauthenticated probe perspective, so the
+    # rationale-visibility surface gates on the same axis as the public
+    # landing endpoint. Non-hidden orgs still let the per-topic
+    # delegate-profile visibility decide who sees what (see Phase 30.3
+    # `can_see_votes` — this function delegates to that gate via the
+    # has_public_topic precondition above).
+    if org.discoverability != "hidden":
         return True
 
     if viewer is None:

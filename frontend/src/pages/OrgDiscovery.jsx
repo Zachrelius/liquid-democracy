@@ -239,6 +239,11 @@ function SortControl({ value, onChange }) {
 // they're walking into.
 const JOIN_POLICY_HINTS = {
   open: 'Open to join',
+  // Phase 57 — three-value vocabulary (open / approval / invite); the
+  // legacy four-value keys are retained for back-compat against a
+  // stale cache that returns OrgOut still using them.
+  approval: 'Approval required',
+  invite: 'Invitation only',
   approval_required: 'Approval required',
   invite_only_public: 'Invitation only',
 };

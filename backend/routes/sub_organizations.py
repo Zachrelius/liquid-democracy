@@ -336,9 +336,12 @@ def create_sub_org(
         name=body.name,
         slug=body.slug,
         description=body.description,
-        # Sub-orgs default to invite_only — Decision 9 mentions this is the
-        # typical pattern; sub-org admin can flip later via PATCH.
-        join_policy="invite_only",
+        # Sub-orgs default to invite + hidden (Phase 57 mapping of the
+        # pre-Phase-14 'invite_only' literal preserved here: same
+        # access posture, new vocabulary). Sub-org admin can flip
+        # discoverability or join_policy later via PATCH.
+        join_policy="invite",
+        discoverability="hidden",
         settings=body.settings or {},
         parent_org_id=parent.id,
     )

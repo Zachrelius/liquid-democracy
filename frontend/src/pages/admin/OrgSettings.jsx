@@ -215,7 +215,13 @@ export default function OrgSettings() {
   const canRevertToSingle = governanceMode === 'admin_council' && userRole === 'admin';
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [joinPolicy, setJoinPolicy] = useState('approval_required');
+  // Phase 57 — three independent access axes (was a single 4-value
+  // join_policy). Default to canonical post-Phase-57 vocabulary;
+  // hydration below maps any legacy 4-value literal onto the new
+  // vocabulary so an OrgOut emitted by an older backend still loads.
+  const [joinPolicy, setJoinPolicy] = useState('approval');
+  const [discoverability, setDiscoverability] = useState('listed');
+  const [activityVisibility, setActivityVisibility] = useState('members_only');
   const [settings, setSettings] = useState({});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
@@ -354,7 +360,25 @@ export default function OrgSettings() {
       // cached-bundle population the coercion was protecting is zero, and
       // the migration has long since renamed legacy rows. Phase 14 tech
       // debt #3 closed.
-      setJoinPolicy(currentOrg.join_policy);
+      // Phase 57 — hydrate the three access axes. The backend normalizes
+      // any legacy 4-value literal at write time, so currentOrg.join_policy
+      // is canonical; the defensive client-side fallback handles a
+      // stale cached bundle still serving the old vocabulary.
+      const legacyMap = {
+        invite_only_secret: ['invite', 'hidden'],
+        invite_only_public: ['invite', 'listed'],
+        approval_required: ['approval', 'listed'],
+      };
+      const rawJp = currentOrg.join_policy;
+      if (legacyMap[rawJp]) {
+        const [newJp, newDisc] = legacyMap[rawJp];
+        setJoinPolicy(newJp);
+        setDiscoverability(currentOrg.discoverability || newDisc);
+      } else {
+        setJoinPolicy(rawJp);
+        setDiscoverability(currentOrg.discoverability || 'listed');
+      }
+      setActivityVisibility(currentOrg.activity_visibility || 'members_only');
       const s = currentOrg.settings || {};
       setSettings(s);
       // Expand the SR section if the org currently has it on, or if any
@@ -433,10 +457,15 @@ export default function OrgSettings() {
     setSaving(true);
     setMsg('');
     try {
+      // Phase 57 — persist all three access axes alongside the rest of
+      // the settings. Backend normalizes hidden+public → hidden+
+      // members_only server-side.
       await api.patch(`/api/orgs/${currentOrg.slug}`, {
         name,
         description,
         join_policy: joinPolicy,
+        discoverability,
+        activity_visibility: activityVisibility,
         settings,
       });
       await refreshOrgs();
@@ -1064,51 +1093,101 @@ export default function OrgSettings() {
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
             />
           </div>
+          {/* Phase 57 F2 — Access & visibility section. The three axes
+              replace the Phase 14 four-policy radio: join policy (how
+              people join), discoverability (how outsiders find the
+              org), activity visibility (what non-members see beyond
+              the splash). Sits adjacent to (NOT merged with) the
+              "Identity verification gates" section — those control
+              whose votes count, a separate concern. */}
           <div>
-            <label className="block text-xs text-gray-500 mb-2">Join Policy</label>
-            {/* Phase 14 F3 — four-policy selector. The split of the legacy
-                "Invite only" into _secret and _public is the visible
-                surface of the new public-landing-pages feature: stewards
-                choose whether the org has a public splash at all. The
-                copy below is verbatim from spec §F3 line 304-307. */}
-            <div className="space-y-2">
-              {[
-                {
-                  value: 'invite_only_secret',
-                  label: 'Invite only (private)',
-                  desc: 'Members must be invited. The organization has no public landing page.',
-                },
-                {
-                  value: 'invite_only_public',
-                  label: 'Invite only (public)',
-                  desc: 'Members must be invited. The organization has a public landing page that explains who you are; visitors cannot join without an invitation.',
-                },
-                {
-                  value: 'approval_required',
-                  label: 'Approval required',
-                  desc: 'Anyone can request to join. Your admins approve each request. The organization has a public landing page.',
-                },
-                {
-                  value: 'open',
-                  label: 'Open',
-                  desc: 'Anyone with the link can join immediately. The organization has a public landing page.',
-                },
-              ].map(opt => (
-                <label key={opt.value} className="flex items-start gap-3 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="joinPolicy"
-                    value={opt.value}
-                    checked={joinPolicy === opt.value}
-                    onChange={() => setJoinPolicy(opt.value)}
-                    className="mt-0.5 accent-[var(--brand-accent)]"
-                  />
-                  <div>
-                    <p className="text-sm text-gray-700">{opt.label}</p>
-                    <p className="text-xs text-gray-400">{opt.desc}</p>
-                  </div>
-                </label>
-              ))}
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+              Access &amp; visibility
+            </h3>
+
+            <div className="mb-4">
+              <label className="block text-xs text-gray-500 mb-1">
+                Join policy <span className="text-gray-400">— how people join</span>
+              </label>
+              <select
+                value={joinPolicy}
+                onChange={e => setJoinPolicy(e.target.value)}
+                className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              >
+                <option value="open">Open — anyone can join immediately</option>
+                <option value="approval">Approval — anyone can request, admins approve</option>
+                <option value="invite">Invitation only — invitees only</option>
+              </select>
+            </div>
+
+            <div className="mb-4">
+              <label className="block text-xs text-gray-500 mb-1">
+                Discoverability <span className="text-gray-400">— how outsiders find your org</span>
+              </label>
+              <select
+                value={discoverability}
+                onChange={e => setDiscoverability(e.target.value)}
+                className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              >
+                <option value="listed">Listed — appears on the public /explore directory</option>
+                <option value="unlisted">Unlisted — reachable only by direct link</option>
+                <option value="hidden">Hidden — no public landing page; 404 to non-members</option>
+              </select>
+              <p className="text-xs text-gray-400 mt-1">
+                <strong>Unlisted</strong> is the right choice for a private group
+                whose landing page you want to share by link (DM, email) without
+                showing up on the public directory.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-500 mb-2">
+                Activity visibility <span className="text-gray-400">— what non-members see</span>
+              </label>
+              <div
+                className={`space-y-2 ${discoverability === 'hidden' ? 'opacity-50' : ''}`}
+              >
+                {[
+                  {
+                    value: 'members_only',
+                    label: 'Members only',
+                    desc: 'Only members can see proposals, tallies, and comments. (Today’s default.)',
+                  },
+                  {
+                    value: 'public',
+                    label: 'Public read-only',
+                    desc:
+                      'Anyone can read proposals, aggregate tallies, and comments. ' +
+                      'Posting / voting / commenting still requires membership. Individual delegate-vote visibility continues to follow each delegate’s per-topic settings.',
+                  },
+                ].map(opt => (
+                  <label
+                    key={opt.value}
+                    className={`flex items-start gap-3 ${
+                      discoverability === 'hidden' ? 'cursor-not-allowed' : 'cursor-pointer'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="activityVisibility"
+                      value={opt.value}
+                      checked={activityVisibility === opt.value}
+                      disabled={discoverability === 'hidden'}
+                      onChange={() => setActivityVisibility(opt.value)}
+                      className="mt-0.5 accent-[var(--brand-accent)]"
+                    />
+                    <div>
+                      <p className="text-sm text-gray-700">{opt.label}</p>
+                      <p className="text-xs text-gray-400">{opt.desc}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              {discoverability === 'hidden' && (
+                <p className="text-xs text-gray-500 mt-2 italic">
+                  Hidden orgs have no public surface, so activity visibility is moot.
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -1333,19 +1412,18 @@ export default function OrgSettings() {
             Public landing page intro
           </h2>
           <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-            {joinPolicy === 'invite_only_secret' && (
+            {discoverability === 'hidden' && (
               <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                Your organization has no public landing page; this intro
-                text isn&apos;t shown anywhere. Switch the join policy
-                to a public variant (Invite only public, Approval required,
-                or Open) to make the intro visible.
+                Your organization is set to <strong>Hidden</strong> — there&apos;s
+                no public landing page, so this intro text isn&apos;t shown
+                anywhere. Switch discoverability to <strong>Listed</strong>
+                {' '}or <strong>Unlisted</strong> to make the intro visible.
               </div>
             )}
             <p className="text-xs text-gray-500">
               A longer introduction shown on your organization&apos;s public
-              landing page at <code>/{currentOrg.slug}</code>. Visible only
-              when policy is &quot;Invite only (public)&quot;,
-              &quot;Approval required&quot;, or &quot;Open&quot;. Markdown
+              landing page at <code>/{currentOrg.slug}</code>. Visible whenever
+              discoverability is <em>Listed</em> or <em>Unlisted</em>. Markdown
               supported (same syntax as proposal bodies).
             </p>
             <div>

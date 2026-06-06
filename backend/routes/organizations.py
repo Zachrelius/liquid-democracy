@@ -229,6 +229,12 @@ def _org_to_out(
         slug=org.slug,
         description=org.description or "",
         join_policy=org.join_policy,
+        # Phase 57 — surface the two new access axes on every OrgOut.
+        # Fall back to today's effective defaults (`listed`,
+        # `members_only`) for any pre-migration row that somehow lacks
+        # them — the server_defaults make this defensive only.
+        discoverability=org.discoverability or "listed",
+        activity_visibility=org.activity_visibility or "members_only",
         settings=org.settings or {},
         parent_org_id=org.parent_org_id,
         created_at=org.created_at,
@@ -401,13 +407,25 @@ def create_organization(
 
     user_agent = request.headers.get("user-agent", "")
 
-    org = models.Organization(
+    # Phase 57 — pass the three access axes through. The OrgCreate
+    # model_validator has already normalized any legacy join_policy
+    # value AND filled in the implied discoverability, so the body
+    # fields here are canonical. discoverability + activity_visibility
+    # may still be None if the FE didn't send them and no legacy value
+    # implied one; in that case we omit them and the column's
+    # server_default ('listed' / 'members_only') applies.
+    org_kwargs = dict(
         name=body.name,
         slug=body.slug,
         description=body.description,
         join_policy=body.join_policy,
         settings=DEFAULT_ORG_SETTINGS.copy(),
     )
+    if body.discoverability is not None:
+        org_kwargs["discoverability"] = body.discoverability
+    if body.activity_visibility is not None:
+        org_kwargs["activity_visibility"] = body.activity_visibility
+    org = models.Organization(**org_kwargs)
     db.add(org)
     db.flush()
 
@@ -515,6 +533,14 @@ def update_organization(
         org.description = body.description
     if body.join_policy is not None:
         org.join_policy = body.join_policy
+    # Phase 57 — discoverability + activity_visibility on PATCH. The
+    # OrgUpdate model_validator has already normalized any legacy
+    # join_policy literal and filled in implied discoverability if the
+    # caller didn't set it explicitly.
+    if body.discoverability is not None:
+        org.discoverability = body.discoverability
+    if body.activity_visibility is not None:
+        org.activity_visibility = body.activity_visibility
     # Phase 49a Cluster B — `proposal_creation_mode` body field
     # removed; the new control is `settings.allow_cosign_petition`,
     # handled by the generic settings-merge below.
@@ -1475,7 +1501,11 @@ def get_public_org(
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
-    if org is None or org.join_policy == "invite_only_secret":
+    # Phase 57 — was `join_policy == 'invite_only_secret'`; now keys on
+    # the discoverability axis so an org whose access posture is
+    # (any join_policy, hidden) 404s the public landing exactly as the
+    # legacy secret check did.
+    if org is None or org.discoverability == "hidden":
         raise HTTPException(status_code=404, detail="Organization not found")
 
     branding_dict = (org.settings or {}).get("branding") or {}
@@ -1490,6 +1520,9 @@ def get_public_org(
         ),
         intro_text=(org.settings or {}).get("intro_text") or None,
         join_policy=org.join_policy,
+        # Phase 57 — included so the FE can decide whether to render
+        # the public proposal-list panel without a second API call.
+        activity_visibility=org.activity_visibility or "members_only",
     )
 
 
@@ -1834,7 +1867,12 @@ def get_explore_orgs(
             activity_subq,
             activity_subq.c.org_id == models.Organization.id,
         )
-        .filter(models.Organization.join_policy != "invite_only_secret")
+        # Phase 57 — was `join_policy != 'invite_only_secret'`; now keys
+        # on the discoverability axis. Only orgs whose steward has set
+        # discoverability='listed' appear here. `unlisted` orgs serve
+        # their /{slug} splash by direct link but stay off the index;
+        # `hidden` orgs 404 the splash entirely.
+        .filter(models.Organization.discoverability == "listed")
         .filter(models.Organization.is_demo.is_(False))
         .filter(models.Organization.parent_org_id.is_(None))
     )
@@ -1898,6 +1936,232 @@ def get_explore_orgs(
 
 
 # ============================================================================
+# Phase 57 — Public activity surface (anon-allowed when activity_visibility='public')
+# ============================================================================
+#
+# When an org's steward has set ``activity_visibility='public'``, non-
+# members may read the org's proposal list + per-proposal detail +
+# comments at the public sibling endpoints below. The default
+# (``members_only``) returns 404 — byte-for-byte the same response as
+# for a non-existent org, mirroring the discoverability=hidden posture.
+#
+# Individual delegate-vote rendering still routes through the
+# Phase 30.3 ``can_see_votes`` gate; this surface does NOT bypass it.
+# Participation (voting, commenting) still requires membership at the
+# member-scoped endpoints — these public endpoints are READ-ONLY.
+
+def _public_activity_org_or_404(
+    db: Session, org_slug: str,
+) -> models.Organization:
+    """Resolve an org for the public activity surface.
+
+    Returns the org IFF discoverability is non-hidden AND
+    activity_visibility=='public'. Otherwise raises 404 — the same
+    response shape as for a non-existent org, so an unauthenticated
+    probe of a members-only org learns nothing.
+    """
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug,
+    ).first()
+    if org is None or org.discoverability == "hidden":
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if org.activity_visibility != "public":
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return org
+
+
+@public_org_router.get(
+    "/{org_slug}/public/proposals",
+    response_model=list[schemas.ProposalOut],
+)
+def list_public_org_proposals(
+    org_slug: str,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    db: Session = Depends(get_db),
+):
+    """Phase 57 B5 — list an org's proposals to anonymous viewers when
+    the org has ``activity_visibility='public'``. Returns 404 for any
+    other access posture.
+
+    Reuses ``_build_proposal_out`` so the projection is byte-identical
+    to the member-scoped list endpoint. Sub-org proposals are excluded
+    here (the public surface is parent-org only; sub-org public exposure
+    is out of scope for Phase 57).
+    """
+    org = _public_activity_org_or_404(db, org_slug)
+    # Phase 57 — top-level proposals only on the public surface.
+    q = db.query(models.Proposal).filter(
+        models.Proposal.org_id == org.id,
+        models.Proposal.sub_org_id.is_(None),
+    )
+    if status_filter:
+        q = q.filter(models.Proposal.status == status_filter)
+    # Phase 31 F1 — three-tier ordering (voting → deliberation → closed).
+    from routes.proposals import (
+        _proposal_list_ordering as _f1_ordering, _build_proposal_out,
+    )
+    proposals = q.order_by(*_f1_ordering()).all()
+    return [_build_proposal_out(p, db) for p in proposals]
+
+
+@public_org_router.get(
+    "/{org_slug}/public/proposals/{proposal_id}",
+    response_model=schemas.ProposalOut,
+)
+def get_public_org_proposal(
+    org_slug: str,
+    proposal_id: str,
+    db: Session = Depends(get_db),
+):
+    """Phase 57 B5 — proposal detail (body, options, status, voting
+    method, and the effective deliberation-engagement flags) for an
+    org with ``activity_visibility='public'``. Returns 404 otherwise.
+
+    Aggregate tallies live at the sibling `/results` public endpoint
+    below to keep the projection shapes parallel with the member
+    endpoints. Individual delegate votes are NOT exposed here — those
+    route through ``can_see_votes`` at the member-scoped endpoints
+    only.
+    """
+    org = _public_activity_org_or_404(db, org_slug)
+    proposal = db.query(models.Proposal).filter(
+        models.Proposal.id == proposal_id,
+        models.Proposal.org_id == org.id,
+        models.Proposal.sub_org_id.is_(None),
+    ).first()
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    from routes.proposals import _build_proposal_out
+    return _build_proposal_out(proposal, db)
+
+
+@public_org_router.get(
+    "/{org_slug}/public/proposals/{proposal_id}/results",
+    response_model=schemas.ProposalResults,
+)
+def get_public_org_proposal_results(
+    org_slug: str,
+    proposal_id: str,
+    db: Session = Depends(get_db),
+):
+    """Phase 57 B5 — aggregate tally for a proposal in a public-activity
+    org. Reuses the member-scoped ``get_results`` body verbatim; this
+    is the public counterpart with no auth dep.
+
+    Aggregate-only — no individual vote data ever flows through this
+    endpoint regardless of org config.
+    """
+    org = _public_activity_org_or_404(db, org_slug)
+    proposal = db.query(models.Proposal).filter(
+        models.Proposal.id == proposal_id,
+        models.Proposal.org_id == org.id,
+        models.Proposal.sub_org_id.is_(None),
+    ).first()
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    # Reuse the existing results-construction logic. Import locally to
+    # avoid circular import at module load time.
+    import delegation_engine
+    from delegation_engine import ApprovalTally, RCVTally
+    tally = delegation_engine.compute_tally(proposal, db)
+    from sustained_majority_service import build_status as _sm_build_status
+    sm_status = _sm_build_status(db, proposal, org)
+    snapshots = (
+        db.query(models.VoteSnapshot)
+        .filter(models.VoteSnapshot.proposal_id == proposal_id)
+        .order_by(models.VoteSnapshot.simulated_time)
+        .all()
+    )
+    time_series = [
+        schemas.SnapshotPoint(
+            simulated_time=s.simulated_time,
+            yes=s.yes_count, no=s.no_count, abstain=s.abstain_count,
+            not_cast=s.not_cast_count, total_eligible=s.total_eligible,
+        )
+        for s in snapshots
+    ]
+    if proposal.voting_method == "approval" and isinstance(tally, ApprovalTally):
+        option_labels = {opt.id: opt.label for opt in proposal.options}
+        return schemas.ProposalResults(
+            proposal_id=proposal_id, voting_method="approval",
+            not_cast=tally.not_cast, total_eligible=tally.total_eligible,
+            votes_cast=tally.total_ballots_cast,
+            quorum_met=tally.quorum_met(proposal.quorum_threshold),
+            option_approvals=tally.option_approvals,
+            option_labels=option_labels,
+            total_ballots_cast=tally.total_ballots_cast,
+            total_abstain=tally.total_abstain, winners=tally.winners,
+            tied=tally.tied, tie_resolution=proposal.tie_resolution,
+            time_series=time_series, sustained_majority=sm_status,
+        )
+    if proposal.voting_method == "ranked_choice" and isinstance(tally, RCVTally):
+        option_labels = {opt.id: opt.label for opt in proposal.options}
+        rounds_out = [
+            schemas.RCVRoundOut(
+                round_number=r.round_number,
+                option_counts=r.option_counts,
+                eliminated=r.eliminated, elected=r.elected,
+                transferred_from=r.transferred_from,
+                transfer_breakdown=r.transfer_breakdown,
+            )
+            for r in tally.rounds
+        ]
+        return schemas.ProposalResults(
+            proposal_id=proposal_id, voting_method="ranked_choice",
+            not_cast=tally.not_cast, total_eligible=tally.total_eligible,
+            votes_cast=tally.total_ballots_cast,
+            quorum_met=tally.quorum_met(proposal.quorum_threshold),
+            option_labels=option_labels,
+            total_ballots_cast=tally.total_ballots_cast,
+            total_abstain=tally.total_abstain, winners=tally.winners,
+            tied=tally.tied, tie_resolution=proposal.tie_resolution,
+            rounds=rounds_out, method=tally.method,
+            num_winners=tally.num_winners,
+            time_series=time_series, sustained_majority=sm_status,
+        )
+    return schemas.ProposalResults(
+        proposal_id=proposal_id, voting_method="binary",
+        yes=tally.yes, no=tally.no, abstain=tally.abstain,
+        not_cast=tally.not_cast, total_eligible=tally.total_eligible,
+        votes_cast=tally.total_ballots_cast,
+        quorum_met=tally.quorum_met(proposal.quorum_threshold),
+        winners=tally.winners, tied=tally.tied,
+        tie_resolution=proposal.tie_resolution,
+        time_series=time_series, sustained_majority=sm_status,
+    )
+
+
+@public_org_router.get(
+    "/{org_slug}/public/proposals/{proposal_id}/comments",
+    response_model=list[schemas.CommentOut],
+)
+def list_public_org_proposal_comments(
+    org_slug: str,
+    proposal_id: str,
+    db: Session = Depends(get_db),
+):
+    """Phase 57 B5 — proposal comments for an org with
+    ``activity_visibility='public'``. Read-only; posting still requires
+    membership at the member-scoped POST endpoint."""
+    org = _public_activity_org_or_404(db, org_slug)
+    proposal = db.query(models.Proposal).filter(
+        models.Proposal.id == proposal_id,
+        models.Proposal.org_id == org.id,
+        models.Proposal.sub_org_id.is_(None),
+    ).first()
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    from routes.comments import _build_comment_out
+    rows = (
+        db.query(models.Comment)
+        .filter(models.Comment.proposal_id == proposal_id)
+        .order_by(models.Comment.created_at.asc())
+        .all()
+    )
+    return [_build_comment_out(c) for c in rows]
+
+
+# ============================================================================
 # Phase 14 B3 — Public join-request endpoint (consolidates two paths)
 # ============================================================================
 
@@ -1935,17 +2199,24 @@ def create_join_request(
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
-    if org is None or org.join_policy == "invite_only_secret":
-        # Same 404 shape for non-existent and secret orgs.
+    # Phase 57 — keys on discoverability axis (was `invite_only_secret`
+    # check on join_policy). Hidden orgs 404 anonymously.
+    if org is None or org.discoverability == "hidden":
+        # Same 404 shape for non-existent and hidden orgs.
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    if org.join_policy == "invite_only_public":
+    if org.join_policy == "invite":
+        # Phase 57 — was `invite_only_public`; the join axis is now
+        # disentangled from discoverability. An invite-policy org with
+        # any non-hidden discoverability still requires an invitation
+        # to join — the splash explains this, and this endpoint 403s
+        # the join attempt loudly.
         raise HTTPException(
             status_code=403,
             detail="This organization requires an invitation.",
         )
 
-    if org.join_policy not in ("approval_required", "open"):
+    if org.join_policy not in ("approval", "open"):
         # Defensive: should be unreachable given the value set, but
         # surfaces a loud error if a future policy variant is added
         # without updating this dispatch.
@@ -2039,7 +2310,7 @@ def create_join_request(
         db.refresh(membership)
         return schemas.JoinRequestOut(status="active", member_id=membership.id)
 
-    # approval_required path.
+    # approval path (Phase 57 — was 'approval_required').
     membership = models.OrgMembership(
         user_id=current_user.id,
         org_id=org.id,
@@ -2054,7 +2325,7 @@ def create_join_request(
         target_type="organization",
         target_id=org.id,
         actor_id=current_user.id,
-        details={"slug": org.slug, "policy": "approval_required"},
+        details={"slug": org.slug, "policy": "approval"},
         ip_address=request.client.host if request.client else None,
     )
     db.commit()
@@ -2176,7 +2447,8 @@ def cancel_join_request(
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
-    if org is None or org.join_policy == "invite_only_secret":
+    # Phase 57 — was secret-policy check; now keys on discoverability.
+    if org is None or org.discoverability == "hidden":
         raise HTTPException(status_code=404, detail="Organization not found")
 
     membership = db.query(models.OrgMembership).filter(
@@ -2228,9 +2500,12 @@ def request_join(
     # this legacy endpoint (defense-in-depth: the new client uses B3
     # exclusively, but old clients calling /join shouldn't leak secret
     # org existence).
-    if org.join_policy == "invite_only_secret":
+    # Phase 57 — hidden discoverability 404s anonymously regardless of
+    # join_policy (the legacy invite_only_secret semantic). Invite join
+    # policy 403s with the invitation-required message.
+    if org.discoverability == "hidden":
         raise HTTPException(status_code=404, detail="Organization not found")
-    if org.join_policy in ("invite_only", "invite_only_public"):
+    if org.join_policy == "invite":
         raise HTTPException(status_code=403, detail="This organization is invite-only")
 
     existing = db.query(models.OrgMembership).filter(

@@ -70,6 +70,14 @@ _MUST_SURFACE_FIELDS: list[str] = [
     # to decide whether to render the cosign-petition entry point for
     # users without ``proposal.create``.
     "allow_cosign_petition",
+    # Phase 57 — the two new access axes (the third, join_policy, is
+    # already on the list above and was repurposed in-place from the
+    # Phase 14 four-value vocabulary to the new three-value vocabulary).
+    # The FE reads these off ``currentOrg`` to drive the new
+    # OrgSettings "Access & visibility" section + the public landing
+    # surface.
+    "discoverability",
+    "activity_visibility",
 ]
 
 # The Phase 45a hotfix surfaces OWNER_ONLY_KEYS via user_permissions

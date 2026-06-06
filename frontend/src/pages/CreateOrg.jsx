@@ -56,7 +56,12 @@ export default function CreateOrg() {
   const [slug, setSlug] = useState('');
   const [slugEdited, setSlugEdited] = useState(false);
   const [description, setDescription] = useState('');
-  const [joinPolicy, setJoinPolicy] = useState('approval_required');
+  // Phase 57 — three independent axes (was a single 4-value
+  // join_policy).  Defaults preserve today's effective behavior:
+  // approval-to-join, appear-on-explore, members-only activity.
+  const [joinPolicy, setJoinPolicy] = useState('approval');
+  const [discoverability, setDiscoverability] = useState('listed');
+  const [activityVisibility, setActivityVisibility] = useState('members_only');
   const [saving, setSaving] = useState(false);
   // Phase 9.5 — replace plain string error with a classified shape.
   const [errorInfo, setErrorInfo] = useState(null);
@@ -94,11 +99,17 @@ export default function CreateOrg() {
     setResent(false);
     setResendError('');
     try {
+      // Phase 57 — send all three access axes. Backend normalizes
+      // hidden+public → hidden+members_only server-side, so we don't
+      // need to enforce that here, but we do disable the activity
+      // toggle UI when discoverability=hidden.
       const org = await api.post('/api/orgs', {
         name,
         slug,
         description,
         join_policy: joinPolicy,
+        discoverability,
+        activity_visibility: activityVisibility,
       });
       await refreshOrgs();
       setCurrentOrg(org);
@@ -244,21 +255,79 @@ export default function CreateOrg() {
           />
         </div>
 
+        {/* Phase 57 — three independent access axes. Join policy
+            controls HOW people join; discoverability controls who can
+            FIND the org; activity visibility controls what non-members
+            SEE beyond the splash. */}
         <div>
-          <label className="block text-xs text-gray-500 mb-2">Join Policy</label>
-          <div className="space-y-2">
+          <label className="block text-xs text-gray-500 mb-2">
+            Join policy <span className="text-gray-400">— how people join</span>
+          </label>
+          <select
+            value={joinPolicy}
+            onChange={e => setJoinPolicy(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+          >
+            <option value="open">Open — anyone can join immediately</option>
+            <option value="approval">Approval — anyone can request, admins approve</option>
+            <option value="invite">Invitation only — invitees only</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs text-gray-500 mb-2">
+            Discoverability <span className="text-gray-400">— how outsiders find your org</span>
+          </label>
+          <select
+            value={discoverability}
+            onChange={e => setDiscoverability(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+          >
+            <option value="listed">Listed — appears on the public /explore directory</option>
+            <option value="unlisted">Unlisted — reachable only by direct link (share via DM, email)</option>
+            <option value="hidden">Hidden — no public landing page; 404 to non-members</option>
+          </select>
+          <p className="text-xs text-gray-400 mt-1">
+            <strong>Unlisted</strong> is the right choice for a private group whose
+            landing page you want to share by link (e.g. a WhatsApp invite) without
+            showing up on the public directory.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-xs text-gray-500 mb-2">
+            Activity visibility <span className="text-gray-400">— what non-members see beyond the splash</span>
+          </label>
+          <div
+            className={`space-y-2 ${discoverability === 'hidden' ? 'opacity-50' : ''}`}
+          >
             {[
-              { value: 'invite_only', label: 'Invite Only', desc: 'Only people you invite can join' },
-              { value: 'approval_required', label: 'Approval Required', desc: 'Anyone can request, admins approve' },
-              { value: 'open', label: 'Open', desc: 'Anyone can join immediately' },
+              {
+                value: 'members_only',
+                label: 'Members only',
+                desc: 'Only members can see proposals, tallies, and comments. (Today’s default.)',
+              },
+              {
+                value: 'public',
+                label: 'Public read-only',
+                desc:
+                  'Anyone can read proposals, aggregate tallies, and comments. ' +
+                  'Posting / voting / commenting still requires membership.',
+              },
             ].map(opt => (
-              <label key={opt.value} className="flex items-start gap-3 cursor-pointer">
+              <label
+                key={opt.value}
+                className={`flex items-start gap-3 ${
+                  discoverability === 'hidden' ? 'cursor-not-allowed' : 'cursor-pointer'
+                }`}
+              >
                 <input
                   type="radio"
-                  name="joinPolicy"
+                  name="activityVisibility"
                   value={opt.value}
-                  checked={joinPolicy === opt.value}
-                  onChange={() => setJoinPolicy(opt.value)}
+                  checked={activityVisibility === opt.value}
+                  disabled={discoverability === 'hidden'}
+                  onChange={() => setActivityVisibility(opt.value)}
                   className="mt-0.5 accent-[var(--brand-accent)]"
                 />
                 <div>
@@ -268,6 +337,11 @@ export default function CreateOrg() {
               </label>
             ))}
           </div>
+          {discoverability === 'hidden' && (
+            <p className="text-xs text-gray-500 mt-2 italic">
+              Hidden orgs have no public surface, so activity visibility is moot.
+            </p>
+          )}
         </div>
 
         <div className="flex gap-3 pt-2">

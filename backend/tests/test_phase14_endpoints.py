@@ -216,7 +216,10 @@ def test_public_endpoint_200_invite_only_public(client, test_db):
     assert body["branding"]["accent_color"] == "#2E75B6"
     # intro_text rendered as-is.
     assert body["intro_text"] == "## Welcome\n\nWe're invite-only."
-    assert body["join_policy"] == "invite_only_public"
+    # Phase 57 — the four old four-value vocabulary normalize at the
+    # model + schema layer onto the new three-value vocabulary.
+    # `invite_only_public` → `invite` (with discoverability='listed').
+    assert body["join_policy"] == "invite"
     # accent_auto_derived NOT in public shape.
     assert "accent_auto_derived" not in body["branding"]
 
@@ -231,7 +234,8 @@ def test_public_endpoint_200_approval_required(client, test_db):
     resp = client.get("/api/orgs/ar-org/public")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["join_policy"] == "approval_required"
+    # Phase 57 — `approval_required` → `approval`.
+    assert body["join_policy"] == "approval"
     assert body["intro_text"] is None
     assert body["logo_url"] is None
     assert body["branding"]["primary_color"] is None
@@ -730,7 +734,11 @@ def test_create_org_accepts_invite_only_secret(client, test_db):
         headers=_auth(user),
     )
     assert resp.status_code == 201, resp.text
-    assert resp.json()["join_policy"] == "invite_only_secret"
+    # Phase 57 — `invite_only_secret` is accepted (back-compat) but
+    # normalizes to `invite` with discoverability='hidden'.
+    body = resp.json()
+    assert body["join_policy"] == "invite"
+    assert body["discoverability"] == "hidden"
 
 
 def test_create_org_accepts_invite_only_public(client, test_db):
@@ -747,7 +755,11 @@ def test_create_org_accepts_invite_only_public(client, test_db):
         headers=_auth(user),
     )
     assert resp.status_code == 201, resp.text
-    assert resp.json()["join_policy"] == "invite_only_public"
+    # Phase 57 — `invite_only_public` normalizes to `invite` +
+    # discoverability='listed'.
+    body = resp.json()
+    assert body["join_policy"] == "invite"
+    assert body["discoverability"] == "listed"
 
 
 def test_create_org_accepts_approval_required(client, test_db):
@@ -797,20 +809,29 @@ def test_patch_org_rejects_legacy_invite_only(client, test_db):
 
 
 def test_patch_org_accepts_all_four_new_values(client, test_db):
-    """All four valid values can be set via PATCH."""
+    """All four legacy values can be set via PATCH (back-compat per
+    Phase 57). The schema validator normalizes them onto the new
+    three-value vocabulary at write time."""
     user = _make_user(test_db, "patcher_all4")
     org = _make_org(test_db, "patch-all4-org", join_policy="open")
     make_org_membership(test_db, org_id=org.id, user_id=user.id, role="admin")
     test_db.commit()
 
-    for new_val in (
-        "invite_only_secret", "invite_only_public",
-        "approval_required", "open",
-    ):
+    # Phase 57 legacy→new normalization mapping.
+    expected = {
+        "invite_only_secret": "invite",
+        "invite_only_public": "invite",
+        "approval_required": "approval",
+        "open": "open",
+    }
+    for new_val, expected_jp in expected.items():
         resp = client.patch(
             f"/api/orgs/{org.slug}",
             json={"join_policy": new_val},
             headers=_auth(user),
         )
         assert resp.status_code == 200, (new_val, resp.text)
-        assert resp.json()["join_policy"] == new_val
+        assert resp.json()["join_policy"] == expected_jp, (
+            f"PATCH {new_val!r} → {resp.json()['join_policy']!r}, "
+            f"expected {expected_jp!r}"
+        )

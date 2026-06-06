@@ -56,7 +56,8 @@ export default function SetupWizard() {
   const [orgSlug, setOrgSlug] = useState('');
   const [slugEdited, setSlugEdited] = useState(false);
   const [orgDescription, setOrgDescription] = useState('');
-  const [joinPolicy, setJoinPolicy] = useState('approval_required');
+  // Phase 57 — three-value vocabulary; was 'approval_required'.
+  const [joinPolicy, setJoinPolicy] = useState('approval');
   const [createdOrg, setCreatedOrg] = useState(null);
 
   // Step 2: Topics
@@ -221,10 +222,16 @@ export default function SetupWizard() {
 
           <div>
             <label className="block text-xs text-gray-500 mb-2">Join Policy</label>
+            {/* Phase 57 — three-value vocabulary (was open / approval_required
+                / invite_only). The CreateOrg page exposes the full
+                three-axis model; this Setup Wizard intentionally only
+                surfaces the join axis with sensible discoverability +
+                activity defaults (listed + members_only — today's
+                behavior). Stewards can refine via OrgSettings later. */}
             <div className="space-y-2">
               {[
-                { value: 'invite_only', label: 'Invite Only' },
-                { value: 'approval_required', label: 'Approval Required' },
+                { value: 'invite', label: 'Invitation only' },
+                { value: 'approval', label: 'Approval required' },
                 { value: 'open', label: 'Open' },
               ].map(opt => (
                 <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
