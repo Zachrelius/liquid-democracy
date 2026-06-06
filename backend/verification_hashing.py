@@ -287,3 +287,44 @@ VALID_UNIQUENESS_STRENGTHS: frozenset[str] = frozenset({
     UNIQUENESS_DOCUMENT_HASH,
     UNIQUENESS_BIOMETRIC,
 })
+
+
+# ---------------------------------------------------------------------------
+# Phase 52i — city/locality residency hash
+# ---------------------------------------------------------------------------
+
+
+def compute_locality_hash(
+    city: object, state: object,
+) -> Optional[str]:
+    """Phase 52i — hash a (city, state) pair for residency gating.
+
+    Reuses the existing ``_h`` + ``normalize_text`` + the
+    ``VERIFICATION_HASH_PEPPER``. The state is included in the hash
+    so cities with the same name across states ("Springfield, MA"
+    vs "Springfield, IL") produce DIFFERENT hashes — load-bearing
+    correctness, otherwise a city gate would match residents of the
+    wrong Springfield.
+
+    Returns:
+      * ``None`` if either ``city`` or ``state`` is missing or
+        unnormalizable (fail-safe — a user with no parseable
+        locality simply has no hash + fails any city gate, the
+        safe direction).
+      * The HMAC-SHA256 hex digest otherwise.
+
+    Pepper is read lazily by ``_h``; absent pepper → ``RuntimeError``
+    (fail-closed; same posture as the dedup hashes).
+    """
+    # Defer the import to avoid a module-level cycle.
+    from verification_provider import normalize_jurisdiction
+
+    normalized_city = normalize_text(city)
+    if not normalized_city:
+        return None
+    normalized_state = normalize_jurisdiction(
+        state if isinstance(state, str) else None,
+    )
+    if not normalized_state:
+        return None
+    return _h(["locality_v1", normalized_city, normalized_state])

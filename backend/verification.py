@@ -154,6 +154,14 @@ SETTING_NAME_MATCH_ACTION = "verification_name_match_action"
 # Phase 52g — minimum age to join the org. Integer ∈
 # ``SUPPORTED_AGE_THRESHOLDS`` or NULL/None for no age gate.
 SETTING_MEMBERSHIP_MIN_AGE = "verification_membership_min_age"
+# Phase 52i — city/locality residency gate. The admin enters the
+# readable city name; it's hashed together with the org's
+# ``SETTING_MEMBERSHIP_JURISDICTION`` at gate-check time and compared
+# to the member's stored ``verification_locality_hash``. SETTING THIS
+# REQUIRES THE JURISDICTION SETTING TOO — a city alone is ambiguous
+# (Springfield collides across ~30 states); the gate refuses to fire
+# without a state to disambiguate.
+SETTING_MEMBERSHIP_LOCALITY = "verification_membership_locality"
 
 # Phase 52f match-mode values
 NAME_MATCH_OFF = "off"
@@ -811,3 +819,96 @@ def display_name_matches_legal(
         return bool(target) and tokens[-1] == target
 
     return False
+
+
+# ---------------------------------------------------------------------------
+# Phase 52i — city/locality residency gate
+# ---------------------------------------------------------------------------
+#
+# State-level (``verification_jurisdiction``) is the existing gate;
+# city-level (``verification_locality_hash``) is the new one. The
+# locked decision is that the two levels are INDEPENDENT — a state
+# gate is NOT auto-satisfied by a city within it, and vice versa.
+# Each is an exact match on its own level.
+
+
+def _gate_city_for_org(org) -> tuple[Optional[str], Optional[str]]:
+    """Returns ``(gate_city, gate_state)`` for the org's city
+    residency gate. ``gate_city`` is the readable admin-entered
+    value; ``gate_state`` is the org's existing membership
+    jurisdiction (must be set when locality is set — the spec's
+    config-validation rule).
+
+    Returns ``(None, None)`` when no city gate is configured.
+    """
+    settings = getattr(org, "settings", None) or {}
+    if not isinstance(settings, dict):
+        return (None, None)
+    city = settings.get(SETTING_MEMBERSHIP_LOCALITY)
+    if not isinstance(city, str) or not city.strip():
+        return (None, None)
+    state = settings.get(SETTING_MEMBERSHIP_JURISDICTION)
+    if not isinstance(state, str) or not state.strip():
+        # Misconfigured (city without state) — fail safe: act as if
+        # no gate, so a misconfig doesn't accidentally lock everyone
+        # out. The OrgSettings UI gates the city field behind a
+        # state choice; this is the server-side defensive default.
+        return (None, None)
+    return (city.strip(), state.strip())
+
+
+def user_meets_locality(user, org) -> bool:
+    """Phase 52i — derived predicate. True iff:
+
+      * The org has NO city gate configured (defaults-if-absent →
+        True; additive-layer parity for unconfigured orgs).
+      * OR the user's stored ``verification_locality_hash`` equals
+        the hash of the gate-city (computed under the SAME pepper +
+        normalization as the user-side hash, including the state
+        component for cross-state disambiguation).
+
+    A user with no stored locality hash → False against any set
+    gate. The safe direction.
+    """
+    gate_city, gate_state = _gate_city_for_org(org)
+    if gate_city is None:
+        return True
+
+    user_hash = getattr(user, "verification_locality_hash", None)
+    if not user_hash:
+        return False
+
+    import verification_hashing
+    gate_hash = verification_hashing.compute_locality_hash(
+        gate_city, gate_state,
+    )
+    if not gate_hash:
+        return False
+    return user_hash == gate_hash
+
+
+def check_membership_locality_for_join(user, org) -> None:
+    """Raises 403 if the org has a city gate and ``user`` doesn't
+    meet it. No-op when no city gate is set. Composes with
+    ``check_membership_floor_for_join`` (state floor) +
+    ``check_membership_min_age_for_join`` (age) — all three checked
+    at every join path.
+    """
+    from fastapi import HTTPException
+    gate_city, gate_state = _gate_city_for_org(org)
+    if gate_city is None:
+        return
+    if user_meets_locality(user, org):
+        return
+    # Structured 403 with a distinct ``locality`` scope so the FE can
+    # render "must be a resident of {city}" copy distinctly from the
+    # state-floor / age / verification-required cases.
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "verification_required",
+            "scope": "locality",
+            "locality_city": gate_city,
+            "locality_state": gate_state,
+        },
+    )

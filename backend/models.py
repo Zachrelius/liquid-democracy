@@ -501,6 +501,17 @@ class User(Base):
     verification_age_promotes_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True,
     )
+    # Phase 52i — city/locality residency hash.
+    # HMAC-SHA256 of ``(normalized_city, normalized_state)`` under
+    # the same ``VERIFICATION_HASH_PEPPER`` as the dedup hashes.
+    # State is included in the hash so "Springfield, MA" ≠
+    # "Springfield, IL". NEVER serialized to clients (extends the
+    # 52d hash-exclusion guard). No index — only ever compared to
+    # the org's computed gate-hash for the single user being gated,
+    # no cross-user lookup.
+    verification_locality_hash: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True,
+    )
     # Phase 52d — document-hash dedup fields. See
     # ``verification_hashing.compute_hashes`` for the inputs +
     # normalization rules.

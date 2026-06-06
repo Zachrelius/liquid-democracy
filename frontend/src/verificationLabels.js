@@ -70,6 +70,14 @@ export function ctaCopyForVerificationRequired(detail) {
     if (!threshold) return null;
     return `This organization requires members to be ${threshold}+. Your verified age band doesn't meet that minimum.`;
   }
+  // Phase 52i — locality scope (city-level residency gate).
+  // ``locality_city`` is the readable admin-configured value; the
+  // member's city is hashed, never displayed.
+  if (detail.scope === 'locality') {
+    const city = detail.locality_city || 'the required city';
+    const state = detail.locality_state ? `, ${detail.locality_state}` : '';
+    return `This organization requires members to be verified residents of ${city}${state}.`;
+  }
   const floorLabel = labelForState(detail.floor);
   const jurisdictionSuffix = detail.jurisdiction ? ` (${detail.jurisdiction})` : '';
   const scopeCopy = {
