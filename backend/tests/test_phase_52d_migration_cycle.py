@@ -77,7 +77,7 @@ def test_phase_52d_upgrade_adds_columns_and_indexes():
         assert "name_dob_hash" not in pre
         assert "uniqueness_strength" not in pre
 
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_52D_REVISION)
         post = _columns(db_url, "users")
         assert "doc_number_hash" in post
         assert "name_dob_address_hash" in post
@@ -100,14 +100,14 @@ def test_phase_52d_downgrade_upgrade_cycle():
     db_url = f"sqlite:///{path}"
     try:
         _build_pre_52d(db_url)
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_52D_REVISION)
         assert "doc_number_hash" in _columns(db_url, "users")
         _run_alembic(db_url, "downgrade", _PRIOR_REVISION)
         post_down = _columns(db_url, "users")
         for c in ("doc_number_hash", "name_dob_address_hash",
                   "name_dob_hash", "uniqueness_strength"):
             assert c not in post_down
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_52D_REVISION)
         assert "doc_number_hash" in _columns(db_url, "users")
         assert DOC_NUMBER_UNIQUE_INDEX in _indexes(db_url, "users")
     finally:
@@ -137,7 +137,7 @@ def test_doc_number_hash_unique_allows_multiple_nulls():
     )
     try:
         _build_pre_52d(db_url)
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_52D_REVISION)
         res = subprocess.run(
             [sys.executable, "-c", code],
             cwd=_BACKEND_DIR, capture_output=True, text=True,

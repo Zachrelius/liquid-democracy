@@ -214,7 +214,9 @@ class TestExtractorRealPaths:
         payload = _captured_shape_payload()
         fields = _extract_ocr_fields(payload["decision"])
         hashes = verification_hashing.compute_hashes(fields)
-        assert hashes["doc_number_hash"] is not None
+        # Phase 52h Stage 2 — doc_number_hash no longer produced;
+        # the two name hashes are what 52e/52h Stage 1 use.
+        assert hashes["doc_number_hash"] is None
         assert hashes["name_dob_hash"] is not None
         assert hashes["name_dob_address_hash"] is not None
 
@@ -309,22 +311,22 @@ class TestJurisdictionFullNames:
 # ===========================================================================
 
 class TestMapperOnRealShape:
+    # Phase 52h Stage 2 — ``doc_number_unique`` kwarg removed;
+    # ``IDENTITY_UNIQUE`` rung no longer producible by the mapper
+    # (Z-locked Option A).
+
     def test_real_shape_payload_with_region_escalates_to_address_on_id(self):
         payload = _captured_shape_payload(region="Massachusetts")
-        mapped = verification_provider.map_decision_to_state(
-            payload["decision"], doc_number_unique=True,
-        )
+        mapped = verification_provider.map_decision_to_state(payload["decision"])
         assert mapped["verification_state"] == verification.ADDRESS_ON_ID
         assert mapped["verification_jurisdiction"] == "MA"
 
-    def test_real_shape_payload_unrecognized_region_stays_at_unique(self):
+    def test_real_shape_payload_unrecognized_region_stays_at_identity(self):
         payload = _captured_shape_payload(region="Ontario")
-        mapped = verification_provider.map_decision_to_state(
-            payload["decision"], doc_number_unique=True,
-        )
-        # Region didn't normalize; no jurisdiction, but unique was
-        # supplied → IDENTITY_UNIQUE (rung 2), not ADDRESS_ON_ID.
-        assert mapped["verification_state"] == verification.IDENTITY_UNIQUE
+        mapped = verification_provider.map_decision_to_state(payload["decision"])
+        # Region didn't normalize → no jurisdiction; with no
+        # IDENTITY_UNIQUE rung, the mapper falls back to IDENTITY.
+        assert mapped["verification_state"] == verification.IDENTITY
         assert mapped["verification_jurisdiction"] is None
 
 
@@ -361,10 +363,12 @@ class TestWebhookOnRealShape:
         assert user.verification_state == verification.ADDRESS_ON_ID
         assert user.verification_jurisdiction == "MA"
         assert user.verification_provenance == verification.PROV_DIDIT
-        assert user.doc_number_hash is not None
+        # Phase 52h Stage 2 — doc_number_hash no longer written;
+        # uniqueness_strength no longer set.
+        assert user.doc_number_hash is None
         assert user.name_dob_hash is not None
         assert user.name_dob_address_hash is not None
-        assert user.uniqueness_strength == "document_hash"
+        assert user.uniqueness_strength is None
 
 
 # ===========================================================================
