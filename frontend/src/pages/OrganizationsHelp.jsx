@@ -23,7 +23,7 @@ export default function OrganizationsHelp() {
         <HelpBackLink />
         <h1 className="text-2xl font-bold text-[var(--brand-primary)]">About Organizations</h1>
         <p className="text-sm text-gray-500 mt-1">
-          The four join policies, what each means for visitors, and how to set up a public landing page.
+          The three access axes (join policy, discoverability, activity visibility), what each means for visitors, and how to set up a public landing page.
         </p>
       </div>
 
