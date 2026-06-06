@@ -574,6 +574,38 @@ def _apply_decision(
         ip_address=request.client.host if request.client else None,
     )
 
+    # Phase 52h Stage 1 H1 — verify-time duplicate-flag detection.
+    # Now that the user's name-based hashes are written (the
+    # ``name_dob_address_hash`` / ``name_dob_hash`` columns above),
+    # evaluate them against every active org membership they hold.
+    # This closes the join-then-verify gap (someone joins an org,
+    # later verifies, was never checked against the org population).
+    #
+    # Behavioral asymmetry vs join-time detection (locked Z policy):
+    # at verify-time we ONLY record the flag — we do NOT flip an
+    # existing active membership to ``pending_approval``. Suspending
+    # a sitting member without warning would be more disruptive than
+    # the join-time block-pending-appeal case. The flag is enough
+    # to flip ``is_org_verified`` to False (per H3), gating the
+    # verified-only actions; the admin sees it in the open-flags
+    # list and acts manually.
+    #
+    # demo_stub never reaches this path — the receiver only invokes
+    # ``_apply_decision`` for PROV_DIDIT writes; demo personas have
+    # no real verifications and produce no hashes.
+    try:
+        import verification_flags
+        verification_flags.evaluate_duplicate_flags_for_user_orgs(
+            db, user=target_user,
+            actor_id=target_user.id,
+            ip_address=request.client.host if request.client else None,
+        )
+    except Exception as e:  # noqa: BLE001 — never block the verification write on flag eval
+        logger.warning(
+            "verification_flags verify-time eval failed for user %s: %s",
+            target_user.id, e,
+        )
+
 
 def _purge_session_best_effort(session_id: str, target_user: models.User) -> bool:
     """Phase 52d D4 — purge the Didit session after extraction.

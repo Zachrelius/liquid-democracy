@@ -2341,9 +2341,13 @@ export default function OrgSettings() {
               </div>
             </label>
 
-            {/* Phase 52e Stage 2 E4 — what to do when a high-confidence
-                name+DOB+address duplicate flag is raised against a
-                new applicant. */}
+            {/* Phase 52e Stage 2 E4 / Phase 52h Stage 1 H2 — both
+                confidence tiers now get the configurable action; both
+                default to pending_approval. Low-confidence used to be
+                hardcoded review-only — the locked-decision pivot is
+                that within a real org, false positives on the low-
+                confidence flag are rare enough that routing to admin
+                review beats letting a possible duplicate through. */}
             <div className="pt-2 border-t border-gray-200 space-y-1">
               <label className="block text-xs font-medium text-gray-700">
                 Action on high-confidence duplicate flag
@@ -2357,7 +2361,24 @@ export default function OrgSettings() {
                 <option value="review_only">Review only (admin notified; member joins as active)</option>
               </select>
               <p className="text-xs text-gray-500">
-                A high-confidence flag means a new applicant's verified name + date of birth + address matches an existing member of this org. The default routes the membership into the same approval queue you already use for join requests; "review only" creates the flag without changing the join, leaving the admin decision optional. Low-confidence flags (name + date of birth only) are always review-only — the math makes false matches near-certain at scale.
+                A high-confidence flag means a new applicant's verified name + date of birth + address matches an existing member of this org. The default routes the membership into the same approval queue you already use for join requests; "review only" creates the flag without changing the join, leaving the admin decision optional.
+              </p>
+            </div>
+
+            <div className="pt-2 space-y-1">
+              <label className="block text-xs font-medium text-gray-700">
+                Action on low-confidence duplicate flag
+              </label>
+              <select
+                value={settings.verification_low_confidence_flag_action || 'pending_approval'}
+                onChange={e => updateSetting('verification_low_confidence_flag_action', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              >
+                <option value="pending_approval">Block pending appeal (route to join-approval queue)</option>
+                <option value="review_only">Review only (admin notified; member joins as active)</option>
+              </select>
+              <p className="text-xs text-gray-500">
+                A low-confidence flag means a new applicant's name + date of birth alone matches an existing member (no address match). Within a real org, false matches on name + DOB alone are rare enough that the default routes to your approval queue too; "review only" creates the flag without changing the join. At very large platform scale name + DOB alone false-collides near-certainly, which is why low-confidence is still per-org only (never platform-wide).
               </p>
             </div>
           </div>

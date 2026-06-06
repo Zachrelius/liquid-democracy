@@ -1987,6 +1987,17 @@ class OrgDuplicateFlag(Base):
     resolved_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True,
     )
+    # Phase 52h Stage 1 H4 — durable demoted-side marker for
+    # ``resolved_same`` flags. NULL until the admin's verdict is
+    # ``resolved_same``; populated at that time with the newer-of-
+    # pair's user_id. Read by ``is_org_verified`` so the predicate
+    # stays False post-resolution (without this column, the
+    # open-only check would re-verify the duplicate when the flag's
+    # status moves away from ``open``).
+    demoted_user_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=_now, nullable=False,
     )

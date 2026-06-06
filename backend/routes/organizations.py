@@ -1900,13 +1900,15 @@ def create_join_request(
         actor_id=current_user.id,
         ip_address=request.client.host if request.client else None,
     )
-    high_conf_match = any(
-        f.confidence == verification_flags.CONFIDENCE_HIGH for f in new_flags
-    )
-    flag_routes_to_pending = (
-        high_conf_match
-        and verification_flags.high_confidence_flag_action(org)
+    # Phase 52h Stage 1 H2 — both tiers now read their own settings.
+    # Routing dispatches per-tier via flag_action_for_confidence;
+    # low-confidence defaults to pending_approval too (was hardcoded
+    # review-only pre-52h). An org can flip either tier to
+    # ``review_only`` independently.
+    flag_routes_to_pending = any(
+        verification_flags.flag_action_for_confidence(org, f.confidence)
             == verification_flags.ACTION_PENDING_APPROVAL
+        for f in new_flags
     )
 
     if org.join_policy == "open" and not flag_routes_to_pending:
@@ -2165,13 +2167,15 @@ def request_join(
         actor_id=current_user.id,
         ip_address=request.client.host if request.client else None,
     )
-    high_conf_match = any(
-        f.confidence == verification_flags.CONFIDENCE_HIGH for f in new_flags
-    )
-    flag_routes_to_pending = (
-        high_conf_match
-        and verification_flags.high_confidence_flag_action(org)
+    # Phase 52h Stage 1 H2 — both tiers now read their own settings.
+    # Routing dispatches per-tier via flag_action_for_confidence;
+    # low-confidence defaults to pending_approval too (was hardcoded
+    # review-only pre-52h). An org can flip either tier to
+    # ``review_only`` independently.
+    flag_routes_to_pending = any(
+        verification_flags.flag_action_for_confidence(org, f.confidence)
             == verification_flags.ACTION_PENDING_APPROVAL
+        for f in new_flags
     )
 
     if org.join_policy == "open" and not flag_routes_to_pending:

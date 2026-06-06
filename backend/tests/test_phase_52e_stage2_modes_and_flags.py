@@ -188,9 +188,13 @@ class TestIsOrgVerifiedPredicate:
         assert verification_flags.is_org_verified(u_a, org, db) is False
         assert verification_flags.is_org_verified(u_b, org, db) is False
 
-    def test_low_confidence_flag_does_not_invalidate(self, db: Session):
-        # Low-confidence flags route to review only — they do NOT
-        # invalidate verified status (birthday-paradox math).
+    def test_low_confidence_flag_NOW_invalidates_phase_52h_h3(self, db: Session):
+        # Phase 52h Stage 1 H3 — both confidence tiers now invalidate
+        # is_org_verified when an open flag exists. The pre-52h
+        # behavior (low-confidence did NOT invalidate) is the
+        # regression the H3 change introduces deliberately, per the
+        # locked Z decision that low-confidence is real enough within
+        # a single org to gate verified-only actions.
         org = _make_org(db, "o", membership_floor="identity")
         u_a = _verified_user(db, "a", state="identity")
         u_b = _verified_user(db, "b", state="identity")
@@ -200,8 +204,8 @@ class TestIsOrgVerifiedPredicate:
             confidence="name_dob", status="open",
         )
         db.add(flag); db.commit()
-        assert verification_flags.is_org_verified(u_a, org, db) is True
-        assert verification_flags.is_org_verified(u_b, org, db) is True
+        assert verification_flags.is_org_verified(u_a, org, db) is False
+        assert verification_flags.is_org_verified(u_b, org, db) is False
 
     def test_resolved_distinct_flag_does_not_invalidate(self, db: Session):
         # Once an admin marks the pair as different people, the
@@ -259,9 +263,14 @@ class TestFlagDetectionAtJoin:
         assert flags[0].confidence == "name_dob_address"
         assert flags[0].status == "open"
 
-    def test_low_confidence_match_does_not_route_pending_on_open_join(
+    def test_low_confidence_match_NOW_routes_pending_phase_52h_h2(
         self, client: TestClient, db: Session,
     ):
+        # Phase 52h Stage 1 H2 — low-confidence now defaults to
+        # pending_approval too (was hardcoded review-only pre-52h).
+        # An org admin can flip it back to review_only via the new
+        # ``verification_low_confidence_flag_action`` setting; see
+        # the dedicated 52h test for that.
         org = _make_org(db, "o", join_policy="open")
         incumbent = _verified_user(db, "incumbent", name_dob_hash="ND_SHARED")
         _add_active(db, incumbent, org)
@@ -271,12 +280,11 @@ class TestFlagDetectionAtJoin:
             headers=_auth(applicant),
         )
         assert r.status_code == 200
-        # Active despite the low-confidence flag (review only).
         m = db.query(models.OrgMembership).filter_by(
             user_id=applicant.id, org_id=org.id,
         ).one()
-        assert m.status == "active"
-        # Flag was created though.
+        assert m.status == "pending_approval"
+        # Flag was created.
         flags = db.query(models.OrgDuplicateFlag).filter_by(
             org_id=org.id,
         ).all()
