@@ -1,27 +1,30 @@
-"""Phase 52d — document-hash dedup (replaces the dead Didit-1:N path).
+"""Phase 52d — document-hash dedup (Phase 52h Stage 2 removed the
+platform-wide doc-number hard block).
 
 Pure module — no DB, no provider calls. Caller (the webhook handler)
 extracts OCR fields from a Didit decision payload, hands them here,
-and persists the returned hashes onto the user. Three hashes are
-computed (any may be ``None`` if its source field is absent):
-
-  * ``doc_number_hash`` — document number alone. Platform-wide HARD
-    BLOCK on collision (same doc on a different account is rejected;
-    see ``routes/verification.py``'s collision branch). Doc numbers
-    don't collide in the wild, so confidence is high enough to drive
-    an automatic action.
+and persists the returned hashes onto the user. Two hashes are
+produced (any may be ``None`` if its source field is absent):
 
   * ``name_dob_address_hash`` — name + DOB + address (the same
     canonical address form used by the residency / ``address_on_id``
-    path; see ``verification_provider.normalize_jurisdiction`` for the
-    coarse region we record). Org-scoped soft flag (Phase 52e). Math
-    in `id_verification_arc_backlog.md` shows near-zero false
+    path). Org-scoped HIGH-CONFIDENCE flag (Phase 52e Stage 2 +
+    Phase 52h Stage 1). Math in
+    ``id_verification_arc_backlog.md`` shows near-zero false
     collisions at 1M users.
 
-  * ``name_dob_hash`` — name + DOB only. Org-scoped lower-confidence
-    flag (the mover-catch). NEVER drives an automatic action — at
-    ~100k+ users the birthday paradox makes false collisions almost
-    certain.
+  * ``name_dob_hash`` — name + DOB only. Org-scoped LOWER-
+    CONFIDENCE flag (the mover-catch). At ~100k+ users the birthday
+    paradox makes false collisions almost certain, which is why
+    this tier stays per-org only and never becomes a platform-wide
+    rule.
+
+The ``doc_number_hash`` key is retained on the returned dict for
+backward compatibility (always ``None``) so any caller reading the
+key explicitly doesn't break. Nothing writes it to the column from
+Phase 52h Stage 2 onward; the column itself is deprecated (model
+comment) and batched for a future cleanup pass alongside the
+deprecated ``verification_nullifier`` column.
 
 Each hash is HMAC-SHA256 keyed by a single platform-wide pepper read
 from ``VERIFICATION_HASH_PEPPER`` in env. **Pepper is fail-closed:**
@@ -235,14 +238,13 @@ def compute_hashes(fields: dict) -> dict[str, Optional[str]]:
 
     out: dict[str, Optional[str]] = {}
 
-    # doc_number_hash
-    if _all_present(fields, _REQUIRED_FIELDS["doc_number_hash"]):
-        out["doc_number_hash"] = _h([
-            "doc_number_v1",
-            normalize_text(fields["document_number"]),
-        ])
-    else:
-        out["doc_number_hash"] = None
+    # Phase 52h Stage 2 — ``doc_number_hash`` is no longer computed.
+    # The platform-wide doc-number hard block was removed; the
+    # name-based hashes drive the org-scoped flag system instead.
+    # The key remains in the output dict (always None) so callers
+    # reading it explicitly don't break; the deprecated
+    # ``users.doc_number_hash`` column is not written.
+    out["doc_number_hash"] = None
 
     # name_dob_hash
     if _all_present(fields, _REQUIRED_FIELDS["name_dob_hash"]):

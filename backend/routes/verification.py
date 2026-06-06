@@ -31,7 +31,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from slowapi import Limiter
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -446,29 +445,18 @@ def _apply_decision(
         session_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
         return
 
-    doc_number_hash = hashes["doc_number_hash"]
-    name_dob_address_hash = hashes["name_dob_address_hash"]
-    name_dob_hash = hashes["name_dob_hash"]
+    # Phase 52h Stage 2 — the platform-wide document-number hard
+    # block is REMOVED. ``compute_hashes`` no longer returns a
+    # doc_number_hash; the collision lookup, the IntegrityError
+    # catch in the webhook handler, and the IDENTITY_UNIQUE
+    # rung's auto-assignment all go with it (Z-locked Option A —
+    # verification proves identity + residency only; uniqueness
+    # within an org is handled by the name-based flag system,
+    # biometric stays the deferred stronger tier).
+    name_dob_address_hash = hashes.get("name_dob_address_hash")
+    name_dob_hash = hashes.get("name_dob_hash")
 
-    # Pre-mapper collision lookup: is doc_number_hash on a DIFFERENT
-    # existing user? This is the platform-wide hard block, and it
-    # ALSO informs the mapper's uniqueness rung (no collision → the
-    # user IS unique on document; mapper can hand back
-    # IDENTITY_UNIQUE).
-    collided_with_user: Optional[models.User] = None
-    if doc_number_hash:
-        collided_with_user = db.execute(
-            select(models.User).where(
-                models.User.doc_number_hash == doc_number_hash,
-                models.User.id != target_user.id,
-            ),
-        ).scalars().first()
-
-    doc_number_unique = bool(doc_number_hash) and collided_with_user is None
-
-    mapped = verification_provider.map_decision_to_state(
-        decision, doc_number_unique=doc_number_unique,
-    )
+    mapped = verification_provider.map_decision_to_state(decision)
     new_state = mapped["verification_state"]
     new_jurisdiction = mapped["verification_jurisdiction"]
     new_attestation = mapped["verification_attestation_id"]
@@ -493,30 +481,6 @@ def _apply_decision(
         )
         return
 
-    # Phase 52d D5 — document-number hard block. Same hash on a
-    # different user is a "one human, two accounts" platform-wide
-    # block. Same user is idempotent re-verify, NOT a block — already
-    # handled by the ``id != target_user.id`` predicate in the
-    # collision lookup above.
-    if collided_with_user is not None:
-        session_row.status = "collision_rejected"
-        session_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        log_audit_event(
-            db,
-            action="verification.duplicate_document",
-            target_type="user",
-            target_id=target_user.id,
-            actor_id=target_user.id,
-            details={
-                "provider": "didit",
-                "provider_session_id": session_row.provider_session_id,
-                "collided_with_user_id": collided_with_user.id,
-                "tier": verification_hashing.UNIQUENESS_DOCUMENT_HASH,
-            },
-            ip_address=request.client.host if request.client else None,
-        )
-        return
-
     # Apply the verification onto the target user.
     old_state = target_user.verification_state
     old_provenance = target_user.verification_provenance
@@ -526,12 +490,11 @@ def _apply_decision(
     target_user.verification_attestation_id = new_attestation
     target_user.verification_provenance = verification.PROV_DIDIT
     target_user.verification_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-    # Phase 52d hash dedup write. ``doc_number_hash`` carries the
-    # platform-wide uniqueness invariant; the two name-based hashes
-    # support the Phase 52e org-scoped soft flag lookup.
-    if doc_number_hash:
-        target_user.doc_number_hash = doc_number_hash
-        target_user.uniqueness_strength = verification_hashing.UNIQUENESS_DOCUMENT_HASH
+    # Phase 52h Stage 2 — only the two name-based hashes are
+    # written; the deprecated ``doc_number_hash`` column stays in
+    # place (model marked deprecated; future cleanup batches its
+    # drop with the deprecated ``verification_nullifier`` column),
+    # but nothing writes to it from this stage onward.
     if name_dob_address_hash:
         target_user.name_dob_address_hash = name_dob_address_hash
     if name_dob_hash:
@@ -569,7 +532,6 @@ def _apply_decision(
             "new_provenance": verification.PROV_DIDIT,
             "jurisdiction": new_jurisdiction,
             "uniqueness_strength": target_user.uniqueness_strength,
-            "doc_hash_written": bool(doc_number_hash),
         },
         ip_address=request.client.host if request.client else None,
     )
@@ -724,45 +686,22 @@ async def didit_webhook(
         db.commit()
         return {"ok": True}
 
-    try:
-        _apply_decision(
-            db,
-            target_user=target_user,
-            decision=decision,
-            session_row=session_row,
-            request=request,
-        )
-        session_row.webhook_type_last = webhook_type
-        db.commit()
-    except IntegrityError:
-        # Phase 52d D5 — doc_number_hash partial-unique index at the
-        # DB layer caught a collision our pre-check missed (race
-        # between two webhooks for two users with the same OCR doc
-        # number). Treat the same as the pre-check hard-block path:
-        # audit + leave existing state.
-        db.rollback()
-        session_row = db.get(
-            models.VerificationSession, session_row.id,
-        )
-        if session_row is not None:
-            session_row.webhook_type_last = webhook_type
-            session_row.status = "collision_rejected"
-            session_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
-        log_audit_event(
-            db,
-            action="verification.duplicate_document",
-            target_type="user",
-            target_id=target_user.id,
-            actor_id=target_user.id,
-            details={
-                "provider": "didit",
-                "provider_session_id": str(session_id),
-                "race": True,
-                "tier": verification_hashing.UNIQUENESS_DOCUMENT_HASH,
-            },
-            ip_address=request.client.host if request.client else None,
-        )
-        db.commit()
+    # Phase 52h Stage 2 — the IntegrityError catch that wrapped this
+    # block to handle the doc_number_hash partial-unique-index race
+    # is REMOVED. The index is dropped in migration e6f7a8b9c0d1 and
+    # the column is no longer written, so an IntegrityError on this
+    # path would be a genuine bug rather than the expected dedup
+    # race — let it surface to the caller (FastAPI will 500 and the
+    # log captures it).
+    _apply_decision(
+        db,
+        target_user=target_user,
+        decision=decision,
+        session_row=session_row,
+        request=request,
+    )
+    session_row.webhook_type_last = webhook_type
+    db.commit()
 
     # Phase 52e E1b — purge the Didit session after we've extracted
     # what we need. Fail-toward-keeping-the-verification: a purge

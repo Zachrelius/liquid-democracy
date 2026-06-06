@@ -466,12 +466,21 @@ class User(Base):
     # Phase 52d — document-hash dedup fields. See
     # ``verification_hashing.compute_hashes`` for the inputs +
     # normalization rules.
-    # ``doc_number_hash`` carries the platform-wide uniqueness
-    # invariant (partial-unique index emitted in migration
-    # ``f1a2b3c4d5e6``). The two name-based hashes are indexed for
-    # org-scoped lookup but NOT unique — name+DOB-alone false-collides
-    # at scale (birthday paradox), so it never drives an automatic
-    # action.
+    #
+    # Phase 52h Stage 2 — ``doc_number_hash`` is now DEPRECATED.
+    # The platform-wide doc-number hard block was removed; the
+    # partial-unique index ``ix_users_doc_number_hash_unique`` was
+    # dropped in migration ``e6f7a8b9c0d1``. Nothing writes to this
+    # column from Phase 52h Stage 2 onward — uniqueness within an
+    # org is handled by the org-scoped name-based flag system
+    # (Phase 52e Stage 2 + Phase 52h Stage 1), and biometric stays
+    # the deferred stronger tier. The column itself is kept (not
+    # dropped) in this stage — dropping columns on PG is the
+    # riskier op; the eventual drop batches with the deprecated
+    # ``verification_nullifier`` column in a future cleanup pass.
+    # The lookup index ``ix_users_doc_number_hash`` is also kept
+    # (harmless on a no-longer-written column; future cleanup
+    # drops both column and index together).
     doc_number_hash: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True, index=True,
     )

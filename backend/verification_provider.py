@@ -51,7 +51,6 @@ from verification import (
     ADDRESS_ON_ID,
     EMAIL_ONLY,
     IDENTITY,
-    IDENTITY_UNIQUE,
 )
 
 logger = logging.getLogger(__name__)
@@ -416,37 +415,46 @@ def _extract_jurisdiction(decision: dict) -> Optional[str]:
 def _decision_passed_id(decision: dict) -> bool:
     """True iff the decision indicates a passed ID-verification check.
 
-    Didit reports per-feature status under keys like
-    ``id_verification.status`` and an overall ``decision.status``.
-    We require the ID-verification feature to be ``Approved`` (and
-    accept an overall ``Approved`` as the broader signal).
+    Real Didit shape (captured in Phase 52c/52e): the per-feature
+    status lives at ``decision.id_verifications[0].status`` (plural
+    array). Back-compat: also accept the documented singular
+    ``decision.id_verification.status`` and the overall
+    ``decision.status``.
     """
     if not isinstance(decision, dict):
         return False
     overall = str(decision.get("status") or "").strip().lower()
-    iv = decision.get("id_verification") if isinstance(decision, dict) else None
+    # Phase 52h Stage 2 — the rest of the mapper reads the plural
+    # ``id_verifications`` array; this consistency fix matches that.
+    iv_plural = decision.get("id_verifications")
+    iv_plural_status = ""
+    if isinstance(iv_plural, list) and iv_plural:
+        first = iv_plural[0]
+        if isinstance(first, dict):
+            iv_plural_status = str(first.get("status") or "").strip().lower()
+    # Legacy singular path.
+    iv = decision.get("id_verification")
     iv_status = ""
     if isinstance(iv, dict):
         iv_status = str(iv.get("status") or "").strip().lower()
-    # Either the dedicated ID-verification feature passed, or the
-    # overall decision is Approved (back-compat for simpler workflows).
-    return iv_status == "approved" or overall == "approved"
+    return (
+        iv_plural_status == "approved"
+        or iv_status == "approved"
+        or overall == "approved"
+    )
 
 
-def map_decision_to_state(
-    decision: dict,
-    *,
-    doc_number_unique: bool = False,
-) -> dict:
+def map_decision_to_state(decision: dict) -> dict:
     """Pure mapper from Didit's ``decision`` payload to our record
     fields. The single place where provider-specific response shape
     is interpreted.
 
     Returns a dict with keys:
       * ``verification_state`` — one of EMAIL_ONLY / IDENTITY /
-        IDENTITY_UNIQUE / ADDRESS_ON_ID. (RESIDENCY_VERIFIED requires
-        a residency-proof feature beyond the Custom KYC workflow and
-        is not produced by this mapper.)
+        ADDRESS_ON_ID. (RESIDENCY_VERIFIED requires a residency-
+        proof feature beyond the Custom KYC workflow and is not
+        produced by this mapper. IDENTITY_UNIQUE is NO LONGER
+        produced — see Phase 52h Stage 2 note below.)
       * ``verification_jurisdiction`` — US-state two-letter code or
         None. Only set when state is ADDRESS_ON_ID.
       * ``verification_attestation_id`` — Didit's session id (for
@@ -456,29 +464,29 @@ def map_decision_to_state(
     else None. The webhook handler treats EMAIL_ONLY as "do not write
     a real verification" (the user's existing state stays put).
 
-    Phase 52d — precedence fix + dedup-source swap. The state ladder
-    is **ordinal**: ``address_on_id`` (rung 3) subsumes
-    ``identity_unique`` (rung 2). The previous mapper wrongly treated
-    them as mutually exclusive (``if jurisdiction ...; elif dedup
-    ...; else identity``), so a passed ID with a parsed address
-    landed at ``address_on_id`` but lost the ``identity_unique``
-    rung. The fix: pick the highest satisfied rung.
+    Phase 52d precedence fix retained — the state ladder is
+    **ordinal** (``address_on_id`` rung 3 subsumes lower rungs), so
+    a passed ID with a parsed jurisdiction lands at
+    ``address_on_id`` directly.
 
-    Phase 52d also swaps the SOURCE of "unique": under the document-
-    hash dedup model, uniqueness comes from the platform-wide
-    ``doc_number_hash`` not colliding — NOT from a Didit 1:N face
-    search. Callers (the webhook handler) compute that result by
-    looking up the hashed doc number against existing users, then
-    pass ``doc_number_unique=True`` if the doc number is new on the
-    platform (so this user is eligible for the ``identity_unique``
-    rung).
+    **Phase 52h Stage 2 — uniqueness rung removed (Z-locked Option
+    A).** The platform-wide doc-number hard block was retired
+    because the locked principle (confidence-determines-scope,
+    harm is org-scoped) makes cross-org duplicate accounts for
+    the same person a non-harm we don't prevent at the platform
+    layer. With the doc-block gone, the auto-assignment of
+    ``IDENTITY_UNIQUE`` was either (a) lying (rung says "unique"
+    but nothing enforces uniqueness — a footgun) or (b) gone.
+    Z picked Option A: gone. Post-removal, verification proves
+    identity + residency only; uniqueness within an org is
+    handled by the org-scoped name-based flag system (Phase 52e
+    Stage 2 + Phase 52h Stage 1), and biometric stays the
+    deferred stronger tier for orgs that need real Sybil
+    resistance.
 
     Sequence of decisions encoded:
       * ID check passed? → at least IDENTITY.
-      * Doc number unique (no platform-wide collision)? → at least
-        IDENTITY_UNIQUE.
-      * Jurisdiction parsed from address? → ADDRESS_ON_ID (subsumes
-        IDENTITY_UNIQUE regardless of doc-number uniqueness).
+      * Jurisdiction parsed from address? → ADDRESS_ON_ID.
     """
     if not isinstance(decision, dict) or not _decision_passed_id(decision):
         return {
@@ -487,13 +495,9 @@ def map_decision_to_state(
             "verification_attestation_id": None,
         }
     jurisdiction = _extract_jurisdiction(decision)
-    # Ordinal pick: highest satisfied rung.
-    if jurisdiction:
-        state = ADDRESS_ON_ID
-    elif doc_number_unique:
-        state = IDENTITY_UNIQUE
-    else:
-        state = IDENTITY
+    # Ordinal pick: highest satisfied rung. IDENTITY_UNIQUE is no
+    # longer reachable from this mapper (Phase 52h Stage 2).
+    state = ADDRESS_ON_ID if jurisdiction else IDENTITY
     attestation_id = decision.get("session_id") or decision.get("id")
     if attestation_id is not None:
         attestation_id = str(attestation_id)

@@ -81,23 +81,21 @@ export function ctaCopyForVerificationRequired(detail) {
 }
 
 /**
- * Phase 52e Stage 2 E5 — the document-number hard-block message.
- * Deliberately NEUTRAL: does not reveal that the duplicate is "an
- * existing account" (that would leak information about other
- * accounts). Honest about what to do: contact support.
- */
-export const DOC_HARD_BLOCK_MESSAGE =
-  "We couldn't complete identity verification for this account. " +
-  "If you think this is a mistake, please contact support.";
-
-/**
- * Phase 52e Stage 2 E5 — up-front expectation copy shown before a
- * user leaves for the verification provider. Sets the one-identity
- * frame so the failure case downstream isn't a surprise.
+ * Phase 52h Stage 2 — up-front expectation copy shown before a
+ * user leaves for the verification provider. The platform-wide
+ * "one account per person" claim shipped in Phase 52e Stage 2 was
+ * RETIRED here when the document-number hard block was removed:
+ * the platform no longer enforces cross-org uniqueness (the locked
+ * principle is confidence-determines-scope + org-scoped harm), so
+ * claiming it would be a copy lie. The honest framing is per-org —
+ * an org may flag or limit duplicate members within its own
+ * approval queue.
  */
 export const UP_FRONT_ONE_IDENTITY_COPY =
-  "You can verify only one account per person. Each verified " +
-  "identity is tied to a single account.";
+  "Identity verification confirms who you are. Each organization " +
+  "may have its own rules about duplicate members; if your verified " +
+  "identity matches another member of the same organization, that " +
+  "organization's admin can review and decide.";
 
 /**
  * Best-effort detection of a verification-required error from a

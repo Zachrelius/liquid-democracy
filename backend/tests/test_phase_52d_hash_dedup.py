@@ -196,21 +196,24 @@ class TestComputeHashes:
         b = verification_hashing.compute_hashes(self._full_fields())
         assert a == b
 
-    def test_three_hashes_present(self):
+    def test_two_name_hashes_present(self):
+        # Phase 52h Stage 2 — doc_number_hash is no longer produced
+        # (platform-wide doc-number hard block removed). The two
+        # name-based hashes are what drive the org-scoped flag
+        # system; ``doc_number_hash`` is always None in the output.
         h = verification_hashing.compute_hashes(self._full_fields())
-        assert h["doc_number_hash"]
+        assert h["doc_number_hash"] is None
         assert h["name_dob_hash"]
         assert h["name_dob_address_hash"]
-        # All distinct.
-        assert h["doc_number_hash"] != h["name_dob_hash"]
         assert h["name_dob_hash"] != h["name_dob_address_hash"]
 
     def test_missing_doc_number_yields_none_for_doc_hash(self):
+        # Doc-number presence no longer matters — the hash is always
+        # None regardless.
         f = self._full_fields()
         f.pop("document_number")
         h = verification_hashing.compute_hashes(f)
         assert h["doc_number_hash"] is None
-        # Name hashes still present.
         assert h["name_dob_hash"]
         assert h["name_dob_address_hash"]
 
@@ -222,13 +225,14 @@ class TestComputeHashes:
         assert h["name_dob_hash"]
 
     def test_missing_dob_drops_name_hashes(self):
+        # Phase 52h Stage 2 — only name hashes are produced now;
+        # doc_number_hash is always None whether DOB is present or not.
         f = self._full_fields()
         f.pop("date_of_birth")
         h = verification_hashing.compute_hashes(f)
         assert h["name_dob_hash"] is None
         assert h["name_dob_address_hash"] is None
-        # Doc hash unaffected.
-        assert h["doc_number_hash"]
+        assert h["doc_number_hash"] is None
 
     def test_normalization_case_insensitive(self):
         f1 = self._full_fields()
@@ -261,13 +265,19 @@ class TestComputeHashes:
         for raw in ("1985-03-14", "1985/03/14", "14-03-1985", "14/03/1985", "19850314"):
             assert verification_hashing.normalize_dob(raw) == "1985-03-14"
 
-    def test_different_doc_numbers_produce_different_hashes(self):
+    def test_different_doc_numbers_no_longer_distinguishable(self):
+        # Phase 52h Stage 2 — doc_number_hash is no longer produced.
+        # The historical assertion "different document_number values
+        # produce different hashes" can no longer hold because the
+        # hash itself is None for both. Renamed to document the new
+        # contract.
         f1 = self._full_fields()
         f2 = self._full_fields()
         f2["document_number"] = "X9876544"
         h1 = verification_hashing.compute_hashes(f1)
         h2 = verification_hashing.compute_hashes(f2)
-        assert h1["doc_number_hash"] != h2["doc_number_hash"]
+        assert h1["doc_number_hash"] is None
+        assert h2["doc_number_hash"] is None
 
     def test_pepper_fail_closed_raises(self, monkeypatch):
         monkeypatch.delenv("VERIFICATION_HASH_PEPPER", raising=False)
@@ -286,9 +296,11 @@ class TestComputeHashes:
         h1 = verification_hashing.compute_hashes(f)
         monkeypatch.setenv("VERIFICATION_HASH_PEPPER", "DIFFERENT_DUMMY_PEPPER")
         h2 = verification_hashing.compute_hashes(f)
-        # Same input, different pepper → different hashes.
-        assert h1["doc_number_hash"] != h2["doc_number_hash"]
+        # Same input, different pepper → different hashes (still
+        # holds for the two name hashes; doc_number_hash is None on
+        # both since Phase 52h Stage 2).
         assert h1["name_dob_hash"] != h2["name_dob_hash"]
+        assert h1["name_dob_address_hash"] != h2["name_dob_address_hash"]
 
 
 # ===========================================================================
@@ -296,48 +308,27 @@ class TestComputeHashes:
 # ===========================================================================
 
 class TestMapDecisionToStatePrecedence:
-    def test_passed_id_no_address_no_unique_returns_identity(self):
+    # Phase 52h Stage 2 — the ``doc_number_unique`` kwarg is gone
+    # from ``map_decision_to_state``; the uniqueness rung was
+    # removed (Z-locked Option A). These tests now exercise the
+    # post-removal mapper shape: IDENTITY or ADDRESS_ON_ID.
+
+    def test_passed_id_no_address_returns_identity(self):
         m = verification_provider.map_decision_to_state(
             {"id_verification": {"status": "Approved"}},
-            doc_number_unique=False,
         )
         assert m["verification_state"] == verification.IDENTITY
-
-    def test_passed_id_unique_no_address_returns_identity_unique(self):
-        m = verification_provider.map_decision_to_state(
-            {"id_verification": {"status": "Approved"}},
-            doc_number_unique=True,
-        )
-        assert m["verification_state"] == verification.IDENTITY_UNIQUE
 
     def test_passed_id_with_address_returns_address_on_id(self):
         m = verification_provider.map_decision_to_state(
             {"id_verification": {"status": "Approved", "address_state": "CA"}},
-            doc_number_unique=False,
         )
         assert m["verification_state"] == verification.ADDRESS_ON_ID
         assert m["verification_jurisdiction"] == "CA"
 
-    def test_address_subsumes_unique(self):
-        """The precedence fix: address_on_id (rung 3) is the SAME state
-        regardless of doc_number_unique. The previous mapper wrongly
-        coupled them; now address always wins because it's the higher
-        ordinal rung."""
-        m_no_unique = verification_provider.map_decision_to_state(
-            {"id_verification": {"status": "Approved", "address_state": "CA"}},
-            doc_number_unique=False,
-        )
-        m_with_unique = verification_provider.map_decision_to_state(
-            {"id_verification": {"status": "Approved", "address_state": "CA"}},
-            doc_number_unique=True,
-        )
-        assert m_no_unique["verification_state"] == verification.ADDRESS_ON_ID
-        assert m_with_unique["verification_state"] == verification.ADDRESS_ON_ID
-
     def test_declined_returns_email_only(self):
         m = verification_provider.map_decision_to_state(
             {"id_verification": {"status": "Declined"}},
-            doc_number_unique=True,
         )
         assert m["verification_state"] == verification.EMAIL_ONLY
 
@@ -356,7 +347,6 @@ class TestDeadCodeRemoved:
     def test_map_decision_to_state_no_longer_emits_nullifier_key(self):
         m = verification_provider.map_decision_to_state(
             {"id_verification": {"status": "Approved"}},
-            doc_number_unique=True,
         )
         assert "verification_nullifier" not in m
 
@@ -398,9 +388,14 @@ class TestDocumentNumberHardBlock:
             },
         }
 
-    def test_first_verification_writes_doc_hash_and_unique_state(
-        self, client: TestClient, db: Session,
+    def test_first_verification_writes_name_hashes_post_stage2(
+        self, client: TestClient, db: Session, monkeypatch,
     ):
+        # Phase 52h Stage 2 — doc_number_hash no longer written;
+        # IDENTITY_UNIQUE no longer producible. The receiver writes
+        # the two name hashes + advances state to IDENTITY (no
+        # parsed address in this payload).
+        monkeypatch.setattr(verification_provider, "delete_session", lambda sid: True)
         alice = make_user(db, "alice")
         self._seed_session(db, alice, "sess_first")
         body = json.dumps(self._payload("sess_first")).encode()
@@ -411,32 +406,30 @@ class TestDocumentNumberHardBlock:
         )
         assert r.status_code == 200
         db.refresh(alice)
-        assert alice.doc_number_hash is not None
-        assert alice.verification_state == verification.IDENTITY_UNIQUE
-        assert alice.uniqueness_strength == "document_hash"
+        assert alice.doc_number_hash is None  # not written
+        assert alice.uniqueness_strength is None  # not set
+        assert alice.verification_state == verification.IDENTITY
         assert alice.verification_provenance == verification.PROV_DIDIT
+        assert alice.name_dob_hash is not None
+        assert alice.name_dob_address_hash is None  # no address in this payload
 
-    def test_second_user_same_doc_blocked_and_audited(
-        self, client: TestClient, db: Session,
+    def test_second_user_same_doc_now_succeeds_post_stage2(
+        self, client: TestClient, db: Session, monkeypatch,
     ):
+        # Phase 52h Stage 2 — the platform-wide doc-number hard block
+        # is GONE. Two accounts with the same document number both
+        # verify successfully now. (In-org dedup remains via the
+        # name-based flag system; that's covered by 52e/52h Stage 1
+        # tests.)
+        monkeypatch.setattr(verification_provider, "delete_session", lambda sid: True)
         alice = make_user(db, "alice")
-        # Seed alice already at IDENTITY_UNIQUE with the doc hash.
-        f = {
-            "document_number": "X9876543",
-            "first_name": "Alice", "last_name": "R",
-            "date_of_birth": "1985-03-14",
-        }
-        h = verification_hashing.compute_hashes(f)
-        alice.doc_number_hash = h["doc_number_hash"]
-        alice.verification_state = verification.IDENTITY_UNIQUE
+        alice.verification_state = verification.IDENTITY
         alice.verification_provenance = verification.PROV_DIDIT
-        alice.uniqueness_strength = "document_hash"
         db.commit()
 
         bob = make_user(db, "bob")
-        self._seed_session(db, bob, "sess_collide")
-        # Bob's payload carries the SAME document number.
-        body = json.dumps(self._payload("sess_collide", doc_number="X9876543")).encode()
+        self._seed_session(db, bob, "sess_no_collide")
+        body = json.dumps(self._payload("sess_no_collide", doc_number="X9876543")).encode()
         r = client.post(
             "/api/webhooks/didit",
             content=body,
@@ -444,46 +437,30 @@ class TestDocumentNumberHardBlock:
         )
         assert r.status_code == 200
         db.refresh(bob)
-        # Bob's account is unchanged. The hash was NOT written; no
-        # state escalation.
-        assert bob.doc_number_hash is None
-        assert bob.verification_provenance != verification.PROV_DIDIT
-        # Audit row written.
-        audit = (
+        # Bob's verification went through.
+        assert bob.verification_state == verification.IDENTITY
+        assert bob.verification_provenance == verification.PROV_DIDIT
+        # No duplicate_document audit anywhere.
+        dup_audits = (
             db.query(models.AuditLog)
-            .filter_by(action="verification.duplicate_document", target_id=bob.id)
-            .first()
+            .filter_by(action="verification.duplicate_document")
+            .all()
         )
-        assert audit is not None
-        assert audit.details.get("collided_with_user_id") == alice.id
-        assert audit.details.get("tier") == "document_hash"
+        assert dup_audits == []
 
-    def test_same_user_reverify_idempotent_not_blocked(
-        self, client: TestClient, db: Session,
+    def test_same_user_reverify_still_works(
+        self, client: TestClient, db: Session, monkeypatch,
     ):
-        """The critical correctness property: a user's re-verify against
-        their OWN doc-number-hash is a legitimate operation and must
-        NOT be hard-blocked. The collision check predicate is
-        ``hash matches AND different user``; same-user re-verify
-        falls through and updates the record normally."""
+        # Same-user re-verify continues to work — no special
+        # idempotency branch is needed now that the hard block is
+        # gone (it was the block's predicate "different user_id"
+        # that handled this).
+        monkeypatch.setattr(verification_provider, "delete_session", lambda sid: True)
         alice = make_user(db, "alice")
-        # Pre-seed alice with the same doc hash.
-        f = {
-            "document_number": "X9876543",
-            "first_name": "Alice", "last_name": "R",
-            "date_of_birth": "1985-03-14",
-        }
-        h = verification_hashing.compute_hashes(f)
-        alice.doc_number_hash = h["doc_number_hash"]
         alice.verification_state = verification.IDENTITY
         alice.verification_provenance = verification.PROV_DIDIT
-        alice.uniqueness_strength = "document_hash"
         db.commit()
 
-        # Alice re-verifies — same document, new session, more parsed
-        # data (an address this time). Phase 52e plural-array shape;
-        # the parsed_address.region carries the residency state which
-        # E1's _extract_jurisdiction normalizes.
         self._seed_session(db, alice, "sess_reverify")
         payload = self._payload("sess_reverify", doc_number="X9876543")
         payload["decision"]["id_verifications"][0]["parsed_address"] = {
@@ -499,16 +476,9 @@ class TestDocumentNumberHardBlock:
         )
         assert r.status_code == 200
         db.refresh(alice)
-        # Re-verify went through. State escalated to ADDRESS_ON_ID.
-        # No duplicate-document audit row written.
+        # State escalated to ADDRESS_ON_ID (the address came along).
         assert alice.verification_state == verification.ADDRESS_ON_ID
         assert alice.verification_jurisdiction == "CA"
-        dup_audit = (
-            db.query(models.AuditLog)
-            .filter_by(action="verification.duplicate_document", target_id=alice.id)
-            .first()
-        )
-        assert dup_audit is None, "Self-reverify must not produce a duplicate audit"
 
 
 # ===========================================================================
@@ -587,8 +557,10 @@ class TestPurgeWiring:
         assert r.status_code == 200
         db.refresh(alice)
         # The verification record stands — purge failure didn't destroy it.
-        assert alice.verification_state == verification.IDENTITY_UNIQUE
-        assert alice.doc_number_hash is not None
+        # Phase 52h Stage 2 — state is now IDENTITY (no IDENTITY_UNIQUE
+        # rung); doc_number_hash is no longer written.
+        assert alice.verification_state == verification.IDENTITY
+        assert alice.doc_number_hash is None
         assert alice.verification_provenance == verification.PROV_DIDIT
 
     def test_purge_raise_does_not_break_receiver(
@@ -613,7 +585,8 @@ class TestPurgeWiring:
         )
         assert r.status_code == 200
         db.refresh(alice)
-        assert alice.verification_state == verification.IDENTITY_UNIQUE
+        # Phase 52h Stage 2 — IDENTITY (no IDENTITY_UNIQUE rung).
+        assert alice.verification_state == verification.IDENTITY
 
 
 # ===========================================================================
