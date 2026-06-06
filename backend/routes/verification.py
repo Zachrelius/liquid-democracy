@@ -361,6 +361,11 @@ def _extract_ocr_fields(decision: dict) -> dict:
     document_number = _str_or_none(iv.get("document_number"))
     first_name = _str_or_none(iv.get("first_name"))
     last_name = _str_or_none(iv.get("last_name"))
+    # Phase 52f — full_name is the canonical readable legal-name
+    # field Didit emits (name conventions vary across IDs; better
+    # to store Didit's rendering than to reconstruct from first +
+    # last).
+    full_name = _str_or_none(iv.get("full_name"))
     date_of_birth = _str_or_none(iv.get("date_of_birth"))
 
     # Structured address from parsed_address. Prefer structured over
@@ -395,6 +400,7 @@ def _extract_ocr_fields(decision: dict) -> dict:
         "document_number": document_number,
         "first_name": first_name,
         "last_name": last_name,
+        "full_name": full_name,
         "date_of_birth": date_of_birth,
         "address": address,
     }
@@ -499,6 +505,41 @@ def _apply_decision(
         target_user.name_dob_address_hash = name_dob_address_hash
     if name_dob_hash:
         target_user.name_dob_hash = name_dob_hash
+
+    # Phase 52f — capture legal name (readable, NOT hashed). The
+    # display-name-match gate compares user-entered display names
+    # against this; a hash can't support partial / first-only
+    # matching. Privacy disclosure lives on the consent + Settings
+    # copy. demo_stub / backdoor never reach this branch — only
+    # PROV_DIDIT writes do.
+    legal_first = ocr_fields.get("first_name")
+    legal_last = ocr_fields.get("last_name")
+    legal_full = ocr_fields.get("full_name")
+    if isinstance(legal_first, str) and legal_first.strip():
+        target_user.legal_first_name = legal_first.strip()
+    if isinstance(legal_last, str) and legal_last.strip():
+        target_user.legal_last_name = legal_last.strip()
+    if isinstance(legal_full, str) and legal_full.strip():
+        target_user.legal_full_name = legal_full.strip()
+
+    # Phase 52g — derive age band from the DOB, then discard the DOB
+    # (it's only a hash input + band-derivation input; never stored).
+    # Month-aligned promotes_at so the value can't reconstruct the
+    # exact birth day.
+    dob_str = ocr_fields.get("date_of_birth")
+    if isinstance(dob_str, str) and dob_str.strip():
+        try:
+            met, promotes_at = verification.compute_age_bands(dob_str)
+            if met or promotes_at:
+                target_user.verification_age_bands = (
+                    verification.serialize_age_bands(met)
+                )
+                target_user.verification_age_promotes_at = promotes_at
+        except Exception as e:  # noqa: BLE001 — never block the verification write on band derivation
+            logger.warning(
+                "age band derivation failed for user %s: %s",
+                target_user.id, e,
+            )
 
     session_row.status = "approved"
     session_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)

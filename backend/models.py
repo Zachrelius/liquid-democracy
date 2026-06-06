@@ -235,6 +235,14 @@ class OrgMembership(Base):
     )
     status: Mapped[str] = mapped_column(String, default="active")  # active, suspended, pending_approval
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+    # Phase 52f — per-org display name override. NULL falls through
+    # to ``User.display_name``. The resolver
+    # ``verification.display_name_for(user, org)`` reads this; every
+    # name-rendering surface in an org context routes through the
+    # resolver.
+    display_name: Mapped[Optional[str]] = mapped_column(
+        String(length=80), nullable=True,
+    )
 
     user: Mapped["User"] = relationship("User", back_populates="org_memberships")
     organization: Mapped["Organization"] = relationship("Organization", back_populates="memberships")
@@ -461,6 +469,36 @@ class User(Base):
         default="none", server_default="none",
     )
     verification_updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True,
+    )
+    # Phase 52f — readable legal name from Didit's OCR (NOT hashed).
+    # The display-name-match feature compares an arbitrary user-entered
+    # display name against the legal name, which a hash can't support
+    # (partial / first-only matching). Disclosed in consent + Settings
+    # copy. NEVER serialized to non-admin clients.
+    legal_first_name: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True,
+    )
+    legal_last_name: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True,
+    )
+    legal_full_name: Mapped[Optional[str]] = mapped_column(
+        String(length=256), nullable=True,
+    )
+    # Phase 52g — derived age bands; NEVER raw DOB. Stored as a sorted
+    # JSON list of met-threshold ints (e.g. ``"[13, 16, 18]"`` =
+    # "meets ≥13, ≥16, ≥18; not ≥21"). NULL until a verification
+    # populates it. The raw ``date_of_birth`` is consumed only as a
+    # hash input + the band-derivation input, then discarded.
+    verification_age_bands: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True,
+    )
+    # Month-aligned promotion date for the NEXT supported threshold
+    # the user will cross. Month granularity (first of the month) so
+    # the value can't reconstruct the exact birth day. NULL when the
+    # user already meets every supported threshold (the common
+    # adult case).
+    verification_age_promotes_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True,
     )
     # Phase 52d — document-hash dedup fields. See
@@ -749,6 +787,13 @@ class Proposal(Base):
     )
     verification_jurisdiction: Mapped[Optional[str]] = mapped_column(
         String(length=16), nullable=True,
+    )
+    # Phase 52g — per-proposal minimum age. NULL = no age gate
+    # (the default; matches the ``verification_floor`` precedent).
+    # Validated against ``verification.SUPPORTED_AGE_THRESHOLDS`` at
+    # the route layer.
+    min_age: Mapped[Optional[int]] = mapped_column(
+        Integer, nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now, nullable=False)

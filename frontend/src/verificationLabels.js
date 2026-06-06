@@ -63,14 +63,15 @@ export function shortLabelForState(state) {
  */
 export function ctaCopyForVerificationRequired(detail) {
   if (!detail || detail.error !== 'verification_required') return null;
+  // Phase 52g — min_age scope returns a different copy shape (no
+  // floor / no jurisdiction; just the threshold).
+  if (detail.scope === 'min_age') {
+    const threshold = detail.min_age;
+    if (!threshold) return null;
+    return `This organization requires members to be ${threshold}+. Your verified age band doesn't meet that minimum.`;
+  }
   const floorLabel = labelForState(detail.floor);
   const jurisdictionSuffix = detail.jurisdiction ? ` (${detail.jurisdiction})` : '';
-  // Phase 52e Stage 2 E5 — added "delegate" scope copy alongside
-  // membership / role / vote. The role-shaped scope is also used by
-  // the delegate-promotion gate (no separate "delegate" scope on the
-  // backend; "role" is reused since it's structurally a per-org
-  // capability gate). Future copy refinement may add a dedicated
-  // delegate string if the scope payload starts carrying it.
   const scopeCopy = {
     membership: 'join this organization',
     role: 'hold this role in this organization',
@@ -78,6 +79,22 @@ export function ctaCopyForVerificationRequired(detail) {
     delegate: 'become a public delegate in this organization',
   }[detail.scope] || 'continue';
   return `To ${scopeCopy}, your account needs: ${floorLabel}${jurisdictionSuffix}. Open Settings to start verification.`;
+}
+
+/**
+ * Phase 52f — copy for the ``name_match_required`` 422 when an org's
+ * display-name-match setting is on and the candidate name doesn't
+ * match the legal name on file. Mode tells the user what part must
+ * match.
+ */
+export function copyForNameMatchRequired(detail) {
+  if (!detail || detail.error !== 'name_match_required') return null;
+  const part = {
+    first: 'first name',
+    last: 'last name',
+    full: 'full name',
+  }[detail.mode] || 'name';
+  return `This organization requires your display name to match the ${part} on your ID.`;
 }
 
 /**

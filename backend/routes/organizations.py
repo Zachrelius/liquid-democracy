@@ -1098,10 +1098,17 @@ def list_members(
         user = db.get(models.User, m.user_id)
         if user:
             role_key = membership_role_system_key(m) or "member"
+            # Phase 52f — surface the per-org effective display name
+            # via the resolver. Members.jsx + every other surface that
+            # reads this list now reflects the per-org override.
+            import verification as _verification
+            effective_display_name = _verification.display_name_for(
+                user, org, membership=m,
+            )
             result.append(schemas.OrgMemberOut(
                 user_id=m.user_id,
                 username=user.username,
-                display_name=user.display_name,
+                display_name=effective_display_name,
                 email=user.email,
                 avatar_url=user.avatar_url,
                 # Phase 12 — emit role.system_key (e.g. 'steward', 'admin');
@@ -1113,6 +1120,99 @@ def list_members(
                 is_org_verified=verification_flags.is_org_verified(user, org, db),
             ))
     return result
+
+
+@router.patch(
+    "/{org_slug}/me/display-name",
+    response_model=dict,
+)
+def set_my_org_display_name(
+    org_slug: str,
+    body: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Phase 52f — set the caller's per-org display name override.
+    NULL / empty string clears the override (falls back to
+    ``User.display_name``).
+
+    Enforcement (per the locked Z decision — both options offered
+    per org):
+      * If the org has ``verification_require_name_match`` set to a
+        non-``off`` mode, the new display name is validated against
+        the caller's legal name via
+        ``display_name_matches_legal``.
+      * If the match fails AND the org's
+        ``verification_name_match_action`` is ``block`` (default),
+        the write is REJECTED with 422 ``name_match_required``.
+      * If the match fails AND the action is ``flag``, the write
+        proceeds and an audit row ``org.display_name_mismatch`` is
+        logged so the admin sees it.
+
+    A user with no legal name on file (unverified) is unconstrained
+    — the verification floor is what forces verification first; the
+    name-match is an ADDITIONAL constraint layered on top.
+    """
+    import verification as _verification
+    org = db.get(models.Organization, membership.org_id)
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    raw = body.get("display_name") if isinstance(body, dict) else None
+    new_name: Optional[str]
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        new_name = None
+    elif isinstance(raw, str):
+        new_name = raw.strip()
+        if len(new_name) > 80:
+            raise HTTPException(
+                status_code=400,
+                detail="Display name must be 80 characters or fewer.",
+            )
+    else:
+        raise HTTPException(status_code=400, detail="Invalid display_name")
+
+    mode = _verification.get_org_name_match_mode(org)
+    if mode != _verification.NAME_MATCH_OFF and new_name is not None:
+        passes = _verification.display_name_matches_legal(
+            new_name, current_user, org,
+        )
+        if not passes:
+            action = _verification.get_org_name_match_action(org)
+            if action == _verification.NAME_MATCH_ACTION_BLOCK:
+                raise HTTPException(
+                    status_code=422,
+                    detail={
+                        "error": "name_match_required",
+                        "mode": mode,
+                    },
+                )
+            # flag mode — allow + audit
+            log_audit_event(
+                db,
+                action="org.display_name_mismatch",
+                target_type="organization",
+                target_id=org.id,
+                actor_id=current_user.id,
+                details={
+                    "org_id": org.id,
+                    "user_id": current_user.id,
+                    "mode": mode,
+                    "candidate_display_name": new_name,
+                },
+                ip_address=request.client.host if request.client else None,
+            )
+
+    membership.display_name = new_name
+    db.commit()
+    return {
+        "display_name": _verification.display_name_for(
+            current_user, org, membership=membership,
+        ),
+        "override_set": new_name is not None,
+    }
 
 
 @router.patch("/{org_slug}/members/{user_id}", response_model=schemas.OrgMemberOut)
@@ -1871,8 +1971,12 @@ def create_join_request(
     # branches so an unverified user can't queue a pending request
     # that would only be approvable into an active row violating
     # the floor.
-    from verification import check_membership_floor_for_join, ensure_can_join_real_org
+    from verification import (
+        check_membership_floor_for_join, ensure_can_join_real_org,
+        check_membership_min_age_for_join,
+    )
     check_membership_floor_for_join(current_user, org)
+    check_membership_min_age_for_join(current_user, org)
     ensure_can_join_real_org(current_user, org)
 
     # Resolve the Member role (defensive seed for legacy orgs).
@@ -2145,8 +2249,12 @@ def request_join(
     # branches: an unverified user shouldn't be able to file a
     # pending request either, since approving them would create the
     # active row that the floor prohibits.
-    from verification import check_membership_floor_for_join, ensure_can_join_real_org
+    from verification import (
+        check_membership_floor_for_join, ensure_can_join_real_org,
+        check_membership_min_age_for_join,
+    )
     check_membership_floor_for_join(current_user, org)
+    check_membership_min_age_for_join(current_user, org)
     ensure_can_join_real_org(current_user, org)
 
     # Phase 12 — defensively seed preset roles for the org if missing
@@ -2479,9 +2587,10 @@ def accept_invitation(
     if inv_org is not None:
         from verification import (
             check_membership_floor_for_join, check_role_grant_floor,
-            ensure_can_join_real_org,
+            ensure_can_join_real_org, check_membership_min_age_for_join,
         )
         check_membership_floor_for_join(current_user, inv_org)
+        check_membership_min_age_for_join(current_user, inv_org)
         ensure_can_join_real_org(current_user, inv_org)
         inv_system_key_for_check = _INV_ROLE_TO_SYSTEM_KEY.get(inv.role, inv.role)
         if inv_system_key_for_check and inv_system_key_for_check != "member":

@@ -143,6 +143,37 @@ def subsumes(
 SETTING_MEMBERSHIP_FLOOR = "verification_membership_floor"
 SETTING_MEMBERSHIP_JURISDICTION = "verification_membership_jurisdiction"
 SETTING_ROLE_FLOORS = "verification_role_floors"
+# Phase 52f — display-name-match: ``off`` (default) / ``first`` /
+# ``last`` / ``full``. Enum form per the spec (mutually exclusive
+# modes; combinable flags can be added later by switching to a list).
+SETTING_REQUIRE_NAME_MATCH = "verification_require_name_match"
+# Phase 52f — action on a non-matching display-name write: ``block``
+# (hard-reject the write) or ``flag`` (allow + audit-log + admin
+# sees it). Per Z's locked decision, both are offered per-org.
+SETTING_NAME_MATCH_ACTION = "verification_name_match_action"
+# Phase 52g — minimum age to join the org. Integer ∈
+# ``SUPPORTED_AGE_THRESHOLDS`` or NULL/None for no age gate.
+SETTING_MEMBERSHIP_MIN_AGE = "verification_membership_min_age"
+
+# Phase 52f match-mode values
+NAME_MATCH_OFF = "off"
+NAME_MATCH_FIRST = "first"
+NAME_MATCH_LAST = "last"
+NAME_MATCH_FULL = "full"
+_VALID_NAME_MATCH_MODES: frozenset[str] = frozenset({
+    NAME_MATCH_OFF, NAME_MATCH_FIRST, NAME_MATCH_LAST, NAME_MATCH_FULL,
+})
+
+# Phase 52f match-action values
+NAME_MATCH_ACTION_BLOCK = "block"
+NAME_MATCH_ACTION_FLAG = "flag"
+_VALID_NAME_MATCH_ACTIONS: frozenset[str] = frozenset({
+    NAME_MATCH_ACTION_BLOCK, NAME_MATCH_ACTION_FLAG,
+})
+
+# Phase 52g — supported age thresholds. Orgs may gate on any of
+# these; adding a new threshold is a constant change. Sorted ascending.
+SUPPORTED_AGE_THRESHOLDS: tuple[int, ...] = (13, 16, 18, 21)
 
 
 def get_org_verification_floor(
@@ -466,3 +497,317 @@ def check_vote_floor_for_proposal(user, proposal) -> None:
             floor=floor, jurisdiction=jurisdiction, scope="vote",
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 52g — age band derivation + lazy-promotion read predicate
+# ---------------------------------------------------------------------------
+#
+# Derive a sorted list of met thresholds from a DOB and an "as-of"
+# reference date. The DOB is the input ONLY; never stored. Each user
+# row carries the derived list + the next-promotion month, both
+# month-aligned so the storage layer can never reconstruct the exact
+# birth day.
+
+
+def _safe_parse_iso_date(s: str | None) -> Optional["date"]:
+    """Pure ISO ``YYYY-MM-DD`` parser. Returns None on malformed
+    input. Avoids dateutil to keep the dependency surface tight."""
+    from datetime import date as _date
+    if not isinstance(s, str):
+        return None
+    parts = s.strip().split("-")
+    if len(parts) != 3:
+        return None
+    try:
+        y, m, d = int(parts[0]), int(parts[1]), int(parts[2])
+        return _date(y, m, d)
+    except (ValueError, TypeError):
+        return None
+
+
+def _years_elapsed(birth_date: "date", as_of: "date") -> int:
+    """How many full years have elapsed from ``birth_date`` to
+    ``as_of``. Counts a birthday on ``as_of`` as completing the year."""
+    years = as_of.year - birth_date.year
+    if (as_of.month, as_of.day) < (birth_date.month, birth_date.day):
+        years -= 1
+    return years
+
+
+def _first_of_month(year: int, month: int) -> "datetime":
+    from datetime import datetime as _dt
+    return _dt(year, month, 1)
+
+
+def compute_age_bands(
+    date_of_birth: str | None,
+    *,
+    as_of: Optional["date"] = None,
+    supported: tuple[int, ...] = SUPPORTED_AGE_THRESHOLDS,
+) -> tuple[list[int], Optional["datetime"]]:
+    """Compute ``(met_thresholds, promotes_at)`` from a DOB.
+
+    ``met_thresholds`` is a sorted ascending list of supported
+    thresholds the user currently meets (e.g. ``[13, 16, 18]``).
+
+    ``promotes_at`` is a month-aligned ``datetime`` (first of the
+    month in which the user will cross the NEXT supported threshold),
+    or None when the user already meets every supported threshold.
+
+    Month-granularity is the load-bearing privacy property — never
+    expose the user's exact birth day; ``promotes_at`` is always the
+    1st of the relevant month.
+
+    Returns ``([], None)`` on malformed / missing DOB so callers can
+    skip the write cleanly (the column stays NULL).
+    """
+    from datetime import date as _date
+    birth = _safe_parse_iso_date(date_of_birth)
+    if birth is None:
+        return ([], None)
+    today = as_of or _date.today()
+    age = _years_elapsed(birth, today)
+    met = sorted(t for t in supported if age >= t)
+    next_t = next((t for t in supported if t > age), None)
+    if next_t is None:
+        return (met, None)
+    # The user turns ``next_t`` on (birth.year + next_t, birth.month,
+    # birth.day). Round to first-of-that-month so we don't leak the
+    # exact birth day.
+    promote_year = birth.year + next_t
+    promote_month = birth.month
+    return (met, _first_of_month(promote_year, promote_month))
+
+
+def serialize_age_bands(met: list[int]) -> str:
+    """JSON-list string for the storage column."""
+    import json
+    return json.dumps(sorted(set(met)))
+
+
+def deserialize_age_bands(raw: str | None) -> list[int]:
+    """Best-effort deserialize. Returns ``[]`` on missing or
+    malformed input."""
+    import json
+    if not isinstance(raw, str) or not raw.strip():
+        return []
+    try:
+        val = json.loads(raw)
+        if isinstance(val, list):
+            return sorted({int(x) for x in val if isinstance(x, int)})
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return []
+
+
+def user_meets_age(user, threshold: int) -> bool:
+    """Phase 52g — derived per-user predicate. True iff ``threshold``
+    is in the user's met-thresholds set OR the lazy-promotion month
+    has arrived (the spec's recommended Option A — no scheduler,
+    promotion-on-read).
+
+    Returns False when the user has no age band at all (the locked
+    "existing users get a band only on re-verify" property).
+    """
+    raw = getattr(user, "verification_age_bands", None)
+    met = deserialize_age_bands(raw)
+    if threshold in met:
+        return True
+    # Lazy promotion: if the promotes_at month has arrived AND it
+    # would push the user past ``threshold``, treat them as meeting it.
+    promotes_at = getattr(user, "verification_age_promotes_at", None)
+    if promotes_at is None:
+        return False
+    from datetime import datetime as _dt
+    now = _dt.utcnow()
+    if promotes_at > now:
+        return False
+    # The user has crossed the NEXT threshold beyond their current
+    # met set. Compute what that next threshold is.
+    next_supported = [t for t in SUPPORTED_AGE_THRESHOLDS if t not in met]
+    if not next_supported:
+        return False
+    next_t = min(next_supported)
+    return threshold <= next_t
+
+
+def check_membership_min_age_for_join(user, org) -> None:
+    """Raises 403 if ``user`` does not meet ``org``'s membership
+    minimum age. No-op when the org has no min-age set. Composes
+    with ``check_membership_floor_for_join`` — both checked at every
+    join path."""
+    from fastapi import HTTPException
+    settings = getattr(org, "settings", None) or {}
+    if not isinstance(settings, dict):
+        return
+    min_age = settings.get(SETTING_MEMBERSHIP_MIN_AGE)
+    if min_age is None or min_age == 0:
+        return
+    try:
+        threshold = int(min_age)
+    except (TypeError, ValueError):
+        return
+    if threshold not in SUPPORTED_AGE_THRESHOLDS:
+        return
+    if user_meets_age(user, threshold):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "verification_required",
+            "scope": "min_age",
+            "min_age": threshold,
+        },
+    )
+
+
+def check_vote_min_age_for_proposal(user, proposal) -> None:
+    """Phase 52g — per-proposal min-age gate. Raises 403 if the
+    proposal carries a ``min_age`` and the user does not meet it.
+    No-op when the proposal has no age gate."""
+    from fastapi import HTTPException
+    min_age = getattr(proposal, "min_age", None)
+    if min_age is None:
+        return
+    try:
+        threshold = int(min_age)
+    except (TypeError, ValueError):
+        return
+    if threshold not in SUPPORTED_AGE_THRESHOLDS:
+        return
+    if user_meets_age(user, threshold):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "error": "verification_required",
+            "scope": "min_age",
+            "min_age": threshold,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 52f — per-org display name resolver + display-name-match
+# ---------------------------------------------------------------------------
+
+
+def display_name_for(user, org, *, membership=None) -> str:
+    """Phase 52f — the resolver every org-context name-render must
+    route through. Returns ``OrgMembership.display_name`` (if set
+    for this user+org) or falls back to ``User.display_name``.
+
+    ``membership`` is optional — pass it when the caller already has
+    the row (member-list loops, etc.) to skip a redundant query.
+    """
+    if membership is not None:
+        override = getattr(membership, "display_name", None)
+        if override:
+            return override
+    elif user is not None and org is not None:
+        # Defer the import to avoid a module-level cycle.
+        import models
+        # Walk the user's loaded org_memberships if available; the
+        # caller usually pre-fetches.
+        memberships = getattr(user, "org_memberships", None) or []
+        for m in memberships:
+            if getattr(m, "org_id", None) == org.id:
+                if m.display_name:
+                    return m.display_name
+                break
+    return getattr(user, "display_name", "") or ""
+
+
+def _normalize_name_for_match(s: str | None) -> str:
+    """Reuse the existing hashing-module normalization so match
+    behavior tracks the hash-side conventions exactly (lowercase +
+    NFKD + strip combining marks + strip punctuation + collapse
+    whitespace)."""
+    if not isinstance(s, str) or not s.strip():
+        return ""
+    # Local import to avoid a hard module-load dependency.
+    import verification_hashing
+    return verification_hashing.normalize_text(s)
+
+
+def get_org_name_match_mode(org) -> str:
+    """Returns one of ``off`` / ``first`` / ``last`` / ``full``.
+    Defaults to ``off`` so unconfigured orgs behave byte-for-byte."""
+    settings = getattr(org, "settings", None) or {}
+    if not isinstance(settings, dict):
+        return NAME_MATCH_OFF
+    val = settings.get(SETTING_REQUIRE_NAME_MATCH)
+    if val in _VALID_NAME_MATCH_MODES:
+        return val
+    return NAME_MATCH_OFF
+
+
+def get_org_name_match_action(org) -> str:
+    """Returns ``block`` (default) or ``flag``. The recommended
+    default per the spec is hard-reject; an org admin can flip to
+    flag-only if they want the softer posture."""
+    settings = getattr(org, "settings", None) or {}
+    if not isinstance(settings, dict):
+        return NAME_MATCH_ACTION_BLOCK
+    val = settings.get(SETTING_NAME_MATCH_ACTION)
+    if val in _VALID_NAME_MATCH_ACTIONS:
+        return val
+    return NAME_MATCH_ACTION_BLOCK
+
+
+def display_name_matches_legal(
+    candidate_display_name: str | None,
+    user,
+    org,
+) -> bool:
+    """Phase 52f — does ``candidate_display_name`` match the user's
+    legal name per the org's required match mode?
+
+    Returns:
+      * True if the org requires no match (``off``).
+      * True if the user has no legal name on file (the gate only
+        applies to verified users; an unverified user's display name
+        is unconstrained — the membership floor is what forces
+        verification first).
+      * True if the candidate matches per the mode.
+      * False otherwise.
+
+    Match mode semantics:
+      * ``first``: the candidate's FIRST normalized token equals the
+        normalized legal first name. (Handles "Bob Smith" display vs
+        "Bob" legal first.)
+      * ``last``: the candidate's LAST normalized token equals the
+        normalized legal last name.
+      * ``full``: the entire normalized candidate equals the
+        normalized legal full name.
+    """
+    mode = get_org_name_match_mode(org)
+    if mode == NAME_MATCH_OFF:
+        return True
+    legal_first = getattr(user, "legal_first_name", None)
+    legal_last = getattr(user, "legal_last_name", None)
+    legal_full = getattr(user, "legal_full_name", None)
+    if not (legal_first or legal_last or legal_full):
+        return True  # no legal name → no gate (verified-only constraint)
+
+    normalized = _normalize_name_for_match(candidate_display_name)
+    if not normalized:
+        return False
+
+    if mode == NAME_MATCH_FULL:
+        return normalized == _normalize_name_for_match(legal_full)
+
+    tokens = normalized.split()
+    if not tokens:
+        return False
+
+    if mode == NAME_MATCH_FIRST:
+        target = _normalize_name_for_match(legal_first)
+        return bool(target) and tokens[0] == target
+
+    if mode == NAME_MATCH_LAST:
+        target = _normalize_name_for_match(legal_last)
+        return bool(target) and tokens[-1] == target
+
+    return False
