@@ -137,7 +137,14 @@ def test_doc_number_hash_unique_allows_multiple_nulls():
     )
     try:
         _build_pre_52d(db_url)
-        _run_alembic(db_url, "upgrade", _PHASE_52D_REVISION)
+        # Upgrade fully to head — the ORM ``models.User`` carries
+        # later-phase columns (legal_first_name, age band fields,
+        # etc.) that aren't in the 52d-only schema, so the ORM-based
+        # insert needs the full schema. The "multi-NULL on
+        # doc_number_hash" property holds at every later revision
+        # too (52h Stage 2 drops the UNIQUE index, making NULL
+        # tolerance trivially preserved).
+        _run_alembic(db_url, "upgrade", "head")
         res = subprocess.run(
             [sys.executable, "-c", code],
             cwd=_BACKEND_DIR, capture_output=True, text=True,

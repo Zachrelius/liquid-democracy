@@ -2253,7 +2253,7 @@ export default function OrgSettings() {
       {canEditOrgSettings && (
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            Identity verification gates
+            Identity verification options
           </h2>
           <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
             <p className="text-sm text-gray-600">
@@ -2379,6 +2379,73 @@ export default function OrgSettings() {
               </select>
               <p className="text-xs text-gray-500">
                 A low-confidence flag means a new applicant's name + date of birth alone matches an existing member (no address match). Within a real org, false matches on name + DOB alone are rare enough that the default routes to your approval queue too; "review only" creates the flag without changing the join. At very large platform scale name + DOB alone false-collides near-certainly, which is why low-confidence is still per-org only (never platform-wide).
+              </p>
+            </div>
+
+            {/* Phase 52f — display-name-match. Mode picks WHICH parts
+                must match; action picks block vs. flag on a non-match
+                (Z's locked decision: both options offered per org). */}
+            <div className="pt-2 border-t border-gray-200 space-y-1">
+              <label className="block text-xs font-medium text-gray-700">
+                Require display name to match legal name
+              </label>
+              <select
+                value={settings.verification_require_name_match || 'off'}
+                onChange={e => updateSetting('verification_require_name_match', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              >
+                <option value="off">Off (any display name allowed)</option>
+                <option value="first">First name must match ID</option>
+                <option value="last">Last name must match ID</option>
+                <option value="full">Full name must match ID</option>
+              </select>
+              <p className="text-xs text-gray-500">
+                When set, a verified member's display name in this org is checked against the legal name on their ID (case-insensitive, punctuation-stripped). Unverified members are unconstrained — the membership verification floor is what forces them to verify first.
+              </p>
+            </div>
+
+            {(settings.verification_require_name_match
+                && settings.verification_require_name_match !== 'off') && (
+              <div className="pt-2 space-y-1">
+                <label className="block text-xs font-medium text-gray-700">
+                  Action on non-matching display name
+                </label>
+                <select
+                  value={settings.verification_name_match_action || 'block'}
+                  onChange={e => updateSetting('verification_name_match_action', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                >
+                  <option value="block">Block (reject the display-name change)</option>
+                  <option value="flag">Flag (allow + log for admin review)</option>
+                </select>
+                <p className="text-xs text-gray-500">
+                  "Block" is the clearer default for a real-names org. "Flag" allows the change and writes an audit row so you can see who used a non-matching name without surprising them with a rejection.
+                </p>
+              </div>
+            )}
+
+            {/* Phase 52g — membership minimum age. Stored as an int
+                from a fixed supported set. */}
+            <div className="pt-2 border-t border-gray-200 space-y-1">
+              <label className="block text-xs font-medium text-gray-700">
+                Minimum age to join
+              </label>
+              <select
+                value={settings.verification_membership_min_age ?? ''}
+                onChange={e => updateSetting(
+                  'verification_membership_min_age',
+                  e.target.value === '' ? null : parseInt(e.target.value, 10),
+                )}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              >
+                <option value="">No minimum age</option>
+                <option value="13">13+</option>
+                <option value="16">16+</option>
+                <option value="18">18+</option>
+                <option value="21">21+</option>
+              </select>
+              <p className="text-xs text-gray-500">
+                A verified member's age is derived from their ID at verification and stored as a coarse band (which thresholds they meet) — never the raw date of birth. Members under the threshold can't join. Already-verified members below the next threshold auto-promote when they cross it; no re-verification needed.
               </p>
             </div>
           </div>

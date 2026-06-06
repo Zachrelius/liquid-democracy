@@ -148,8 +148,11 @@ async def cast_vote(
     # gated proposals — Cluster C4 — so they'd be filtered out of
     # the eligible set too; this check ensures the FE renders the
     # right CTA). No-op when the proposal has no gate.
-    from verification import check_vote_floor_for_proposal
+    from verification import (
+        check_vote_floor_for_proposal, check_vote_min_age_for_proposal,
+    )
     check_vote_floor_for_proposal(current_user, proposal)
+    check_vote_min_age_for_proposal(current_user, proposal)
 
     # Phase 10.1: eligibility check. Pre-fix, parent-org members could vote on
     # sub-org proposals they weren't members of, and cross-org users could
