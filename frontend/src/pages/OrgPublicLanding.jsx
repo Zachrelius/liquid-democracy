@@ -273,6 +273,16 @@ export default function OrgPublicLanding() {
             onGoToProposals={() => navigate(urlFor(slug, 'proposals'))}
           />
         </div>
+
+        {/* Phase 57 — public proposals panel. Only renders when the
+            steward has set activity_visibility='public'. Read-only
+            anonymous-allowed list of the org's proposals; deeper
+            detail (body, tally, comments) is reachable from the
+            per-row link. Hidden when activity is members_only — the
+            today-default — so existing orgs see no UI change. */}
+        {orgData.activity_visibility === 'public' && (
+          <PublicProposalsPanel slug={slug} />
+        )}
       </div>
     </>
   );
@@ -328,7 +338,13 @@ function JoinCta({
   // Non-member views by policy.
   // ---------------------------------------------------------------------
 
-  if (policy === 'invite_only_public') {
+  if (policy === 'invite') {
+    // Phase 57 — the invite policy covers what was `invite_only_public`
+    // in the Phase 14 four-value vocabulary. The splash itself only
+    // ever renders for non-hidden orgs (hidden 404s server-side), so
+    // by the time we reach this branch the org has either listed or
+    // unlisted discoverability — i.e. the visitor reached it via a
+    // direct link or /explore. Same copy as before.
     return (
       <div className="space-y-3">
         <p className="text-sm text-gray-700">
@@ -358,7 +374,8 @@ function JoinCta({
     );
   }
 
-  if (policy === 'approval_required') {
+  if (policy === 'approval') {
+    // Phase 57 — the approval policy covers what was `approval_required`.
     if (!user) {
       return (
         <div className="space-y-3">
@@ -456,4 +473,92 @@ function JoinCta({
   // contract from B5. If a stale frontend bundle hits a future policy
   // value, render nothing visible rather than a broken control.
   return null;
+}
+
+
+/**
+ * Phase 57 F3 — public proposals panel rendered on the splash when the
+ * org's activity_visibility is 'public'. Anonymous + logged-in non-
+ * members both get the same read-only list. Member viewers also see
+ * the panel (it's the same data they'd see on /{slug}/proposals minus
+ * the participation affordances), but the splash's Join CTA is
+ * suppressed for members anyway so the panel + the "Go to proposals"
+ * link sit naturally side-by-side.
+ */
+function PublicProposalsPanel({ slug }) {
+  const [proposals, setProposals] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setError(null);
+    api.get(`/api/orgs/${slug}/public/proposals`)
+      .then(data => {
+        if (alive) {
+          setProposals(Array.isArray(data) ? data : []);
+        }
+      })
+      .catch(err => {
+        if (alive) {
+          setError(err?.message || 'Could not load proposals.');
+        }
+      })
+      .finally(() => {
+        if (alive) {
+          setLoading(false);
+        }
+      });
+    return () => { alive = false; };
+  }, [slug]);
+
+  return (
+    <section className="mt-10">
+      <div className="flex items-baseline justify-between mb-4">
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">
+          Proposals
+        </h2>
+        <span className="text-xs text-gray-400">Public read-only</span>
+      </div>
+      {loading && (
+        <div className="p-6 rounded-xl border border-gray-200 bg-white text-center">
+          <p className="text-sm text-gray-500">Loading proposals…</p>
+        </div>
+      )}
+      {!loading && error && (
+        <div className="p-4 rounded-xl border border-red-200 bg-red-50">
+          <p className="text-sm text-red-800">{error}</p>
+        </div>
+      )}
+      {!loading && !error && proposals.length === 0 && (
+        <div className="p-6 rounded-xl border border-gray-200 bg-white text-center">
+          <p className="text-sm text-gray-500">No proposals yet.</p>
+        </div>
+      )}
+      {!loading && !error && proposals.length > 0 && (
+        <ul className="space-y-2">
+          {proposals.map(p => (
+            <li
+              key={p.id}
+              className="bg-white border border-gray-200 rounded-xl p-4 flex items-start justify-between gap-4"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-gray-800 truncate">
+                  {p.title || '(untitled)'}
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Status: {p.status}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-xs text-gray-400 mt-3 italic">
+        Joining this organization lets you vote, comment, and start your
+        own proposals.
+      </p>
+    </section>
+  );
 }

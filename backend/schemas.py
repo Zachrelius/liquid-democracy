@@ -1650,6 +1650,12 @@ class OrgPublicOut(BaseModel):
     branding: OrgPublicBrandingOut = OrgPublicBrandingOut()
     intro_text: Optional[str] = None
     join_policy: str
+    # Phase 57 — surface activity_visibility on the public splash so
+    # the FE can render a public proposal panel when 'public'. The
+    # public endpoint is the SAME source of truth the unauth viewer
+    # sees, so including this here keeps the FE from doing a second
+    # API call to learn the access posture.
+    activity_visibility: str = "members_only"
 
 
 class ExploreOrgCard(BaseModel):
