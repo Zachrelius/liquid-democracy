@@ -41,6 +41,19 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, pe
               ({member.held_titles.join(', ')})
             </span>
           )}
+          {/* Phase 52e Stage 2 E3 — derived verified badge. Reads
+              ``member.is_org_verified`` (computed server-side via
+              ``verification_flags.is_org_verified`` — membership floor
+              satisfied AND not currently the subject of an open high-
+              confidence duplicate flag). */}
+          {member.is_org_verified && (
+            <span
+              title="Verified member of this organization"
+              className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold"
+            >
+              Verified
+            </span>
+          )}
         </span>
         <span className="w-32 text-gray-500">@{member.username}</span>
         <span className="w-24">

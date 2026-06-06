@@ -1925,6 +1925,80 @@ class ElectionCandidacy(Base):
     )
 
 
+class OrgDuplicateFlag(Base):
+    """Phase 52e Stage 2 E4 — org-scoped duplicate-identity flag.
+
+    Created when a name-based hash match is detected between two
+    members of the SAME org at a participation point (join, delegate
+    promotion). Cross-org matches are deliberately NOT flagged —
+    harm is org-scoped (one human with two accounts only distorts
+    outcomes if both participate in the same org).
+
+    Confidence tiers:
+      * ``name_dob_address`` (high) → may default to block-pending-
+        appeal (membership routes to ``pending_approval``).
+      * ``name_dob`` (low) → route-to-review only; NEVER drives an
+        automatic block (birthday-paradox math makes false
+        collisions near-certain at scale).
+
+    Status lifecycle:
+      * ``open`` (default) — flag exists, no admin decision yet.
+      * ``resolved_distinct`` — admin confirmed these ARE two real
+        different people; suppresses re-flagging.
+      * ``resolved_same`` — admin confirmed these ARE the same
+        person; v1 records only (enforcement is manual / future).
+
+    No PII stored on this row — only the user_ids. The admin
+    adjudication surface shows WHICH members are flagged, not the
+    matched name/DOB values (the admin already knows their members).
+    """
+
+    __tablename__ = "org_duplicate_flags"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    # The pair of users implicated. Stored in lexical order (a < b)
+    # so the unique constraint catches duplicates regardless of which
+    # user triggered the match.
+    user_a_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    user_b_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    # "name_dob_address" (high) or "name_dob" (low).
+    confidence: Mapped[str] = mapped_column(
+        String(length=32), nullable=False,
+    )
+    # "open" / "resolved_distinct" / "resolved_same".
+    status: Mapped[str] = mapped_column(
+        String(length=32), nullable=False,
+        default="open", server_default="open", index=True,
+    )
+    resolved_by_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "org_id", "user_a_id", "user_b_id", "confidence",
+            name="uq_org_duplicate_flags_pair",
+        ),
+    )
+
+
 class VerificationConsumption(Base):
     """Phase 52b — append-only log of real Didit verifications
     consumed against the shared monthly free pool.

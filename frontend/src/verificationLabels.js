@@ -65,13 +65,39 @@ export function ctaCopyForVerificationRequired(detail) {
   if (!detail || detail.error !== 'verification_required') return null;
   const floorLabel = labelForState(detail.floor);
   const jurisdictionSuffix = detail.jurisdiction ? ` (${detail.jurisdiction})` : '';
+  // Phase 52e Stage 2 E5 — added "delegate" scope copy alongside
+  // membership / role / vote. The role-shaped scope is also used by
+  // the delegate-promotion gate (no separate "delegate" scope on the
+  // backend; "role" is reused since it's structurally a per-org
+  // capability gate). Future copy refinement may add a dedicated
+  // delegate string if the scope payload starts carrying it.
   const scopeCopy = {
     membership: 'join this organization',
     role: 'hold this role in this organization',
     vote: 'cast a vote on this proposal',
+    delegate: 'become a public delegate in this organization',
   }[detail.scope] || 'continue';
   return `To ${scopeCopy}, your account needs: ${floorLabel}${jurisdictionSuffix}. Open Settings to start verification.`;
 }
+
+/**
+ * Phase 52e Stage 2 E5 — the document-number hard-block message.
+ * Deliberately NEUTRAL: does not reveal that the duplicate is "an
+ * existing account" (that would leak information about other
+ * accounts). Honest about what to do: contact support.
+ */
+export const DOC_HARD_BLOCK_MESSAGE =
+  "We couldn't complete identity verification for this account. " +
+  "If you think this is a mistake, please contact support.";
+
+/**
+ * Phase 52e Stage 2 E5 — up-front expectation copy shown before a
+ * user leaves for the verification provider. Sets the one-identity
+ * frame so the failure case downstream isn't a surprise.
+ */
+export const UP_FRONT_ONE_IDENTITY_COPY =
+  "You can verify only one account per person. Each verified " +
+  "identity is tied to a single account.";
 
 /**
  * Best-effort detection of a verification-required error from a

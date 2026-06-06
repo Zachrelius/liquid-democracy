@@ -1602,6 +1602,13 @@ class OrgMemberOut(BaseModel):
     role: str
     status: str
     joined_at: datetime
+    # Phase 52e Stage 2 E3 — derived per-org verified status. Computed
+    # on read via ``verification_flags.is_org_verified`` (membership
+    # floor satisfied AND not currently the subject of an open high-
+    # confidence duplicate flag in this org). NOT a stored field; the
+    # value reflects the live derived state at list-render time. The
+    # member-list "Verified" badge reads this boolean.
+    is_org_verified: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 
