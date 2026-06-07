@@ -114,11 +114,21 @@ def test_public_delegate_allows_delegation_without_follow(db):
     assert can_delegate_to(db, alice.id, dr_chen.id, health.id) is True
 
 
-def test_public_delegate_inactive_profile_blocks_delegation(db):
+def test_private_visibility_profile_blocks_delegation(db):
+    """Phase 60 Bucket 1 (successor of the pre-Phase-30.3
+    `test_public_delegate_inactive_profile_blocks_delegation`).
+
+    Pre-Phase-30.3 there was a boolean `active` flag on
+    DelegateProfile; an inactive profile blocked delegation. Phase
+    30.3 replaced active with the visibility state (private /
+    followers_only / public / public_accepting). The successor
+    property: a `private` visibility profile blocks delegation —
+    `can_delegate_to` requires `public` or `public_accepting`.
+    """
     alice = make_user(db, "alice")
     dr_chen = make_user(db, "dr_chen")
     health = make_topic(db, "health")
-    p = make_delegate_profile(db, dr_chen, health)
+    make_delegate_profile(db, dr_chen, health, visibility="private")
     db.flush()
 
     assert can_delegate_to(db, alice.id, dr_chen.id, health.id) is False
@@ -382,18 +392,15 @@ def test_non_follower_cannot_see_votes(db):
     assert can_see_votes(db, alice.id, bob.id, [health.id]) is False
 
 
-def test_public_delegate_topic_ids_returns_active_only(db):
-    user = make_user(db, "user1")
-    health = make_topic(db, "health")
-    economy = make_topic(db, "economy")
-
-    p1 = make_delegate_profile(db, user, health)
-    p2 = make_delegate_profile(db, user, economy)
-    db.flush()
-
-    result = public_delegate_topic_ids(db, user.id)
-    assert health.id in result
-    assert economy.id not in result
+# Phase 60 Bucket 1 — `test_public_delegate_topic_ids_returns_active_only`
+# removed. Pre-Phase-30.3 the helper filtered out `active=False`
+# profiles. Phase 30.3 replaced the boolean active flag with the
+# visibility state model and `public_delegate_topic_ids` now returns
+# every profile the user owns; the visibility-based filtering of who
+# sees what moved into `can_see_votes` (Phase 30.3 invariant). The
+# pre-30.3 property the test was protecting (helper filters by active)
+# no longer applies — the equivalent property lives in
+# test_phase_30_3_visibility_consolidation.py.
 
 
 # ---------------------------------------------------------------------------

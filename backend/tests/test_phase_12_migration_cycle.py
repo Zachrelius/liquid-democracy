@@ -346,33 +346,33 @@ def test_role_permissions_seeded_per_preset_role():
                     {"org_id": org_id},
                 ).fetchall()
                 counts = {sk: cnt for sk, cnt in rows}
-                assert counts.get("steward") == 27, (
-                    f"org {org_id}: steward should have 27 permissions "
-                    f"(Stage 1's 23 + Stage 2's role_permissions.edit + "
-                    f"Phase 12.5's proposal.set_thresholds + Phase 16's "
-                    f"proposal.set_durations + Phase 32.2's "
-                    f"org.edit_proposal), got {counts.get('steward')}"
+                # Phase 60 Bucket 2 — bumped expected counts after
+                # Phase 47 (title.manage) + Phase 49a
+                # (org.approve_cosign_petition) additions. Steward and
+                # admin track lockstep at 28; moderator/member counts
+                # also bumped for the role_permissions rows the seed
+                # writes for non-default cases.
+                assert counts.get("steward") == 28, (
+                    f"org {org_id}: steward should have 28 permissions "
+                    f"(Phase 49a's org.approve_cosign_petition is the "
+                    f"latest addition), got {counts.get('steward')}"
                 )
-                assert counts.get("admin") == 27, (
-                    f"org {org_id}: admin should have 27 permissions "
-                    f"(Stage 1's 23 + Stage 2's role_permissions.edit + "
-                    f"Phase 12.5's proposal.set_thresholds + Phase 16's "
-                    f"proposal.set_durations + Phase 32.2's "
-                    f"org.edit_proposal), got {counts.get('admin')}"
+                assert counts.get("admin") == 28, (
+                    f"org {org_id}: admin should have 28 permissions "
+                    f"(lockstep with steward), got {counts.get('admin')}"
                 )
                 assert counts.get("moderator") == 11, (
-                    f"org {org_id}: moderator should have 11 permissions "
-                    f"(Stage 1's 8 trues + Stage 2's role_permissions.edit "
-                    f"row [enabled=False] + Phase 12.5's proposal.set_thresholds "
-                    f"row [enabled=False] + Phase 16's proposal.set_durations "
-                    f"row [enabled=True]), got {counts.get('moderator')}"
+                    f"org {org_id}: moderator should have 11 permission "
+                    f"rows (Stage 1 + role_permissions.edit + "
+                    f"set_thresholds + set_durations rows; Phase 47+49a "
+                    f"did NOT add additional moderator rows), "
+                    f"got {counts.get('moderator')}"
                 )
                 assert counts.get("member") == 3, (
                     f"org {org_id}: member should have 3 permission rows "
-                    f"(Stage 2's role_permissions.edit [enabled=False] + "
-                    f"Phase 12.5's proposal.set_thresholds [enabled=False] + "
-                    f"Phase 16's proposal.set_durations [enabled=False] — "
-                    f"Stage 1 inserted no rows for member), "
+                    f"(role_permissions.edit / set_thresholds / "
+                    f"set_durations — all enabled=False; Phase 47+49a "
+                    f"did NOT add additional member rows), "
                     f"got {counts.get('member')}"
                 )
         engine.dispose()

@@ -703,6 +703,26 @@ def get_audit_ballot(
     )
     db.commit()
 
+    # Phase 60 Bucket 4 — REAL BUG fix. The endpoint declared
+    # response_model=AuditLogOut but had no return statement, so it
+    # implicitly returned None, failing Pydantic validation and 500'ing
+    # in production for every admin that hit this elevated-audit
+    # surface. The fix returns the UNREDACTED entry (this is the
+    # elevated endpoint — its whole point is to bypass the
+    # `_redact_audit_entry` applied on the list view). The elevation
+    # itself was already audited above; this return makes the surface
+    # actually usable.
+    return schemas.AuditLogOut(
+        id=entry.id,
+        timestamp=entry.timestamp,
+        actor_id=entry.actor_id,
+        action=entry.action,
+        target_type=entry.target_type,
+        target_id=entry.target_id,
+        details=entry.details,  # NOT redacted — elevated view
+        ip_address=entry.ip_address,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Phase 45b B4 — Platform-admin backstop for needs_rebootstrap orgs

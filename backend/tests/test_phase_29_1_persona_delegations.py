@@ -78,12 +78,20 @@ class TestPersonaDelegationsSeeded:
     """All 6 quick-login personas get delegation_strategy + the expected
     number of Delegation + TopicPrecedence rows from the bible spec."""
 
+    # Phase 60 Bucket 3 — hoa_brenda + hoa_linda delegation counts
+    # bumped. Phase 34 B3 deliberately MOVED both personas' "Cedar
+    # Court Issues" delegation to the Cedar Court Condos sub-org
+    # (General Issues), so the parent-org bible now has fewer
+    # delegations for each. The bible's docstrings at
+    # hoa_bible.py:1822 and :1859 document this. The change was
+    # intentional content evolution, NOT a regression (per the
+    # Phase 60 spec Bucket 3 investigation gate).
     EXPECTED = {
         "hoa_janet": ("relevance_weighted", 2, 2),
-        "hoa_brenda": ("relevance_weighted", 2, 2),
+        "hoa_brenda": ("relevance_weighted", 1, 1),
         "hoa_marcus": ("relevance_weighted", 4, 4),
         "hoa_don": ("strict_precedence", 0, 0),
-        "hoa_linda": ("strict_precedence", 4, 4),
+        "hoa_linda": ("strict_precedence", 3, 3),
         "hoa_tomas": ("relevance_weighted", 2, 2),
     }
 
