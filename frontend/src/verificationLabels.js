@@ -78,6 +78,29 @@ export function ctaCopyForVerificationRequired(detail) {
     const state = detail.locality_state ? `, ${detail.locality_state}` : '';
     return `This organization requires members to be verified residents of ${city}${state}.`;
   }
+  // Phase 52j J1 — residency-scope scope (org-level list of allowed
+  // (state, city?) localities, OR-matched). The detail carries the
+  // readable scope so the CTA names the places.
+  if (detail.scope === 'residency_scope') {
+    const scope = Array.isArray(detail.residency_scope) ? detail.residency_scope : [];
+    if (!scope.length) {
+      return "This organization requires members to be a verified resident of an allowed location.";
+    }
+    const labels = scope.map(e => {
+      if (e && e.city) return `${e.city}, ${e.state}`;
+      if (e && e.state) return e.state;
+      return null;
+    }).filter(Boolean);
+    if (!labels.length) {
+      return "This organization requires members to be a verified resident of an allowed location.";
+    }
+    const list = labels.length === 1
+      ? labels[0]
+      : labels.length === 2
+        ? `${labels[0]} or ${labels[1]}`
+        : `${labels.slice(0, -1).join(', ')}, or ${labels[labels.length - 1]}`;
+    return `This organization requires members to be a verified resident of ${list}.`;
+  }
   const floorLabel = labelForState(detail.floor);
   const jurisdictionSuffix = detail.jurisdiction ? ` (${detail.jurisdiction})` : '';
   const scopeCopy = {

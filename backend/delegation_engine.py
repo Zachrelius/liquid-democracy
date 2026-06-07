@@ -1209,23 +1209,27 @@ def eligible_voter_ids_for_proposal(
             ids = {r.id for r in rows}
 
     # Phase 52 Stage 1 — verification fork. Narrow the eligible set
-    # when the proposal is gated AND the org's delegation-carries-
-    # weight setting is False (default).
-    floor = getattr(proposal, "verification_floor", None)
+    # when the EFFECTIVE proposal floor is non-None (Phase 52j J3
+    # routes this through ``effective_proposal_floor`` so an
+    # ``always``-policy org applies its org floor uniformly across
+    # the eligibility filter AND the vote-cast block; a ``never``-
+    # policy org applies no narrowing even if the proposal row
+    # carries a stale stored floor).
+    org_id_for_setting = getattr(proposal, "org_id", None)
+    org_row = (
+        db.get(models.Organization, org_id_for_setting)
+        if org_id_for_setting else None
+    )
+    from verification import effective_proposal_floor
+    floor, jurisdiction = effective_proposal_floor(proposal, org_row)
     if floor:
-        org_id_for_setting = getattr(proposal, "org_id", None)
         carries = False
-        if org_id_for_setting:
-            org_row = db.get(models.Organization, org_id_for_setting)
-            if org_row is not None:
-                from verification import (
-                    delegation_carries_unverified_weight,
-                )
-                carries = delegation_carries_unverified_weight(org_row)
-        if not carries and ids:
-            jurisdiction = getattr(
-                proposal, "verification_jurisdiction", None,
+        if org_row is not None:
+            from verification import (
+                delegation_carries_unverified_weight,
             )
+            carries = delegation_carries_unverified_weight(org_row)
+        if not carries and ids:
             from verification import user_satisfies_floor
             users = db.query(models.User).filter(
                 models.User.id.in_(ids),

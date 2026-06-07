@@ -823,9 +823,10 @@ def transfer_stewardship(
     # Phase 52 Stage 1 — verification role-grant gate. Target user
     # must satisfy the steward floor; otherwise the swap aborts +
     # the existing steward keeps the role (governance floor
-    # preserved naturally).
-    from verification import check_role_grant_floor
+    # preserved naturally). Phase 52j J1 — also residency-scope.
+    from verification import check_role_grant_floor, check_role_residency_for_grant
     check_role_grant_floor(target_user, org, "steward")
+    check_role_residency_for_grant(target_user, org, "steward")
 
     # Resolve the Admin + Steward role ids for this org.
     steward_role_id = _resolve_role_id_by_system_key(db, org.id, "steward")
@@ -982,9 +983,11 @@ def change_governance_mode(
 
     # Phase 52 Stage 1 — verification role-grant gate. Successor
     # becomes Steward; must satisfy that role's floor. Existing
-    # admin tier remains unchanged on block.
-    from verification import check_role_grant_floor
+    # admin tier remains unchanged on block. Phase 52j J1 — also
+    # residency-scope.
+    from verification import check_role_grant_floor, check_role_residency_for_grant
     check_role_grant_floor(successor_user, org, "steward")
+    check_role_residency_for_grant(successor_user, org, "steward")
 
     # Phase 48 Stage 3 D12 — direct council→single_steward revert
     # requires multi-admin sign-off when Phase 44 is enabled for the
@@ -1292,11 +1295,12 @@ def change_member_role(
     # the destination role. Existing role-holder keeps their role on
     # block; the governance-floor invariant is preserved by
     # construction (no demote happens). The check goes BEFORE the
-    # role_id write.
-    from verification import check_role_grant_floor
+    # role_id write. Phase 52j J1 — also residency-scope.
+    from verification import check_role_grant_floor, check_role_residency_for_grant
     target_user = db.get(models.User, m.user_id)
     if target_user is not None:
         check_role_grant_floor(target_user, org, new_system_key)
+        check_role_residency_for_grant(target_user, org, new_system_key)
     m.role_id = new_role_id
     db.commit()
     db.refresh(m)
@@ -2868,6 +2872,7 @@ def accept_invitation(
             check_membership_floor_for_join, check_role_grant_floor,
             ensure_can_join_real_org, check_membership_min_age_for_join,
             check_membership_locality_for_join,
+            check_role_residency_for_grant,
         )
         check_membership_floor_for_join(current_user, inv_org)
         check_membership_min_age_for_join(current_user, inv_org)
@@ -2876,6 +2881,10 @@ def accept_invitation(
         inv_system_key_for_check = _INV_ROLE_TO_SYSTEM_KEY.get(inv.role, inv.role)
         if inv_system_key_for_check and inv_system_key_for_check != "member":
             check_role_grant_floor(
+                current_user, inv_org, inv_system_key_for_check,
+            )
+            # Phase 52j J1 — also residency-scope.
+            check_role_residency_for_grant(
                 current_user, inv_org, inv_system_key_for_check,
             )
         # Phase 52e Stage 2 E4 — duplicate-flag evaluation on
