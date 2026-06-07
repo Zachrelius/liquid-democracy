@@ -24,6 +24,14 @@ aiosmtplib==3.0.1
 Pillow==10.4.0
 pytest==8.3.4
 pytest-asyncio==0.24.0
+# pytest-xdist: Phase 61 O3 — parallel test execution. `pytest -n auto`
+# distributes tests across CPU workers; cuts full-suite wall-clock from
+# ~40min to ~19min (51% reduction) at 2266 tests. Each worker gets its
+# own session-scoped engine via the conftest fixture, so cross-worker
+# DB isolation is automatic. Not required for correctness — the suite
+# still passes serially — but `-n auto` is the recommended local +
+# CI invocation. See docs/test_perf_profile_2026-06.md.
+pytest-xdist==3.6.1
 httpx==0.28.1
 # tzdata: zoneinfo fallback for platforms without system tzdata (Windows
 # dev hosts especially). Phase 23 B6 uses ZoneInfo("America/Los_Angeles")
