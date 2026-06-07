@@ -121,9 +121,9 @@ def _create_membership(db, org, user, role="admin"):
 
 
 def _create_topic(db: Session, org=None) -> models.Topic:
+    # Phase 58 Cluster T — `Topic.description` was dropped in Phase 33.
     t = models.Topic(
         name=f"Topic-{models._uuid()[:8]}",
-        description="",
         color="#00ff00",
         org_id=org.id if org else None,
     )

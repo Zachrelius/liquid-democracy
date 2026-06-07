@@ -130,7 +130,7 @@ class TestDocBlockRemoved:
         db.refresh(alice)
         assert alice.verification_state == verification.IDENTITY  # not IDENTITY_UNIQUE
         assert alice.verification_provenance == verification.PROV_DIDIT
-        assert alice.doc_number_hash is None  # NEVER written
+        # Phase 58 Cluster C — `doc_number_hash` column dropped.
 
         # Bob — same doc number, different user. Pre-52h-Stage-2 this
         # would have been rejected with verification.duplicate_document.
@@ -146,7 +146,7 @@ class TestDocBlockRemoved:
         db.refresh(bob)
         assert bob.verification_state == verification.IDENTITY
         assert bob.verification_provenance == verification.PROV_DIDIT
-        assert bob.doc_number_hash is None
+        # Phase 58 Cluster C — `doc_number_hash` column dropped.
 
         # NO duplicate_document audit row written for either user.
         dup_audits = db.query(models.AuditLog).filter_by(
@@ -176,9 +176,8 @@ class TestDocBlockRemoved:
             content=body, headers={**_sign(body), "Content-Type": "application/json"},
         )
         db.refresh(alice)
-        # Doc hash column stays NULL (the column is deprecated but
-        # retained; it's just no longer written).
-        assert alice.doc_number_hash is None
+        # Phase 58 Cluster C — `doc_number_hash` column dropped
+        # (was the no-longer-written deprecated column).
         # uniqueness_strength also no longer set (Z-locked Option A).
         assert alice.uniqueness_strength is None
         # Name hashes ARE written — in-org dedup still works.

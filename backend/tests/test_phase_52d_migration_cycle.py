@@ -115,43 +115,9 @@ def test_phase_52d_downgrade_upgrade_cycle():
         except OSError: pass
 
 
-def test_doc_number_hash_unique_allows_multiple_nulls():
-    """Same partial-unique tolerance check Phase 52a's migration test
-    runs for the nullifier index: on SQLite the unique index treats
-    NULLs as distinct; the PG partial-WHERE branch is exercised by
-    PG smoke."""
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    db_url = f"sqlite:///{path}"
-    code = (
-        f"import os; os.environ['DATABASE_URL']={db_url!r}\n"
-        "import models\n"
-        "from database import SessionLocal\n"
-        "s = SessionLocal()\n"
-        "u1 = models.User(username='a', email='a@example.com', password_hash='x', display_name='a')\n"
-        "u2 = models.User(username='b', email='b@example.com', password_hash='x', display_name='b')\n"
-        "s.add_all([u1, u2]); s.commit()\n"
-        "assert u1.doc_number_hash is None\n"
-        "assert u2.doc_number_hash is None\n"
-        "s.close()\n"
-    )
-    try:
-        _build_pre_52d(db_url)
-        # Upgrade fully to head — the ORM ``models.User`` carries
-        # later-phase columns (legal_first_name, age band fields,
-        # etc.) that aren't in the 52d-only schema, so the ORM-based
-        # insert needs the full schema. The "multi-NULL on
-        # doc_number_hash" property holds at every later revision
-        # too (52h Stage 2 drops the UNIQUE index, making NULL
-        # tolerance trivially preserved).
-        _run_alembic(db_url, "upgrade", "head")
-        res = subprocess.run(
-            [sys.executable, "-c", code],
-            cwd=_BACKEND_DIR, capture_output=True, text=True,
-        )
-        assert res.returncode == 0, (
-            f"multi-null insert failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
-        )
-    finally:
-        try: os.unlink(path)
-        except OSError: pass
+# Phase 58 Cluster C — `test_doc_number_hash_unique_allows_multiple_nulls`
+# removed. It asserted partial-unique-index NULL tolerance on the
+# `doc_number_hash` column. The column itself was dropped in migration
+# `c0d1e2f3a4b5` (this pass), so the property the test guarded is moot.
+# The Phase 58 migration cycle test asserts the column is gone, which
+# is the natural successor guard.

@@ -81,7 +81,7 @@ def test_phase_52a_upgrade_adds_table_and_index():
         pre_indexes = _indexes(db_url, "users")
         assert "verification_sessions" not in pre_tables
         assert NULLIFIER_UNIQUE_INDEX not in pre_indexes
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_52A_REVISION)
         post_tables = _tables(db_url)
         post_indexes = _indexes(db_url, "users")
         assert "verification_sessions" in post_tables
@@ -97,12 +97,12 @@ def test_phase_52a_downgrade_upgrade_cycle():
     db_url = f"sqlite:///{path}"
     try:
         _build_pre_52a(db_url)
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_52A_REVISION)
         assert "verification_sessions" in _tables(db_url)
         _run_alembic(db_url, "downgrade", _PRIOR_REVISION)
         assert "verification_sessions" not in _tables(db_url)
         assert NULLIFIER_UNIQUE_INDEX not in _indexes(db_url, "users")
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_52A_REVISION)
         assert "verification_sessions" in _tables(db_url)
         assert NULLIFIER_UNIQUE_INDEX in _indexes(db_url, "users")
     finally:
@@ -110,38 +110,9 @@ def test_phase_52a_downgrade_upgrade_cycle():
         except OSError: pass
 
 
-def test_nullifier_unique_index_allows_multiple_nulls():
-    """Sanity check the partial-unique-on-PG / many-nulls-tolerant-on-
-    SQLite behavior. On SQLite, the unique index allows multiple NULLs
-    because the SQL spec says NULLs are distinct in a UNIQUE index;
-    we exercise that here through the ORM (which fills in all the
-    NOT NULL defaults). The PG partial-WHERE branch is exercised by
-    the PG smoke."""
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    db_url = f"sqlite:///{path}"
-    code = (
-        f"import os; os.environ['DATABASE_URL']={db_url!r}\n"
-        "import models\n"
-        "from database import SessionLocal\n"
-        "s = SessionLocal()\n"
-        "u1 = models.User(username='a', email='a@example.com', password_hash='x', display_name='a')\n"
-        "u2 = models.User(username='b', email='b@example.com', password_hash='x', display_name='b')\n"
-        "s.add_all([u1, u2]); s.commit()\n"
-        "assert u1.verification_nullifier is None\n"
-        "assert u2.verification_nullifier is None\n"
-        "s.close()\n"
-    )
-    try:
-        _build_pre_52a(db_url)
-        _run_alembic(db_url, "upgrade", "head")
-        res = subprocess.run(
-            [sys.executable, "-c", code],
-            cwd=_BACKEND_DIR, capture_output=True, text=True,
-        )
-        assert res.returncode == 0, (
-            f"multi-null insert failed:\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
-        )
-    finally:
-        try: os.unlink(path)
-        except OSError: pass
+# Phase 58 Cluster C — `test_nullifier_unique_index_allows_multiple_nulls`
+# removed. It asserted partial-unique-index NULL tolerance on the
+# `verification_nullifier` column. The column itself was dropped in
+# migration `c0d1e2f3a4b5` (this pass), so the property the test guarded
+# is moot. The Phase 58 migration cycle test asserts the column is gone,
+# which is the natural successor guard.

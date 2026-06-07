@@ -307,7 +307,10 @@ class TestUserDefaults:
         assert u.verification_provenance == "none"
         assert u.verification_jurisdiction is None
         assert u.verification_attestation_id is None
-        assert u.verification_nullifier is None
+        # Phase 58 — `verification_nullifier` column dropped (migration
+        # c0d1e2f3a4b5). The original assertion stayed for years as
+        # belt-and-suspenders that nothing accidentally wrote it; with
+        # the column gone the equivalent guard is the migration itself.
         assert u.verification_updated_at is None
 
 

@@ -61,10 +61,18 @@ def _get_or_create_topic(
     db: Session, name: str, description: str, color: str,
     sub_org_id: Optional[str] = None,
 ) -> models.Topic:
+    # Phase 58 Cluster T — `Topic.description` was dropped as a column
+    # in Phase 33 (it had become a same-value clone of `Topic.name`;
+    # `name` is now the canonical display name, uniquely scoped per-
+    # org). The `description` parameter is preserved here for back-
+    # compat with the many call sites below that still pass a string,
+    # but it is NO LONGER persisted. Don't migrate to Phase 56
+    # `purpose=` either — these seed strings predate the purpose
+    # semantic and would silently change behavior.
     topic = db.query(models.Topic).filter(models.Topic.name == name).first()
     if not topic:
         topic = models.Topic(
-            name=name, description=description, color=color,
+            name=name, color=color,
             sub_org_id=sub_org_id,
         )
         db.add(topic)

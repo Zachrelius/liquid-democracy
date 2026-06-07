@@ -364,8 +364,9 @@ class TestWebhookOnRealShape:
         assert user.verification_jurisdiction == "MA"
         assert user.verification_provenance == verification.PROV_DIDIT
         # Phase 52h Stage 2 — doc_number_hash no longer written;
-        # uniqueness_strength no longer set.
-        assert user.doc_number_hash is None
+        # uniqueness_strength no longer set. Phase 58 Cluster C —
+        # `doc_number_hash` column dropped (migration c0d1e2f3a4b5);
+        # the assertion would now AttributeError, removed.
         assert user.name_dob_hash is not None
         assert user.name_dob_address_hash is not None
         assert user.uniqueness_strength is None
