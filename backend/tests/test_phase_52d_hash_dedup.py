@@ -406,7 +406,7 @@ class TestDocumentNumberHardBlock:
         )
         assert r.status_code == 200
         db.refresh(alice)
-        assert alice.doc_number_hash is None  # not written
+        # Phase 58 Cluster C — `doc_number_hash` column dropped.
         assert alice.uniqueness_strength is None  # not set
         assert alice.verification_state == verification.IDENTITY
         assert alice.verification_provenance == verification.PROV_DIDIT
@@ -557,10 +557,8 @@ class TestPurgeWiring:
         assert r.status_code == 200
         db.refresh(alice)
         # The verification record stands — purge failure didn't destroy it.
-        # Phase 52h Stage 2 — state is now IDENTITY (no IDENTITY_UNIQUE
-        # rung); doc_number_hash is no longer written.
+        # Phase 58 Cluster C — `doc_number_hash` column dropped.
         assert alice.verification_state == verification.IDENTITY
-        assert alice.doc_number_hash is None
         assert alice.verification_provenance == verification.PROV_DIDIT
 
     def test_purge_raise_does_not_break_receiver(

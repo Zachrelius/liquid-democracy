@@ -73,7 +73,7 @@ def test_phase_51_upgrade_adds_verification_columns():
         assert "verification_provenance" not in pre_cols
         assert "verification_updated_at" not in pre_cols
 
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_51_REVISION)
         post_cols = _columns(db_url, "users")
         for c in (
             "verification_state",
@@ -98,7 +98,7 @@ def test_phase_51_upgrade_downgrade_upgrade_cycle():
     try:
         _build_pre_51(db_url)
 
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_51_REVISION)
         assert "verification_state" in _columns(db_url, "users")
 
         _run_alembic(db_url, "downgrade", _PRIOR_REVISION)
@@ -113,7 +113,7 @@ def test_phase_51_upgrade_downgrade_upgrade_cycle():
         ):
             assert c not in post_down, f"column survived downgrade: {c}"
 
-        _run_alembic(db_url, "upgrade", "head")
+        _run_alembic(db_url, "upgrade", _PHASE_51_REVISION)
         assert "verification_state" in _columns(db_url, "users")
     finally:
         try:

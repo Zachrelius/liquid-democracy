@@ -365,7 +365,7 @@ class TestCaptureFiresOnWebhook:
         assert r.status_code == 200
         db.refresh(user)
         assert user.verification_state == verification.IDENTITY
-        assert user.verification_nullifier is None
+        # Phase 58 — `user.verification_nullifier` column dropped.
         assert user.verification_provenance == verification.PROV_DIDIT
 
     def test_capture_failure_does_not_break_receiver(

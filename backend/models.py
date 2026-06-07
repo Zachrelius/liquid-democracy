@@ -519,18 +519,13 @@ class User(Base):
     verification_attestation_id: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True,
     )
-    # Phase 51 / Phase 52a — verification_nullifier is now DEPRECATED.
-    # Phase 52d swapped the dedup model from Didit's 1:N nullifier to
-    # our-side document-hash dedup (see ``verification_hashing.py``),
-    # so this column is no longer written. It is kept (NOT dropped) to
-    # avoid the risk of dropping a partial-unique-indexed column on PG.
-    # A later cleanup pass can drop both the column and the
-    # ``ix_users_verification_nullifier_unique`` index. Nothing reads
-    # this field as of Phase 52d; ``doc_number_hash`` is the live
-    # platform-wide uniqueness invariant.
-    verification_nullifier: Mapped[Optional[str]] = mapped_column(
-        String(length=128), nullable=True, index=True,
-    )
+    # Phase 58 Cluster C — ``verification_nullifier`` column DROPPED
+    # (migration c0d1e2f3a4b5). The Phase 52d hash-dedup model
+    # replaced Didit's 1:N nullifier; nothing has written it since.
+    # The column + its two indexes (``ix_users_verification_nullifier``,
+    # ``ix_users_verification_nullifier_unique``) are gone. Reversible
+    # downgrade re-adds the column + the lookup index (not the partial
+    # unique).
     verification_provenance: Mapped[str] = mapped_column(
         String(length=16), nullable=False,
         default="none", server_default="none",
@@ -583,23 +578,13 @@ class User(Base):
     # ``verification_hashing.compute_hashes`` for the inputs +
     # normalization rules.
     #
-    # Phase 52h Stage 2 — ``doc_number_hash`` is now DEPRECATED.
-    # The platform-wide doc-number hard block was removed; the
-    # partial-unique index ``ix_users_doc_number_hash_unique`` was
-    # dropped in migration ``e6f7a8b9c0d1``. Nothing writes to this
-    # column from Phase 52h Stage 2 onward — uniqueness within an
-    # org is handled by the org-scoped name-based flag system
-    # (Phase 52e Stage 2 + Phase 52h Stage 1), and biometric stays
-    # the deferred stronger tier. The column itself is kept (not
-    # dropped) in this stage — dropping columns on PG is the
-    # riskier op; the eventual drop batches with the deprecated
-    # ``verification_nullifier`` column in a future cleanup pass.
-    # The lookup index ``ix_users_doc_number_hash`` is also kept
-    # (harmless on a no-longer-written column; future cleanup
-    # drops both column and index together).
-    doc_number_hash: Mapped[Optional[str]] = mapped_column(
-        String(length=128), nullable=True, index=True,
-    )
+    # Phase 58 Cluster C — ``doc_number_hash`` column DROPPED
+    # (migration c0d1e2f3a4b5). Phase 52h Stage 2 removed the
+    # platform-wide doc-number hard block; Phase 52h Stage 2 also
+    # dropped the partial-unique ``ix_users_doc_number_hash_unique``
+    # (migration e6f7a8b9c0d1). Nothing wrote it since. Phase 58
+    # finishes the cleanup by dropping the column itself plus the
+    # remaining ``ix_users_doc_number_hash`` lookup index.
     name_dob_address_hash: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True, index=True,
     )

@@ -284,7 +284,9 @@ _USER_OUT_MUST_SURFACE_FIELDS: list[str] = [
 # a future "why are these missing?" investigation lands on the rule.
 _USER_OUT_INTERNAL_VERIFICATION_FIELDS: list[str] = [
     "verification_attestation_id",
-    "verification_nullifier",
+    # Phase 58 Cluster C — `verification_nullifier` column dropped
+    # (migration c0d1e2f3a4b5). It can no longer leak through
+    # UserOut.model_dump() since the model attribute is gone.
 ]
 
 

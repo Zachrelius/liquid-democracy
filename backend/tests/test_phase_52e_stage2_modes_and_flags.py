@@ -88,8 +88,11 @@ def _verified_user(
     jurisdiction: str | None = None,
     name_dob_hash: str | None = None,
     name_dob_address_hash: str | None = None,
-    doc_number_hash: str | None = None,
 ) -> models.User:
+    # Phase 58 Cluster C — `doc_number_hash=` parameter removed; the
+    # column was dropped (migration c0d1e2f3a4b5). No caller in this
+    # file ever passed the arg (the guarded block was dead since Phase
+    # 52h Stage 2), so removal is safe.
     u = make_user(db, name)
     u.verification_state = state
     u.verification_jurisdiction = jurisdiction
@@ -99,9 +102,6 @@ def _verified_user(
         u.name_dob_hash = name_dob_hash
     if name_dob_address_hash:
         u.name_dob_address_hash = name_dob_address_hash
-    if doc_number_hash:
-        u.doc_number_hash = doc_number_hash
-        u.uniqueness_strength = "document_hash"
     db.commit()
     return u
 
