@@ -1084,6 +1084,74 @@ def update_proposal(
                 proposal_id=proposal.id, topic_id=t.topic_id, relevance=t.relevance
             ))
 
+    # Phase 59 A4 — voting_method + num_winners change while in draft.
+    # Reject post-draft (the proposal has an audience by then; switching
+    # method invalidates any cast intent). Option reshape: when leaving
+    # an options-method, discard the existing ProposalOption rows
+    # (cascade-via-ORM); the FE confirms the destructive intent with the
+    # user before submitting. When entering RCV, num_winners defaults
+    # to 1 unless supplied. When leaving RCV, num_winners snaps to 1.
+    method_changed = (
+        "voting_method" in body.model_fields_set
+        and body.voting_method is not None
+        and body.voting_method != proposal.voting_method
+    )
+    if method_changed:
+        if proposal.status != "draft":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "voting_method can only be changed while the proposal "
+                    "is in draft status."
+                ),
+            )
+        new_method = body.voting_method
+        # Validate against org's allowed_voting_methods (mirrors the
+        # _validate_voting_method check on create).
+        from routes.organizations import DEFAULT_ORG_SETTINGS
+        org_for_method = (
+            db.get(models.Organization, proposal.org_id)
+            if proposal.org_id else None
+        )
+        if org_for_method is not None:
+            allowed = (org_for_method.settings or {}).get(
+                "allowed_voting_methods",
+                DEFAULT_ORG_SETTINGS["allowed_voting_methods"],
+            )
+            if new_method not in allowed:
+                raise HTTPException(
+                    status_code=(
+                        403 if new_method == "ranked_choice" else 400
+                    ),
+                    detail=(
+                        f"Voting method '{new_method}' is not allowed by "
+                        f"this organization"
+                    ),
+                )
+        old_method = proposal.voting_method
+        # When the new method is binary, drop any existing options.
+        if new_method == "binary":
+            for opt in list(proposal.options or []):
+                db.delete(opt)
+            db.flush()
+        # When leaving RCV, snap num_winners back to 1 (unless the body
+        # explicitly sets it).
+        if old_method == "ranked_choice" and "num_winners" not in body.model_fields_set:
+            proposal.num_winners = 1
+        proposal.voting_method = new_method
+    # num_winners change (independent of method change — RCV proposals
+    # can adjust num_winners while in draft).
+    if "num_winners" in body.model_fields_set and body.num_winners is not None:
+        if proposal.status != "draft":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "num_winners can only be changed while the proposal "
+                    "is in draft status."
+                ),
+            )
+        proposal.num_winners = body.num_winners
+
     if body.options is not None:
         if proposal.voting_method not in ("approval", "ranked_choice"):
             raise HTTPException(
@@ -1271,6 +1339,72 @@ def update_proposal(
     db.commit()
     db.refresh(proposal)
     return _build_proposal_out(proposal, db)
+
+
+@router.delete(
+    "/{proposal_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_proposal(
+    proposal_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 59 A5 — hard-delete a draft proposal.
+
+    Restricted to ``status='draft'`` ONLY. Proposals that have entered
+    deliberation/voting (or any later status) preserve the audit trail
+    via withdrawal, NOT deletion. This is a load-bearing invariant —
+    asserted in tests — and deliberately the only `proposal` row
+    deletion path in the codebase.
+
+    Permission ladder: author OR ``org.edit_proposal`` permission OR
+    platform admin. Mirrors the PATCH /api/proposals/{id} permission
+    check.
+
+    Cascade: ORM `cascade='all, delete-orphan'` on Proposal's
+    `options`, `proposal_topics`, and the rest of the relationship
+    set handles dependent rows. No vote / delegation / comment rows
+    can exist on a draft (those require deliberation/voting), so the
+    cascade scope is bounded.
+    """
+    proposal = _proposal_or_404(proposal_id, db)
+    if proposal.status != "draft":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only draft proposals can be hard-deleted. "
+                "Proposals that have entered deliberation or voting are "
+                "withdrawn (preserving the audit trail), not deleted."
+            ),
+        )
+    if not (
+        proposal.author_id == current_user.id
+        or current_user.is_admin
+        or (
+            proposal.org_id is not None
+            and _has_permission(
+                db, current_user.id, proposal.org_id, "org.edit_proposal",
+            )
+        )
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Not authorized to delete this proposal",
+        )
+
+    log_audit_event(
+        db,
+        action="proposal.deleted",
+        target_type="proposal",
+        target_id=proposal.id,
+        actor_id=current_user.id,
+        details={"slug_org_id": proposal.org_id, "title": proposal.title},
+    )
+    db.delete(proposal)
+    db.commit()
+    from fastapi import Response
+    return Response(status_code=204)
 
 
 # ===========================================================================

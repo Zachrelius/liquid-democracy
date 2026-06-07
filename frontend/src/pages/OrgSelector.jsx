@@ -2,10 +2,13 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useOrg } from '../OrgContext';
 import { urlFor } from '../utils/urls';
+import { useIsDemoUser } from '../hooks/useIsDemoUser';
 
 export default function OrgSelector() {
   const { userOrgs, setCurrentOrg, loading } = useOrg();
   const navigate = useNavigate();
+  // Phase 59 D1 — demo users can't create real orgs; hide the CTA.
+  const isDemoUser = useIsDemoUser();
 
   // Phase 11 — UX nicety: a user with exactly one org and a matching
   // localStorage `currentOrgSlug` hint auto-lands in their app rather than
@@ -44,21 +47,38 @@ export default function OrgSelector() {
               organization's link" without a discovery surface; with Phase 55
               there's a real browse page. */}
           <p className="text-sm text-gray-500 mb-8">
-            Create your own organization,{' '}
-            <button
-              onClick={() => navigate('/explore')}
-              className="text-[var(--brand-accent)] font-medium hover:underline"
-            >
-              browse public organizations
-            </button>
-            , or wait for an invitation.
+            {isDemoUser ? (
+              <>
+                You&apos;re signed in as a demo persona. <button
+                  onClick={() => navigate('/explore')}
+                  className="text-[var(--brand-accent)] font-medium hover:underline"
+                >
+                  Browse public organizations
+                </button>, or sign out and register a real account to
+                create your own.
+              </>
+            ) : (
+              <>
+                Create your own organization,{' '}
+                <button
+                  onClick={() => navigate('/explore')}
+                  className="text-[var(--brand-accent)] font-medium hover:underline"
+                >
+                  browse public organizations
+                </button>
+                , or wait for an invitation.
+              </>
+            )}
           </p>
-          <button
-            onClick={() => navigate('/orgs/create')}
-            className="inline-block px-6 py-2.5 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
-          >
-            Create Organization
-          </button>
+          {/* Phase 59 D1 — hide the Create-Org button for demo users. */}
+          {!isDemoUser && (
+            <button
+              onClick={() => navigate('/orgs/create')}
+              className="inline-block px-6 py-2.5 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
+            >
+              Create Organization
+            </button>
+          )}
           <p className="text-xs text-gray-400 mt-6">
             Have an invitation? Click the link in the email.
           </p>

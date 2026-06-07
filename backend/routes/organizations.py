@@ -333,6 +333,23 @@ def create_organization(
             detail="Please verify your email before creating an organization",
         )
 
+    # Phase 59 D1 — block demo-stamped users from creating real orgs.
+    # The demo-seed pipeline stamps personas with
+    # `verification_provenance='demo_stub'`; `backdoor` is the
+    # auxiliary admin-test marker. Both are demo-only identities and
+    # neither should be able to create real organizations. The FE
+    # hides the create-org affordance for these users; this is the
+    # backend enforcement that catches a stale FE bundle or direct
+    # API call.
+    if current_user.verification_provenance in ("demo_stub", "backdoor"):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Demo accounts can't create organizations. Sign out and "
+                "register a real account if you want to create one."
+            ),
+        )
+
     # Gate 3 — per-user cap
     # Phase 12 Stage 1: ``OrgMembership.role`` is now an FK to ``roles.id``;
     # we identify "owner-equivalent" memberships by joining to the role row
@@ -595,6 +612,59 @@ def update_organization(
                     status_code=400,
                     detail="topic_categories_enabled must be a boolean",
                 )
+
+        # Phase 59 B1 — org-defined topic categories list. JSON array of
+        # strings, each ≤80 chars (matches Topic.category column width),
+        # ≤50 entries, deduplicated. The org's topic-edit dropdown
+        # populates from this list when the toggle is on. Legacy free-
+        # text Topic.category values remain on rows and are surfaced
+        # with a "(not in list)" marker by the FE; this validator does
+        # NOT enforce that existing values conform to the new list.
+        if "topic_categories" in body.settings:
+            tc = body.settings["topic_categories"]
+            if not isinstance(tc, list):
+                raise HTTPException(
+                    status_code=400,
+                    detail="topic_categories must be a list of strings",
+                )
+            if len(tc) > 50:
+                raise HTTPException(
+                    status_code=400,
+                    detail="topic_categories may contain at most 50 entries",
+                )
+            cleaned: list[str] = []
+            seen: set[str] = set()
+            for entry in tc:
+                if not isinstance(entry, str):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "topic_categories entries must be strings"
+                        ),
+                    )
+                stripped = entry.strip()
+                if not stripped:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "topic_categories entries must be non-empty"
+                        ),
+                    )
+                if len(stripped) > 80:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "topic_categories entries must be ≤80 chars"
+                        ),
+                    )
+                key = stripped.lower()
+                if key in seen:
+                    # Silently de-dup on case-insensitive match — drop
+                    # the duplicate rather than 400'ing (user-friendly).
+                    continue
+                seen.add(key)
+                cleaned.append(stripped)
+            body.settings["topic_categories"] = cleaned
 
         # Phase 17 B5 — tie_resolution validation. Same pre-merge shape:
         # invalid method on either voting_method fails the whole PATCH

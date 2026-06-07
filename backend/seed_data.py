@@ -654,6 +654,17 @@ def _seed_demo(db: Session) -> dict:
     log.info("Seeding Phase 2 full demo scenario…")
 
     # ── Default organization ───────────────────────────────────────────────
+    # Phase 59 Cluster E note: this legacy seed creates a `slug='demo'`
+    # Organization that is UNREACHABLE on prod — the `/demo` route is
+    # now the demo login/marketing page, NOT a per-org landing. The
+    # cleanup script `backend/scripts/phase59_remove_orphaned_demo_org.py`
+    # removes the orphan from prod data. The legacy seed itself only
+    # runs when IS_PUBLIC_DEMO=true (via seed_if_empty.py at container
+    # start). On prod that flag is false (today's demo lives in the
+    # Phase 23 three-bible system at backend/demo_content/), so the
+    # orphan should not re-appear after the cleanup script runs. The
+    # legacy code path is retained for test_seed_idempotency coverage
+    # + local-dev convenience.
     demo_org = _get_or_create_org(
         db,
         name="Demo Organization",

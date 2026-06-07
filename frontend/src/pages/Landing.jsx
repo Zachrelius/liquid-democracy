@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import PublicLayout from '../components/PublicLayout';
 import { useAuth } from '../AuthContext';
+import { useIsDemoUser } from '../hooks/useIsDemoUser';
 
 export default function Landing() {
   // Phase 43 Cluster F: the "Start an organization" CTA routes by auth state.
@@ -10,6 +11,10 @@ export default function Landing() {
   // email-verification round-trip via sessionStorage.
   const { user } = useAuth();
   const startOrgTo = user ? '/orgs/create' : '/register?next=/orgs/create';
+  // Phase 59 D1 — hide the "Start an organization" CTA for demo users
+  // (the backend rejects their POST anyway; the FE shouldn't surface
+  // a dead control). Logged-out visitors still see it.
+  const isDemoUser = useIsDemoUser();
 
   return (
     <PublicLayout>
@@ -28,14 +33,17 @@ export default function Landing() {
             any time. An open platform for liquid democracy.
           </p>
 
-          {/* Phase 43 Cluster F — primary CTA: Start an organization */}
+          {/* Phase 43 Cluster F — primary CTA: Start an organization.
+              Phase 59 D1 — hidden for demo users (backend rejects). */}
           <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-3">
-            <Link
-              to={startOrgTo}
-              className="inline-flex items-center justify-center px-6 py-3 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors shadow-sm w-full sm:w-auto"
-            >
-              Start an organization
-            </Link>
+            {!isDemoUser && (
+              <Link
+                to={startOrgTo}
+                className="inline-flex items-center justify-center px-6 py-3 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors shadow-sm w-full sm:w-auto"
+              >
+                Start an organization
+              </Link>
+            )}
             <Link
               to="/demo"
               className="inline-flex items-center justify-center px-6 py-3 bg-white text-[var(--brand-primary)] text-sm font-medium rounded-lg border border-gray-300 hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors w-full sm:w-auto"

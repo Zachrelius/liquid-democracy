@@ -1224,12 +1224,20 @@ export default function ProposalManagement() {
                           Advance to Deliberation
                         </button>
                       )}
-                      <a
-                        href={`/proposals/${p.id}`}
+                      {/* Phase 59 A1 — was `<a href="/proposals/{id}">`,
+                          a flat non-org-scoped URL that fell through to
+                          App.jsx's catch-all and redirected to `/`. Now
+                          a react-router <Link> to the org-scoped
+                          proposal detail route, which renders
+                          ProposalDetail (the voter-facing page) where
+                          the Phase 32.2 author-edit affordance lives
+                          (extended in A2/A3 to cover draft status). */}
+                      <Link
+                        to={`/${slug}/proposals/${p.id}`}
                         className="text-xs px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-100"
                       >
                         Edit Draft
-                      </a>
+                      </Link>
                     </>
                   )}
                   {p.status === 'deliberation' && canAdvancePhase && (
