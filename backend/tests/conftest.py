@@ -16,8 +16,9 @@ migration, so the conftest indirection is a test-only convenience.
 import os
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import StaticPool
 
 from database import Base
 import models  # noqa: F401 — registers ORM classes with Base
@@ -68,20 +69,100 @@ _DUMMY_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/lewrwKJuRxm5pJmJi"
 TEST_DB_URL = os.environ.get("TEST_DATABASE_URL") or "sqlite:///:memory:"
 
 
-@pytest.fixture(scope="function")
-def db() -> Session:
+# ---------------------------------------------------------------------------
+# Phase 61 O1 — session-scoped engine + per-test SAVEPOINT rollback.
+#
+# Pre-Phase-61, the `db` fixture was scope="function" and ran the full
+# `Base.metadata.create_all` + `Base.metadata.drop_all` per test, on a
+# fresh in-memory SQLite engine. At ~2266 tests that's 2266 full
+# schema creates + drops — the dominant test-time cost.
+#
+# The new pattern: build the schema ONCE per session against a single
+# StaticPool engine. Each test runs in an outer transaction with a
+# nested SAVEPOINT; the SAVEPOINT is re-established on every commit
+# (so test code can call `session.commit()` freely without breaking
+# the outer rollback boundary). On teardown, the outer transaction
+# rolls back, restoring the database to its post-create_all empty
+# state.
+#
+# Isolation: each test gets its own Session bound to a fresh
+# Connection; cross-test state leakage is impossible because the
+# outer rollback discards everything the test wrote.
+#
+# Failure modes guarded:
+#   - Sessions that `session.commit()` (the majority): handled by the
+#     savepoint-restart event listener below.
+#   - Sessions that `session.rollback()` mid-test: also handled —
+#     the restart listener fires on any nested transaction end.
+#   - Cross-process tests that spawn subprocesses + write to a
+#     different DB URL: unaffected (they use their own engine via env
+#     `DATABASE_URL`).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def _shared_test_engine():
+    """Phase 61 O1 — one engine + one create_all for the whole session.
+
+    Uses StaticPool so the in-memory SQLite database persists across
+    connections (without StaticPool, each connection sees its own
+    fresh DB and tests would see empty schema). Disposed at session
+    end.
+    """
     if TEST_DB_URL.startswith("sqlite"):
-        engine = create_engine(TEST_DB_URL, connect_args={"check_same_thread": False})
+        engine = create_engine(
+            TEST_DB_URL,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
     else:
         engine = create_engine(TEST_DB_URL)
     Base.metadata.create_all(engine)
-    SessionLocal = sessionmaker(bind=engine)
-    session = SessionLocal()
+    yield engine
+    Base.metadata.drop_all(engine)
+    engine.dispose()
+
+
+@pytest.fixture(scope="function")
+def db(_shared_test_engine) -> Session:
+    """Phase 61 O1 — per-test transaction-rollback isolation.
+
+    Each test:
+      1. opens a Connection from the shared engine
+      2. begins an outer transaction
+      3. creates a Session bound to that Connection
+      4. begins a nested SAVEPOINT (auto-restarted after each commit)
+      5. yields the Session
+      6. on teardown: closes the Session, rolls back the outer
+         transaction, returns the Connection to the pool
+    """
+    connection = _shared_test_engine.connect()
+    transaction = connection.begin()
+    TestSession = sessionmaker(bind=connection)
+    session = TestSession()
+
+    # Begin a SAVEPOINT inside the outer transaction; re-establish it
+    # after every commit so test-side commits don't release the outer
+    # rollback boundary. This is the standard "tests in transactions"
+    # recipe from the SQLAlchemy docs.
+    nested = connection.begin_nested()
+
+    @event.listens_for(session, "after_transaction_end")
+    def _restart_savepoint(_session, trans):
+        nonlocal nested
+        # Re-open the savepoint whenever the inner one ends (commit
+        # or rollback). The outer transaction stays open until the
+        # teardown below.
+        if trans.nested and not trans._parent.nested:
+            nested = connection.begin_nested()
+
     try:
         yield session
     finally:
         session.close()
-        Base.metadata.drop_all(engine)
+        if transaction.is_active:
+            transaction.rollback()
+        connection.close()
 
 
 @pytest.fixture(scope="function")
