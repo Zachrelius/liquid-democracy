@@ -387,6 +387,21 @@ def browse_org_delegates(
     )
     users_by_id = {u.id: u for u in users}
 
+    # Phase 52j J6 — per-org display name resolver. Build a
+    # user_id -> effective display name map honoring per-org overrides
+    # (``OrgMembership.display_name``). Avoids N+1 by pre-fetching the
+    # membership rows for this org.
+    from verification import display_name_for
+    memberships_for_org = (
+        db.query(models.OrgMembership)
+        .filter(
+            models.OrgMembership.org_id == org.id,
+            models.OrgMembership.user_id.in_(candidate_user_ids),
+        )
+        .all()
+    ) if candidate_user_ids else []
+    membership_by_user = {m.user_id: m for m in memberships_for_org}
+
     # Per-user public topics (visibility IN ('public', 'public_accepting'))
     # joined with the topic name. D12: the page renders both public and
     # public_accepting topics, so the browse payload also surfaces both
@@ -453,7 +468,9 @@ def browse_org_delegates(
         odp = odp_by_user.get(uid)
         payload.append({
             "user_id": user.id,
-            "display_name": user.display_name,
+            "display_name": display_name_for(
+                user, org, membership=membership_by_user.get(uid),
+            ),
             "username": user.username,
             "delegate_handle": user.delegate_handle,
             "avatar_url": user.avatar_url,
@@ -637,10 +654,13 @@ def public_delegate_page(
         for tp in topic_rows
     ]
 
+    # Phase 52j J6 — per-org display name resolver. The delegate
+    # page is org-scoped, so honor the per-org override when set.
+    from verification import display_name_for
     return schemas.PublicDelegatePageOut(
         user_id=target.id,
         username=target.username,
-        display_name=target.display_name,
+        display_name=display_name_for(target, org),
         avatar_url=target.avatar_url,
         delegate_handle=target.delegate_handle,
         org_id=org.id,

@@ -117,15 +117,30 @@ def _now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _build_comment_out(c: models.Comment) -> schemas.CommentOut:
+def _build_comment_out(c: models.Comment, db: Session | None = None) -> schemas.CommentOut:
     """Build the wire payload for a comment, blanking body when soft-deleted.
 
     Decision: keep ``body_deleted`` as an explicit boolean rather than
     overloading the body string. The frontend renders ``[deleted]`` from
     that flag, which avoids the corner case where a legitimate comment
     happens to read "[deleted]" verbatim.
+
+    Phase 52j J6 — when ``db`` is passed AND the comment's proposal has
+    an org context, the author's display name routes through the
+    per-org resolver. Without ``db`` we fall back to ``User.display_name``
+    (pre-J6 behavior — covers stale callers; a TODO to sweep remaining
+    callers carries forward).
     """
     is_deleted = c.deleted_at is not None
+    author_display = c.author.display_name
+    if db is not None:
+        proposal = getattr(c, "proposal", None)
+        org_id = getattr(proposal, "org_id", None) if proposal is not None else None
+        if org_id:
+            org = db.get(models.Organization, org_id)
+            if org is not None:
+                from verification import display_name_for
+                author_display = display_name_for(c.author, org)
     return schemas.CommentOut(
         id=c.id,
         proposal_id=c.proposal_id,
@@ -133,7 +148,7 @@ def _build_comment_out(c: models.Comment) -> schemas.CommentOut:
         author=schemas.CommentAuthorOut(
             id=c.author.id,
             username=c.author.username,
-            display_name=c.author.display_name,
+            display_name=author_display,
             avatar_url=c.author.avatar_url,
         ),
         parent_comment_id=c.parent_comment_id,
@@ -177,7 +192,7 @@ def list_comments(
         .order_by(models.Comment.created_at.asc())
         .all()
     )
-    return [_build_comment_out(c) for c in rows]
+    return [_build_comment_out(c, db) for c in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +352,7 @@ def create_comment(
         except Exception:  # noqa: BLE001
             pass
 
-    return _build_comment_out(comment)
+    return _build_comment_out(comment, db)
 
 
 # ---------------------------------------------------------------------------
@@ -405,7 +420,7 @@ def update_comment(
 
     db.commit()
     db.refresh(comment)
-    return _build_comment_out(comment)
+    return _build_comment_out(comment, db)
 
 
 # ---------------------------------------------------------------------------

@@ -151,7 +151,13 @@ async def cast_vote(
     from verification import (
         check_vote_floor_for_proposal, check_vote_min_age_for_proposal,
     )
-    check_vote_floor_for_proposal(current_user, proposal)
+    # Phase 52j J3 — pass org for the org-policy resolution of the
+    # effective floor (``author`` / ``always`` / ``never``).
+    vote_org = (
+        db.get(models.Organization, proposal.org_id)
+        if proposal.org_id is not None else None
+    )
+    check_vote_floor_for_proposal(current_user, proposal, vote_org)
     check_vote_min_age_for_proposal(current_user, proposal)
 
     # Phase 10.1: eligibility check. Pre-fix, parent-org members could vote on

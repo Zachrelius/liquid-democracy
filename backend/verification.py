@@ -161,15 +161,41 @@ SETTING_MEMBERSHIP_MIN_AGE = "verification_membership_min_age"
 # REQUIRES THE JURISDICTION SETTING TOO — a city alone is ambiguous
 # (Springfield collides across ~30 states); the gate refuses to fire
 # without a state to disambiguate.
+#
+# DEPRECATED as of Phase 52j J1 — folded into
+# ``SETTING_RESIDENCY_SCOPE``; the J1 normalizer migrates orgs that
+# still carry this key. ``user_satisfies_residency_scope`` reads only
+# the new key. Left in place for back-compat reads against historical
+# rows that haven't been normalized; new writes go to the scope key.
 SETTING_MEMBERSHIP_LOCALITY = "verification_membership_locality"
+
+# Phase 52j J1 — org-level residency model. A list of allowed
+# ``{state, city?}`` entries (OR-matched). City-bearing entries
+# compare the user's ``verification_locality_hash`` against
+# ``compute_locality_hash(entry.city, entry.state)``; state-only
+# entries compare ``verification_jurisdiction == entry.state``. The
+# two levels are INDEPENDENT (the 52i locked decision is preserved):
+# a state-only entry is satisfied by jurisdiction match; a city
+# entry requires the city hash. No subsumption between levels.
+SETTING_RESIDENCY_SCOPE = "verification_residency_scope"
+
+# Phase 52j J1 — per-gate "require residency" booleans. Each gate
+# scope toggles WHETHER the org scope applies; the scope itself
+# (WHERE) is the single org-level definition above.
+SETTING_MEMBERSHIP_REQUIRE_RESIDENCY = "verification_membership_require_residency"
+SETTING_ROLE_REQUIRE_RESIDENCY = "verification_role_require_residency"
 
 # Phase 52f match-mode values
 NAME_MATCH_OFF = "off"
 NAME_MATCH_FIRST = "first"
 NAME_MATCH_LAST = "last"
 NAME_MATCH_FULL = "full"
+# Phase 52j — J4. "Either first OR last token matches" — the looser
+# "you're using at least one part of your real name" option Z asked for.
+NAME_MATCH_EITHER = "either"
 _VALID_NAME_MATCH_MODES: frozenset[str] = frozenset({
     NAME_MATCH_OFF, NAME_MATCH_FIRST, NAME_MATCH_LAST, NAME_MATCH_FULL,
+    NAME_MATCH_EITHER,
 })
 
 # Phase 52f match-action values
@@ -485,18 +511,93 @@ def ensure_can_join_real_org(user, org) -> None:
     )
 
 
-def check_vote_floor_for_proposal(user, proposal) -> None:
-    """Raises 403 if ``proposal`` carries a ``verification_floor`` and
-    ``user`` doesn't satisfy it. No-op when the proposal has no gate
-    set (``verification_floor IS NULL`` — today's behavior for every
-    pre-Phase-52 row). Called from the vote-cast route at the start
-    of the handler, before any ``Vote`` row is written.
+# Phase 52j — J3. Org-level proposal verification policy. Controls
+# how a proposal's per-proposal ``verification_floor`` interacts with
+# an org-level policy: ``author`` (today's behavior — author sets the
+# floor at creation), ``always`` (every proposal carries the org's
+# floor regardless of author), ``never`` (proposals can't carry a
+# verification floor; any stored value is ignored at enforcement).
+SETTING_PROPOSAL_POLICY = "verification_proposal_policy"
+SETTING_PROPOSAL_FLOOR = "verification_proposal_floor"
+SETTING_PROPOSAL_JURISDICTION = "verification_proposal_jurisdiction"
+
+PROPOSAL_POLICY_AUTHOR = "author"
+PROPOSAL_POLICY_ALWAYS = "always"
+PROPOSAL_POLICY_NEVER = "never"
+_VALID_PROPOSAL_POLICIES: frozenset[str] = frozenset({
+    PROPOSAL_POLICY_AUTHOR, PROPOSAL_POLICY_ALWAYS, PROPOSAL_POLICY_NEVER,
+})
+
+
+def get_org_proposal_policy(org) -> str:
+    """Phase 52j J3 — returns one of ``author`` / ``always`` /
+    ``never``. Defaults to ``author`` (today's behavior — author sets
+    the floor at proposal creation; unconfigured orgs unchanged).
+    """
+    settings = getattr(org, "settings", None) or {}
+    if not isinstance(settings, dict):
+        return PROPOSAL_POLICY_AUTHOR
+    val = settings.get(SETTING_PROPOSAL_POLICY)
+    if val in _VALID_PROPOSAL_POLICIES:
+        return val
+    return PROPOSAL_POLICY_AUTHOR
+
+
+def effective_proposal_floor(
+    proposal, org,
+) -> tuple[Optional[str], Optional[str]]:
+    """Phase 52j J3 — resolves the EFFECTIVE (floor, jurisdiction)
+    for a proposal under the org's policy. One helper so the vote
+    path + the FE proposal-creation form agree.
+
+      * ``author`` → ``(proposal.verification_floor, proposal.
+        verification_jurisdiction)`` (today's behavior).
+      * ``always`` → the org's chosen floor + jurisdiction. Applies
+        to EVERY proposal in the org, regardless of any author-set
+        value on the proposal.
+      * ``never`` → ``(None, None)``. Any stored proposal floor is
+        ignored at enforcement.
+    """
+    policy = get_org_proposal_policy(org) if org is not None else PROPOSAL_POLICY_AUTHOR
+
+    if policy == PROPOSAL_POLICY_NEVER:
+        return (None, None)
+
+    if policy == PROPOSAL_POLICY_ALWAYS:
+        settings = getattr(org, "settings", None) or {}
+        if not isinstance(settings, dict):
+            return (None, None)
+        floor = settings.get(SETTING_PROPOSAL_FLOOR)
+        if not isinstance(floor, str) or floor not in VALID_STATES:
+            return (None, None)
+        jurisdiction = settings.get(SETTING_PROPOSAL_JURISDICTION)
+        if not isinstance(jurisdiction, str) or not jurisdiction.strip():
+            jurisdiction = None
+        return (floor, jurisdiction)
+
+    # author (default)
+    floor = getattr(proposal, "verification_floor", None)
+    jurisdiction = getattr(proposal, "verification_jurisdiction", None)
+    if not floor:
+        return (None, None)
+    return (floor, jurisdiction)
+
+
+def check_vote_floor_for_proposal(user, proposal, org=None) -> None:
+    """Raises 403 if the org-policy-resolved floor isn't satisfied.
+    No-op when no floor applies (proposal's policy resolves to None).
+    Called from the vote-cast route at the start of the handler,
+    before any ``Vote`` row is written.
+
+    ``org`` is optional for back-compat; when omitted, the proposal's
+    own floor is used (== legacy ``author`` policy path). Call sites
+    that have the Organization row should pass it so the org-policy
+    resolution applies. Phase 52j J3.
     """
     from fastapi import HTTPException
-    floor = getattr(proposal, "verification_floor", None)
+    floor, jurisdiction = effective_proposal_floor(proposal, org)
     if not floor:
         return
-    jurisdiction = getattr(proposal, "verification_jurisdiction", None)
     if user_satisfies_floor(user, floor, jurisdiction):
         return
     raise HTTPException(
@@ -781,14 +882,22 @@ def display_name_matches_legal(
       * True if the candidate matches per the mode.
       * False otherwise.
 
-    Match mode semantics:
+    Match mode semantics (Phase 52j J4 — first-token philosophy):
+
       * ``first``: the candidate's FIRST normalized token equals the
-        normalized legal first name. (Handles "Bob Smith" display vs
-        "Bob" legal first.)
+        FIRST token of the legal first name. Handles Didit's habit
+        of packing middle names into ``first_name`` ("Zachary Michael")
+        — display "Zachary" still matches.
       * ``last``: the candidate's LAST normalized token equals the
-        normalized legal last name.
-      * ``full``: the entire normalized candidate equals the
-        normalized legal full name.
+        LAST token of the legal last name. Symmetric.
+      * ``full``: relaxed first + last (Z-default — middle-name-
+        tolerant). Display must have ≥2 tokens; its first matches
+        legal-first's first token AND its last matches legal-last's
+        last token. Falls back to whole-string equality only when
+        legal_first / legal_last aren't separately set.
+      * ``either``: passes if first OR last token matches. The
+        loosest "you're using at least one part of your real name"
+        option.
     """
     mode = get_org_name_match_mode(org)
     if mode == NAME_MATCH_OFF:
@@ -803,20 +912,30 @@ def display_name_matches_legal(
     if not normalized:
         return False
 
-    if mode == NAME_MATCH_FULL:
-        return normalized == _normalize_name_for_match(legal_full)
-
     tokens = normalized.split()
     if not tokens:
         return False
 
+    first_target_tokens = _normalize_name_for_match(legal_first).split()
+    last_target_tokens = _normalize_name_for_match(legal_last).split()
+    first_match = bool(first_target_tokens) and tokens[0] == first_target_tokens[0]
+    last_match = bool(last_target_tokens) and tokens[-1] == last_target_tokens[-1]
+
     if mode == NAME_MATCH_FIRST:
-        target = _normalize_name_for_match(legal_first)
-        return bool(target) and tokens[0] == target
+        return first_match
 
     if mode == NAME_MATCH_LAST:
-        target = _normalize_name_for_match(legal_last)
-        return bool(target) and tokens[-1] == target
+        return last_match
+
+    if mode == NAME_MATCH_EITHER:
+        return first_match or last_match
+
+    if mode == NAME_MATCH_FULL:
+        # Relaxed first+last (Z-default). Whole-string fallback only
+        # when first/last aren't separately on file.
+        if first_target_tokens and last_target_tokens:
+            return len(tokens) >= 2 and first_match and last_match
+        return normalized == _normalize_name_for_match(legal_full)
 
     return False
 
@@ -832,83 +951,220 @@ def display_name_matches_legal(
 # Each is an exact match on its own level.
 
 
-def _gate_city_for_org(org) -> tuple[Optional[str], Optional[str]]:
-    """Returns ``(gate_city, gate_state)`` for the org's city
-    residency gate. ``gate_city`` is the readable admin-entered
-    value; ``gate_state`` is the org's existing membership
-    jurisdiction (must be set when locality is set — the spec's
-    config-validation rule).
+def _residency_scope_entries(org) -> list[dict]:
+    """Phase 52j J1 — read + normalize the org's residency-scope
+    entries. Returns ``[]`` on absent / malformed config (which the
+    predicate treats as "no scope gate, parity").
 
-    Returns ``(None, None)`` when no city gate is configured.
+    Each entry is a dict ``{"state": str, "city": Optional[str]}``
+    with the state already upper-cased and stripped, the city left
+    as-entered (it's hashed via the standard normalizer). Entries
+    without a state are dropped (a city alone is ambiguous; same
+    rule as 52i — the state is load-bearing for the hash).
+
+    Back-compat fallback: if the new ``SETTING_RESIDENCY_SCOPE`` key
+    is absent BUT the org carries the old 52i single-value keys
+    (``verification_membership_jurisdiction`` + optional
+    ``verification_membership_locality``), synthesize a one-entry
+    scope from them. This keeps pre-J1-normalizer orgs behaving
+    correctly until the migration runs. The 52i locality-only-with-
+    state rule is preserved (a locality without a state is silently
+    inert, matching the old behavior).
     """
     settings = getattr(org, "settings", None) or {}
     if not isinstance(settings, dict):
-        return (None, None)
-    city = settings.get(SETTING_MEMBERSHIP_LOCALITY)
-    if not isinstance(city, str) or not city.strip():
-        return (None, None)
-    state = settings.get(SETTING_MEMBERSHIP_JURISDICTION)
-    if not isinstance(state, str) or not state.strip():
-        # Misconfigured (city without state) — fail safe: act as if
-        # no gate, so a misconfig doesn't accidentally lock everyone
-        # out. The OrgSettings UI gates the city field behind a
-        # state choice; this is the server-side defensive default.
-        return (None, None)
-    return (city.strip(), state.strip())
+        return []
+    raw = settings.get(SETTING_RESIDENCY_SCOPE)
+    if isinstance(raw, list):
+        normalized: list[dict] = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            state = entry.get("state")
+            if not isinstance(state, str) or not state.strip():
+                continue
+            state_clean = state.strip().upper()
+            city = entry.get("city")
+            city_clean: Optional[str] = None
+            if isinstance(city, str) and city.strip():
+                city_clean = city.strip()
+            normalized.append({"state": state_clean, "city": city_clean})
+        return normalized
+
+    # Back-compat: synthesize from old 52i single-value keys.
+    old_state = settings.get(SETTING_MEMBERSHIP_JURISDICTION)
+    if not isinstance(old_state, str) or not old_state.strip():
+        return []
+    old_city = settings.get(SETTING_MEMBERSHIP_LOCALITY)
+    entry: dict = {"state": old_state.strip().upper(), "city": None}
+    if isinstance(old_city, str) and old_city.strip():
+        entry["city"] = old_city.strip()
+    return [entry]
 
 
-def user_meets_locality(user, org) -> bool:
-    """Phase 52i — derived predicate. True iff:
+def user_satisfies_residency_scope(user, org) -> bool:
+    """Phase 52j J1 — the org-level residency predicate. True iff:
 
-      * The org has NO city gate configured (defaults-if-absent →
-        True; additive-layer parity for unconfigured orgs).
-      * OR the user's stored ``verification_locality_hash`` equals
-        the hash of the gate-city (computed under the SAME pepper +
-        normalization as the user-side hash, including the state
-        component for cross-state disambiguation).
+      * The org has no residency scope defined (defaults-if-absent →
+        True; load-bearing additive-layer parity for unconfigured
+        orgs).
+      * OR the user satisfies AT LEAST ONE scope entry (OR semantics):
+        - state-only entry → ``user.verification_jurisdiction``
+          equals the entry's state (case-insensitive — both are
+          upper-cased).
+        - city entry → ``user.verification_locality_hash`` equals
+          ``compute_locality_hash(entry.city, entry.state)``. State
+          is in the hash (52i cross-state disambiguation preserved).
 
-    A user with no stored locality hash → False against any set
-    gate. The safe direction.
+    Independent levels (52i locked decision): a state-only entry is
+    satisfied by jurisdiction match; a city entry requires the city
+    hash. NO subsumption between levels — each entry is matched on
+    its own terms.
+
+    A user with neither a jurisdiction nor a locality hash → False
+    against any non-empty scope (safe direction).
     """
-    gate_city, gate_state = _gate_city_for_org(org)
-    if gate_city is None:
+    entries = _residency_scope_entries(org)
+    if not entries:
         return True
 
-    user_hash = getattr(user, "verification_locality_hash", None)
-    if not user_hash:
-        return False
+    user_jurisdiction = getattr(user, "verification_jurisdiction", None)
+    user_jurisdiction_norm = (
+        user_jurisdiction.strip().upper()
+        if isinstance(user_jurisdiction, str) else None
+    )
+    user_locality_hash = getattr(user, "verification_locality_hash", None)
 
     import verification_hashing
-    gate_hash = verification_hashing.compute_locality_hash(
-        gate_city, gate_state,
-    )
-    if not gate_hash:
+    for entry in entries:
+        if entry["city"] is None:
+            # State-only entry — jurisdiction match.
+            if user_jurisdiction_norm == entry["state"]:
+                return True
+        else:
+            if not user_locality_hash:
+                continue
+            gate_hash = verification_hashing.compute_locality_hash(
+                entry["city"], entry["state"],
+            )
+            if gate_hash and gate_hash == user_locality_hash:
+                return True
+    return False
+
+
+def membership_requires_residency(org) -> bool:
+    """Phase 52j J1 — does the org's membership gate require
+    residency-scope match? Defaults False (additive-layer parity)."""
+    settings = getattr(org, "settings", None) or {}
+    if not isinstance(settings, dict):
         return False
-    return user_hash == gate_hash
+    return bool(settings.get(SETTING_MEMBERSHIP_REQUIRE_RESIDENCY, False))
+
+
+def role_requires_residency(org, role_system_key: str) -> bool:
+    """Phase 52j J1 — does the org require residency-scope match for
+    holders of ``role_system_key``? Reads
+    ``SETTING_ROLE_REQUIRE_RESIDENCY[role_key]``; defaults False."""
+    settings = getattr(org, "settings", None) or {}
+    if not isinstance(settings, dict):
+        return False
+    role_map = settings.get(SETTING_ROLE_REQUIRE_RESIDENCY) or {}
+    if not isinstance(role_map, dict):
+        return False
+    return bool(role_map.get(role_system_key, False))
+
+
+def _residency_payload(org) -> dict:
+    """Structured-403 detail body for a residency-scope failure.
+    Includes the readable scope so the FE can render a meaningful
+    CTA ("must be a verified resident of MA / NH / Somerville MA").
+    """
+    entries = _residency_scope_entries(org)
+    return {
+        "error": "verification_required",
+        "scope": "residency_scope",
+        "residency_scope": [
+            {"state": e["state"], "city": e["city"]} for e in entries
+        ],
+    }
+
+
+def check_membership_residency_for_join(user, org) -> None:
+    """Phase 52j J1 — raises 403 if the org's membership gate requires
+    residency and the user doesn't satisfy the org scope. No-op when
+    the membership gate doesn't require residency (default)."""
+    from fastapi import HTTPException
+    if not membership_requires_residency(org):
+        return
+    if user_satisfies_residency_scope(user, org):
+        return
+    raise HTTPException(status_code=403, detail=_residency_payload(org))
+
+
+def check_role_residency_for_grant(user, org, role_system_key: str) -> None:
+    """Phase 52j J1 — raises 403 if the org requires residency to
+    hold ``role_system_key`` and the user doesn't satisfy the org
+    scope. No-op when the role doesn't require residency.
+
+    Cardinality-floor invariant: same construction as
+    ``check_role_grant_floor`` — the check precedes the role-id write,
+    so a residency block prevents the mutation; the existing role
+    holder is never demoted by a config change.
+    """
+    from fastapi import HTTPException
+    if not role_requires_residency(org, role_system_key):
+        return
+    if user_satisfies_residency_scope(user, org):
+        return
+    raise HTTPException(status_code=403, detail=_residency_payload(org))
+
+
+# ---------------------------------------------------------------------------
+# Phase 52i — back-compat shims (replaced by Phase 52j J1)
+# ---------------------------------------------------------------------------
+#
+# ``check_membership_locality_for_join`` is kept as a thin shim that
+# now delegates to the Phase 52j J1 residency-scope check. The shim
+# preserves the import surface for any caller wired pre-J1 (org
+# routes, tests) — the new model subsumes the old single-value city
+# gate. A no-op when the org has no scope + no membership residency
+# requirement (the parity case).
 
 
 def check_membership_locality_for_join(user, org) -> None:
-    """Raises 403 if the org has a city gate and ``user`` doesn't
-    meet it. No-op when no city gate is set. Composes with
-    ``check_membership_floor_for_join`` (state floor) +
-    ``check_membership_min_age_for_join`` (age) — all three checked
-    at every join path.
+    """Back-compat shim. Phase 52j J1 unified the locality gate into
+    the org-level residency scope + per-gate "require residency"
+    boolean. Two fire-triggers cover pre- and post-migration orgs:
+
+      1. The new model: ``verification_membership_require_residency=
+         True`` AND there's a non-empty scope.
+      2. The legacy model: ``verification_membership_locality`` set
+         (with jurisdiction, per the 52i rule). The
+         ``_residency_scope_entries`` helper synthesizes the
+         equivalent scope; an org carrying the old single-value
+         keys keeps enforcing exactly as it did pre-J1.
+
+    Either trigger raises the scope-based 403 on mismatch.
     """
     from fastapi import HTTPException
-    gate_city, gate_state = _gate_city_for_org(org)
-    if gate_city is None:
+    settings = getattr(org, "settings", None) or {}
+    if not isinstance(settings, dict):
         return
-    if user_meets_locality(user, org):
-        return
-    # Structured 403 with a distinct ``locality`` scope so the FE can
-    # render "must be a resident of {city}" copy distinctly from the
-    # state-floor / age / verification-required cases.
-    raise HTTPException(
-        status_code=403,
-        detail={
-            "error": "verification_required",
-            "scope": "locality",
-            "locality_city": gate_city,
-            "locality_state": gate_state,
-        },
+    legacy_locality = settings.get(SETTING_MEMBERSHIP_LOCALITY)
+    legacy_active = (
+        isinstance(legacy_locality, str)
+        and legacy_locality.strip()
+        and isinstance(settings.get(SETTING_MEMBERSHIP_JURISDICTION), str)
+        and settings.get(SETTING_MEMBERSHIP_JURISDICTION, "").strip()
     )
+    if not (membership_requires_residency(org) or legacy_active):
+        return
+    if user_satisfies_residency_scope(user, org):
+        return
+    raise HTTPException(status_code=403, detail=_residency_payload(org))
+
+
+def user_meets_locality(user, org) -> bool:
+    """Back-compat shim. Returns True when no scope is set or the
+    user satisfies the org's residency scope."""
+    return user_satisfies_residency_scope(user, org)

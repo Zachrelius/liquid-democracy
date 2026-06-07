@@ -296,7 +296,10 @@ class TestIndependentLevels:
         with pytest.raises(HTTPException) as exc:
             verification.check_membership_locality_for_join(u, org)
         assert exc.value.status_code == 403
-        assert exc.value.detail["scope"] == "locality"
+        # Phase 52j J1 — old `scope="locality"` shape unified into
+        # `scope="residency_scope"`. The structured-403 carries the
+        # whole scope (a list) so the FE can render any combination.
+        assert exc.value.detail["scope"] == "residency_scope"
 
 
 # ===========================================================================
@@ -342,9 +345,12 @@ class TestMembershipGateSideEffect:
         r = client.post(f"/api/orgs/{org.slug}/join-request", headers=_auth(u))
         assert r.status_code == 403
         detail = r.json()["detail"]
-        assert detail["scope"] == "locality"
-        assert detail["locality_city"] == "Boston"
-        assert detail["locality_state"] == "MA"
+        # Phase 52j J1 — unified residency_scope payload (an entry
+        # list). The city + state are embedded inside the scope entry.
+        assert detail["scope"] == "residency_scope"
+        assert detail["residency_scope"] == [
+            {"state": "MA", "city": "Boston"},
+        ]
         # No membership row written.
         m = db.query(models.OrgMembership).filter_by(
             user_id=u.id, org_id=org.id,

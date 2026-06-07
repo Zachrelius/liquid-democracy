@@ -2335,7 +2335,7 @@ export default function OrgSettings() {
           </h2>
           <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
             <p className="text-sm text-gray-600">
-              Optionally require members to verify their identity before joining, holding a role, or casting a vote. Leave any setting on "No verification required" to keep the existing behavior. Identity-verification options for members will become available in a future update.
+              Optionally require members to verify their identity before joining, holding a role, or casting a vote. Leave any setting on "No verification required" to keep the existing behavior.
             </p>
 
             <label className="text-sm space-y-1 block">
@@ -2347,67 +2347,125 @@ export default function OrgSettings() {
               >
                 <option value="">No verification required (default)</option>
                 <option value="identity">Identity verified</option>
-                <option value="identity_unique">Identity verified — unique person</option>
-                <option value="address_on_id">Identity verified — address on ID</option>
-                <option value="residency_verified">Identity verified — residency confirmed</option>
+                <option value="address_on_id">Verified resident</option>
               </select>
-              {(settings.verification_membership_floor === 'address_on_id'
-                  || settings.verification_membership_floor === 'residency_verified') && (
-                <input
-                  type="text"
-                  value={settings.verification_membership_jurisdiction || ''}
-                  onChange={e => updateSetting('verification_membership_jurisdiction', e.target.value || null)}
-                  placeholder="Jurisdiction (e.g. US state code)"
-                  className="mt-2 w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              )}
-              {/* Phase 52i — city/locality residency gate. The city
-                  field is gated behind a state choice (jurisdiction);
-                  it's hashed WITH the state to disambiguate cross-
-                  state collisions (Springfield, MA ≠ Springfield,
-                  IL). The admin's text is the readable gate value,
-                  not user PII; only the member's city is hashed. */}
-              {(settings.verification_membership_floor === 'address_on_id'
-                  || settings.verification_membership_floor === 'residency_verified')
-                  && settings.verification_membership_jurisdiction && (
-                <input
-                  type="text"
-                  value={settings.verification_membership_locality || ''}
-                  onChange={e => updateSetting('verification_membership_locality', e.target.value || null)}
-                  placeholder="City (e.g. Boston) — leave blank for no city gate"
-                  className="mt-2 w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              )}
-              {(settings.verification_membership_floor === 'address_on_id'
-                  || settings.verification_membership_floor === 'residency_verified') && (
-                <p className="text-xs text-gray-500 mt-1">
-                  {settings.verification_membership_jurisdiction
-                    ? "Optional: restrict membership to verified residents of a specific city within the chosen state. Match is exact; city names that span multiple states are disambiguated by the state above."
-                    : "Choose a state first to optionally add a city restriction."}
-                </p>
+              {/* Phase 52j J2 — "Verified resident" now reveals the
+                  org-level residency scope editor (J1). Toggling on
+                  "require residency" for membership opts this gate
+                  into the org-wide scope. */}
+              {settings.verification_membership_floor === 'address_on_id' && (
+                <label className="flex items-start gap-3 cursor-pointer pt-2">
+                  <input
+                    type="checkbox"
+                    checked={!!settings.verification_membership_require_residency}
+                    onChange={e => updateSetting('verification_membership_require_residency', e.target.checked)}
+                    className="mt-0.5 accent-[var(--brand-accent)]"
+                  />
+                  <span className="text-xs text-gray-600">
+                    Also require the member to live inside this organization's residency scope (defined below). When off, "Verified resident" requires only that the member's ID has a verified address.
+                  </span>
+                </label>
               )}
             </label>
+
+            {/* Phase 52j J1 — org-level residency scope editor. Defined
+                ONCE here; each gate (membership / per-role / proposal)
+                toggles a "require residency" boolean to reference it.
+                Each entry is a (state, optional city) pair; a user
+                satisfies the scope by matching ANY entry. */}
+            <div className="pt-3 border-t border-gray-200 space-y-2">
+              <label className="block text-xs font-medium text-gray-700">
+                Residency scope (where members must live, when a gate requires it)
+              </label>
+              <p className="text-xs text-gray-500">
+                Add one or more allowed locations. A member with verified residency that matches ANY entry passes. Leave the city blank to match anyone in that state. City entries are hashed with the state; "Springfield, MA" and "Springfield, IL" are different.
+              </p>
+              <div className="space-y-2">
+                {(settings.verification_residency_scope || []).map((entry, idx) => (
+                  <div key={idx} className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={entry.state || ''}
+                      onChange={e => {
+                        const next = [...(settings.verification_residency_scope || [])];
+                        next[idx] = { ...next[idx], state: e.target.value || '' };
+                        updateSetting('verification_residency_scope', next);
+                      }}
+                      placeholder="State (e.g. MA)"
+                      className="w-24 px-2 py-1 border border-gray-300 rounded text-sm"
+                    />
+                    <input
+                      type="text"
+                      value={entry.city || ''}
+                      onChange={e => {
+                        const next = [...(settings.verification_residency_scope || [])];
+                        const v = e.target.value || '';
+                        if (v) next[idx] = { ...next[idx], city: v };
+                        else { const { city: _drop, ...rest } = next[idx] || {}; next[idx] = rest; }
+                        updateSetting('verification_residency_scope', next);
+                      }}
+                      placeholder="City (optional)"
+                      className="flex-1 max-w-xs px-2 py-1 border border-gray-300 rounded text-sm"
+                    />
+                    <button
+                      type="button"
+                      className="text-xs text-red-600 hover:underline"
+                      onClick={() => {
+                        const next = (settings.verification_residency_scope || []).filter((_, i) => i !== idx);
+                        updateSetting('verification_residency_scope', next.length ? next : null);
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="text-xs text-blue-600 hover:underline"
+                  onClick={() => {
+                    const next = [...(settings.verification_residency_scope || []), { state: '' }];
+                    updateSetting('verification_residency_scope', next);
+                  }}
+                >
+                  + Add allowed location
+                </button>
+              </div>
+            </div>
 
             <div className="space-y-2">
               <p className="text-xs text-gray-600 font-medium">Required to hold a role</p>
               {['admin', 'moderator', 'steward'].map(roleKey => (
-                <label key={roleKey} className="text-sm flex items-center gap-3">
-                  <span className="capitalize text-xs text-gray-600 w-20">{roleKey}</span>
-                  <select
-                    value={(settings.verification_role_floors || {})[roleKey] || ''}
-                    onChange={e => updateSetting('verification_role_floors', {
-                      ...(settings.verification_role_floors || {}),
-                      [roleKey]: e.target.value || undefined,
-                    })}
-                    className="flex-1 max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                  >
-                    <option value="">No verification required</option>
-                    <option value="identity">Identity verified</option>
-                    <option value="identity_unique">Identity verified — unique person</option>
-                    <option value="address_on_id">Identity verified — address on ID</option>
-                    <option value="residency_verified">Identity verified — residency confirmed</option>
-                  </select>
-                </label>
+                <div key={roleKey} className="space-y-1">
+                  <label className="text-sm flex items-center gap-3">
+                    <span className="capitalize text-xs text-gray-600 w-20">{roleKey}</span>
+                    <select
+                      value={(settings.verification_role_floors || {})[roleKey] || ''}
+                      onChange={e => updateSetting('verification_role_floors', {
+                        ...(settings.verification_role_floors || {}),
+                        [roleKey]: e.target.value || undefined,
+                      })}
+                      className="flex-1 max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    >
+                      <option value="">No verification required</option>
+                      <option value="identity">Identity verified</option>
+                      <option value="address_on_id">Verified resident</option>
+                    </select>
+                  </label>
+                  {((settings.verification_role_floors || {})[roleKey] === 'address_on_id') && (
+                    <label className="flex items-center gap-3 cursor-pointer pl-20">
+                      <input
+                        type="checkbox"
+                        checked={!!((settings.verification_role_require_residency || {})[roleKey])}
+                        onChange={e => updateSetting('verification_role_require_residency', {
+                          ...(settings.verification_role_require_residency || {}),
+                          [roleKey]: e.target.checked ? true : undefined,
+                        })}
+                        className="accent-[var(--brand-accent)]"
+                      />
+                      <span className="text-xs text-gray-600">Also require residency scope match for this role</span>
+                    </label>
+                  )}
+                </div>
               ))}
             </div>
 
@@ -2437,7 +2495,7 @@ export default function OrgSettings() {
                 className="mt-0.5 accent-[var(--brand-accent)]"
               />
               <div>
-                <p className="text-sm text-gray-700">Require verified members to be promoted to public delegate</p>
+                <p className="text-sm text-gray-700">Require verification to become a public delegate</p>
                 <p className="text-xs text-gray-500">
                   Default (off): any member can submit for public-delegate promotion. When on, only members who satisfy this org's membership verification floor AND aren't currently flagged as a possible duplicate of another member can request public-delegate status.
                 </p>
@@ -2500,6 +2558,7 @@ export default function OrgSettings() {
                 <option value="off">Off (any display name allowed)</option>
                 <option value="first">First name must match ID</option>
                 <option value="last">Last name must match ID</option>
+                <option value="either">Either first or last name must match ID</option>
                 <option value="full">Full name must match ID</option>
               </select>
               <p className="text-xs text-gray-500">
@@ -2548,9 +2607,58 @@ export default function OrgSettings() {
                 <option value="21">21+</option>
               </select>
               <p className="text-xs text-gray-500">
-                A verified member's age is derived from their ID at verification and stored as a coarse band (which thresholds they meet) — never the raw date of birth. Members under the threshold can't join. Already-verified members below the next threshold auto-promote when they cross it; no re-verification needed.
+                We record which age brackets a verified member has passed (for example, 16+ and 18+) and the month they'll reach the next one — not their date of birth. Members below the minimum can't join, and a member who later reaches the minimum gains access automatically without re-verifying.
               </p>
             </div>
+
+            {/* Phase 52j J3 — org-level proposal verification policy.
+                `author` (default) keeps today's behavior: proposal
+                author picks the floor. `always` applies the org-chosen
+                floor to every proposal. `never` ignores any stored
+                proposal floor at vote time. */}
+            <div className="pt-2 border-t border-gray-200 space-y-1">
+              <label className="block text-xs font-medium text-gray-700">
+                Proposal verification policy
+              </label>
+              <select
+                value={settings.verification_proposal_policy || 'author'}
+                onChange={e => updateSetting('verification_proposal_policy', e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              >
+                <option value="author">Proposal author chooses (default)</option>
+                <option value="always">Always require verification on every proposal</option>
+                <option value="never">Never require verification on proposals</option>
+              </select>
+              <p className="text-xs text-gray-500">
+                Controls how the per-proposal verification gate is set. "Author chooses" preserves today's behavior. "Always" applies the org-wide floor below to every proposal's vote. "Never" ignores any author-set floor at vote time.
+              </p>
+            </div>
+
+            {settings.verification_proposal_policy === 'always' && (
+              <div className="pt-2 space-y-1">
+                <label className="block text-xs font-medium text-gray-700">
+                  Required floor for every proposal
+                </label>
+                <select
+                  value={settings.verification_proposal_floor || ''}
+                  onChange={e => updateSetting('verification_proposal_floor', e.target.value || null)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                >
+                  <option value="">No verification required</option>
+                  <option value="identity">Identity verified</option>
+                  <option value="address_on_id">Verified resident</option>
+                </select>
+                {(settings.verification_proposal_floor === 'address_on_id') && (
+                  <input
+                    type="text"
+                    value={settings.verification_proposal_jurisdiction || ''}
+                    onChange={e => updateSetting('verification_proposal_jurisdiction', e.target.value || null)}
+                    placeholder="Jurisdiction (e.g. US state code)"
+                    className="mt-2 w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                  />
+                )}
+              </div>
+            )}
           </div>
         </section>
       )}

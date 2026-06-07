@@ -448,8 +448,10 @@ def _apply_bound_role_for_assign(
     # at or above the required tier (no-op assignment doesn't need
     # to re-verify).
     if current_key != bound_role:
-        from verification import check_role_grant_floor
+        from verification import check_role_grant_floor, check_role_residency_for_grant
         check_role_grant_floor(target_user, org, bound_role)
+        # Phase 52j J1 — also residency-scope.
+        check_role_residency_for_grant(target_user, org, bound_role)
 
     # Steward binding has special handling per D7.
     if bound_role == "steward":
