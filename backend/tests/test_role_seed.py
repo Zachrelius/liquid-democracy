@@ -118,9 +118,24 @@ def test_default_grants_counts_match_spec():
     25; moderator/member get it absent per Q2: reserved for Steward and
     maybe Admin). Phase 16 adds `proposal.set_durations` (steward/admin
     both go to 26; moderator gets it TRUE since durations are logistics
-    not governance — Q1; member still absent). New totals: 26/26/9/0.
+    not governance — Q1; member still absent). Phase 47 added
+    `title.manage` (steward/admin both 27). Phase 49a added
+    `org.approve_cosign_petition` (steward/admin both 28; moderator
+    stays at 9). Current totals: 28/28/9/0.
+
+    Phase 60 Bucket 2 — bumped literals from 27 → 28 to match
+    DEFAULT_GRANTS as it stands post-Phase-49a. The shape invariants
+    below (steward == admin, member == 0) capture the
+    structural-correctness property; the literal counts are the
+    "no accidental seed bump" signal. Update both when adding a
+    permission that goes to steward/admin.
     """
-    assert len(DEFAULT_GRANTS["steward"]) == 27
-    assert len(DEFAULT_GRANTS["admin"]) == 27
+    assert len(DEFAULT_GRANTS["steward"]) == 28
+    assert len(DEFAULT_GRANTS["admin"]) == 28
     assert len(DEFAULT_GRANTS["moderator"]) == 9
+    assert len(DEFAULT_GRANTS["member"]) == 0
+    # Shape invariants — steward and admin always track in lockstep
+    # (per the historical "seed both equally" rule); member always
+    # zero (member is a participation role, not an admin tier).
+    assert len(DEFAULT_GRANTS["steward"]) == len(DEFAULT_GRANTS["admin"])
     assert len(DEFAULT_GRANTS["member"]) == 0

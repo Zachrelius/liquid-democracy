@@ -373,13 +373,16 @@ class TestSeedPipelineCreatesProposalTopicAssociations:
         # Two topics → two rows
         assert len(pts) == 2
         # Primary topic gets relevance 1.0, secondary 0.8
+        # Phase 60 Bucket 3 — was `t.description`; Phase 30.1 made
+        # `name` the canonical (per-org-unique, unprefixed) display
+        # name and Phase 33 dropped the description column. Reading
+        # `t.name` is the post-Phase-30.1 equivalent.
         topic_names = []
         for pt in pts:
             t = test_db.query(models.Topic).filter(
                 models.Topic.id == pt.topic_id,
             ).one()
-            topic_names.append((t.description, pt.relevance))
-        # description column holds the unscoped name; name has org-slug prefix
+            topic_names.append((t.name, pt.relevance))
         topic_names_sorted = sorted(topic_names, key=lambda x: -x[1])
         assert topic_names_sorted[0][0] == "Alpha"
         assert topic_names_sorted[0][1] == 1.0

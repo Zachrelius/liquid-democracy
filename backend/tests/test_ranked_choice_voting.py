@@ -1035,7 +1035,16 @@ def test_39_results_endpoint_returns_rcv_payload(client, test_db):
             json={"ranking": ranking},
         )
 
-    resp = client.get(f"/api/proposals/{p.id}/results")
+    # Phase 60 Bucket 5 — add auth header. `/api/proposals/{id}/results`
+    # is the member-only endpoint (Phase 38 B1: requires auth +
+    # eligibility). Phase 57's anonymous public-results path is a
+    # separate route at `/api/orgs/{slug}/public/proposals/{id}/results`,
+    # gated on `activity_visibility='public'`. This test hits the
+    # legacy member-only endpoint and needs auth.
+    resp = client.get(
+        f"/api/proposals/{p.id}/results",
+        headers=_auth_header(voters[0]),
+    )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["voting_method"] == "ranked_choice"
