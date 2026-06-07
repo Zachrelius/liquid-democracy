@@ -297,6 +297,13 @@ export default function OrgSettings() {
   // (but category values are retained on the rows so re-enabling
   // restores grouping).
   const [topicCategoriesEnabled, setTopicCategoriesEnabled] = useState(false);
+  // Phase 59 B1 — org-defined topic categories list. Free-text Phase 56
+  // categories live on `Topic.category`; this list constrains future
+  // category selections at the UI (existing free-text values are kept
+  // and flagged "(not in list)").
+  const [topicCategoriesList, setTopicCategoriesList] = useState([]);
+  const [newCategoryInput, setNewCategoryInput] = useState('');
+  const [savingCategoriesList, setSavingCategoriesList] = useState(false);
   const [savingTopicCategories, setSavingTopicCategories] = useState(false);
 
   // Phase 45b F1 — Governance Mode section state. The revert flow needs
@@ -417,6 +424,10 @@ export default function OrgSettings() {
       // missing toggle.
       setTopicGuidance(typeof s.topic_guidance === 'string' ? s.topic_guidance : '');
       setTopicCategoriesEnabled(!!s.topic_categories_enabled);
+      // Phase 59 B1 — hydrate the org-defined category list.
+      setTopicCategoriesList(
+        Array.isArray(s.topic_categories) ? s.topic_categories.slice() : [],
+      );
 
       // Phase 17 F1 — Tie resolution lives at settings.tie_resolution
       // {approval, ranked_choice}. Hydrate from the org's stored values
@@ -818,6 +829,25 @@ export default function OrgSettings() {
       toast.error(err.message || 'Failed to save topic guidance');
     } finally {
       setSavingTopicGuidance(false);
+    }
+  }
+
+  async function handleSaveTopicCategoriesList(nextList) {
+    // Phase 59 B1 — persist the org-defined category list. Saved
+    // independently from the toggle (Phase 56 F4) so a steward can
+    // prepare the list before enabling grouping.
+    setSavingCategoriesList(true);
+    try {
+      await api.patch(`/api/orgs/${currentOrg.slug}`, {
+        settings: { topic_categories: nextList },
+      });
+      await refreshOrgs();
+      setTopicCategoriesList(nextList.slice());
+      toast.success('Topic categories list saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save categories list');
+    } finally {
+      setSavingCategoriesList(false);
     }
   }
 
@@ -1533,7 +1563,7 @@ export default function OrgSettings() {
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
           Topic categories
         </h2>
-        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+        <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
           <label className="flex items-start gap-3 cursor-pointer">
             <input
               type="checkbox"
@@ -1554,6 +1584,85 @@ export default function OrgSettings() {
               </p>
             </div>
           </label>
+
+          {/* Phase 59 B1 — org-defined category list editor. Editable
+              regardless of toggle state so a steward can prepare the
+              list before turning grouping on. Topics.jsx will offer
+              these as a dropdown when the toggle is on; existing
+              free-text values that aren't in this list are kept and
+              flagged "(not in list)". */}
+          <div className="pt-3 border-t border-gray-100">
+            <p className="text-sm font-medium text-gray-800 mb-1">
+              Category list
+            </p>
+            <p className="text-xs text-gray-500 mb-3">
+              The categories topic creators can assign. Up to 50 entries,
+              each ≤80 characters. Adding to this list does not change
+              existing topics; topics already assigned a category outside
+              this list are kept and marked &ldquo;(not in list)&rdquo;
+              in the topic editor.
+            </p>
+            <ul className="space-y-1 mb-3">
+              {topicCategoriesList.length === 0 && (
+                <li className="text-xs text-gray-400 italic">
+                  No categories defined yet.
+                </li>
+              )}
+              {topicCategoriesList.map((cat, idx) => (
+                <li
+                  key={`${cat}-${idx}`}
+                  className="flex items-center gap-2 text-sm text-gray-700"
+                >
+                  <span className="flex-1">{cat}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = topicCategoriesList.filter((c, i) => i !== idx);
+                      handleSaveTopicCategoriesList(next);
+                    }}
+                    disabled={savingCategoriesList}
+                    className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newCategoryInput}
+                onChange={e => setNewCategoryInput(e.target.value)}
+                placeholder="Add a category (e.g. Operations)"
+                maxLength={80}
+                className="flex-1 max-w-sm px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const trimmed = newCategoryInput.trim();
+                  if (!trimmed) return;
+                  if (topicCategoriesList.length >= 50) {
+                    toast.error('Maximum 50 categories.');
+                    return;
+                  }
+                  // Avoid case-insensitive duplicates on the client too.
+                  const lower = trimmed.toLowerCase();
+                  if (topicCategoriesList.some(c => c.toLowerCase() === lower)) {
+                    toast.error(`'${trimmed}' is already in the list.`);
+                    return;
+                  }
+                  const next = [...topicCategoriesList, trimmed];
+                  setNewCategoryInput('');
+                  handleSaveTopicCategoriesList(next);
+                }}
+                disabled={savingCategoriesList || !newCategoryInput.trim()}
+                className="px-4 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+              >
+                Add
+              </button>
+            </div>
+          </div>
         </div>
       </section>
 

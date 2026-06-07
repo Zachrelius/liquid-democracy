@@ -87,6 +87,14 @@ export default function Topics() {
       ? currentOrg.settings.topic_guidance
       : '';
   const categoriesEnabled = !!currentOrg?.settings?.topic_categories_enabled;
+  // Phase 59 B2 — org-defined category list. When the toggle is on, the
+  // category control on the topic create/edit form is a dropdown
+  // populated from this list (free-text legacy values are kept and
+  // shown with a "(not in list)" marker). When the toggle is off the
+  // control is hidden entirely (fixing the half-wired Phase 56 surface).
+  const orgCategories = Array.isArray(currentOrg?.settings?.topic_categories)
+    ? currentOrg.settings.topic_categories
+    : [];
   const groupedTopics = useMemo(() => {
     if (!categoriesEnabled) return null;
     const groups = new Map();
@@ -222,9 +230,17 @@ export default function Topics() {
     // swatches so a steward can pick any hex (covers what the dropped
     // var() swatches loosely gestured at). The native picker always emits
     // `#RRGGBB`, so the backend validator (regex `^#(?:[0-9a-f]{3}|[0-9a-f]{6})$`)
-    // accepts the output by construction. The current selected color
-    // surfaces below the swatch row for visibility when a custom choice
-    // isn't one of the presets.
+    // accepts the output by construction.
+    //
+    // Phase 59 C1 — `onMouseDown={preventDefault}` on each swatch keeps
+    // the browser's focus on whatever was previously focused (including
+    // the system-level color picker dialog if open). Without this guard,
+    // clicking a swatch steals focus from the OS color dialog and the
+    // browser closes the dialog. The `onClick` still fires (preventDefault
+    // on mousedown doesn't suppress click). This is the conservative fix
+    // for the "auto-closes on each swatch click" report — the React layer
+    // has no popover of its own, but the OS-level picker reacted to focus
+    // changes triggered by swatch clicks.
     const isPreset = PRESET_COLORS.includes(value);
     return (
       <div>
@@ -233,6 +249,7 @@ export default function Topics() {
             <button
               key={c}
               type="button"
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => onChange(c)}
               className={`w-7 h-7 rounded-full border-2 transition-all ${
                 value === c ? 'border-gray-800 scale-110' : 'border-transparent hover:border-gray-300'
@@ -342,17 +359,31 @@ export default function Topics() {
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
           </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Category (optional)</label>
-            <input
-              type="text"
-              value={newCategory}
-              onChange={e => setNewCategory(e.target.value)}
-              maxLength={80}
-              placeholder="A grouping label (e.g. 'Policy', 'Operations'). Only used when categories are enabled."
-              className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
-            />
-          </div>
+          {/* Phase 59 B2 — category control hidden when the toggle is
+              off (the Phase 56 surface was visible-but-unused).
+              When on, dropdown from the org-defined list (B1). */}
+          {categoriesEnabled && (
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Category (optional)</label>
+              {orgCategories.length === 0 ? (
+                <p className="text-xs text-gray-500 italic">
+                  Your organization hasn&apos;t defined any categories yet.
+                  Add some in <strong>Org Settings → Topic categories</strong>.
+                </p>
+              ) : (
+                <select
+                  value={newCategory}
+                  onChange={e => setNewCategory(e.target.value)}
+                  className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                >
+                  <option value="">(no category)</option>
+                  {orgCategories.map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
           <div>
             <label className="block text-xs text-gray-500 mb-1">Color</label>
             <ColorPicker value={newColor} onChange={setNewColor} />
@@ -428,17 +459,45 @@ export default function Topics() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
               />
             </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Category (optional)</label>
-              <input
-                type="text"
-                value={editCategory}
-                onChange={e => setEditCategory(e.target.value)}
-                maxLength={80}
-                placeholder="A grouping label (e.g. 'Policy', 'Operations')."
-                className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
-              />
-            </div>
+            {/* Phase 59 B2 — same hide-on-toggle-off + dropdown pattern
+                as the create form. Legacy free-text values not in the
+                org list are preserved with a "(not in list)" marker
+                so a steward can keep them or pick from the new list. */}
+            {categoriesEnabled && (
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Category (optional)</label>
+                {(() => {
+                  const isLegacy =
+                    editCategory && !orgCategories.includes(editCategory);
+                  if (orgCategories.length === 0 && !isLegacy) {
+                    return (
+                      <p className="text-xs text-gray-500 italic">
+                        Your organization hasn&apos;t defined any
+                        categories yet. Add some in{' '}
+                        <strong>Org Settings → Topic categories</strong>.
+                      </p>
+                    );
+                  }
+                  return (
+                    <select
+                      value={editCategory}
+                      onChange={e => setEditCategory(e.target.value)}
+                      className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                    >
+                      <option value="">(no category)</option>
+                      {isLegacy && (
+                        <option value={editCategory}>
+                          {editCategory} (not in list)
+                        </option>
+                      )}
+                      {orgCategories.map(cat => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                  );
+                })()}
+              </div>
+            )}
             <div>
               <label className="block text-xs text-gray-500 mb-1">Color</label>
               <ColorPicker value={editColor} onChange={setEditColor} />

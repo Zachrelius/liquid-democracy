@@ -7,6 +7,7 @@ import { ADMIN_NAV_SUBSECTION_PERMISSIONS } from '../constants/admin_nav_permiss
 import Avatar from './Avatar';
 import NotificationBadge from './NotificationBadge';
 import usePendingActionsCount from '../hooks/usePendingActionsCount';
+import { useIsDemoUser } from '../hooks/useIsDemoUser';
 
 /**
  * Org switcher tree (Phase 8.5).
@@ -19,6 +20,8 @@ import usePendingActionsCount from '../hooks/usePendingActionsCount';
 function OrgSwitcher() {
   const navigate = useNavigate();
   const { currentOrg, userOrgs, fetchSubOrgsFor, subOrgsByParent } = useOrg();
+  // Phase 59 D1 — hide the Create Organization affordance for demo users.
+  const isDemoUser = useIsDemoUser();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -184,16 +187,20 @@ function OrgSwitcher() {
             );
           })}
           {/* Phase 9.5 — discoverable entry to org creation. Visible to all
-              authenticated users, no role gating. */}
-          <div className="border-t border-gray-200 mt-1 pt-1">
-            <Link
-              to="/orgs/create"
-              onClick={() => setOpen(false)}
-              className="block px-4 py-1.5 text-sm text-[var(--brand-accent)] hover:bg-gray-50 transition-colors"
-            >
-              + Create new organization
-            </Link>
-          </div>
+              authenticated users, no role gating.
+              Phase 59 D1 — hidden for demo users (the backend rejects
+              their POST anyway; this avoids surfacing a dead control). */}
+          {!isDemoUser && (
+            <div className="border-t border-gray-200 mt-1 pt-1">
+              <Link
+                to="/orgs/create"
+                onClick={() => setOpen(false)}
+                className="block px-4 py-1.5 text-sm text-[var(--brand-accent)] hover:bg-gray-50 transition-colors"
+              >
+                + Create new organization
+              </Link>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -203,6 +210,8 @@ function OrgSwitcher() {
 export default function Nav() {
   const { user, logout } = useAuth();
   const { currentOrg, userOrgs } = useOrg();
+  // Phase 59 D1 — demo users can't create real orgs (backend rejects).
+  const isDemoUser = useIsDemoUser();
   const [menuOpen, setMenuOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -585,14 +594,17 @@ export default function Nav() {
                       Switch Org
                     </Link>
                   )}
-                  {/* Phase 9.5 — tertiary entry to org creation. */}
-                  <Link
-                    to="/orgs/create"
-                    onClick={() => setMenuOpen(false)}
-                    className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100"
-                  >
-                    Create Organization
-                  </Link>
+                  {/* Phase 9.5 — tertiary entry to org creation.
+                      Phase 59 D1 — hidden for demo users. */}
+                  {!isDemoUser && (
+                    <Link
+                      to="/orgs/create"
+                      onClick={() => setMenuOpen(false)}
+                      className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100"
+                    >
+                      Create Organization
+                    </Link>
+                  )}
                   <button
                     onClick={() => { setMenuOpen(false); logout(); }}
                     className="block w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100"

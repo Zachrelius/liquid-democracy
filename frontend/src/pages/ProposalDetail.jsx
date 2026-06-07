@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
@@ -1140,6 +1140,194 @@ function EditProposalButton({ proposal, onSaved }) {
 
 
 /**
+ * Phase 59 A4 + A5 — draft-only actions: change voting_method (with
+ * options reshape + discard-with-confirm fork), adjust num_winners
+ * for RCV, and hard-delete the draft.
+ *
+ * Rendered alongside EditProposalButton when proposal.status === 'draft'.
+ * Backend gates: PATCH rejects voting_method change post-draft (A4);
+ * DELETE rejects on non-draft status (A5). Both restrictions are
+ * load-bearing — asserted in tests — but the FE only renders these
+ * controls in draft, so a user shouldn't normally see them mis-wired.
+ */
+function DraftActionsPanel({ proposal, onSaved, linkOrg }) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const navigate = useNavigate();
+  const [method, setMethod] = useState(proposal.voting_method);
+  const [numWinners, setNumWinners] = useState(proposal.num_winners || 1);
+  const [savingType, setSavingType] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  // Reset local state if the parent reloads the proposal.
+  useEffect(() => {
+    setMethod(proposal.voting_method);
+    setNumWinners(proposal.num_winners || 1);
+  }, [proposal.voting_method, proposal.num_winners]);
+
+  const methodChanged = method !== proposal.voting_method;
+  const numWinnersChanged =
+    proposal.voting_method === 'ranked_choice'
+    && method === 'ranked_choice'
+    && numWinners !== proposal.num_winners;
+  const hasExistingOptions = Array.isArray(proposal.options) && proposal.options.length > 0;
+  // When the change drops us from an options-method TO binary, the
+  // existing option rows will be discarded server-side. Warn first.
+  const willDiscardOptions =
+    methodChanged
+    && method === 'binary'
+    && proposal.voting_method !== 'binary'
+    && hasExistingOptions;
+
+  async function handleSaveType() {
+    if (willDiscardOptions) {
+      const ok = await confirm({
+        title: 'Discard existing options?',
+        message: (
+          `Changing to a binary proposal will remove the ${proposal.options.length} `
+          + `existing option${proposal.options.length === 1 ? '' : 's'}. `
+          + `This cannot be undone. Continue?`
+        ),
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    setSavingType(true);
+    try {
+      const payload = { voting_method: method };
+      // When entering RCV, send a num_winners (defaults to 1 from
+      // create-form symmetry). When leaving RCV the backend snaps
+      // num_winners back to 1 automatically.
+      if (method === 'ranked_choice') {
+        payload.num_winners = numWinners || 1;
+      }
+      await api.patch(`/api/proposals/${proposal.id}`, payload);
+      toast.success('Proposal type updated');
+      onSaved?.();
+    } catch (err) {
+      toast.error(err?.message || 'Could not change proposal type');
+    } finally {
+      setSavingType(false);
+    }
+  }
+
+  async function handleSaveNumWinners() {
+    setSavingType(true);
+    try {
+      await api.patch(`/api/proposals/${proposal.id}`, {
+        num_winners: numWinners,
+      });
+      toast.success('Number of winners updated');
+      onSaved?.();
+    } catch (err) {
+      toast.error(err?.message || 'Could not update num winners');
+    } finally {
+      setSavingType(false);
+    }
+  }
+
+  async function handleDelete() {
+    const ok = await confirm({
+      title: 'Permanently delete this draft?',
+      message: (
+        'This proposal will be deleted permanently. This cannot be undone. '
+        + 'Only drafts can be hard-deleted; proposals that have entered '
+        + 'deliberation or voting are withdrawn instead.'
+      ),
+      destructive: true,
+    });
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/api/proposals/${proposal.id}`);
+      toast.success('Draft deleted');
+      // Navigate back to the org's proposals list. linkOrg is the
+      // parent org for sub-org-scoped proposals; falls back to /orgs
+      // for the global edge case.
+      navigate(linkOrg ? urlFor(linkOrg, 'proposals') : '/orgs');
+    } catch (err) {
+      toast.error(err?.message || 'Could not delete draft');
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 p-3 bg-amber-50/40 border border-amber-200 rounded-lg space-y-3 max-w-2xl">
+      <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
+        Draft actions
+      </p>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-600 mb-1">
+          Voting method
+        </label>
+        <div className="flex items-center gap-2 flex-wrap">
+          <select
+            value={method}
+            onChange={(e) => setMethod(e.target.value)}
+            className="px-2 py-1 text-sm border border-gray-300 rounded bg-white focus:outline-none focus:border-[var(--brand-accent)]"
+          >
+            <option value="binary">Binary (yes / no)</option>
+            <option value="approval">Approval (multi-option)</option>
+            <option value="ranked_choice">Ranked choice</option>
+          </select>
+          {method === 'ranked_choice' && (
+            <label className="flex items-center gap-1 text-xs text-gray-600">
+              Winners:
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={numWinners}
+                onChange={(e) => setNumWinners(parseInt(e.target.value, 10) || 1)}
+                className="w-16 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:border-[var(--brand-accent)]"
+              />
+            </label>
+          )}
+          {(methodChanged || numWinnersChanged) && (
+            <button
+              type="button"
+              onClick={methodChanged ? handleSaveType : handleSaveNumWinners}
+              disabled={savingType}
+              className="px-3 py-1 text-xs font-medium text-white bg-[var(--brand-accent)] rounded hover:opacity-90 disabled:opacity-50"
+            >
+              {savingType ? 'Saving…' : 'Apply'}
+            </button>
+          )}
+        </div>
+        {method !== 'binary' && method !== proposal.voting_method && (
+          <p className="mt-1 text-xs text-gray-500">
+            You&apos;ll be able to add options after applying the
+            change{willDiscardOptions ? ' (existing options will be discarded)' : ''}.
+          </p>
+        )}
+        {willDiscardOptions && (
+          <p className="mt-1 text-xs text-amber-700">
+            Switching to binary will remove the {proposal.options.length}{' '}
+            existing option{proposal.options.length === 1 ? '' : 's'}.
+            You&apos;ll be asked to confirm before saving.
+          </p>
+        )}
+      </div>
+
+      <div className="pt-3 border-t border-amber-200">
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={deleting}
+          className="px-3 py-1 text-xs font-medium text-red-700 border border-red-300 rounded hover:bg-red-50 disabled:opacity-50"
+        >
+          {deleting ? 'Deleting…' : 'Delete draft'}
+        </button>
+        <span className="ml-2 text-xs text-gray-500 italic">
+          Drafts only — proposals that have advanced are withdrawn, not deleted.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+
+/**
  * Phase 31 B6 — full-width always-visible trajectory chart section.
  *
  * Replaces the Phase 22 F3 collapsed-by-default treatment. Rendered in
@@ -1473,6 +1661,13 @@ export default function ProposalDetail() {
   const isVoting = proposal.status === 'voting';
   const isClosed = ['passed', 'failed', 'withdrawn'].includes(proposal.status);
   const isDeliberation = proposal.status === 'deliberation';
+  // Phase 59 A3 — extend edit gating to include draft status. Drafts
+  // are the most permissive edit state (no audience yet); the lockout
+  // fraction doesn't apply to them. Author OR has `org.edit_proposal`
+  // permission OR platform admin. The richer draft surface (type
+  // change, options reshape, hard-delete) is rendered inline in the
+  // EditProposalButton when status === 'draft'.
+  const isDraft = proposal.status === 'draft';
   // Phase 32.1 F2.3 — edit-author button gating. Author OR admin can
   // edit; lockout check is server-side authoritative (E3) but the
   // frontend pre-checks to avoid rendering a button that 403s on click.
@@ -1499,7 +1694,13 @@ export default function ProposalDetail() {
       editLockoutReached = elapsedFrac >= lockoutFrac;
     }
   }
-  const canEditProposal = isDeliberation && (isAuthor || canEditAsNonAuthor) && !editLockoutReached;
+  // Phase 59 A3 — canEditProposal now true for draft (no lockout) OR
+  // deliberation (lockout-respected). The EditProposalButton renders
+  // different controls based on status.
+  const canEditProposal =
+    (isDraft || isDeliberation)
+    && (isAuthor || canEditAsNonAuthor)
+    && !editLockoutReached;
 
   // ── Phase 8.5 — scope detection (Decisions 7 + 10) ────────────────────────
   // hasSubOrgScope: proposal is sub-org-scoped (sub_org_id is set).
@@ -1606,6 +1807,18 @@ export default function ProposalDetail() {
             {canEditProposal && (
               <div className="mt-3">
                 <EditProposalButton proposal={proposal} onSaved={fetchData} />
+                {/* Phase 59 A4 + A5 — draft-only actions (type
+                    change + hard delete) rendered alongside the
+                    title/body editor when the proposal is in draft.
+                    Hidden once the proposal advances to
+                    deliberation. */}
+                {isDraft && (
+                  <DraftActionsPanel
+                    proposal={proposal}
+                    onSaved={fetchData}
+                    linkOrg={linkOrg}
+                  />
+                )}
               </div>
             )}
             {/* Phase 32.1 F2.3 — lockout tooltip when author/admin but

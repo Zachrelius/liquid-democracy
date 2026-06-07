@@ -432,6 +432,12 @@ class ProposalUpdate(BaseModel):
     body: Optional[str] = Field(default=None, max_length=50000)
     topics: Optional[list[Any]] = None
     options: Optional[list[OptionCreate]] = None
+    # Phase 59 A4 — voting_method + num_winners are editable WHILE STATUS
+    # == 'draft' ONLY. The route handler enforces the draft gate and the
+    # option-handling fork (binary↔approval/RCV reshape). Outside draft
+    # status these fields are rejected (400).
+    voting_method: Optional[str] = Field(default=None)
+    num_winners: Optional[int] = Field(default=None, ge=1)
     # Phase 8 / Phase 20 — per-proposal "Stable Result Required" override
     # (see ProposalCreate). Use Field with explicit default sentinel so
     # omitted vs. null differ: we only update the column when the field is
@@ -476,6 +482,18 @@ class ProposalUpdate(BaseModel):
     def sanitize_body(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
             return _sanitize_markdown(v)
+        return v
+
+    @field_validator("voting_method")
+    @classmethod
+    def validate_voting_method(cls, v: Optional[str]) -> Optional[str]:
+        # Phase 59 A4 — same value set as ProposalCreate.
+        if v is None:
+            return v
+        if v not in ("binary", "approval", "ranked_choice"):
+            raise ValueError(
+                "voting_method must be binary, approval, or ranked_choice"
+            )
         return v
 
 
