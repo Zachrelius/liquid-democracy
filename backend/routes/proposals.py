@@ -1069,6 +1069,74 @@ def update_proposal(
         ):
             proposal.voting_days = body.voting_days
 
+    # Phase 62 A2 — per-proposal verification gate edit (draft-only).
+    # Mirrors the create-path normalization block: validate against
+    # VALID_STATES, enforce jurisdiction-presence consistency, drop a
+    # misleading jurisdiction on a non-jurisdiction floor, normalize
+    # email_only → NULL (= ungated). Gated on status='draft' because
+    # tightening or relaxing the floor after voters have begun casting
+    # would re-eligible/de-eligible them mid-vote.
+    #
+    # Semantics: client must send `verification_floor` to change the
+    # gate at all. `verification_floor: null` clears the gate (and
+    # any jurisdiction). Sending only `verification_jurisdiction`
+    # without `verification_floor` is a no-op (matches the create
+    # path which only acts when floor is non-null).
+    if "verification_floor" in body.model_fields_set:
+        if proposal.status != "draft":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "verification_floor / verification_jurisdiction can "
+                    "only be changed while the proposal is in draft status."
+                ),
+            )
+        if body.verification_floor is not None:
+            from verification import (
+                VALID_STATES,
+                ORDER,
+                jurisdiction_required_for,
+                EMAIL_ONLY,
+            )
+            if body.verification_floor not in VALID_STATES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Unknown verification_floor "
+                        f"{body.verification_floor!r}. "
+                        f"Allowed: {list(ORDER)}."
+                    ),
+                )
+            _jur = body.verification_jurisdiction
+            _jur = _jur.strip() if isinstance(_jur, str) else None
+            if _jur == "":
+                _jur = None
+            if jurisdiction_required_for(body.verification_floor) and not _jur:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"verification_floor {body.verification_floor!r} "
+                        "requires a non-empty verification_jurisdiction."
+                    ),
+                )
+            if (
+                not jurisdiction_required_for(body.verification_floor)
+                and _jur
+            ):
+                body.verification_jurisdiction = None
+            else:
+                body.verification_jurisdiction = _jur
+            if body.verification_floor == EMAIL_ONLY:
+                body.verification_floor = None
+                body.verification_jurisdiction = None
+            proposal.verification_floor = body.verification_floor
+            proposal.verification_jurisdiction = body.verification_jurisdiction
+        else:
+            # Explicit NULL → clear the gate. Jurisdiction is cleared
+            # alongside so the column pair stays consistent.
+            proposal.verification_floor = None
+            proposal.verification_jurisdiction = None
+
     if body.title is not None:
         proposal.title = body.title
     if body.body is not None:

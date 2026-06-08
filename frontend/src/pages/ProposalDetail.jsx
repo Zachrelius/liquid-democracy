@@ -36,6 +36,11 @@ import MyVoteRationaleBox from '../components/MyVoteRationaleBox';
 import { colorForOption } from '../components/voteFlowGraphUtils';
 import renderMarkdown from '../utils/renderMarkdown';
 import { urlFor } from '../utils/urls';
+// Phase 62 A3 — full-form draft editor reused from the admin Create flow.
+// The form supports an `editingProposal` prop (Phase 62 A1) which switches
+// it from POST-to-create to PATCH-to-edit while prefilling every editable
+// field. Imported from the admin module to avoid duplicating the form.
+import { ProposalForm } from './admin/ProposalManagement';
 // Phase 52 Stage 1 — verification floor labels + structured-403 helpers.
 import {
   labelForState,
@@ -1360,6 +1365,11 @@ export default function ProposalDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const { currentOrg, userOrgs } = useOrg();
+  // Phase 62 A3 — used by the draft-edit delete handler. Lifted to the
+  // top of the component so the handler isn't a hook-violating closure.
+  const navigate = useNavigate();
+  const confirm = useConfirm();
+  const toast = useToast();
   // Phase 11 — proposals/delegations routes are parent-org-rooted. If
   // currentOrg is itself a sub-org, walk up for link construction.
   const linkOrg = (() => {
@@ -1399,6 +1409,22 @@ export default function ProposalDetail() {
   // delegated weight was dropped because delegators didn't meet the
   // floor.
   const [verificationWeight, setVerificationWeight] = useState(null);
+  // Phase 62 A3 — full-form draft-edit mode. Auto-on when the loaded
+  // proposal is a draft + viewer has edit rights (the spec's "click
+  // into draft → goes straight to the edit form" behavior). Cancel
+  // returns to the read view; Save closes edit + re-fetches.
+  const [draftEditMode, setDraftEditMode] = useState(false);
+  // Lazy-loaded inputs for the form (topics + sub-orgs). Fetched only
+  // when entering edit mode so the regular read-view path doesn't pay
+  // the API cost.
+  const [editTopics, setEditTopics] = useState(null);
+  const [editSubOrgs, setEditSubOrgs] = useState([]);
+  // Phase 62 A3 — lifted from below the early-return boundary. The
+  // hook MUST be called every render in the same order; the original
+  // placement at line 1727 (after `if (loading) return`) was a
+  // pre-existing rules-of-hooks violation that we're now closing as
+  // part of the lift to drive the auto-init effect below.
+  const canEditViaPermission = useHasPermission('org.edit_proposal');
 
   const fetchData = useCallback(async () => {
     // Phase 25 F3 — clear stale error before re-fetch so the Retry
@@ -1458,6 +1484,49 @@ export default function ProposalDetail() {
   }, [id, linkOrg?.slug]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Phase 62 A3 — auto-enter draft-edit mode when (a) the proposal is a
+  // draft, (b) the viewer has edit rights (author / platform admin /
+  // org.edit_proposal). Cancel inside the form toggles back to the
+  // read view; users can re-open via the "Edit" button in the read
+  // view header. Re-fires when status flips out of draft (turn off)
+  // or back into draft (turn on).
+  useEffect(() => {
+    if (!proposal) return;
+    if (proposal.status !== 'draft') {
+      setDraftEditMode(false);
+      return;
+    }
+    const isAuthor = !!user && proposal.author_id === user.id;
+    const isPlatformAdmin = !!user && !!user.is_admin;
+    if (isAuthor || isPlatformAdmin || canEditViaPermission) {
+      setDraftEditMode(true);
+    }
+  }, [proposal?.status, proposal?.author_id, user?.id, user?.is_admin, canEditViaPermission]);
+
+  // Phase 62 A3 — lazy-fetch topics + sub-orgs only when entering edit
+  // mode. Skips the API cost on the regular read path.
+  useEffect(() => {
+    if (!draftEditMode || !linkOrg?.slug) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const tops = await api.get(`/api/orgs/${linkOrg.slug}/topics`);
+        if (!cancelled) setEditTopics(tops);
+      } catch {
+        if (!cancelled) setEditTopics([]);
+      }
+      // Only fetch sub-orgs when on the parent org. linkOrg already
+      // walks up if currentOrg is a sub-org.
+      try {
+        const subs = await api.get(`/api/orgs/${linkOrg.slug}/sub-orgs`);
+        if (!cancelled) setEditSubOrgs(subs || []);
+      } catch {
+        if (!cancelled) setEditSubOrgs([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [draftEditMode, linkOrg?.slug]);
 
   // Phase 8.5 — when the proposal carries a sub_org_id, look up the sub-org
   // (for name + the viewer's user_role) and the member roster so we can
@@ -1676,8 +1745,9 @@ export default function ProposalDetail() {
   // permission. The permission key is now registered (M2) + seeded
   // to admin + steward in every org, and the backend PATCH endpoint
   // (B2) enforces it. Platform admin still bypasses via the helper's
-  // is_admin short-circuit.
-  const canEditViaPermission = useHasPermission('org.edit_proposal');
+  // is_admin short-circuit. Phase 62 A3: canEditViaPermission is now
+  // computed earlier (above the early-return boundary) so the same
+  // value can drive the auto-init draft-edit-mode effect.
   const isPlatformAdmin = !!user && !!user.is_admin;
   const canEditAsNonAuthor = isPlatformAdmin || canEditViaPermission;
   let editLockoutReached = false;
@@ -1745,6 +1815,60 @@ export default function ProposalDetail() {
     }
   }
 
+  // Phase 62 A3 — full draft-edit view. When the proposal is a draft
+  // and the viewer can edit, the form REPLACES the regular read view
+  // (per spec: "the full form IS the draft view for editors"). Cancel
+  // returns to the read view; Save closes edit + re-fetches the
+  // proposal. Delete navigates back to the org's proposals list.
+  if (draftEditMode && isDraft && canEditProposal && editTopics !== null) {
+    const handleDeleteDraft = async () => {
+      // Mirrors the old DraftActionsPanel hard-delete flow: confirm
+      // dialog, DELETE, toast, navigate to the org's proposals admin
+      // list. The form is now the home for this control (the old
+      // DraftActionsPanel is no longer rendered in the read view).
+      const ok = await confirm({
+        title: 'Permanently delete this draft?',
+        message: (
+          'This proposal will be deleted permanently. This cannot be undone. '
+          + 'Only drafts can be hard-deleted; proposals that have entered '
+          + 'deliberation or voting are withdrawn instead.'
+        ),
+        destructive: true,
+      });
+      if (!ok) return;
+      try {
+        await api.delete(`/api/proposals/${proposal.id}`);
+        toast.success('Draft deleted');
+        navigate(linkOrg ? urlFor(linkOrg, 'proposals') : '/orgs');
+      } catch (err) {
+        toast.error(err?.message || 'Could not delete draft');
+      }
+    };
+    return (
+      <div className="max-w-3xl mx-auto px-4 py-8 space-y-4">
+        <Link
+          to={linkOrg ? urlFor(linkOrg, 'proposals') : '/orgs'}
+          className="text-sm text-[var(--brand-accent)] hover:underline inline-block"
+        >
+          ← Back to Proposals
+        </Link>
+        <p className="text-xs text-gray-500">
+          You're editing this draft. Click <span className="font-medium">Cancel</span> to view it without editing.
+        </p>
+        <ProposalForm
+          slug={linkOrg?.slug}
+          orgSettings={currentOrg?.settings || {}}
+          topics={editTopics}
+          subOrgs={editSubOrgs}
+          editingProposal={proposal}
+          onCreated={() => { setDraftEditMode(false); fetchData(); }}
+          onCancel={() => setDraftEditMode(false)}
+          onDelete={handleDeleteDraft}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       {/* Back link */}
@@ -1803,22 +1927,29 @@ export default function ProposalDetail() {
             </p>
             {/* Phase 32.1 F2.3 — edit-author button. Author or admin
                 during deliberation, before lockout. Server-side
-                authoritative via E3; this is the pre-check render. */}
-            {canEditProposal && (
+                authoritative via E3; this is the pre-check render.
+                Phase 62 A3: when the proposal is a draft + viewer can
+                edit, this read-view path is the cancel-back state from
+                the full editor. We swap the legacy
+                EditProposalButton + DraftActionsPanel (which only
+                edited a subset and competed with the full form) for a
+                single "Open editor" button that re-opens it. The
+                deliberation path keeps the legacy inline editor
+                unchanged. */}
+            {canEditProposal && isDraft && (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => setDraftEditMode(true)}
+                  className="text-sm px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
+                >
+                  Open full editor
+                </button>
+              </div>
+            )}
+            {canEditProposal && !isDraft && (
               <div className="mt-3">
                 <EditProposalButton proposal={proposal} onSaved={fetchData} />
-                {/* Phase 59 A4 + A5 — draft-only actions (type
-                    change + hard delete) rendered alongside the
-                    title/body editor when the proposal is in draft.
-                    Hidden once the proposal advances to
-                    deliberation. */}
-                {isDraft && (
-                  <DraftActionsPanel
-                    proposal={proposal}
-                    onSaved={fetchData}
-                    linkOrg={linkOrg}
-                  />
-                )}
               </div>
             )}
             {/* Phase 32.1 F2.3 — lockout tooltip when author/admin but

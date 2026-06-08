@@ -261,8 +261,32 @@ function TopicPickerList({
   return <div className="space-y-2">{topics.map(renderTopicRow)}</div>;
 }
 
-function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onCancel }) {
+// Phase 62 A1 — CreateProposalForm doubles as the draft-edit form when
+// `editingProposal` is supplied. In edit mode it prefills every editable
+// field from the proposal, PATCHes /api/proposals/{id} on submit, and
+// labels the submit button "Save Changes". Create-mode behavior is
+// unchanged when `editingProposal` is null/undefined. The full editable
+// field set matches the create payload modulo `sub_org_id` and
+// `linked_polis_ids` — both are deliberately not editable post-creation
+// in this pass (scope is structural; linked Polises are a structural
+// link, and changing either has broader implications beyond the draft).
+function CreateProposalForm({
+  slug,
+  orgSettings,
+  topics,
+  subOrgs,
+  onCreated,
+  onCancel,
+  editingProposal = null,
+  // Phase 62 A3 — optional hard-delete callback surfaced in edit mode.
+  // When supplied, a "Delete draft" button is rendered alongside Save
+  // + Cancel. Caller is responsible for the API DELETE + navigation;
+  // see ProposalDetail.jsx for the canonical wiring.
+  onDelete = null,
+}) {
+  const isEditMode = !!editingProposal;
   const toast = useToast();
+  const confirm = useConfirm();
   // Cluster B (49a) — creation-flow awareness. The legacy 3-way
   // proposal_creation_mode collapsed into permission + toggle:
   // members lacking ``proposal.create`` can still file a petition
@@ -289,26 +313,69 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
   // number inputs (deliberation integer days, voting fractional days with
   // a 0.05 floor / 0.05 step for live-poll use cases).
   const canSetDurations = useHasPermission('proposal.set_durations');
-  const [title, setTitle] = useState('');
-  const [body, setBody] = useState('');
-  const [votingMethod, setVotingMethod] = useState('binary');
-  const [options, setOptions] = useState([{ label: '', description: '' }, { label: '', description: '' }]);
-  const [numWinners, setNumWinners] = useState(1);
-  const [selectedTopics, setSelectedTopics] = useState([]);
-  // Phase 8.5 — scope selector. '' == parent-org-wide.
-  const [scope, setScope] = useState('');
-  const [passThreshold, setPassThreshold] = useState(orgSettings?.default_pass_threshold ?? 0.5);
-  const [quorumThreshold, setQuorumThreshold] = useState(orgSettings?.default_quorum_threshold ?? 0.4);
+  // Phase 62 A1 — prefill from editingProposal when in edit mode. Fall
+  // back to create-mode defaults otherwise. Lazy-init so we read the
+  // proposal once on mount; subsequent updates to editingProposal would
+  // require a key= on the form (we never re-prefill mid-edit).
+  const [title, setTitle] = useState(() => (isEditMode ? (editingProposal.title ?? '') : ''));
+  const [body, setBody] = useState(() => (isEditMode ? (editingProposal.body ?? '') : ''));
+  const [votingMethod, setVotingMethod] = useState(() => (
+    isEditMode ? (editingProposal.voting_method ?? 'binary') : 'binary'
+  ));
+  const [options, setOptions] = useState(() => {
+    if (isEditMode && Array.isArray(editingProposal.options) && editingProposal.options.length > 0) {
+      return editingProposal.options.map(o => ({
+        label: o.label ?? '',
+        description: o.description ?? '',
+      }));
+    }
+    return [{ label: '', description: '' }, { label: '', description: '' }];
+  });
+  const [numWinners, setNumWinners] = useState(() => (
+    isEditMode ? (editingProposal.num_winners ?? 1) : 1
+  ));
+  const [selectedTopics, setSelectedTopics] = useState(() => {
+    if (isEditMode && Array.isArray(editingProposal.topics)) {
+      // ProposalOut surfaces topics as [{topic_id, relevance, ...}]; map
+      // to the form's {topic_id, relevance} shape (drop extras).
+      return editingProposal.topics.map(t => ({
+        topic_id: t.topic_id ?? t.id,
+        relevance: t.relevance ?? 1.0,
+      }));
+    }
+    return [];
+  });
+  // Phase 8.5 — scope selector. '' == parent-org-wide. Not editable post-
+  // creation (structural choice); we still surface it as read-only in
+  // edit mode for context.
+  const [scope, setScope] = useState(() => (
+    isEditMode ? (editingProposal.sub_org_id ?? '') : ''
+  ));
+  const [passThreshold, setPassThreshold] = useState(() => (
+    isEditMode && editingProposal.pass_threshold != null
+      ? editingProposal.pass_threshold
+      : (orgSettings?.default_pass_threshold ?? 0.5)
+  ));
+  const [quorumThreshold, setQuorumThreshold] = useState(() => (
+    isEditMode && editingProposal.quorum_threshold != null
+      ? editingProposal.quorum_threshold
+      : (orgSettings?.default_quorum_threshold ?? 0.4)
+  ));
   // Phase 16 F1 — duration state. Pre-populated from org defaults so the
   // visible numbers match what the backend would default to. When the user
   // lacks `proposal.set_durations` we still hold these values but only
-  // include them in the payload when the editor is shown.
-  const [deliberationDays, setDeliberationDays] = useState(
-    orgSettings?.default_deliberation_days ?? 7,
-  );
-  const [votingDays, setVotingDays] = useState(
-    orgSettings?.default_voting_days ?? 3,
-  );
+  // include them in the payload when the editor is shown. In edit mode,
+  // prefill from the proposal's own value if it overrode the default.
+  const [deliberationDays, setDeliberationDays] = useState(() => (
+    isEditMode && editingProposal.deliberation_days != null
+      ? editingProposal.deliberation_days
+      : (orgSettings?.default_deliberation_days ?? 7)
+  ));
+  const [votingDays, setVotingDays] = useState(() => (
+    isEditMode && editingProposal.voting_days != null
+      ? editingProposal.voting_days
+      : (orgSettings?.default_voting_days ?? 3)
+  ));
 
   // Decision 3: sub-org proposals can use parent-org-wide topics + that sub-
   // org's own topics. Parent-org-wide proposals can use ONLY parent-org-wide
@@ -329,18 +396,30 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
     orgSettings?.stable_result_enabled_default
     ?? orgSettings?.sustained_majority_enabled_default
   ) === true;
-  const [smEnabled, setSmEnabled] = useState(orgSmDefault);
+  const [smEnabled, setSmEnabled] = useState(() => (
+    isEditMode && editingProposal.stable_result_required != null
+      ? editingProposal.stable_result_required
+      : orgSmDefault
+  ));
   // Phase 9 — Linked Polises (Decision 2 + 7). When org config has
   // `require_polis_for_new_proposals` true, at least one link is required;
   // form blocks submission otherwise. The org config walks parent chain
   // server-side via `get_org_config`; for parent-org-wide proposals the
   // value lives on `currentOrg.settings`.
   const requirePolis = orgSettings?.require_polis_for_new_proposals === true;
-  const [linkedPolisIds, setLinkedPolisIds] = useState([]);
+  const [linkedPolisIds, setLinkedPolisIds] = useState(() => (
+    isEditMode && Array.isArray(editingProposal.linked_polis_ids)
+      ? editingProposal.linked_polis_ids
+      : []
+  ));
   // Phase 52 Stage 1 — per-proposal verification floor. Default
   // empty → backend serializes as NULL → ungated (today's behavior).
-  const [verificationFloor, setVerificationFloor] = useState('');
-  const [verificationJurisdiction, setVerificationJurisdiction] = useState('');
+  const [verificationFloor, setVerificationFloor] = useState(() => (
+    isEditMode ? (editingProposal.verification_floor ?? '') : ''
+  ));
+  const [verificationJurisdiction, setVerificationJurisdiction] = useState(() => (
+    isEditMode ? (editingProposal.verification_jurisdiction ?? '') : ''
+  ));
   // Phase 32.2 F1 — three new deliberation-engagement override toggles,
   // now mode-aware. The Phase 32.2 migration replaced the four boolean
   // default fields with enum modes (`always_off` / `default_off` /
@@ -371,12 +450,39 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
   const orgPreVotingAllowed = _modeDefault(preVotingAllowedMode, false);
   const orgShowVotesDuringDelib = _modeDefault(visibilityMode, false);
   const orgEditLockoutFrac = orgSettings?.proposal_edits?.lockout_fraction ?? 0.75;
-  const [allowWriteIns, setAllowWriteIns] = useState(orgWriteInsAllowed);
-  const [allowWriteInsDuringVoting, setAllowWriteInsDuringVoting] = useState(orgWriteInsDuringVoting);
-  const [maxWriteIns, setMaxWriteIns] = useState(orgMaxWriteIns);
-  const [allowPreVoting, setAllowPreVoting] = useState(orgPreVotingAllowed);
-  const [showVotesDuringDelib, setShowVotesDuringDelib] = useState(orgShowVotesDuringDelib);
-  const [editLockoutFrac, setEditLockoutFrac] = useState(orgEditLockoutFrac);
+  // Phase 62 A1 — prefill engagement overrides from the proposal's own
+  // value when non-null; fall back to org-default otherwise (so "inherit"
+  // stays "inherit" unless the user changes it).
+  const [allowWriteIns, setAllowWriteIns] = useState(() => (
+    isEditMode && editingProposal.allow_write_in_options != null
+      ? editingProposal.allow_write_in_options
+      : orgWriteInsAllowed
+  ));
+  const [allowWriteInsDuringVoting, setAllowWriteInsDuringVoting] = useState(() => (
+    isEditMode && editingProposal.allow_write_ins_during_voting != null
+      ? editingProposal.allow_write_ins_during_voting
+      : orgWriteInsDuringVoting
+  ));
+  const [maxWriteIns, setMaxWriteIns] = useState(() => (
+    isEditMode && editingProposal.max_write_ins != null
+      ? editingProposal.max_write_ins
+      : orgMaxWriteIns
+  ));
+  const [allowPreVoting, setAllowPreVoting] = useState(() => (
+    isEditMode && editingProposal.allow_pre_voting != null
+      ? editingProposal.allow_pre_voting
+      : orgPreVotingAllowed
+  ));
+  const [showVotesDuringDelib, setShowVotesDuringDelib] = useState(() => (
+    isEditMode && editingProposal.show_votes_during_deliberation != null
+      ? editingProposal.show_votes_during_deliberation
+      : orgShowVotesDuringDelib
+  ));
+  const [editLockoutFrac, setEditLockoutFrac] = useState(() => (
+    isEditMode && editingProposal.edit_lockout_fraction != null
+      ? editingProposal.edit_lockout_fraction
+      : orgEditLockoutFrac
+  ));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -421,9 +527,30 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
     // Phase 9 — block submission when require_polis_for_new_proposals is
     // true and the picker is empty. Server enforces this too; we surface
     // it inline so the operator doesn't round-trip a 400.
-    if (requirePolis && (linkedPolisIds || []).length === 0 && scope) {
+    if (!isEditMode && requirePolis && (linkedPolisIds || []).length === 0 && scope) {
       setError('At least one linked Polis is required for proposals in this scope.');
       return;
+    }
+    // Phase 62 A1 — voting_method change during edit discards existing
+    // options (matches the Phase 59 A4 backend's option-reshape behavior).
+    // Confirm with the user before submit so the destructive intent is
+    // explicit. Only fires when actually changing methods.
+    if (
+      isEditMode
+      && votingMethod !== (editingProposal.voting_method ?? 'binary')
+      && Array.isArray(editingProposal.options)
+      && editingProposal.options.length > 0
+    ) {
+      const ok = await confirm({
+        title: 'Change voting method?',
+        message: (
+          'Changing the voting method on this draft will discard the '
+          + 'existing options. New options can be added if the new method '
+          + 'is approval or ranked-choice. Continue?'
+        ),
+        destructive: true,
+      });
+      if (!ok) return;
     }
     setSaving(true);
     setError('');
@@ -450,7 +577,10 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
         payload.deliberation_days = deliberationDays;
         payload.voting_days = votingDays;
       }
-      if (scope) payload.sub_org_id = scope;
+      // Phase 62 A1 — sub_org_id is set only on create. Edit mode keeps
+      // the proposal's existing scope; the PATCH endpoint does not accept
+      // a scope change.
+      if (!isEditMode && scope) payload.sub_org_id = scope;
       if (isMultiOption) {
         payload.options = options.map(o => ({
           label: o.label.trim(),
@@ -460,10 +590,20 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
       }
-      // Phase 52 Stage 1 — verification floor + optional jurisdiction.
-      // Only include when explicitly set; an unset value lets the
-      // backend leave the column NULL (the ungated default).
-      if (verificationFloor) {
+      // Phase 52 Stage 1 + Phase 62 A1 — verification floor + optional
+      // jurisdiction. In create mode, only include when explicitly set
+      // (unset → backend leaves NULL = ungated default). In edit mode,
+      // always send the field (including explicit null) so the user can
+      // clear a previously-set gate; the backend reads model_fields_set
+      // to distinguish "not editing this" from "editing this to null".
+      if (isEditMode) {
+        payload.verification_floor = verificationFloor || null;
+        payload.verification_jurisdiction = (
+          verificationFloor && verificationJurisdiction.trim()
+            ? verificationJurisdiction.trim()
+            : null
+        );
+      } else if (verificationFloor) {
         payload.verification_floor = verificationFloor;
         if (verificationJurisdiction.trim()) {
           payload.verification_jurisdiction = verificationJurisdiction.trim();
@@ -505,14 +645,21 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
       // Phase 9 — structurally-recorded Polis links (Decision 2). Server
       // rejects this on parent-org-wide proposals (linked_polis_ids only
       // supported on org-scoped proposals); only include when scoped.
-      if (scope && (linkedPolisIds || []).length > 0) {
+      // In edit mode we don't currently surface a polis-picker (scope is
+      // immutable; the existing links stay), so this stays create-only.
+      if (!isEditMode && scope && (linkedPolisIds || []).length > 0) {
         payload.linked_polis_ids = linkedPolisIds;
       }
-      await api.post(`/api/orgs/${slug}/proposals`, payload);
-      toast.success('Proposal created');
+      if (isEditMode) {
+        await api.patch(`/api/proposals/${editingProposal.id}`, payload);
+        toast.success('Proposal updated');
+      } else {
+        await api.post(`/api/orgs/${slug}/proposals`, payload);
+        toast.success('Proposal created');
+      }
       onCreated();
     } catch (err) {
-      setError(err.message || 'Failed to create proposal');
+      setError(err.message || (isEditMode ? 'Failed to save changes' : 'Failed to create proposal'));
     } finally {
       setSaving(false);
     }
@@ -520,20 +667,37 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
 
   return (
     <form onSubmit={handleSubmit} className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
-      <h3 className="text-lg font-semibold text-[var(--brand-primary)]">Create Proposal</h3>
+      <h3 className="text-lg font-semibold text-[var(--brand-primary)]">
+        {isEditMode ? 'Edit Draft Proposal' : 'Create Proposal'}
+      </h3>
 
       {/* Phase 46 F2 / Phase 46a — cosign-required advisory.
           Members in cosign_required orgs see this so the creation flow
           doesn't silently change behavior. 46a: threshold is measured
-          in WEIGHT (delegation-aware) and evaluated at window-end. */}
-      {showCosignAdvisory && (
+          in WEIGHT (delegation-aware) and evaluated at window-end.
+          Phase 62 A1: cosign is a create-time gathering mechanic; not
+          surfaced in edit mode (an existing draft has already entered
+          the cosign pipeline at creation time if applicable). */}
+      {!isEditMode && showCosignAdvisory && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900">
           <strong>This org gathers signatures first.</strong> Your proposal will need <strong>{cosignThreshold} weight</strong> of cosign support (you count for yourself plus everyone who delegates a relevant topic to you) within roughly <strong>{cosignWindowDays} day{cosignWindowDays === 1 ? '' : 's'}</strong>. The threshold is checked at window-end: if support is met, the proposal advances to voting; otherwise it closes as "expired_unsigned."
         </div>
       )}
 
-      {/* Phase 8.5 — Scope Selector */}
-      {subOrgs && subOrgs.length > 0 && (
+      {/* Phase 8.5 — Scope Selector. Phase 62 A1: scope is structural and
+          immutable post-creation; in edit mode we render the current
+          scope read-only (or omit if parent-org-wide) rather than the
+          selector. */}
+      {isEditMode && scope && subOrgs && subOrgs.find(s => s.id === scope) && (
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">Scope</label>
+          <div className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600">
+            {subOrgs.find(s => s.id === scope).name} only
+            <span className="ml-2 text-xs text-gray-400">(scope is not editable)</span>
+          </div>
+        </div>
+      )}
+      {!isEditMode && subOrgs && subOrgs.length > 0 && (
         <div>
           <label className="block text-xs text-gray-500 mb-1">Scope</label>
           <select
@@ -830,7 +994,10 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
           linked_polis_ids on parent-org-wide proposals (only org-scoped
           proposals can carry structural links — see routes/proposals.py),
           so the picker only renders when a sub-org scope is selected. */}
-      {scope && (
+      {/* Phase 62 A1 — linked Polises are a structural link captured at
+          creation; not editable in draft-edit for now (no PATCH endpoint
+          difference, but exposing the picker invites unexpected diffs). */}
+      {!isEditMode && scope && (
         <LinkedPolisesPicker
           parentSlug={slug}
           scopeSubOrgId={scope}
@@ -1016,13 +1183,15 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 items-center">
         <button
           type="submit"
           disabled={saving || !title.trim() || !optionsValid || !numWinnersValid}
           className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
         >
-          {saving ? 'Creating...' : 'Create Proposal'}
+          {saving
+            ? (isEditMode ? 'Saving...' : 'Creating...')
+            : (isEditMode ? 'Save Changes' : 'Create Proposal')}
         </button>
         <button
           type="button"
@@ -1031,10 +1200,27 @@ function CreateProposalForm({ slug, orgSettings, topics, subOrgs, onCreated, onC
         >
           Cancel
         </button>
+        {/* Phase 62 A3 — Delete-draft button (edit mode only, when caller
+            supplies an onDelete handler). Destructive styling; the
+            handler is responsible for confirm dialog + navigation. */}
+        {isEditMode && onDelete && (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="ml-auto text-sm px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
+          >
+            Delete draft
+          </button>
+        )}
       </div>
     </form>
   );
 }
+
+// Phase 62 A3 — re-export under the friendlier name for downstream
+// consumers (ProposalDetail wires the edit-mode form). The functional
+// alias keeps the existing import paths working without renaming.
+export { CreateProposalForm as ProposalForm };
 
 export default function ProposalManagement() {
   const { currentOrg, fetchSubOrgsFor } = useOrg();
