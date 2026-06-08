@@ -2,7 +2,8 @@
 
 **Branch:** `phase-62/draft-edit-complete-and-fixes`
 **Spec:** `phase62_draft_edit_complete_spec_2026-06-08.md`
-**Merge to master:** _pending pytest green_ (filled in on merge)
+**Merged to master:** 2026-06-08 (merge commit `3c54a48`)
+**Deploy status:** SHIPPED. Bundle flipped to `index-C-Meb5KW.js` (Phase 62) on top of the Phase 52j-followup's `index-BZOMmtce.js`. Backend healthy on 3 consecutive 200s on `/api/health` within ~40s of push.
 
 ## Per-cluster status
 
