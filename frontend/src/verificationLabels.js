@@ -31,12 +31,14 @@ export const VERIFICATION_STATE_SHORT_LABELS = {
   residency_verified: 'Residency',
 };
 
+// Phase 52j J2 — collapsed to the three meaningful tiers (Z-locked
+// relabel; backend ladder UNCHANGED so any stored stale value still
+// resolves through labelForState). Membership + role floor dropdowns
+// and the proposal-floor dropdown all read from this list.
 export const VERIFICATION_STATE_OPTIONS = [
   { value: '', label: 'No verification required (default)' },
-  { value: 'identity', label: VERIFICATION_STATE_LABELS.identity },
-  { value: 'identity_unique', label: VERIFICATION_STATE_LABELS.identity_unique },
-  { value: 'address_on_id', label: VERIFICATION_STATE_LABELS.address_on_id },
-  { value: 'residency_verified', label: VERIFICATION_STATE_LABELS.residency_verified },
+  { value: 'identity', label: 'Identity verified' },
+  { value: 'address_on_id', label: 'Verified resident' },
 ];
 
 export const VERIFICATION_PROVENANCE_LABELS = {

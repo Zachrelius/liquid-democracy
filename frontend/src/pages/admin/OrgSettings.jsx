@@ -2487,7 +2487,7 @@ export default function OrgSettings() {
                 Residency scope (where members must live, when a gate requires it)
               </label>
               <p className="text-xs text-gray-500">
-                Add one or more allowed locations. A member with verified residency that matches ANY entry passes. Leave the city blank to match anyone in that state. City entries are hashed with the state; "Springfield, MA" and "Springfield, IL" are different.
+                Add one or more allowed locations. Use the two-letter US state code (MA, NH, CA, NY — not the full name). The city is optional; leave it blank to match anyone in that state. City entries are hashed with the state, so "Springfield, MA" and "Springfield, IL" are treated as different places.
               </p>
               <div className="space-y-2">
                 {(settings.verification_residency_scope || []).map((entry, idx) => (
@@ -2497,11 +2497,18 @@ export default function OrgSettings() {
                       value={entry.state || ''}
                       onChange={e => {
                         const next = [...(settings.verification_residency_scope || [])];
-                        next[idx] = { ...next[idx], state: e.target.value || '' };
+                        // Force 2-letter uppercase US state codes — the
+                        // backend's normalize_jurisdiction expects this
+                        // form, and a typed-out "Massachusetts" works at
+                        // hash time but the FE input shouldn't suggest
+                        // it's accepted.
+                        const v = (e.target.value || '').toUpperCase().slice(0, 2);
+                        next[idx] = { ...next[idx], state: v };
                         updateSetting('verification_residency_scope', next);
                       }}
-                      placeholder="State (e.g. MA)"
-                      className="w-24 px-2 py-1 border border-gray-300 rounded text-sm"
+                      placeholder="State"
+                      maxLength={2}
+                      className="w-20 px-2 py-1 border border-gray-300 rounded text-sm uppercase tracking-wider"
                     />
                     <input
                       type="text"
@@ -2513,7 +2520,7 @@ export default function OrgSettings() {
                         else { const { city: _drop, ...rest } = next[idx] || {}; next[idx] = rest; }
                         updateSetting('verification_residency_scope', next);
                       }}
-                      placeholder="City (optional)"
+                      placeholder="City (optional, e.g. Boston)"
                       className="flex-1 max-w-xs px-2 py-1 border border-gray-300 rounded text-sm"
                     />
                     <button
