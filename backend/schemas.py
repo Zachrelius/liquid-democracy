@@ -469,6 +469,13 @@ class ProposalUpdate(BaseModel):
     edit_lockout_fraction: Optional[float] = Field(
         default=None, ge=0.0, le=1.0,
     )
+    # Phase 62 A2 — per-proposal verification floor + jurisdiction become
+    # editable while status='draft' (matching ProposalCreate). The route
+    # enforces the draft-only guard + reuses the create-path normalization
+    # block (VALID_STATES + jurisdiction-presence + email_only → NULL).
+    # Outside draft these are rejected.
+    verification_floor: Optional[str] = Field(default=None)
+    verification_jurisdiction: Optional[str] = Field(default=None)
 
     @field_validator("topics", mode="before")
     @classmethod

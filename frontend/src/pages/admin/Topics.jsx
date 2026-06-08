@@ -21,6 +21,63 @@ const PRESET_COLORS = [
   '#64748b', '#78716c', '#1B3A5C', '#2E75B6',
 ];
 
+// Phase 62 B1 — ColorPicker MUST be defined at module scope (not nested
+// inside the Topics component). Phase 56 declared it inside Topics(),
+// which meant every render of Topics() created a fresh function
+// reference; React saw it as a "different" component and remounted the
+// entire ColorPicker subtree on every parent state change. That
+// remount unmounts the underlying native `<input type="color">`,
+// which the OS treats as a focus-loss event and closes the color
+// picker dialog. Phase 59's `onMouseDown={preventDefault}` was
+// targeting OS-level focus management, but the actual trigger was
+// React unmounting the input out from under the dialog. Hoisting the
+// component to module scope keeps the subtree stable across renders
+// and the dialog stays open while the user adjusts swatches or drags
+// the slider.
+function ColorPicker({ value, onChange }) {
+  const isPreset = PRESET_COLORS.includes(value);
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-2">
+        {PRESET_COLORS.map(c => (
+          <button
+            key={c}
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onChange(c)}
+            className={`w-7 h-7 rounded-full border-2 transition-all ${
+              value === c ? 'border-gray-800 scale-110' : 'border-transparent hover:border-gray-300'
+            }`}
+            style={{ backgroundColor: c }}
+            aria-label={`Use color ${c}`}
+          />
+        ))}
+        <label
+          className={`relative inline-flex items-center justify-center w-7 h-7 rounded-full border-2 cursor-pointer transition-all ${
+            !isPreset ? 'border-gray-800 scale-110' : 'border-dashed border-gray-300 hover:border-gray-500'
+          }`}
+          style={!isPreset ? { backgroundColor: value } : { backgroundColor: 'white' }}
+          title="Pick a custom color"
+        >
+          <input
+            type="color"
+            value={value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#6366f1'}
+            onChange={e => onChange(e.target.value)}
+            className="absolute inset-0 opacity-0 cursor-pointer"
+            aria-label="Pick a custom color"
+          />
+          {isPreset && (
+            <span className="text-[10px] text-gray-500 leading-none select-none">+</span>
+          )}
+        </label>
+      </div>
+      <p className="mt-2 text-xs text-gray-400">
+        Selected: <span className="font-mono">{value || '—'}</span>
+      </p>
+    </div>
+  );
+}
+
 export default function Topics() {
   const { currentOrg, fetchSubOrgsFor } = useOrg();
   const toast = useToast();
@@ -223,65 +280,6 @@ export default function Topics() {
     // category (or empty strings when null) so the inputs are editable.
     setEditPurpose(topic.purpose || '');
     setEditCategory(topic.category || '');
-  }
-
-  function ColorPicker({ value, onChange }) {
-    // Phase 56 F1 — a native `<input type="color">` sits beside the preset
-    // swatches so a steward can pick any hex (covers what the dropped
-    // var() swatches loosely gestured at). The native picker always emits
-    // `#RRGGBB`, so the backend validator (regex `^#(?:[0-9a-f]{3}|[0-9a-f]{6})$`)
-    // accepts the output by construction.
-    //
-    // Phase 59 C1 — `onMouseDown={preventDefault}` on each swatch keeps
-    // the browser's focus on whatever was previously focused (including
-    // the system-level color picker dialog if open). Without this guard,
-    // clicking a swatch steals focus from the OS color dialog and the
-    // browser closes the dialog. The `onClick` still fires (preventDefault
-    // on mousedown doesn't suppress click). This is the conservative fix
-    // for the "auto-closes on each swatch click" report — the React layer
-    // has no popover of its own, but the OS-level picker reacted to focus
-    // changes triggered by swatch clicks.
-    const isPreset = PRESET_COLORS.includes(value);
-    return (
-      <div>
-        <div className="flex flex-wrap items-center gap-2">
-          {PRESET_COLORS.map(c => (
-            <button
-              key={c}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => onChange(c)}
-              className={`w-7 h-7 rounded-full border-2 transition-all ${
-                value === c ? 'border-gray-800 scale-110' : 'border-transparent hover:border-gray-300'
-              }`}
-              style={{ backgroundColor: c }}
-              aria-label={`Use color ${c}`}
-            />
-          ))}
-          <label
-            className={`relative inline-flex items-center justify-center w-7 h-7 rounded-full border-2 cursor-pointer transition-all ${
-              !isPreset ? 'border-gray-800 scale-110' : 'border-dashed border-gray-300 hover:border-gray-500'
-            }`}
-            style={!isPreset ? { backgroundColor: value } : { backgroundColor: 'white' }}
-            title="Pick a custom color"
-          >
-            <input
-              type="color"
-              value={value && /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#6366f1'}
-              onChange={e => onChange(e.target.value)}
-              className="absolute inset-0 opacity-0 cursor-pointer"
-              aria-label="Pick a custom color"
-            />
-            {isPreset && (
-              <span className="text-[10px] text-gray-500 leading-none select-none">+</span>
-            )}
-          </label>
-        </div>
-        <p className="mt-2 text-xs text-gray-400">
-          Selected: <span className="font-mono">{value || '—'}</span>
-        </p>
-      </div>
-    );
   }
 
   return (
