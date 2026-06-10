@@ -4,6 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -42,8 +43,23 @@ def _require_voting_open(
 
     Default behavior unchanged for proposals with ``allow_pre_voting``
     null/False: vote-casting still requires status="voting".
+
+    Phase 63 (security): also enforce ``voting_end`` directly. The
+    deadline used to be enforced only by the sustained-majority worker
+    flipping ``status`` on its tick (default 300s), so votes and
+    vote-changes were accepted for up to one tick interval past the
+    official deadline — material on tight tallies. The worker's natural
+    close keeps ``update_voting_end=False`` semantics; this check uses
+    the same naive-UTC now the worker compares against.
     """
     if proposal.status == "voting":
+        if proposal.voting_end is not None:
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            if now >= proposal.voting_end:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Voting has closed for this proposal",
+                )
         return
     if proposal.status == "deliberation":
         from proposal_engagement_config import resolve_allow_pre_voting
@@ -266,7 +282,32 @@ async def cast_vote(
             cast_by_id=current_user.id,
         )
         db.add(vote)
-        db.flush()
+        try:
+            db.flush()
+        except IntegrityError:
+            # Phase 63 — two concurrent first votes by the same user both
+            # pass the check-then-insert above; the UniqueConstraint
+            # (proposal_id, user_id) correctly blocks the second row, but
+            # pre-fix the IntegrityError surfaced as a 500. Resolve the
+            # race by retargeting the already-committed row as an update.
+            db.rollback()
+            existing = (
+                db.query(models.Vote)
+                .filter(
+                    models.Vote.proposal_id == proposal_id,
+                    models.Vote.user_id == current_user.id,
+                )
+                .first()
+            )
+            if existing is None:  # pragma: no cover — constraint implies row
+                raise HTTPException(status_code=409, detail="Vote conflict; retry")
+            existing.vote_value = vote_value
+            existing.ballot = ballot
+            existing.is_direct = True
+            existing.delegate_chain = None
+            existing.cast_by_id = current_user.id
+            db.flush()
+            vote = existing
         log_audit_event(
             db,
             action="vote.cast",

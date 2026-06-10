@@ -11,7 +11,10 @@
 export function resolveNext(rawNext) {
   if (typeof rawNext !== 'string') return null;
   if (!rawNext.startsWith('/')) return null;
-  if (rawNext.startsWith('//')) return null;
+  // Reject protocol-relative targets in both slash flavors: browsers
+  // normalize backslashes in URL resolution, so `/\evil.com` becomes
+  // `//evil.com` (Phase 63 hardening).
+  if (/^\/[\\/]/.test(rawNext)) return null;
   return rawNext;
 }
 

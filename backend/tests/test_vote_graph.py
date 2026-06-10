@@ -204,6 +204,14 @@ def _node(graph: dict, user_id: str) -> dict:
     raise AssertionError(f"Node {user_id} not found in graph")
 
 
+def _anon_nodes(graph: dict) -> list[dict]:
+    """Phase 63 (security): identity-redacted nodes no longer carry the
+    voter's real user_id — they get a per-request opaque ``anon_`` id.
+    Redacted voters must be located by their opaque id (and disambiguated
+    by ballot content), never by real user_id."""
+    return [n for n in graph["nodes"] if n["id"].startswith("anon_")]
+
+
 # ===========================================================================
 # Tests
 # ===========================================================================
@@ -270,7 +278,12 @@ def test_02_approval_graph_visible_and_anonymous_voter_ballots(client, test_db):
     assert resp.status_code == 200
     graph = resp.json()
     pub_node = _node(graph, public_dlg.id)
-    anon_node = _node(graph, anon.id)
+    # Phase 63 (security): the anonymous voter's real user_id no longer
+    # appears in the graph — locate the redacted node by its anon_ id.
+    assert all(n["id"] != anon.id for n in graph["nodes"])
+    anon_candidates = _anon_nodes(graph)
+    assert len(anon_candidates) == 1
+    anon_node = anon_candidates[0]
     # Public delegate is visible: ballot present with approvals list, label populated.
     assert pub_node["label"] != ""
     assert pub_node["ballot"] is not None
@@ -387,14 +400,19 @@ def test_06_binary_graph_preserves_legacy_structure(client, test_db):
     assert c["approval"] is None
     assert c["rcv"] is None
     assert data["options"] == []
-    # Per-node ballot for binary uses vote_value
-    yes_node = _node(data, v_yes.id)
-    # Author is the current_user → visible
+    # Author is the current_user → visible under their real id.
     author_node = _node(data, author.id)
     assert author_node["ballot"] is None  # author has no vote
-    # v_yes is anonymous to author. Phase 7C.1: identity hidden, ballot visible.
+    # v_yes is anonymous to author. Phase 7C.1: identity hidden, ballot
+    # visible. Phase 63 (security): the redacted voter's real user_id is
+    # also hidden — find their node by ballot content among the anon_ ids.
+    node_ids = {n["id"] for n in data["nodes"]}
+    assert v_yes.id not in node_ids
+    yes_node = next(
+        n for n in _anon_nodes(data)
+        if n["ballot"] is not None and n["ballot"]["vote_value"] == "yes"
+    )
     assert yes_node["label"] == ""
-    assert yes_node["ballot"] is not None
     assert yes_node["ballot"]["vote_value"] == "yes"
 
 
@@ -416,7 +434,12 @@ def test_07_privacy_anonymous_voters_keep_ballots_label_redacted(client, test_db
     resp = client.get(f"/api/proposals/{p.id}/vote-graph", headers=_auth(viewer))
     assert resp.status_code == 200
     data = resp.json()
-    stranger_node = _node(data, stranger.id)
+    # Phase 63 (security): the stranger's real user_id is redacted along
+    # with the label — the node carries an opaque anon_ id instead.
+    assert all(n["id"] != stranger.id for n in data["nodes"])
+    anon_candidates = _anon_nodes(data)
+    assert len(anon_candidates) == 1
+    stranger_node = anon_candidates[0]
     assert stranger_node["label"] == ""                 # identity hidden
     assert stranger_node["ballot"] is not None           # ballot remains visible
     assert stranger_node["ballot"]["approvals"] == [oids[0]]

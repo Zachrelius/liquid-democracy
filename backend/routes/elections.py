@@ -54,9 +54,19 @@ class _OpenElectionBody(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _proposal_or_404(db: Session, proposal_id: str) -> models.Proposal:
+def _proposal_or_404(
+    db: Session, proposal_id: str, org_id: Optional[str] = None,
+) -> models.Proposal:
     p = db.get(models.Proposal, proposal_id)
     if p is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    # Phase 63 (security): bind the proposal to the org resolved from the
+    # URL slug. Without this, a member of any org could act on another
+    # org's election proposal (declare/withdraw candidacy, list the
+    # candidate roster) because require_org_membership only validates
+    # membership in the *slug's* org. 404 (not 403) to avoid confirming
+    # the proposal exists, mirroring duplicate_flags.resolve_flag.
+    if org_id is not None and p.org_id != org_id:
         raise HTTPException(status_code=404, detail="Proposal not found")
     return p
 
@@ -320,7 +330,7 @@ def list_candidacies(
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_membership),
 ):
-    proposal = _proposal_or_404(db, proposal_id)
+    proposal = _proposal_or_404(db, proposal_id, org_id=membership.org_id)
     _require_election(proposal)
     from elections import active_candidacies
     rows = active_candidacies(db, proposal.id)
@@ -351,7 +361,7 @@ def declare_my_candidacy(
     """Self-nominate per D5. Only the caller can declare for themselves
     — there is no draft-nomination of others. Must be in the
     nomination window (proposal.status in 'draft'/'deliberation')."""
-    proposal = _proposal_or_404(db, proposal_id)
+    proposal = _proposal_or_404(db, proposal_id, org_id=membership.org_id)
     _require_election(proposal)
     _require_nomination_window(proposal)
 
@@ -386,7 +396,7 @@ def withdraw_my_candidacy(
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_membership),
 ):
-    proposal = _proposal_or_404(db, proposal_id)
+    proposal = _proposal_or_404(db, proposal_id, org_id=membership.org_id)
     _require_election(proposal)
     _require_nomination_window(proposal)
 

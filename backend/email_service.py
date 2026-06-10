@@ -21,7 +21,9 @@ event), builds template_vars, and calls ``send_org_email``.
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
+import re
 from pathlib import Path
 from string import Template
 from typing import Any, Optional
@@ -196,6 +198,9 @@ def _load_template(template_key: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+_HEX_COLOR_RE = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})")
+
+
 def _resolve_org_primary_color(org: Optional[models.Organization]) -> str:
     """Return the org's branded primary color, or the platform default.
 
@@ -209,7 +214,13 @@ def _resolve_org_primary_color(org: Optional[models.Organization]) -> str:
     settings_dict = org.settings or {}
     branding = settings_dict.get("branding") or {}
     color = (branding.get("primary_color") or "").strip()
-    return color or PLATFORM_DEFAULT_PRIMARY_COLOR
+    # Phase 63 (security): the color is interpolated into inline CSS in the
+    # email templates without escaping — only accept a strict hex literal
+    # here (same shape schemas.py validates at write time) so a value that
+    # reached settings through any other path can't inject markup/CSS.
+    if not _HEX_COLOR_RE.fullmatch(color):
+        return PLATFORM_DEFAULT_PRIMARY_COLOR
+    return color
 
 
 def _format_subject(template_key: str, template_vars: dict[str, Any]) -> str:
@@ -277,11 +288,18 @@ def _prepare_org_email(
 
     subs: dict[str, str] = {"PRIMARY_COLOR": primary_color}
     # Translate template_vars keys to UPPER_CASE for ${VAR_NAME} substitution.
+    # Phase 63 (security): HTML-escape every substitution value. The
+    # templates interpolate user-controlled strings (display names,
+    # proposal titles, org names, denial comments) directly into HTML;
+    # pre-fix, a display name like '<a href="https://evil/">…</a>' rendered
+    # as live markup in recipients' mail clients — a phishing vector from
+    # the platform's own sending domain. PRIMARY_COLOR is exempt (strict
+    # hex-validated above).
     for k, v in template_vars.items():
         if v is None:
             subs[k.upper()] = ""
         else:
-            subs[k.upper()] = str(v)
+            subs[k.upper()] = html.escape(str(v), quote=True)
 
     # safe_substitute leaves unknown placeholders as-is rather than KeyError;
     # surfaces missing-key bugs in dev (visible in the rendered email) but
@@ -710,7 +728,11 @@ async def send_invitation_email(
     ``create_invitations`` + ``resend_invitation`` in
     ``routes/organizations.py`` are unchanged.
     """
-    color = (primary_color or "").strip() or PLATFORM_DEFAULT_PRIMARY_COLOR
+    color = (primary_color or "").strip()
+    # Phase 63 (security): same strict-hex + HTML-escape treatment as
+    # _prepare_org_email — org_name is user-controlled.
+    if not _HEX_COLOR_RE.fullmatch(color):
+        color = PLATFORM_DEFAULT_PRIMARY_COLOR
     cta_url = f"{base_url}/invite/{token}"
     subject = _format_subject("invitation", {"org_name": org_name})
     try:
@@ -720,8 +742,8 @@ async def send_invitation_email(
         return False
     html_body = Template(raw).safe_substitute(
         PRIMARY_COLOR=color,
-        ORG_NAME=org_name,
-        ORG_SLUG=org_slug,
-        CTA_URL=cta_url,
+        ORG_NAME=html.escape(str(org_name), quote=True),
+        ORG_SLUG=html.escape(str(org_slug), quote=True),
+        CTA_URL=html.escape(cta_url, quote=True),
     )
     return await send_email(email, subject, html_body)

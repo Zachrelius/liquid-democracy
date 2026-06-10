@@ -1,4 +1,6 @@
+import hashlib
 import logging
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -2875,6 +2877,14 @@ def get_vote_graph(
     render the option-attractor visualization for approval and RCV.
     """
     proposal = _proposal_or_404(proposal_id, db)
+    # Phase 63 (security): same viewer-eligibility gate as get_proposal /
+    # get_results / get_trajectory. Pre-fix this endpoint required only
+    # authentication, so any logged-in user — including non-members of a
+    # private org — could pull the full per-voter ballot list. 404 (not
+    # 403) to avoid confirming the proposal exists.
+    if not current_user.is_admin:
+        if current_user.id not in _eligible_viewers_for_proposal(db, proposal):
+            raise HTTPException(status_code=404, detail="Proposal not found")
     if proposal.status not in ("voting", "passed", "failed"):
         raise HTTPException(status_code=400, detail="Vote graph only available for voting/passed/failed proposals")
 
@@ -2943,6 +2953,31 @@ def get_vote_graph(
     for uid in user_map:
         vote_results[uid] = resolve_vote_pure(uid, ctx)
 
+    # ------------------------------------------------------------------
+    # Phase 63 (security): identity-redacted nodes must NOT expose the
+    # voter's real user_id. The members endpoint maps user_id ->
+    # display_name (+ email) for any co-member, so a real id on a
+    # redacted node is a stable join key that de-anonymizes every
+    # ballot. Redacted nodes get a per-request opaque id instead —
+    # stable within this response only (nodes and edges are wired
+    # through the same mapping), unlinkable across requests.
+    # ------------------------------------------------------------------
+    _graph_salt = secrets.token_hex(16)
+
+    def _viewer_can_see_identity(uid: str) -> bool:
+        return (
+            uid == current_user.id
+            or uid in pub_delegate_ids
+            or uid in following_ids
+            or uid in delegators_to_me
+        )
+
+    def _node_id(uid: str) -> str:
+        if _viewer_can_see_identity(uid):
+            return uid
+        digest = hashlib.sha256(f"{_graph_salt}:{uid}".encode()).hexdigest()
+        return f"anon_{digest[:16]}"
+
     # Build delegation edges: for each user who delegates, find their delegate
     edges: list[schemas.VoteFlowEdge] = []
     delegator_counts: dict[str, int] = {}  # delegate_id -> count of delegators
@@ -2981,8 +3016,8 @@ def get_vote_graph(
             )
             if can_see_edge:
                 edges.append(schemas.VoteFlowEdge(
-                    source=uid,
-                    target=direct_delegate_id,
+                    source=_node_id(uid),
+                    target=_node_id(direct_delegate_id),
                     topic=topic_name,
                     topic_color=topic_color,
                     is_active=True,
@@ -3002,8 +3037,8 @@ def get_vote_graph(
                     )
                     if can_see_chain:
                         edges.append(schemas.VoteFlowEdge(
-                            source=chain_src,
-                            target=chain_tgt,
+                            source=_node_id(chain_src),
+                            target=_node_id(chain_tgt),
                             topic=topic_name,
                             topic_color=topic_color,
                             is_active=True,
@@ -3066,6 +3101,8 @@ def get_vote_graph(
         is_delegator_to_me = uid in delegators_to_me
 
         # Privacy: show real name if self, public delegate, followed, or they privately delegate to you
+        # (must stay consistent with _viewer_can_see_identity above, which
+        # drives the opaque node-id mapping)
         can_see_identity = is_self or is_pub or is_followed or is_delegator_to_me
         label = user.display_name if can_see_identity else ""
 
@@ -3102,7 +3139,9 @@ def get_vote_graph(
                 )
 
         nodes.append(schemas.VoteFlowNode(
-            id=uid,
+            # Phase 63 (security): real user_id only when the viewer may see
+            # this voter's identity; otherwise a per-request opaque id.
+            id=_node_id(uid),
             label=label,
             type=node_type,
             vote=vote,

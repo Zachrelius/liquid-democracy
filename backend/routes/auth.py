@@ -250,6 +250,7 @@ def _revoke_all_refresh_tokens(db: Session, user_id: str) -> int:
 # ---------------------------------------------------------------------------
 
 @router.post("/register", response_model=schemas.RegisterResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/hour")
 async def register(
     body: schemas.RegisterRequest,
     request: Request,
@@ -492,7 +493,33 @@ def refresh_token(
         models.RefreshToken.token == body.refresh_token,
     ).first()
 
-    if not rt or rt.revoked_at is not None or rt.expires_at < now:
+    # Phase 63 (security) — reuse detection. A known-but-already-revoked
+    # token presented again is the classic stolen-token-replay signal
+    # (tokens rotate on every refresh, so the legitimate holder never
+    # re-presents an old one). Treat it as theft: revoke the user's whole
+    # active token family and audit, then fail with the same 401 as any
+    # other invalid token so the response doesn't oracle the detection.
+    if rt is not None and rt.revoked_at is not None:
+        db.query(models.RefreshToken).filter(
+            models.RefreshToken.user_id == rt.user_id,
+            models.RefreshToken.revoked_at.is_(None),
+        ).update({"revoked_at": now})
+        log_audit_event(
+            db,
+            action="auth.refresh_token_reuse_detected",
+            target_type="user",
+            target_id=rt.user_id,
+            actor_id=rt.user_id,
+            details={"refresh_token_id": rt.id},
+            ip_address=None,
+        )
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+        )
+
+    if not rt or rt.expires_at < now:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired refresh token",

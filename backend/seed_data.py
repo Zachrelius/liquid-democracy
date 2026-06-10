@@ -13,6 +13,8 @@ All users have password: demo1234
 from __future__ import annotations
 
 import logging
+import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -31,6 +33,29 @@ DEMO_PASSWORD = "demo1234"
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _admin_seed_password() -> str:
+    """Phase 63 (security) — the platform-admin seed account must never get
+    the publicly-committed DEMO_PASSWORD. Pre-fix, prod ran with
+    admin/demo1234 — a full platform-admin login (incl. the ballot-
+    unredaction endpoint) available to anyone who read this file.
+
+    Resolution order:
+      1. ``SEED_ADMIN_PASSWORD`` env var, when set (operator-provisioned).
+      2. Otherwise a random throwaway — the account exists but is not
+         log-in-able until an operator resets the password out-of-band.
+    DEMO_PASSWORD is only ever used for non-admin demo personas.
+    """
+    provisioned = os.environ.get("SEED_ADMIN_PASSWORD", "").strip()
+    if provisioned:
+        return provisioned
+    random_pw = secrets.token_urlsafe(32)
+    log.warning(
+        "Seeding platform-admin user with a random unusable password "
+        "(set SEED_ADMIN_PASSWORD to provision a known one)."
+    )
+    return random_pw
+
+
 def _get_or_create_user(
     db: Session, username: str, display_name: str, is_admin: bool = False
 ) -> models.User:
@@ -44,10 +69,11 @@ def _get_or_create_user(
     if user:
         return user
     email = f"{username}@demo.example"
+    password = _admin_seed_password() if is_admin else DEMO_PASSWORD
     user = models.User(
         username=username,
         display_name=display_name,
-        password_hash=hash_password(DEMO_PASSWORD),
+        password_hash=hash_password(password),
         is_admin=is_admin,
         email=email,
         email_verified=True,
