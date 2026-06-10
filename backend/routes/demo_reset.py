@@ -27,16 +27,25 @@ import hmac
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from slowapi import Limiter
 from sqlalchemy.orm import Session
 
 from database import get_db
+from rate_limit_utils import bypass_or_remote_address
 
 router = APIRouter(prefix="/api/demo", tags=["demo-reset"])
 
+limiter = Limiter(key_func=bypass_or_remote_address)
+
 
 @router.post("/trigger-reset")
+# Phase 63 (security): each call wipes + reseeds the demo orgs, so a leaked
+# token must not allow unbounded reset-flooding. Honest callers (the CLI
+# helper, demo-content iteration) never need more than a few per hour.
+@limiter.limit("6/hour")
 def trigger_demo_reset_via_token(
+    request: Request,
     authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ) -> dict:

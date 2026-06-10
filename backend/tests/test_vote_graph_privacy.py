@@ -163,6 +163,21 @@ def _node(graph: dict, user_id: str) -> dict:
     raise AssertionError(f"Node {user_id} not found in graph")
 
 
+def _anon_nodes(graph: dict) -> list[dict]:
+    """Phase 63 (security): identity-redacted nodes no longer carry the
+    voter's real user_id — they get a per-request opaque ``anon_`` id.
+    Redacted voters must be located by their opaque id (and disambiguated
+    by ballot content), never by real user_id."""
+    return [n for n in graph["nodes"] if n["id"].startswith("anon_")]
+
+
+def _anon_node_by_approvals(graph: dict, approvals: list[str]) -> dict:
+    for n in _anon_nodes(graph):
+        if n["ballot"] is not None and sorted(n["ballot"].get("approvals") or []) == sorted(approvals):
+            return n
+    raise AssertionError(f"No anon node with approvals {approvals} in graph")
+
+
 # ===========================================================================
 # Tests
 # ===========================================================================
@@ -186,17 +201,21 @@ def test_anonymous_voter_ballot_visible_but_label_redacted(client, test_db):
     data = resp.json()
 
     # All three are anonymous to viewer — labels blank, ballots populated.
+    # Phase 63 (security): their real user_ids no longer appear in the
+    # graph; locate each redacted node by its distinct ballot content.
+    node_ids = {n["id"] for n in data["nodes"]}
     for voter, expected_approvals in (
         (voter_a, [oids[0], oids[1]]),
         (voter_b, [oids[1]]),
         (voter_c, [oids[0], oids[2]]),
     ):
-        n = _node(data, voter.id)
+        assert voter.id not in node_ids, (
+            f"{voter.username} real user_id leaked into the graph"
+        )
+        n = _anon_node_by_approvals(data, expected_approvals)
+        assert n["id"].startswith("anon_")
         assert n["label"] == "", f"{voter.username} label should be redacted"
         assert n["ballot"] is not None, f"{voter.username} ballot should be visible"
-        assert sorted(n["ballot"]["approvals"]) == sorted(expected_approvals), (
-            f"{voter.username} ballot mismatch"
-        )
 
 
 def test_anonymous_voter_rcv_ballot_visible_label_redacted(client, test_db):
@@ -213,7 +232,12 @@ def test_anonymous_voter_rcv_ballot_visible_label_redacted(client, test_db):
     resp = client.get(f"/api/proposals/{p.id}/vote-graph", headers=_auth(viewer))
     assert resp.status_code == 200
     data = resp.json()
-    n = _node(data, stranger.id)
+    # Phase 63 (security): the stranger's real user_id is redacted along
+    # with the label — the node carries an opaque anon_ id instead.
+    assert all(node["id"] != stranger.id for node in data["nodes"])
+    anon = _anon_nodes(data)
+    assert len(anon) == 1
+    n = anon[0]
     assert n["label"] == ""
     assert n["ballot"] is not None
     assert n["ballot"]["ranking"] == ordered
@@ -275,7 +299,13 @@ def test_anonymous_node_has_no_other_identity_leaks(client, test_db):
     resp = client.get(f"/api/proposals/{p.id}/vote-graph", headers=_auth(viewer))
     assert resp.status_code == 200
     data = resp.json()
-    n = _node(data, secret_user.id)
+    # Phase 63 (security): the anonymous voter's node now carries an
+    # opaque anon_ id — the real user_id itself was an identity leak
+    # (a stable join key against the members endpoint).
+    assert all(node["id"] != secret_user.id for node in data["nodes"])
+    anon = _anon_nodes(data)
+    assert len(anon) == 1
+    n = anon[0]
     assert n["label"] == ""
     # Serialise the full node dict and confirm none of the identity strings appear.
     import json
@@ -283,6 +313,7 @@ def test_anonymous_node_has_no_other_identity_leaks(client, test_db):
     assert "secret_username" not in blob, "username leaked into anonymous node"
     assert "secret_email" not in blob, "email leaked into anonymous node"
     assert "Imani" not in blob, "display_name leaked into anonymous node"
+    assert secret_user.id not in blob, "real user_id leaked into anonymous node"
     # Ballot still populated (the whole point of the new boundary).
     assert n["ballot"] is not None
     assert n["ballot"]["approvals"] == [oids[0]]

@@ -154,6 +154,13 @@ app = FastAPI(
     title="Liquid Democracy API",
     description="Vote directly or delegate your vote on specific topics.",
     version="0.2.0",
+    # Phase 63 (security): don't serve Swagger/ReDoc/openapi.json outside
+    # debug. The backend's own *.up.railway.app domain bypasses the nginx
+    # proxy, so pre-fix the full interactive API surface was publicly
+    # browsable on prod.
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
+    openapi_url="/openapi.json" if settings.debug else None,
 )
 
 # Attach rate-limiter state and error handler
