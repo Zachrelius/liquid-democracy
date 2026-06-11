@@ -246,6 +246,10 @@ class TopicCreate(BaseModel):
     # Purpose is NEVER used as a display-name fallback (Phase 33 guard).
     purpose: Optional[str] = Field(default=None, max_length=500)
     category: Optional[str] = Field(default=None, max_length=80)
+    # Phase 65 — per-topic delegation disallow flag. True (today's
+    # behavior) when the caller omits it; False makes proposals touching
+    # this topic direct-vote-only.
+    allow_delegation: bool = True
 
     @field_validator("color")
     @classmethod
@@ -281,6 +285,10 @@ class TopicOut(BaseModel):
     # existing topics; the FE handles None gracefully.
     purpose: Optional[str] = None
     category: Optional[str] = None
+    # Phase 65 — surfaced so the FE can render the per-topic "Allow
+    # delegation" toggle + inert-delegation labeling. True on every
+    # pre-existing topic (server_default).
+    allow_delegation: bool = True
 
     model_config = {"from_attributes": True}
 
@@ -590,6 +598,12 @@ class ProposalOut(BaseModel):
     # didn't carry" surface on these two fields.
     verification_floor: Optional[str] = None
     verification_jurisdiction: Optional[str] = None
+
+    # Phase 65 — True when the proposal is direct-vote-only (org master
+    # delegation switch off OR any attached topic disallows delegation).
+    # FE keys the proposal-detail "direct vote only" indicator on this so
+    # voters know their delegate won't cover them.
+    delegation_gated: bool = False
 
     model_config = {"from_attributes": True}
 

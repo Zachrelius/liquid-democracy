@@ -1915,6 +1915,17 @@ export default function ProposalDetail() {
                   {proposal.verification_jurisdiction ? ` (${proposal.verification_jurisdiction})` : ''}
                 </span>
               )}
+              {/* Phase 65 — delegation-gated proposal (org master switch
+                  off, or a tagged topic disallows delegation). Only
+                  personally-cast ballots count toward this proposal. */}
+              {proposal.delegation_gated && (
+                <span
+                  title="Delegation doesn't apply to this proposal — only votes cast personally count."
+                  className="text-xs bg-gray-100 text-gray-700 border border-gray-200 px-2 py-0.5 rounded-full font-medium"
+                >
+                  Direct vote only
+                </span>
+              )}
             </div>
             <h1 className="text-2xl font-bold text-[var(--brand-primary)] leading-tight mb-2">
               {proposal.title}

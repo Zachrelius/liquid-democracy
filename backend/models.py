@@ -676,6 +676,15 @@ class Topic(Base):
     category: Mapped[Optional[str]] = mapped_column(
         String(length=80), nullable=True,
     )
+    # Phase 65 — per-topic delegation disallow flag. False = proposals
+    # touching this topic are direct-vote-only (D1: ANY disallowed topic
+    # gates the WHOLE proposal). Existing Delegation rows on a disallowed
+    # topic are kept but inert (D2) — never deleted; flipping the flag
+    # back restores behavior. default + server_default true so existing
+    # rows and freshly-constructed Topic() instances behave unchanged.
+    allow_delegation: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("true"),
+    )
     org_id: Mapped[Optional[str]] = mapped_column(String, ForeignKey("organizations.id"), nullable=True, index=True)
     # Phase 8.5: NULL = parent-org-wide (default); non-NULL = scoped to that sub-org.
     sub_org_id: Mapped[Optional[str]] = mapped_column(

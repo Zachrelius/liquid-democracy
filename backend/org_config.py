@@ -210,6 +210,67 @@ def get_intro_text(org: Optional[models.Organization]) -> Optional[str]:
     return val
 
 
+def delegation_enabled_for_org(org: Optional[models.Organization]) -> bool:
+    """Return whether delegation is enabled org-wide (Phase 65 master
+    switch).
+
+    Reads ``Organization.settings['delegation']['enabled']`` with a
+    read-time default of True — absent key, non-dict section, or
+    non-bool value all resolve to True (delegation on). The read-time
+    default deliberately sidesteps the existing-orgs backfill gotcha
+    (Phase 65 D3): no settings key is written until an org explicitly
+    flips the switch.
+
+    ``org=None`` (legacy / pre-multi-tenancy proposals) returns True —
+    the master switch is an org-level self-constraint and there is no
+    org to have imposed it.
+
+    Like the sibling resolvers above, this does NOT walk the parent
+    chain via ``get_org_config``; sub-orgs inherit the parent org's
+    behavior by virtue of proposals carrying the parent ``org_id``.
+    """
+    if org is None:
+        return True
+    settings = org.settings or {}
+    section = settings.get("delegation")
+    if not isinstance(section, dict):
+        return True
+    val = section.get("enabled")
+    if not isinstance(val, bool):
+        return True
+    return val
+
+
+def proposal_is_delegation_gated(
+    proposal: models.Proposal,
+    org: Optional[models.Organization],
+    topics: list[models.Topic],
+) -> bool:
+    """Return True when the proposal is direct-vote-only (Phase 65).
+
+    A proposal is delegation-gated when EITHER:
+      * the org master switch is off (``delegation_enabled_for_org``), OR
+      * ANY topic attached to the proposal has ``allow_delegation=False``
+        (D1 — whole-proposal gating; blocking only the per-topic channel
+        would let global delegations carry the vote, and tagging a second
+        topic would re-enable delegation).
+
+    Untagged proposals (``topics == []``) are only affected by the org
+    master switch, never by per-topic flags (D4).
+
+    ``topics`` is the list of Topic rows attached to the proposal —
+    callers fetch them (the predicate stays query-free so it can run on
+    already-loaded rows). ``getattr`` default True keeps duck-typed test
+    shims and pre-migration rows on today's behavior.
+    """
+    if not delegation_enabled_for_org(org):
+        return True
+    for t in topics:
+        if getattr(t, "allow_delegation", True) is False:
+            return True
+    return False
+
+
 def get_org_config(
     org: Optional[models.Organization], key: str, default: Any = None,
 ) -> Any:

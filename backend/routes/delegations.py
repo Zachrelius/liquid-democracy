@@ -29,6 +29,7 @@ import schemas
 from audit_utils import log_audit_event
 from database import get_db
 from delegation_engine import graph_store
+from org_config import delegation_enabled_for_org
 from org_middleware import require_org_membership
 from permissions import can_delegate_to, delegation_denied_message
 
@@ -62,6 +63,34 @@ def _validate_sub_org_for_org(
             detail="sub_org_id is not a sub-org of this organization",
         )
     return sub.id
+
+
+def _assert_delegation_writable(
+    db: Session, org_id: str, topic_id: Optional[str]
+) -> None:
+    """Phase 65 creation-layer gate. Rejects ALL delegation writes when
+    the org's master delegation switch is off, and topic-specific writes
+    when the targeted topic has ``allow_delegation=False``. 403 with a
+    clear user-facing message (no phase numbers in copy).
+
+    Resolution-layer enforcement (the load-bearing half) lives in
+    ``DelegationService._build_context`` — this gate is the UX half so
+    users aren't allowed to create a delegation that would silently
+    never resolve.
+    """
+    org = db.get(models.Organization, org_id)
+    if not delegation_enabled_for_org(org):
+        raise HTTPException(
+            status_code=403,
+            detail="Delegation is turned off for this organization.",
+        )
+    if topic_id is not None:
+        topic = db.get(models.Topic, topic_id)
+        if topic is not None and topic.allow_delegation is False:
+            raise HTTPException(
+                status_code=403,
+                detail="This topic does not allow delegation.",
+            )
 
 
 def _validate_topic_for_org(
@@ -140,6 +169,9 @@ def upsert_delegation(
     # Phase 18: topic + sub-org must belong to the URL-prefix org.
     _validate_topic_for_org(db, org_id, body.topic_id)
     sub_org_id = _validate_sub_org_for_org(db, org_id, body.sub_org_id)
+
+    # Phase 65: org master switch + per-topic disallow flag.
+    _assert_delegation_writable(db, org_id, body.topic_id)
 
     if not can_delegate_to(
         db, current_user.id, body.delegate_id, body.topic_id, org_id=org_id,
@@ -705,6 +737,24 @@ def activate_intents_for_follow(
         intent_org_id = getattr(intent, "org_id", None)
         intent_sub_org_id = getattr(intent, "sub_org_id", None)
 
+        # Phase 65 — SKIP (not error) intents that are currently inert:
+        # the intent's org has the master delegation switch off, or the
+        # intent's topic disallows delegation. The intent stays pending
+        # (no status change) so flipping the toggle back makes it
+        # activatable again on a future approval; it still lazy-expires
+        # on its own schedule.
+        if intent_org_id is not None:
+            intent_org = db.get(models.Organization, intent_org_id)
+            if not delegation_enabled_for_org(intent_org):
+                continue
+        if intent.topic_id is not None:
+            intent_topic = db.get(models.Topic, intent.topic_id)
+            if (
+                intent_topic is not None
+                and intent_topic.allow_delegation is False
+            ):
+                continue
+
         # Phase 18: existence check uses (delegator, org, sub_org, topic)
         # to mirror the new unique constraint shape on Delegation.
         existing = db.query(models.Delegation).filter(
@@ -788,6 +838,12 @@ def request_delegation(
 
     _validate_topic_for_org(db, org_id, body.topic_id)
     sub_org_id = _validate_sub_org_for_org(db, org_id, body.sub_org_id)
+
+    # Phase 65: org master switch + per-topic disallow flag. Applies to
+    # BOTH branches below — the direct-create path and the follow-request
+    # + intent queue path (queuing an intent that could never activate
+    # would be a UX dead end).
+    _assert_delegation_writable(db, org_id, body.topic_id)
 
     # ── Has permission already? Create directly ──────────────────────────
     if can_delegate_to(

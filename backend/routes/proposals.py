@@ -253,6 +253,22 @@ def _build_proposal_out(
     _pv = resolve_allow_pre_voting_full(proposal, _org)
     _svd = resolve_show_votes_during_deliberation_full(proposal, _org)
 
+    # Phase 65 — delegation gating indicator. Same predicate the
+    # resolution layer uses (DelegationService._build_context), so the
+    # FE "direct vote only" indicator can never disagree with how the
+    # tally actually resolves.
+    from org_config import proposal_is_delegation_gated
+    _gate_topic_ids = [pt.topic_id for pt in proposal.proposal_topics]
+    _gate_topics = (
+        db.query(models.Topic)
+        .filter(models.Topic.id.in_(_gate_topic_ids))
+        .all()
+        if _gate_topic_ids else []
+    )
+    _delegation_gated = proposal_is_delegation_gated(
+        proposal, _org, _gate_topics,
+    )
+
     return schemas.ProposalOut(
         id=proposal.id,
         title=proposal.title,
@@ -320,6 +336,9 @@ def _build_proposal_out(
         # ungated; non-null = floor required to cast direct vote.
         verification_floor=getattr(proposal, "verification_floor", None),
         verification_jurisdiction=getattr(proposal, "verification_jurisdiction", None),
+        # Phase 65 — direct-vote-only indicator (org master switch off OR
+        # any attached topic disallows delegation).
+        delegation_gated=_delegation_gated,
     )
 
 

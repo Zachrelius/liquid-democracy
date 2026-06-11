@@ -249,6 +249,8 @@ export default function OrgSettings() {
   const [savingVotingMethods, setSavingVotingMethods] = useState(false);
   // Phase 44 F1 — Multi-admin approval section saving state.
   const [savingMultiAdminApproval, setSavingMultiAdminApproval] = useState(false);
+  // Phase 65 — Delegation master-switch section saving state.
+  const [savingDelegation, setSavingDelegation] = useState(false);
 
   // Phase 12.7 F4 — Branding section local state.
   //
@@ -1029,6 +1031,30 @@ export default function OrgSettings() {
       toast.error(err.message || 'Failed to save voting methods');
     } finally {
       setSavingVotingMethods(false);
+    }
+  }
+
+  // Phase 65 — Delegation master switch. Per-section save: PATCH only the
+  // nested `delegation` settings key. Read-time default is enabled — an
+  // absent key means delegation is on, so the checkbox treats anything
+  // other than an explicit `false` as enabled.
+  async function handleSaveDelegation() {
+    setSavingDelegation(true);
+    try {
+      await api.patch(`/api/orgs/${currentOrg.slug}`, {
+        settings: {
+          delegation: {
+            ...(settings.delegation || {}),
+            enabled: settings.delegation?.enabled !== false,
+          },
+        },
+      });
+      await refreshOrgs();
+      toast.success('Delegation settings saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save delegation settings');
+    } finally {
+      setSavingDelegation(false);
     }
   }
 
@@ -2428,6 +2454,45 @@ export default function OrgSettings() {
                 </label>
               </div>
             )}
+          </div>
+        </section>
+      )}
+
+      {/* Phase 65 — org-wide delegation master switch. Lives at
+          settings.delegation.enabled; read-time default is true, so
+          absent ⇒ enabled and existing orgs behave unchanged. Turning
+          it off pauses (never deletes) existing delegations and makes
+          every proposal direct-vote-only. */}
+      {canEditOrgSettings && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Delegation
+          </h2>
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.delegation?.enabled !== false}
+                onChange={e => updateSetting('delegation', {
+                  ...(settings.delegation || {}),
+                  enabled: e.target.checked,
+                })}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <div className="text-sm text-gray-700">Allow vote delegation in this organization</div>
+                <div className="text-xs text-gray-500">
+                  Turning this off makes every proposal direct vote only and pauses existing delegations — they're kept, not deleted, and resume if delegation is re-enabled.
+                </div>
+              </div>
+            </label>
+            <button
+              onClick={handleSaveDelegation}
+              disabled={savingDelegation}
+              className="px-4 py-1.5 bg-[var(--brand-primary)] text-white text-xs rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+            >
+              {savingDelegation ? 'Saving…' : 'Save delegation settings'}
+            </button>
           </div>
         </section>
       )}
