@@ -1307,25 +1307,56 @@ class DelegationService:
         # query so existing tests don't regress. Real production proposals
         # always carry an ``org_id`` since Phase 4.
         proposal_org_id = getattr(proposal, "org_id", None)
-        delegation_query = db.query(models.Delegation)
-        if proposal_org_id is not None:
-            delegation_query = delegation_query.filter(
-                models.Delegation.org_id == proposal_org_id
-            )
-        all_delegations: dict[str, dict[Optional[str], DelegationData]] = {}
-        for row in delegation_query.all():
-            dd = DelegationData(
-                delegator_id=row.delegator_id,
-                delegate_id=row.delegate_id,
-                topic_id=row.topic_id,
-                chain_behavior=row.chain_behavior,
-            )
-            all_delegations.setdefault(row.delegator_id, {})[row.topic_id] = dd
 
-        # All topic precedences indexed by user → topic_id
+        # Phase 65 — delegation gating. When the org master switch is off
+        # OR any attached topic disallows delegation (D1 whole-proposal
+        # semantics), the context is built with an EMPTY delegation map
+        # (and empty precedences — they only exist to choose among
+        # delegations) so no delegated ballot ever resolves: direct
+        # ballots only, everyone else not_cast. Gating here, at the sole
+        # delegation-loading chokepoint, automatically covers
+        # compute_tally, resolve_vote, the sustained-majority worker,
+        # cosign weight resolution, and the vote-graph endpoint. Existing
+        # Delegation rows are KEPT (D2) — they're simply not loaded into
+        # the context while gated.
+        from org_config import proposal_is_delegation_gated
+
+        _gate_org = (
+            db.get(models.Organization, proposal_org_id)
+            if proposal_org_id is not None
+            else None
+        )
+        _gate_topics: list[models.Topic] = []
+        if proposal_topics:
+            _gate_topics = (
+                db.query(models.Topic)
+                .filter(models.Topic.id.in_(proposal_topics))
+                .all()
+            )
+        delegation_gated = proposal_is_delegation_gated(
+            proposal, _gate_org, _gate_topics,
+        )
+
+        all_delegations: dict[str, dict[Optional[str], DelegationData]] = {}
         all_precedences: dict[str, dict[str, int]] = {}
-        for row in db.query(models.TopicPrecedence).all():
-            all_precedences.setdefault(row.user_id, {})[row.topic_id] = row.priority
+        if not delegation_gated:
+            delegation_query = db.query(models.Delegation)
+            if proposal_org_id is not None:
+                delegation_query = delegation_query.filter(
+                    models.Delegation.org_id == proposal_org_id
+                )
+            for row in delegation_query.all():
+                dd = DelegationData(
+                    delegator_id=row.delegator_id,
+                    delegate_id=row.delegate_id,
+                    topic_id=row.topic_id,
+                    chain_behavior=row.chain_behavior,
+                )
+                all_delegations.setdefault(row.delegator_id, {})[row.topic_id] = dd
+
+            # All topic precedences indexed by user → topic_id
+            for row in db.query(models.TopicPrecedence).all():
+                all_precedences.setdefault(row.user_id, {})[row.topic_id] = row.priority
 
         # Direct votes/ballots for this proposal only.
         # Phase 10.1: filter to eligible voters when provided so non-eligible
