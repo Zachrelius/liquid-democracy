@@ -4008,3 +4008,23 @@ QA agent ran 18 scenarios via Claude in Chrome MCP. 11 PASS, 0 FAIL, 6 BLOCKED (
 - **D-cluster bible seeding** for pre-voting / edits / spam-remove still partial — pre-voting flags wired on P-H-10 but seeded pre-votes + revision rows deferred.
 - **F5 worker-tick wait** for chart verification — no operational signal of "fresh deliberation snapshots ready"; QA timing is a coordination dance.
 - **Mobile-screen polish** for new Phase 32+32.1 UI surfaces is unverified.
+
+---
+
+## Phase 64 — CSP Hardening + Secrets Scratch-File Cleanup ✅ Complete (2026-06-11)
+
+(Entries for Phases 33–63 live in their per-phase closeout files at the repo root; this file resumes with 64.)
+
+**CSP shipped in two same-day stages on `phase-64/csp-and-secrets-cleanup`.** Stage A (`35cac0e`, merge `ccb3651`): `Content-Security-Policy-Report-Only` on the SPA via `frontend/nginx.conf`, policy drafted from a frontend-source origin inventory (pol.is is the only external origin — script/frame/img/connect; no external fonts/CDNs; Didit is a full-page redirect needing no allowance). Stage B (`1775219`, merge `e2c5117`): flipped to enforcing, policy unchanged.
+
+**Final policy:** `default-src 'self'; script-src 'self' https://pol.is; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://pol.is; font-src 'self'; connect-src 'self' https://pol.is wss://www.liquiddemocracy.us; frame-src https://pol.is; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; worker-src 'self'; manifest-src 'self'`
+
+**Compromise documented:** `style-src 'unsafe-inline'` retained — React inline style attributes require it; `script-src` carries NO unsafe-inline (the load-bearing directive for the sessionStorage token model).
+
+**Stage A QA (Report-Only):** swept login/demo/org/proposals/proposal-detail (vote-network SVG)/delegations/settings/delegates plus a live pol.is embed and a Didit redirect start. ZERO real violations. Method note: the Chrome MCP console reader does not surface CSP violation entries — QA used a buffered `ReportingObserver({types:['csp-violation'], buffered:true})`, validated end-to-end with a synthetic img-src probe. No pol.is content existed in demo orgs, so QA created a temp Polis row on demo-cedar-hollow pointing at pol.is `2demo` (self-cleans at daily reset).
+
+**Stage B QA (enforcing):** all surfaces re-verified working under enforcement — pol.is iframe loads and is interactive (statement voting, submission box, opinion groups), vote-network graph renders, avatars 16/16, Didit button present. Zero violations. Bundle `index-sYs3jVMx.js` (nginx-only change; bundle hash unchanged by design — header observed directly).
+
+**Secrets cleanup:** deleted `janet.json`, `janet2.json` (contained live JWTs), `jtok.txt`, `backend/tok.txt` (empty) — all untracked, confirmed never committed. `.gitignore` now blocks `tok.txt` / `jtok.txt` / `*token*.txt` / `janet*.json` / `*.tokens.json`. Repo-wide sweep of all 209 untracked files: no other JWT/bearer-shaped strings.
+
+**Follow-up (non-blocking):** the policy has no `report-uri`/`report-to`, so field violations are invisible outside DevTools; add a reporting endpoint if telemetry is ever wanted. Pre-existing non-CSP observations from QA: polis live-stats row shows "API didn't respond" on the manual-path embed; `/{org}/polises` list route redirects to public landing on direct load.
