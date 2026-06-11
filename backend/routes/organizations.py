@@ -666,6 +666,27 @@ def update_organization(
                 cleaned.append(stripped)
             body.settings["topic_categories"] = cleaned
 
+        # Phase 65 — org-wide delegation master switch validation. Same
+        # pre-merge fail-cleanly shape: `delegation` must be an object
+        # and `delegation.enabled` (when present) must be a boolean. The
+        # key is read-time-defaulted (absent ⇒ enabled) so no backfill
+        # exists for orgs that never touch it.
+        if "delegation" in body.settings:
+            dele = body.settings["delegation"]
+            if not isinstance(dele, dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "delegation must be an object, e.g. "
+                        '{"enabled": false}'
+                    ),
+                )
+            if "enabled" in dele and not isinstance(dele["enabled"], bool):
+                raise HTTPException(
+                    status_code=400,
+                    detail="delegation.enabled must be a boolean",
+                )
+
         # Phase 17 B5 — tie_resolution validation. Same pre-merge shape:
         # invalid method on either voting_method fails the whole PATCH
         # cleanly with HTTP 400. Unknown keys (e.g., a future
@@ -3174,6 +3195,9 @@ def create_org_topic(
         # but the data shape stays clean).
         purpose=body.purpose or None,
         category=body.category or None,
+        # Phase 65 — per-topic delegation disallow flag; defaults True
+        # (delegation allowed) when the caller omits it.
+        allow_delegation=body.allow_delegation,
         org_id=org.id,
         sub_org_id=target_sub_org_id,
     )
@@ -3212,6 +3236,12 @@ def update_org_topic(
     # supplied value otherwise.
     topic.purpose = body.purpose or None
     topic.category = body.category or None
+    # Phase 65 — per-topic delegation disallow flag. Full-replacement
+    # semantics like the other TopicCreate fields: the schema default
+    # (True) applies when the caller omits it. Existing Delegation rows
+    # on a newly-disallowed topic are kept but inert (D2) — flipping the
+    # flag back restores behavior.
+    topic.allow_delegation = body.allow_delegation
     db.commit()
     db.refresh(topic)
     return topic
