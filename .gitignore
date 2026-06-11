@@ -21,3 +21,10 @@ venv/
 .DS_Store
 
 qa_credentials.md
+
+# Token/credential scratch files (Phase 64) — never commit auth material
+tok.txt
+jtok.txt
+*token*.txt
+janet*.json
+*.tokens.json
