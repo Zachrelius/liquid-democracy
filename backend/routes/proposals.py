@@ -339,6 +339,11 @@ def _build_proposal_out(
         # Phase 65 — direct-vote-only indicator (org master switch off OR
         # any attached topic disallows delegation).
         delegation_gated=_delegation_gated,
+        # Phase 66 — multi-winner approval config. NULL = legacy
+        # single-winner (all pre-66 rows).
+        approval_winner_config=getattr(
+            proposal, "approval_winner_config", None,
+        ),
     )
 
 
@@ -595,6 +600,20 @@ def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[mode
                 status_code=status_code,
                 detail=f"Voting method '{body.voting_method}' is not allowed by this organization",
             )
+    # Phase 66 — approval_winner_config is approval-method-only. Shape
+    # validation already happened at the Pydantic layer (422); this is
+    # the method-compatibility gate (400).
+    if (
+        getattr(body, "approval_winner_config", None) is not None
+        and body.voting_method != "approval"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "approval_winner_config is only supported on approval "
+                f"proposals (voting_method is '{body.voting_method}')."
+            ),
+        )
     if body.voting_method == "binary":
         if body.options:
             raise HTTPException(
@@ -900,6 +919,10 @@ def create_proposal(
         allow_pre_voting=body.allow_pre_voting,
         show_votes_during_deliberation=body.show_votes_during_deliberation,
         edit_lockout_fraction=body.edit_lockout_fraction,
+        # Phase 66 — multi-winner approval config. Validated for shape
+        # at the Pydantic layer + method-compatibility in
+        # _validate_proposal_creation above. NULL = legacy single-winner.
+        approval_winner_config=body.approval_winner_config,
     )
     db.add(proposal)
     db.flush()
@@ -1227,6 +1250,14 @@ def update_proposal(
         # explicitly sets it).
         if old_method == "ranked_choice" and "num_winners" not in body.model_fields_set:
             proposal.num_winners = 1
+        # Phase 66 — leaving the approval method clears any multi-winner
+        # config (it's approval-only; mirrors the num_winners snap).
+        if (
+            old_method == "approval"
+            and new_method != "approval"
+            and getattr(proposal, "approval_winner_config", None) is not None
+        ):
+            proposal.approval_winner_config = None
         proposal.voting_method = new_method
     # num_winners change (independent of method change — RCV proposals
     # can adjust num_winners while in draft).
@@ -1240,6 +1271,43 @@ def update_proposal(
                 ),
             )
         proposal.num_winners = body.num_winners
+
+    # Phase 66 — approval_winner_config change (draft-only, approval
+    # method only, never on elections — 66a wires elections). Shape was
+    # validated at the Pydantic layer; explicit null clears the config
+    # (back to legacy single-winner). Runs AFTER the voting_method
+    # block so a single PATCH that switches to approval AND sets the
+    # config works.
+    if "approval_winner_config" in body.model_fields_set:
+        if getattr(proposal, "is_election", False):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "approval_winner_config is not yet supported for "
+                    "elections."
+                ),
+            )
+        if proposal.status != "draft":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "approval_winner_config can only be changed while "
+                    "the proposal is in draft status."
+                ),
+            )
+        if (
+            body.approval_winner_config is not None
+            and proposal.voting_method != "approval"
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "approval_winner_config is only supported on approval "
+                    f"proposals (voting_method is "
+                    f"'{proposal.voting_method}')."
+                ),
+            )
+        proposal.approval_winner_config = body.approval_winner_config
 
     if body.options is not None:
         if proposal.voting_method not in ("approval", "ranked_choice"):
@@ -2108,14 +2176,66 @@ def _maybe_resolve_tie(
     from tie_resolution import resolve_tie
     from org_config import get_org_tie_resolution_method
 
-    if not (getattr(tally, "tied", False) and len(getattr(tally, "winners", []) or []) > 1):
+    # Phase 66 (D4) — multi-winner boundary tie. When the pure layer
+    # detected an equal-count group that only partially fits the
+    # remaining seats, it seated the unambiguous set into
+    # ``tally.winners`` and exposed the tied subset + seat count here.
+    # Both fields are always empty for NULL-config proposals, so the
+    # legacy branch below is byte-for-byte unchanged.
+    boundary_tied = list(getattr(tally, "boundary_tied", None) or [])
+    seats_remaining = int(getattr(tally, "seats_remaining", 0) or 0)
+    is_boundary_tie = bool(boundary_tied) and seats_remaining > 0
+
+    if not is_boundary_tie and not (
+        getattr(tally, "tied", False)
+        and len(getattr(tally, "winners", []) or []) > 1
+    ):
         return
 
     org = db.get(models.Organization, proposal.org_id) if proposal.org_id else None
     method = get_org_tie_resolution_method(org, voting_method)
 
     try:
-        result = resolve_tie(method, list(tally.winners), proposal, tally, db)
+        if is_boundary_tie:
+            # Route the boundary-tied subset through the org's resolver
+            # for the remaining seat(s). ``expand_winners`` seats ALL
+            # tied options in one call — documented existing semantics
+            # (D11 precedent): the result may exceed max_winners. The
+            # single-pick methods (random_seed / earliest_decisive_vote
+            # / broader_approval_base) are invoked once per remaining
+            # seat over the not-yet-chosen subset.
+            chosen: list[str] = []
+            seed: Optional[str] = None
+            rounds_meta: list = []
+            if method == "expand_winners":
+                result = resolve_tie(
+                    method, list(boundary_tied), proposal, tally, db,
+                )
+                chosen = list(result.chosen_winners)
+                seed = result.seed
+                rounds_meta.append(result.metadata)
+            else:
+                remaining = sorted(boundary_tied)
+                for _seat in range(seats_remaining):
+                    if not remaining:
+                        break
+                    result = resolve_tie(
+                        method, list(remaining), proposal, tally, db,
+                    )
+                    picks = [
+                        oid for oid in result.chosen_winners
+                        if oid in remaining
+                    ]
+                    chosen.extend(picks)
+                    remaining = [
+                        oid for oid in remaining if oid not in picks
+                    ]
+                    seed = result.seed or seed
+                    rounds_meta.append(result.metadata)
+        else:
+            result = resolve_tie(
+                method, list(tally.winners), proposal, tally, db,
+            )
     except RuntimeError as exc:
         # B4.1 — random_seed requires voting_end. None at resolution time
         # means the advance path didn't pass through the "voting" branch
@@ -2132,6 +2252,44 @@ def _maybe_resolve_tie(
                 f"{exc}"
             ),
         ) from exc
+
+    if is_boundary_tie:
+        proposal.tie_resolution = {
+            "method": method,
+            "input_winners": list(boundary_tied),
+            "chosen_winners": list(chosen),
+            "seed": seed,
+            "metadata": {
+                "boundary_tie": True,
+                "seats_remaining": seats_remaining,
+                "rounds": rounds_meta,
+            },
+            "applied_at": datetime.now(timezone.utc).isoformat(),
+        }
+        # Merge the resolver's picks into the seated set (tally.tied
+        # stays True for transparency — D9) and attribute their seats.
+        tally.winners = list(tally.winners) + [
+            oid for oid in chosen if oid not in tally.winners
+        ]
+        if hasattr(tally, "winner_seats"):
+            for oid in chosen:
+                tally.winner_seats.setdefault(oid, "tie_resolution")
+
+        log_audit_event(
+            db,
+            action="proposal.tie_resolved",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=current_user_id,
+            details={
+                "method": method,
+                "input_winners": list(boundary_tied),
+                "chosen_winners": list(chosen),
+                "boundary_tie": True,
+                "seats_remaining": seats_remaining,
+            },
+        )
+        return
 
     proposal.tie_resolution = {
         "method": result.method,
@@ -2228,8 +2386,18 @@ def advance_proposal(
     elif next_status == "passed":
         tally = delegation_engine.compute_tally(proposal, db)
         if proposal.voting_method == "approval":
-            # Approval proposals pass if quorum met and at least one option has votes
-            if isinstance(tally, ApprovalTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
+            # Approval proposals pass if quorum met and at least one option
+            # has votes. Phase 66: a multi-winner boundary tie can leave
+            # ``winners`` empty with the whole contested set in
+            # ``boundary_tied`` (e.g. Top 1 with two options tied at the
+            # top) — that's resolvable, not a failure, so it counts as
+            # "has votes" here. For NULL-config proposals boundary_tied
+            # is always empty (legacy condition unchanged).
+            if (
+                isinstance(tally, ApprovalTally)
+                and tally.quorum_met(proposal.quorum_threshold)
+                and (tally.winners or tally.boundary_tied)
+            ):
                 _maybe_resolve_tie(
                     proposal, tally, "approval", db,
                     current_user_id=current_user.id,
@@ -2577,6 +2745,30 @@ def withdraw_cosign(
     return _build_proposal_out(proposal, db, viewer_id=current_user.id)
 
 
+def _approval_winner_seats(
+    tally: ApprovalTally, proposal: models.Proposal,
+) -> dict[str, str]:
+    """Phase 66 — per-winner seat attribution for the results surface.
+
+    Starts from the pure layer's ``winner_seats`` ("floor" /
+    "threshold") and layers in "tie_resolution" for any boundary-tied
+    option the persisted ``Proposal.tie_resolution`` record chose at
+    close time. The live tally is recomputed on every results read, so
+    close-time resolver picks only exist in the persisted record — this
+    merge keeps the results page's attribution complete for closed
+    proposals while remaining honest (an unresolved live boundary tie
+    surfaces via ``boundary_tied`` / ``seats_remaining`` instead).
+    """
+    seats = dict(getattr(tally, "winner_seats", None) or {})
+    record = getattr(proposal, "tie_resolution", None)
+    boundary = set(getattr(tally, "boundary_tied", None) or [])
+    if record and boundary:
+        for oid in record.get("chosen_winners", []) or []:
+            if oid in boundary and oid not in seats:
+                seats[oid] = "tie_resolution"
+    return seats
+
+
 @router.get("/{proposal_id}/results", response_model=schemas.ProposalResults)
 def get_results(
     proposal_id: str,
@@ -2633,6 +2825,13 @@ def get_results(
             winners=tally.winners,
             tied=tally.tied,
             tie_resolution=proposal.tie_resolution,
+            # Phase 66 — multi-winner attribution + boundary-tie surface.
+            winner_seats=_approval_winner_seats(tally, proposal),
+            boundary_tied=list(tally.boundary_tied or []),
+            seats_remaining=tally.seats_remaining,
+            approval_winner_config=getattr(
+                proposal, "approval_winner_config", None,
+            ),
             time_series=time_series,
             sustained_majority=sm_status,
         )

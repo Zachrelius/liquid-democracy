@@ -2176,6 +2176,7 @@ def get_public_org_proposal_results(
         for s in snapshots
     ]
     if proposal.voting_method == "approval" and isinstance(tally, ApprovalTally):
+        from routes.proposals import _approval_winner_seats
         option_labels = {opt.id: opt.label for opt in proposal.options}
         return schemas.ProposalResults(
             proposal_id=proposal_id, voting_method="approval",
@@ -2187,6 +2188,13 @@ def get_public_org_proposal_results(
             total_ballots_cast=tally.total_ballots_cast,
             total_abstain=tally.total_abstain, winners=tally.winners,
             tied=tally.tied, tie_resolution=proposal.tie_resolution,
+            # Phase 66 — multi-winner attribution + boundary-tie surface.
+            winner_seats=_approval_winner_seats(tally, proposal),
+            boundary_tied=list(tally.boundary_tied or []),
+            seats_remaining=tally.seats_remaining,
+            approval_winner_config=getattr(
+                proposal, "approval_winner_config", None,
+            ),
             time_series=time_series, sustained_majority=sm_status,
         )
     if proposal.voting_method == "ranked_choice" and isinstance(tally, RCVTally):
@@ -3683,6 +3691,13 @@ def create_org_proposal(
         # right above ``models.Proposal(...)``.
         verification_floor=body.verification_floor,
         verification_jurisdiction=body.verification_jurisdiction,
+        # Phase 66 — multi-winner approval config. Shape validated at
+        # the Pydantic layer; method-compatibility (approval only)
+        # enforced by _validate_proposal_creation above. NULL = legacy
+        # single-winner. (Phase 32.1 lesson: a new Proposal field must
+        # flow through BOTH create endpoints — this is the org-scoped
+        # half.)
+        approval_winner_config=body.approval_winner_config,
     )
     db.add(proposal)
     db.flush()
@@ -3892,7 +3907,14 @@ def advance_org_proposal(
         from routes.proposals import _maybe_resolve_tie
         tally = delegation_engine.compute_tally(proposal, db)
         if proposal.voting_method == "approval":
-            if isinstance(tally, ApprovalTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
+            # Phase 66: a multi-winner boundary tie can leave ``winners``
+            # empty with the contested set in ``boundary_tied`` — that's
+            # resolvable, not a failure (mirrors routes/proposals.py).
+            if (
+                isinstance(tally, ApprovalTally)
+                and tally.quorum_met(proposal.quorum_threshold)
+                and (tally.winners or tally.boundary_tied)
+            ):
                 _maybe_resolve_tie(
                     proposal, tally, "approval", db,
                     current_user_id=current_user.id,
