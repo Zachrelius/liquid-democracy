@@ -125,6 +125,23 @@ class ApprovalTally:
     # is intentionally NOT carried — only the approval sets, which are
     # already aggregable from the existing approval ballots.
     ballots: list[list[str]] = field(default_factory=list)
+    # Phase 66 — multi-winner approval fields. All empty/zero when the
+    # proposal carries no ``approval_winner_config`` (legacy path —
+    # byte-for-byte unchanged).
+    #
+    # ``winner_seats``: per-winner seat attribution,
+    #   {option_id: "floor" | "threshold"}. The route layer adds
+    #   "tie_resolution" entries when a boundary tie is resolved.
+    # ``boundary_tied``: D4 — when options are tied at a seat boundary
+    #   (equal approval counts where only some fit), this is the tied
+    #   subset. The pure layer seats only the unambiguous set and leaves
+    #   these out of ``winners``; the route layer routes them through
+    #   ``tie_resolution.resolve_tie`` for the remaining seat(s).
+    # ``seats_remaining``: how many seats are left for the
+    #   ``boundary_tied`` subset.
+    winner_seats: dict[str, str] = field(default_factory=dict)
+    boundary_tied: list[str] = field(default_factory=list)
+    seats_remaining: int = 0
 
     @property
     def votes_cast(self) -> int:
@@ -175,6 +192,12 @@ class ProposalContext:
     # if a user isn't in the map (defensive — service layer populates for
     # every eligible voter). Values: "strict_precedence" | "relevance_weighted".
     user_strategies: dict[str, str] = field(default_factory=dict)
+    # Phase 66 — multi-winner approval selection config, lifted from
+    # ``Proposal.approval_winner_config`` by the service layer (keeps the
+    # pure layer DB-free). None = legacy single-winner approval behavior.
+    # Only populated for approval proposals that are NOT elections
+    # (elections ignore the config until 66a wires them — D6).
+    approval_winner_config: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
@@ -624,6 +647,113 @@ def _compute_binary_tally_pure(
     return tally
 
 
+def select_approval_winners_with_config(
+    option_approvals: dict[str, int],
+    total_ballots_cast: int,
+    config: dict,
+) -> tuple[list[str], dict[str, str], bool, list[str], int]:
+    """Phase 66 D3/D4 — pure multi-winner approval selection.
+
+    Inputs:
+      - ``option_approvals``: {option_id: approval count} (only options
+        with >= 1 approval appear — an option nobody approved can never
+        seat).
+      - ``total_ballots_cast``: the D2 threshold denominator. This is
+        the SAME counter the existing quorum math uses: it increments
+        for EVERY resolved ballot, including empty-approval (abstain)
+        ballots (see ``_compute_approval_tally_pure`` — the counter is
+        bumped before the approvals-content check). "B% approval" means
+        B% of everyone who cast a ballot, abstainers included.
+      - ``config``: ``{min_winners, max_winners, approval_threshold}``
+        (validated upstream at the schema layer; this function trusts
+        the shape).
+
+    Algorithm (D3): sort options by approval count descending. Seat the
+    top ``min_winners`` unconditionally. Continue seating options that
+    clear ``approval_threshold`` (count / total_ballots_cast >=
+    threshold) until ``max_winners`` (null = unbounded). Threshold null
+    ⇒ only the unconditional floor seats.
+
+    Boundary ties (D4): options are walked in equal-count groups
+    (descending count; option_id ascending within a group for
+    deterministic output ordering). When only SOME members of an
+    equal-count group fit in the remaining seats, the group is a
+    boundary tie: nobody from that group seats here; the tied subset +
+    the number of seats they're competing for are returned so the route
+    layer can run the org's configured tie resolver.
+
+    Returns ``(winners, winner_seats, tied, boundary_tied,
+    seats_remaining)`` where ``winner_seats`` maps each winner to
+    ``"floor"`` or ``"threshold"`` seat attribution.
+    """
+    min_winners = int(config.get("min_winners") or 0)
+    max_winners = config.get("max_winners")  # None = unbounded
+    threshold = config.get("approval_threshold")  # None = floor only
+
+    def _clears_threshold(count: int) -> bool:
+        if threshold is None:
+            return False
+        if total_ballots_cast <= 0:
+            return False
+        return (count / total_ballots_cast) >= float(threshold)
+
+    # Group options by approval count, descending.
+    by_count: dict[int, list[str]] = {}
+    for oid, count in option_approvals.items():
+        by_count.setdefault(int(count), []).append(oid)
+    groups = [
+        (count, sorted(by_count[count]))
+        for count in sorted(by_count.keys(), reverse=True)
+    ]
+
+    winners: list[str] = []
+    winner_seats: dict[str, str] = {}
+    boundary_tied: list[str] = []
+    seats_remaining = 0
+    tied = False
+
+    for count, members in groups:
+        seated = len(winners)
+        floor_need = max(0, min_winners - seated)
+        if max_winners is None:
+            remaining_to_max: Optional[int] = None
+        else:
+            remaining_to_max = max(0, int(max_winners) - seated)
+
+        if _clears_threshold(count):
+            # Every member of this group wants a seat (threshold
+            # cleared); capacity is bounded only by max_winners.
+            qualified = (
+                len(members) if remaining_to_max is None
+                else min(len(members), remaining_to_max)
+            )
+        else:
+            # Below threshold (or threshold null): only unconditional
+            # floor seats are available. min_winners <= max_winners is
+            # enforced at validation, so floor seats never exceed the
+            # max cap.
+            qualified = min(floor_need, len(members))
+
+        if qualified <= 0:
+            # No seats left for this count tier; lower tiers have lower
+            # counts (and therefore lower fractions), so nothing below
+            # can seat either.
+            break
+        if qualified < len(members):
+            # D4 boundary tie — equal-count group only partially fits.
+            tied = True
+            boundary_tied = list(members)
+            seats_remaining = qualified
+            break
+        for oid in members:
+            winners.append(oid)
+            winner_seats[oid] = (
+                "floor" if len(winners) <= min_winners else "threshold"
+            )
+
+    return winners, winner_seats, tied, boundary_tied, seats_remaining
+
+
 def _compute_approval_tally_pure(
     user_ids: list[str],
     ctx: ProposalContext,
@@ -662,6 +792,32 @@ def _compute_approval_tally_pure(
                 for oid in approvals:
                     option_approvals[oid] = option_approvals.get(oid, 0) + 1
                 ballots_seen.append(list(approvals))
+
+    # Phase 66 — multi-winner selection when the proposal carries an
+    # ``approval_winner_config`` (threaded through ProposalContext to
+    # keep this layer DB-free). NULL config takes the legacy
+    # single-winner path below, byte-for-byte.
+    config = getattr(ctx, "approval_winner_config", None)
+    if config:
+        (
+            mw_winners, winner_seats, mw_tied, boundary_tied,
+            seats_remaining,
+        ) = select_approval_winners_with_config(
+            option_approvals, total_ballots_cast, config,
+        )
+        return ApprovalTally(
+            option_approvals=option_approvals,
+            total_ballots_cast=total_ballots_cast,
+            total_abstain=total_abstain,
+            not_cast=not_cast,
+            total_eligible=len(user_ids),
+            winners=mw_winners,
+            tied=mw_tied,
+            ballots=ballots_seen,
+            winner_seats=winner_seats,
+            boundary_tied=boundary_tied,
+            seats_remaining=seats_remaining,
+        )
 
     # Determine winners: option(s) with highest approval count
     winners: list[str] = []
@@ -1404,6 +1560,18 @@ class DelegationService:
             ):
                 user_strategies[uid] = strat or "strict_precedence"
 
+        # Phase 66 — lift the multi-winner approval config onto the
+        # context (the pure layer never touches the DB). Elections
+        # IGNORE the config until 66a wires them (D6) — defense in
+        # depth on top of the route-layer 400s.
+        approval_winner_config = None
+        if voting_method == "approval" and not getattr(
+            proposal, "is_election", False,
+        ):
+            approval_winner_config = getattr(
+                proposal, "approval_winner_config", None,
+            )
+
         return ProposalContext(
             proposal_topics=proposal_topics,
             all_delegations=all_delegations,
@@ -1413,6 +1581,7 @@ class DelegationService:
             voting_method=voting_method,
             proposal_topic_relevances=proposal_topic_relevances,
             user_strategies=user_strategies,
+            approval_winner_config=approval_winner_config,
         )
 
     # ------------------------------------------------------------------
