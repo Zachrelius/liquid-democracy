@@ -123,6 +123,14 @@ function DelegationRow({
           )}
           {topic ? <TopicBadge topic={topic} /> : <span className="text-xs italic text-gray-500">Global default</span>}
           <TopicScopeBadge topic={topic} subOrgsById={subOrgsById} />
+          {/* Phase 65 — inert-delegation label. The row stays fully
+              manageable (change/remove); the delegation just doesn't
+              resolve while the topic disallows delegation. */}
+          {topic && topic.allow_delegation === false && (
+            <span className="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-amber-50 text-amber-700 border border-amber-200">
+              Delegation paused — this topic doesn't allow delegation
+            </span>
+          )}
         </div>
       </td>
       <td className="py-3 px-4">
@@ -213,6 +221,12 @@ function DelegationCard({
           )}
           {topic ? <TopicBadge topic={topic} /> : <span className="text-xs italic text-gray-500">Global default</span>}
           <TopicScopeBadge topic={topic} subOrgsById={subOrgsById} />
+          {/* Phase 65 — inert-delegation label (mobile card variant). */}
+          {topic && topic.allow_delegation === false && (
+            <span className="inline-block px-1.5 py-0.5 text-[10px] font-medium rounded bg-amber-50 text-amber-700 border border-amber-200">
+              Delegation paused — this topic doesn't allow delegation
+            </span>
+          )}
         </div>
         <div className="flex gap-3">
           <button onClick={() => onChangeDelegate(delegation)} disabled={unverified} className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline">Change</button>
@@ -264,6 +278,13 @@ export default function Delegations() {
     return currentOrg;
   }, [currentOrg, userOrgs]);
   const parentSlug = parentOrg?.slug || null;
+
+  // Phase 65 — org-wide delegation master switch. Read-time default is
+  // enabled: only an explicit `false` means the org turned delegation
+  // off. Delegations live on the parent org, so read its settings (fall
+  // back to currentOrg when the parent row isn't in userOrgs).
+  const orgDelegationEnabled =
+    (parentOrg || currentOrg)?.settings?.delegation?.enabled !== false;
 
   // Phase 34.2 F2.2 — load parent's sub-orgs so the topic-scope badge
   // can render the sub-org name when a delegation is on a sub-org-scoped
@@ -500,6 +521,14 @@ export default function Delegations() {
       {unverified && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           <VerifyEmailInlineNote action="delegate" />
+        </div>
+      )}
+
+      {/* Phase 65 — org master switch off. Delegations stay listed and
+          manageable below; this banner explains why none of them apply. */}
+      {orgDelegationEnabled === false && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm text-amber-800">
+          Delegation is currently turned off for this organization — your delegations are paused and votes are direct-only.
         </div>
       )}
 

@@ -100,12 +100,18 @@ export default function Topics() {
   const [newCategory, setNewCategory] = useState('');
   // Phase 8.5 — scope selector. '' == parent-org-wide (sub_org_id null).
   const [newScope, setNewScope] = useState('');
+  // Phase 65 — per-topic delegation flag. Defaults true (today's behavior).
+  const [newAllowDelegation, setNewAllowDelegation] = useState(true);
 
   // Edit form state
   const [editName, setEditName] = useState('');
   const [editColor, setEditColor] = useState('#6366f1');
   const [editPurpose, setEditPurpose] = useState('');
   const [editCategory, setEditCategory] = useState('');
+  // Phase 65 — PATCH uses full-replacement semantics for this flag, so the
+  // edit form must ALWAYS seed + send the current value or a save would
+  // silently reset it to true.
+  const [editAllowDelegation, setEditAllowDelegation] = useState(true);
 
   // Phase 8.5 — sub-orgs available for the scope dropdown.
   const [subOrgs, setSubOrgs] = useState([]);
@@ -201,6 +207,8 @@ export default function Topics() {
       if (trimmedPurpose) payload.purpose = trimmedPurpose;
       if (trimmedCategory) payload.category = trimmedCategory;
       if (newScope) payload.sub_org_id = newScope;
+      // Phase 65 — always send the flag explicitly.
+      payload.allow_delegation = newAllowDelegation;
       await api.post(`/api/orgs/${slug}/topics`, payload);
       toast.success('Topic created');
       setNewName('');
@@ -208,6 +216,7 @@ export default function Topics() {
       setNewPurpose('');
       setNewCategory('');
       setNewScope('');
+      setNewAllowDelegation(true);
       setShowCreate(false);
       load();
     } catch (err) {
@@ -241,6 +250,9 @@ export default function Topics() {
       // explicitly clear a field by saving with the input blank.
       payload.purpose = trimmedPurpose;
       payload.category = trimmedCategory;
+      // Phase 65 — full-replacement semantics: omitting this would
+      // silently reset the flag to true on every save.
+      payload.allow_delegation = editAllowDelegation;
       await api.patch(`/api/orgs/${slug}/topics/${topicId}`, payload);
       toast.success('Topic updated');
       setEditingId(null);
@@ -280,6 +292,8 @@ export default function Topics() {
     // category (or empty strings when null) so the inputs are editable.
     setEditPurpose(topic.purpose || '');
     setEditCategory(topic.category || '');
+    // Phase 65 — seed with the current value (treat missing as true).
+    setEditAllowDelegation(topic.allow_delegation !== false);
   }
 
   return (
@@ -386,6 +400,21 @@ export default function Topics() {
             <label className="block text-xs text-gray-500 mb-1">Color</label>
             <ColorPicker value={newColor} onChange={setNewColor} />
           </div>
+          {/* Phase 65 — per-topic delegation toggle. */}
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={newAllowDelegation}
+              onChange={e => setNewAllowDelegation(e.target.checked)}
+              className="mt-0.5 accent-[var(--brand-accent)]"
+            />
+            <div>
+              <span className="text-sm text-gray-700">Allow delegation</span>
+              <p className="text-xs text-gray-400">
+                When off, any proposal tagged with this topic becomes direct vote only — even if its other topics allow delegation.
+              </p>
+            </div>
+          </label>
           <div className="flex gap-2">
             <button
               type="submit"
@@ -500,6 +529,21 @@ export default function Topics() {
               <label className="block text-xs text-gray-500 mb-1">Color</label>
               <ColorPicker value={editColor} onChange={setEditColor} />
             </div>
+            {/* Phase 65 — per-topic delegation toggle. */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={editAllowDelegation}
+                onChange={e => setEditAllowDelegation(e.target.checked)}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <span className="text-sm text-gray-700">Allow delegation</span>
+                <p className="text-xs text-gray-400">
+                  When off, any proposal tagged with this topic becomes direct vote only — even if its other topics allow delegation.
+                </p>
+              </div>
+            </label>
             <div className="flex gap-2">
               <button
                 onClick={() => handleUpdate(t.id)}
@@ -528,6 +572,15 @@ export default function Topics() {
                   {t.sub_org_id && (
                     <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">
                       {(subOrgs.find(s => s.id === t.sub_org_id)?.name) || 'sub-org'}
+                    </span>
+                  )}
+                  {/* Phase 65 — delegation disallowed on this topic. */}
+                  {t.allow_delegation === false && (
+                    <span
+                      className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-amber-50 text-amber-700"
+                      title="Proposals tagged with this topic are direct vote only — delegation doesn't apply."
+                    >
+                      direct vote only
                     </span>
                   )}
                 </div>
