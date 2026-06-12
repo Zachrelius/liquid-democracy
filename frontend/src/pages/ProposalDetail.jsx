@@ -442,14 +442,19 @@ function ApprovalResultsPanel({ tally, proposal }) {
         {options.map(opt => {
           const count = optionApprovals[opt.id] || 0;
           const pct = maxApprovals > 0 ? (count / maxApprovals) * 100 : 0;
-          const isWinner = winners.includes(opt.id);
-          const isSelectedWinner = tieResolution
+          // A failed election seated nobody (quorum gates seat
+          // installation) — suppress the winner checkmark / seat chips
+          // so the bars don't contradict "no seats were changed".
+          // Non-election proposals keep today's winner styling.
+          const electionNotSeated = proposal.is_election && proposal.status === 'failed';
+          const isWinner = !electionNotSeated && winners.includes(opt.id);
+          const isSelectedWinner = !electionNotSeated && (tieResolution
             ? (
                 tieResolution.selected_option_id === opt.id
                 || (Array.isArray(tieResolution.chosen_winners)
                   && tieResolution.chosen_winners.includes(opt.id))
               )
-            : false;
+            : false);
           // Multi-winner seat attribution chip \u2014 "guaranteed seat"
           // (floor), "met threshold", or "tie-break". Only rendered
           // when the proposal carries a winner-selection config.
