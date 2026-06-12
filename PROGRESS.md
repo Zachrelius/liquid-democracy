@@ -4083,3 +4083,23 @@ Approval-method elections now honor `approval_winner_config` with N winners. Bra
 - **DELETE title → 500** once any election references it (`proposals.election_title_id` FK, no ondelete; `routes/org_titles.py:~393`). Needs friendly 400 or FK handling.
 - Election banner never announces winners after close ("Voting will determine the winner" persists).
 - Demo-login persona allowlist is narrower than org membership (several hoa_* members 404).
+
+---
+
+## Phase 67 — Honest Election Quorum + Approval-Election UI + Bug Fixes ✅ Complete (2026-06-12)
+
+Z-approved follow-ups from 66a. Branch `phase-67/election-ux-and-bug-fixes` (merge `4bf2ccd`) + `phase-67a/qa-copy-fixes` (merge `292ef71`). Bundle `index-BMTIwlNV.js` → 67a follow-up. No migration; PG smoke n/a. Tests 2370 → 2392 (+22), 0 failures.
+
+**W1 — quorum gates seat installation (design pivoted mid-pass per Z + planning agent, superseding the force-passed draft).** `election_close_status` makes quorum the ONLY pass/fail gate for elections; `run_election_close_hook` runs `finalize_election` ONLY on `passed` — a failed (quorum-unmet) close seats nothing, writes `election.not_finalized` ({reason: quorum_not_met, seats_unchanged: true}), and scheduled elections still advance the term clock (prevents immediate re-open loops). Elections default to `quorum_threshold=0` at creation (plurality-of-those-who-vote is the norm; `_OpenElectionBody` accepts an explicit override) — so all existing election flows close passed and seat winners unchanged. **Pre-existing bug found and fixed:** only the global advance route ever ran the finalize hook — the org-scoped advance AND the worker natural/SRR close closed elections without seating winners at all. All three sites now share the same two helpers. FE: "Elected: <names>" banner, "X of 76 eligible members voted" turnout line, "Quorum not met — no seats were changed." on failed closes; zero-candidate passed closes read as an honest hold-over (67a).
+
+**W2 — approval elections in the UI.** `OrgTitlesPanel`'s window.prompt chain replaced with a real modal: voting-method radios (RCV default / Approval), the 4-preset winner-selection control (shared `approvalWinnerConfig.js`), single-holder max_winners==1 constraint surfaced client-side, seats-up-for-election input for RCV multi-holder, slate-mode select, nomination/voting windows, and a "Turnout quorum (%)" input defaulting to 0/no minimum.
+
+**W3 — candidate display names.** New `frontend/src/utils/optionDisplay.js` (`optionDisplayLabel`: `option.description` primary on elections) wired through ballots, options list, approval + RCV results panels, Sankey, vote-network legend, attractor graph, trajectory labels, list cards. No more raw user-id UUIDs on election surfaces.
+
+**W4 — title delete with election history:** friendly 400 ("This title has election history and can't be deleted…") before the FK would 500; title row intact.
+
+**W5 — delegations/network 500 fixed:** `routes/delegations.py` read `Topic.description` (column dropped Phase 58) — AttributeError on every My Delegations load. Fixed to canonical `Topic.name`; regression test for the previously-untested topic-specific-delegation path added.
+
+**Prod QA (Cedar Hollow, 7 scenarios, ALL PASS):** network endpoint 200 (was 500, four historical 500s visible in the tab's request log); full approval election opened entirely through the new modal → display names everywhere → default-quorum close seated Marcus+Don with banner + turnout line; explicit-40%-quorum election at 1.3% turnout closed FAILED with holders verified unchanged (2 before, 2 after); title delete → friendly 400; zero-candidate close → passed hold-over, nothing seated. Two cosmetic contradictions QA caught (failed-election seat chips; zero-candidate "have been seated" copy) fixed same-day in 67a.
+
+**Notes:** per-title holder NAMES have no list endpoint (identity inferred via counts in QA — small future nicety); the static "Nominations open…" proposal body persists on closed elections (cosmetic); auto-extend-voting-once-on-quorum-miss deliberately deferred per Z.
