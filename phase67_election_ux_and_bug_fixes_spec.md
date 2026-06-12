@@ -54,5 +54,7 @@ network with a TOPIC-SPECIFIC delegation (the untested path that hid this).
 ## Verification bar
 - Full suite 0 failures (baseline 2370 passed / 18 skipped).
 - Browser-verify on Cedar Hollow: open an APPROVAL election entirely through the new UI,
-  full lifecycle to close; display names everywhere; under-quorum election shows passed +
-  turnout line + winner announcement; title-delete attempt shows friendly error.
+  full lifecycle to close; display names everywhere; default-quorum election closes passed
+  with winner announcement + turnout line; an explicit-quorum election that misses turnout
+  closes failed with "Quorum not met — no seats were changed" and NO holder changes;
+  title-delete attempt shows friendly error.
