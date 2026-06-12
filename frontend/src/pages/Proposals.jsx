@@ -9,6 +9,10 @@ import VoteBar from '../components/VoteBar';
 import MultiOptionResultBar from '../components/MultiOptionResultBar';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
+// Multi-winner approval — merges close-time tie-resolution picks into
+// the displayed winner set (the live tally recompute leaves boundary-
+// tied options out of `winners`; only the persisted record has them).
+import { effectiveApprovalWinners } from '../utils/approvalWinnerConfig';
 
 const STATUS_FILTERS = ['all', 'deliberation', 'voting', 'passed', 'failed'];
 
@@ -30,7 +34,9 @@ function timeRemaining(votingEnd) {
 // percentage = approvals / votes_cast, NOT normalized across options.
 function buildApprovalBars(proposal, tally) {
   const counts = tally?.option_approvals || {};
-  const winners = new Set(tally?.winners || []);
+  // Multi-winner: include any boundary-tied options the close-time tie
+  // resolver seated (they live in tally.tie_resolution, not winners).
+  const winners = new Set(effectiveApprovalWinners(tally));
   const total = tally?.votes_cast || tally?.total_ballots_cast || 0;
   const optsByLabel = (proposal.options || []).map(o => ({
     id: o.id,
@@ -80,12 +86,24 @@ function lookupLabel(proposal, optionId) {
 // over the winner-count framing per spec — when the backend hasn't resolved a
 // tie, render "Tied: ..." rather than picking arbitrarily.
 function closedHeading(proposal, tally) {
-  const winnerIds = Array.isArray(tally?.winners) ? tally.winners : [];
+  // Multi-winner approval: union the seated winners with any boundary-
+  // tied options the close-time tie resolver picked. Non-approval
+  // methods keep the raw winners list.
+  const winnerIds = proposal.voting_method === 'approval'
+    ? effectiveApprovalWinners(tally)
+    : (Array.isArray(tally?.winners) ? tally.winners : []);
+  if (tally?.tied === true && !tally?.tie_resolution) {
+    // Unresolved tie. For a multi-winner boundary tie the contested set
+    // lives in boundary_tied (winners may be empty when nobody seated
+    // unambiguously, e.g. Top 1 with two options tied at the top).
+    const tiedIds = winnerIds.length > 0
+      ? winnerIds
+      : (Array.isArray(tally?.boundary_tied) ? tally.boundary_tied : []);
+    if (tiedIds.length === 0) return null;
+    return `Tied: ${tiedIds.map(id => lookupLabel(proposal, id)).join(', ')}`;
+  }
   if (winnerIds.length === 0) return null;
   const labels = winnerIds.map(id => lookupLabel(proposal, id));
-  if (tally?.tied === true && !tally?.tie_resolution) {
-    return `Tied: ${labels.join(', ')}`;
-  }
   if (winnerIds.length === 1) return `Winner: ${labels[0]}`;
   return `Winners: ${labels.join(', ')}`;
 }
