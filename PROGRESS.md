@@ -4060,3 +4060,26 @@ Approval proposals can now seat multiple winners via one generalized config `pro
 **Prod QA (Cedar Hollow, real UI form + results pages, API ballots):** Top-2 → {A,B} both floor-attributed; 60% threshold with one option at exactly 60% → seated (>= boundary confirmed); Floor+extras Y=1/Z=3/C=50% → A floor + B threshold exactly as spec'd; untouched control → legacy single-winner rendering; boundary tie (Top-2, B/C tied) → persisted `tie_resolution` (`broader_approval_base`, `boundary_tie:true`, `chosen_winners:[B]`), page shows "tie-break" star + method banner. Five [QA] proposals self-clean at nightly reset.
 
 **Non-blocking observations:** tie-resolved proposals suppress the ✓ marker for all winners (legacy `isWinner && !tieResolution` guard — visually inconsistent with seat chips, deliberate); Chrome MCP `form_input` doesn't fire React onChange on radios/checkboxes (QA tooling note, recurring).
+
+---
+
+## Phase 66a — Multi-Winner Approval Elections ✅ Complete (2026-06-11)
+
+Approval-method elections now honor `approval_winner_config` with N winners. Branch `phase-66a/election-wiring`, merge `fdadf6b` (backend-only; no bundle change). No migration (column shipped in 66 core) — PG smoke n/a.
+
+**Wiring:** `_OpenElectionBody` accepts the config (shared validator; 400 on RCV/binary elections — `num_winners` owns those); `_build_context` election carve-out lifted for approval only. `finalize_election` → `_resolve_approval_config_winners` (config-driven tally; persisted close-time tie_resolution merged to avoid duplicate audit; option.label→user_id mapping per Stage 1/2 convention) → `_cap_winners_to_title_capacity` (overflow recorded as `capacity_overflow_winner_ids` in election.resolved details) → EXISTING Stage 2 seating machinery unchanged (`_refresh_slate_for_title` / `grant_title` + `_apply_bound_role_for_assign`). Uncontested shortcut mirrors Stage 2 (`candidates <= min_winners`); threshold-only configs get no shortcut and fall back to zero winners on engine error.
+
+**Cardinality floor:** unchanged Stage 2 defense (`_check_revoke_floor` → `count_active_governors`), proven by an engineered-violation test: refresh_slate election whose winner set excludes the org's ONLY governor → `slate_refresh_rejected`, governor keeps role, winners not installed, `count_active_governors == 1`.
+
+**Tests:** 2351 → 2370 (+19: 18 new + 1 in the 66 file), 0 failures. One 66-core test renamed/split (the blanket election-400 became non-approval-only — inherent to lifting the block).
+
+**Prod QA (Cedar Hollow, full lifecycle):** created multi-holder title (cap 3), opened approval election via API (Top-2 config echoed back), 4 candidacies (UI-rendered), advanced, 5 ballots (one via real UI checkboxes), closed → winners Marcus 4 / Don 3 seated as title holders (UI + API confirmed), both `floor`-attributed in `winner_seats`, Janet's steward role intact. State left for nightly reset documented in QA notes.
+
+**Known gap (deliberate stop):** the election-open UI never sends `voting_method` — elections are RCV-only in the FE (`OrgTitlesPanel.handleOpenElection` is a window.prompt chain). Approval-config elections are API-only until a UI pass adds a method picker + the winner-selection control (`frontend/src/utils/approvalWinnerConfig.js` is ready to reuse).
+
+**Pre-existing issues surfaced by QA (NOT 66a regressions — for triage):**
+- **Under-quorum elections still seat winners** while the proposal closes as `failed` (finalize hook fires on passed AND failed, `routes/proposals.py:~2453` — Stage 1/2 behavior). UI says "Proposal Failed" while title holders change. Needs a product decision: should quorum gate seat installation?
+- **Election surfaces render candidate user-id UUIDs as primary text** (ballot options, results panel, vote-network legend); display name is secondary or absent — `option.description` should be primary on election proposals.
+- **DELETE title → 500** once any election references it (`proposals.election_title_id` FK, no ondelete; `routes/org_titles.py:~393`). Needs friendly 400 or FK handling.
+- Election banner never announces winners after close ("Voting will determine the winner" persists).
+- Demo-login persona allowlist is narrower than org membership (several hoa_* members 404).
