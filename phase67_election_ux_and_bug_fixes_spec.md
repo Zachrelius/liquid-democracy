@@ -4,16 +4,22 @@ Z-approved follow-ups from the Phase 66a closeout (2026-06-12). Branch `phase-67
 
 ## Goal / clusters
 
-**W1 — Election close semantics (resolves the under-quorum contradiction).** Z's locked
-product decision stands: elections always produce winners. Resolution chosen (Z open to
-alternatives, this one preserves turnout visibility): an election proposal whose finalize
-seats a winner set closes as **passed** regardless of quorum — elections are not pass/fail
-propositions; seating winners IS success. Turnout stays visible: results retain
-`quorum_met`/`total_ballots_cast`/`total_eligible`, and election results UI shows a neutral
-turnout line (e.g. "5 of 76 eligible members voted") — flagged low-turnout copy when below
-the org quorum, but NOT a failure banner. Both close sites (route advance + worker natural
-close) must agree. Election banner announces the winner set after close (fixes the
-"Voting will determine the winner" stale banner).
+**W1 — Election close semantics (resolves the under-quorum contradiction). REVISED
+2026-06-12 per Z + planning agent — supersedes the force-passed design.** Quorum is made
+HONEST: **quorum gates seat installation.** An election that closes under quorum closes as
+**failed** and seats NOTHING — incumbents stay, vacancies stay vacant, the org can re-run.
+The finalize/seating hook fires only on `passed`, never on `failed`. To keep plurality-of-
+those-who-vote as the norm, **elections default to quorum 0** at creation (`open_election`
++ the scheduled/cosign service path set `quorum_threshold=0` unless the caller explicitly
+passes one; `_OpenElectionBody` accepts an optional `quorum_threshold`). An org that
+deliberately sets a quorum on a leadership election means it. Turnout stays visible:
+results retain `quorum_met`/`total_ballots_cast`/`total_eligible`; election results UI
+shows a neutral turnout line, and a failed-by-quorum election shows an honest "Quorum not
+met — no seats were changed" message. Election banner announces the winner set after a
+seated close (fixes the stale "Voting will determine the winner" banner). Both close sites
+(route advance + worker natural close) must agree. Audit: failed-by-quorum closes record
+that seating was skipped. Future nicety, NOT this pass: optional auto-extend-voting-once
+toggle when quorum unmet.
 
 **W2 — Approval elections in the UI.** Replace the `window.prompt` chain in
 `OrgTitlesPanel.handleOpenElection` with a proper modal/form: voting method picker
