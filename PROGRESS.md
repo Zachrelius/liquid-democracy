@@ -4028,3 +4028,21 @@ QA agent ran 18 scenarios via Claude in Chrome MCP. 11 PASS, 0 FAIL, 6 BLOCKED (
 **Secrets cleanup:** deleted `janet.json`, `janet2.json` (contained live JWTs), `jtok.txt`, `backend/tok.txt` (empty) — all untracked, confirmed never committed. `.gitignore` now blocks `tok.txt` / `jtok.txt` / `*token*.txt` / `janet*.json` / `*.tokens.json`. Repo-wide sweep of all 209 untracked files: no other JWT/bearer-shaped strings.
 
 **Follow-up (non-blocking):** the policy has no `report-uri`/`report-to`, so field violations are invisible outside DevTools; add a reporting endpoint if telemetry is ever wanted. Pre-existing non-CSP observations from QA: polis live-stats row shows "API didn't respond" on the manual-path embed; `/{org}/polises` list route redirects to public landing on direct load.
+
+---
+
+## Phase 65 — Org Delegation Controls ✅ Complete (2026-06-11)
+
+Orgs can now turn delegation off — org-wide (`settings.delegation.enabled`, read-time default true, no backfill needed) or per-topic (`Topic.allow_delegation`, NOT NULL server_default true, migration `e7a9c4d2b8f1` revising `d1e2f3a4b5c6`, reversible + cycle-tested, PG smoke both modes PASS). Branch `phase-65/delegation-controls`, merge `7b66222`, bundle `index-CDRqvJ_X.js`.
+
+**Enforcement is two-layer.** Resolution layer (load-bearing): `DelegationService._build_context` builds the context with EMPTY delegation + precedence maps when the proposal is gated (org switch off OR any attached topic disallowed — D1 whole-proposal semantics; untagged proposals see only the org switch, D4) — automatically covers compute_tally, resolve_vote, the sustained-majority worker, cosign weight, and vote-graph. Existing Delegation rows kept inert, never deleted (D2). Creation layer (UX): `upsert_delegation` + `request_delegation` (both branches) 403 with clear copy; `activate_intents_for_follow` skips inert intents (stay pending, re-activatable). Gating predicate `org_config.proposal_is_delegation_gated` is shared by the resolver AND `ProposalOut.delegation_gated`, so the FE indicator can never disagree with the tally.
+
+**FE:** Topics admin per-topic toggle + helper text + row chip; OrgSettings "Delegation" section with master switch; Delegations page paused banner + per-row inert label; ProposalDetail "Direct vote only" badge.
+
+**Tests:** 2293 → 2313 (+20: 19 behavior + 1 migration cycle), 0 failures (additive-layer invariant held — defaults byte-identical).
+
+**Prod QA (Cedar Hollow, full loop observed):** "Raise Pool Membership Fees" baseline 16y/7n/53nc with 14 delegation-resolved ballots → topic Budget flagged → 3y/6n/67nc, delegated nodes 14→0, "Direct vote only" badge shown → unflagged → EXACT return to baseline. Org master switch loop identical. Paused label + banner verified. Create-on-flagged-topic correctly 403s with inline error. All state restored.
+
+**Spec deviation:** settings key shape is nested `delegation.enabled` (dispatch choice) vs the spec's flat `delegation_enabled` — semantics identical.
+
+**Follow-ups (non-blocking):** (1) pre-existing 500 on `GET /api/orgs/{slug}/delegations/network` observed on every My Delegations load — unrelated to this pass, needs a look; (2) UX: Set Delegate picker only errors after submit on a disallowed topic — could pre-disable; (3) Chrome MCP `form_input` checkbox writes don't fire React onChange (QA tooling note — use native click).
