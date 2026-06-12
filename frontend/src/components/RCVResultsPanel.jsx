@@ -1,5 +1,8 @@
 import { useMemo } from 'react';
 import TieResolutionBanner from './TieResolutionBanner';
+// Phase 67 W3 — election proposals show candidate display names
+// (option.description) instead of the raw user-id UUID labels.
+import { optionDisplayLabel } from '../utils/optionDisplay';
 
 /**
  * RCVResultsPanel — round-by-round breakdown for ranked-choice (IRV / STV) results.
@@ -31,7 +34,12 @@ export default function RCVResultsPanel({ tally, proposal }) {
     if (tally?.option_labels) {
       Object.entries(tally.option_labels).forEach(([k, v]) => { m[k] = v; });
     }
-    (proposal?.options || []).forEach(o => { if (!m[o.id]) m[o.id] = o.label; });
+    // Phase 67 W3 — for elections the proposal options' descriptions
+    // (candidate display names) take precedence over the raw UUID labels.
+    (proposal?.options || []).forEach(o => {
+      const lbl = optionDisplayLabel(proposal, o);
+      if (lbl && (proposal?.is_election || !m[o.id])) m[o.id] = lbl;
+    });
     return m;
   }, [tally, proposal]);
 
@@ -94,30 +102,44 @@ export default function RCVResultsPanel({ tally, proposal }) {
         </div>
       )}
 
-      {/* Final result — Item 5: tense-aware label for in-progress vs closed */}
+      {/* Final result — Item 5: tense-aware label for in-progress vs closed.
+          Phase 67 W1 — a failed election (quorum gated) seated nobody:
+          the tally still names the most-supported candidates, but the
+          box renders neutrally instead of announcing a "Winner". */}
       {!tied && winners.length > 0 && (() => {
         const inProgress = proposal?.status === 'voting';
+        const notSeated = proposal?.is_election && proposal?.status === 'failed';
         const totalRounds = Array.isArray(tally.rounds) ? tally.rounds.length : null;
         const headerWord = inProgress
-          ? (numWinners > 1 ? 'Currently winning' : 'Currently winning')
-          : (numWinners > 1 ? 'Winners' : 'Winner');
+          ? 'Currently winning'
+          : notSeated
+            ? 'Most support (not seated)'
+            : (numWinners > 1 ? 'Winners' : 'Winner');
+        const boxCls = inProgress
+          ? 'bg-blue-50 border-blue-200'
+          : notSeated
+            ? 'bg-gray-50 border-gray-200'
+            : 'bg-green-50 border-green-200';
+        const headCls = inProgress ? 'text-blue-700' : notSeated ? 'text-gray-600' : 'text-green-700';
+        const bodyCls = inProgress ? 'text-blue-800' : notSeated ? 'text-gray-700' : 'text-green-800';
+        const numCls = inProgress ? 'text-blue-600' : notSeated ? 'text-gray-500' : 'text-green-600';
         return (
-          <div className={`${inProgress ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'} border rounded-lg p-3`}>
-            <p className={`text-xs font-medium uppercase tracking-wide mb-1 ${inProgress ? 'text-blue-700' : 'text-green-700'}`}>
+          <div className={`${boxCls} border rounded-lg p-3`}>
+            <p className={`text-xs font-medium uppercase tracking-wide mb-1 ${headCls}`}>
               {headerWord}
               {inProgress && totalRounds ? ` after ${totalRounds} round${totalRounds === 1 ? '' : 's'}` : ''}
             </p>
             {numWinners > 1 ? (
-              <ol className={`text-sm space-y-0.5 ${inProgress ? 'text-blue-800' : 'text-green-800'}`}>
+              <ol className={`text-sm space-y-0.5 ${bodyCls}`}>
                 {winners.map((wid, idx) => (
                   <li key={wid}>
-                    <span className={`mr-1 ${inProgress ? 'text-blue-600' : 'text-green-600'}`}>{idx + 1}.</span>
+                    <span className={`mr-1 ${numCls}`}>{idx + 1}.</span>
                     <strong>{labelOf(wid)}</strong>
                   </li>
                 ))}
               </ol>
             ) : (
-              <p className={`text-base font-bold ${inProgress ? 'text-blue-800' : 'text-green-800'}`}>
+              <p className={`text-base font-bold ${bodyCls}`}>
                 {labelOf(winners[0])}
               </p>
             )}
@@ -214,15 +236,29 @@ export default function RCVResultsPanel({ tally, proposal }) {
         })}
       </div>
 
-      {/* Summary stats */}
+      {/* Summary stats. Phase 67 W1 — elections get a neutral turnout
+          line. Quorum gates seat installation: an election that closed
+          failed under an explicit quorum seated nobody, and says so
+          honestly. */}
       <div className="text-sm text-gray-500 space-y-1 pt-1">
-        <p>
-          {tally.total_ballots_cast ?? 0} ballot{(tally.total_ballots_cast ?? 0) !== 1 ? 's' : ''} cast
-          {tally.total_eligible > 0 &&
-            ` of ${tally.total_eligible} eligible (${(
-              (tally.total_ballots_cast / tally.total_eligible) * 100
-            ).toFixed(1)}%)`}
-        </p>
+        {proposal?.is_election ? (
+          <>
+            <p>{tally.total_ballots_cast ?? 0} of {tally.total_eligible ?? 0} eligible member{(tally.total_eligible ?? 0) !== 1 ? 's' : ''} voted</p>
+            {proposal.status === 'failed' && tally.quorum_met === false && (
+              <p className="text-[#C0392B] font-medium">
+                Quorum not met — no seats were changed.
+              </p>
+            )}
+          </>
+        ) : (
+          <p>
+            {tally.total_ballots_cast ?? 0} ballot{(tally.total_ballots_cast ?? 0) !== 1 ? 's' : ''} cast
+            {tally.total_eligible > 0 &&
+              ` of ${tally.total_eligible} eligible (${(
+                (tally.total_ballots_cast / tally.total_eligible) * 100
+              ).toFixed(1)}%)`}
+          </p>
+        )}
         {(tally.total_abstain ?? 0) > 0 && (
           <p>
             {tally.total_abstain} empty ranking

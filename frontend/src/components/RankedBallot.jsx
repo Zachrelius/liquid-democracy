@@ -4,6 +4,9 @@ import api from '../api';
 import { useToast } from './Toast';
 import { useConfirm } from './ConfirmDialog';
 import UserLink from './UserLink';
+// Phase 67 W3 — election proposals show candidate display names
+// (option.description) instead of the raw user-id UUID labels.
+import { optionDisplayLabel } from '../utils/optionDisplay';
 
 function ordinal(n) {
   const s = ['th', 'st', 'nd', 'rd'];
@@ -152,7 +155,7 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
           {rank.map((oid, idx) => (
             <li key={oid}>
               <span className="text-gray-400 mr-2">{idx + 1}.</span>
-              {optionMap[oid]?.label || oid}
+              {optionDisplayLabel(proposal, optionMap[oid]) || oid}
             </li>
           ))}
         </ol>
@@ -195,7 +198,7 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
                   {myVote.ranking.map((oid, idx) => (
                     <li key={oid}>
                       <span className="text-gray-400 mr-2">{idx + 1}.</span>
-                      {optionMap[oid]?.label || oid}
+                      {optionDisplayLabel(proposal, optionMap[oid]) || oid}
                     </li>
                   ))}
                 </ol>
@@ -317,8 +320,8 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
                           <span className="text-gray-300 text-sm select-none mt-0.5">⠿</span>
                           <span className="text-sm font-bold text-[var(--brand-primary)] w-10 shrink-0">{ordinal(index + 1)}</span>
                           <div className="flex-1 min-w-0">
-                            <span className="text-sm font-medium text-gray-800">{opt.label}</span>
-                            {opt.description && <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>}
+                            <span className="text-sm font-medium text-gray-800">{optionDisplayLabel(proposal, opt)}</span>
+                            {!proposal.is_election && opt.description && <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>}
                           </div>
                           <button
                             type="button"
@@ -373,8 +376,8 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
                         >
                           <span className="text-gray-300 text-sm select-none mt-0.5">⠿</span>
                           <div className="flex-1 min-w-0">
-                            <span className="text-sm font-medium text-gray-800">{opt.label}</span>
-                            {opt.description && <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>}
+                            <span className="text-sm font-medium text-gray-800">{optionDisplayLabel(proposal, opt)}</span>
+                            {!proposal.is_election && opt.description && <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>}
                           </div>
                           <button
                             type="button"

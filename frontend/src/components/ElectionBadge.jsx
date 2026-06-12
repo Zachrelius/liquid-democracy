@@ -14,8 +14,13 @@ import { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import { useToast } from './Toast';
 import { useAuth } from '../AuthContext';
+// Phase 67 W1 — winner announcement on closed elections. Winners come
+// from the results tally (passed in by ProposalDetail); display names
+// come from the option descriptions via the shared W3 helper.
+import { effectiveApprovalWinners } from '../utils/approvalWinnerConfig';
+import { optionLabelOf } from '../utils/optionDisplay';
 
-export default function ElectionBadge({ proposal, orgSlug, onChanged }) {
+export default function ElectionBadge({ proposal, orgSlug, onChanged, tally }) {
   const toast = useToast();
   const { user } = useAuth();
   const [candidates, setCandidates] = useState([]);
@@ -46,6 +51,37 @@ export default function ElectionBadge({ proposal, orgSlug, onChanged }) {
   if (!proposal?.is_election) return null;
 
   const isCandidate = !!user && candidates.some(c => c.user_id === user.id);
+
+  // Phase 67 W1 — banner copy per phase. After a seated (passed) close,
+  // announce the winner set (tally winners + candidate display names)
+  // instead of the stale "Voting will determine the winner." Quorum
+  // gates seat installation: a failed close under an explicit quorum
+  // seated nobody and says so honestly.
+  const isClosedStatus = ['passed', 'failed', 'withdrawn'].includes(proposal.status);
+  const winnerIds = proposal.status === 'passed'
+    ? (proposal.voting_method === 'approval'
+      ? effectiveApprovalWinners(tally)
+      : (Array.isArray(tally?.winners) ? tally.winners : []))
+    : [];
+  const winnerNames = winnerIds.map(optionLabelOf(proposal, tally?.option_labels));
+  let phaseCopy;
+  if (inNominationWindow) {
+    phaseCopy = 'Nominations are open. Members may self-declare during this window. When voting opens, the candidate set is locked.';
+  } else if (!isClosedStatus) {
+    phaseCopy = 'Nominations are closed. Voting will determine the winner.';
+  } else if (winnerNames.length > 0) {
+    phaseCopy = `Elected: ${winnerNames.join(', ')}`;
+  } else if (proposal.status === 'withdrawn') {
+    phaseCopy = 'This election was withdrawn.';
+  } else if (proposal.status === 'failed' && tally?.quorum_met === false) {
+    phaseCopy = 'Quorum not met — no seats were changed.';
+  } else if (proposal.status === 'passed') {
+    // Passed but the results tally hasn't loaded (yet) — don't claim
+    // nobody was seated.
+    phaseCopy = 'Voting has closed and the winning candidates have been seated.';
+  } else {
+    phaseCopy = 'This election closed without seating a winner.';
+  }
 
   async function handleDeclare() {
     setBusy(true);
@@ -86,10 +122,8 @@ export default function ElectionBadge({ proposal, orgSlug, onChanged }) {
           <h3 className="text-sm font-semibold text-purple-800 uppercase tracking-wide">
             Election: {proposal.election_title_name || 'a title'}
           </h3>
-          <p className="text-sm text-purple-900 mt-1">
-            {inNominationWindow
-              ? 'Nominations are open. Members may self-declare during this window. When voting opens, the candidate set is locked.'
-              : 'Nominations are closed. Voting will determine the winner.'}
+          <p className={`text-sm text-purple-900 mt-1 ${winnerNames.length > 0 ? 'font-semibold' : ''}`}>
+            {phaseCopy}
           </p>
         </div>
         {inNominationWindow && user && (
