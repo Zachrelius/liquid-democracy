@@ -13,6 +13,16 @@ import renderMarkdown from '../../utils/renderMarkdown';
 import { useHasPermission } from '../../hooks/useHasPermission';
 // Phase 52 Stage 1 — shared verification state label tables.
 import { VERIFICATION_STATE_OPTIONS } from '../../verificationLabels';
+// Multi-winner approval selection — shared preset detection, payload
+// builder, validation, and plain-language phrasing (also used by the
+// results panel so the copy matches end to end).
+import {
+  SINGLE_WINNER_SUMMARY,
+  detectApprovalWinnerPreset,
+  buildApprovalWinnerConfig,
+  validateApprovalWinnerSelection,
+  describeApprovalWinnerRule,
+} from '../../utils/approvalWinnerConfig';
 
 // Phase 16 F1 — format a day-count for display. Whole numbers render as
 // integers ("3 days"); fractional values keep up to two decimal places so
@@ -334,6 +344,16 @@ function CreateProposalForm({
   const [numWinners, setNumWinners] = useState(() => (
     isEditMode ? (editingProposal.num_winners ?? 1) : 1
   ));
+  // Multi-winner approval selection (approval method only; never for
+  // elections — those create through OrgTitles, not this form). One
+  // state object holding the active preset + every preset's input
+  // values; seeded from the proposal's stored generalized config in
+  // edit mode (preset shape detected; non-matching shapes fall back to
+  // the floor_extras preset showing the raw generalized values).
+  const [winnerSel, setWinnerSel] = useState(() => detectApprovalWinnerPreset(
+    isEditMode ? editingProposal.approval_winner_config : null,
+  ));
+  const isElection = isEditMode && editingProposal.is_election === true;
   const [selectedTopics, setSelectedTopics] = useState(() => {
     if (isEditMode && Array.isArray(editingProposal.topics)) {
       // ProposalOut surfaces topics as [{topic_id, relevance, ...}]; map
@@ -522,6 +542,26 @@ function CreateProposalForm({
     Number.isInteger(numWinners) && numWinners >= 1 && numWinners <= options.length
   );
 
+  // Multi-winner approval selection — client-side validation mirrors
+  // the backend's approval_winner_config rules; the submit button is
+  // disabled with an inline message when invalid.
+  const winnerSelectionError = (votingMethod === 'approval' && !isElection)
+    ? validateApprovalWinnerSelection(winnerSel)
+    : null;
+  const winnerSelectionValid = !winnerSelectionError;
+  const winnerRulePreview = (votingMethod === 'approval' && !isElection && winnerSelectionValid)
+    ? (describeApprovalWinnerRule(buildApprovalWinnerConfig(winnerSel)) || SINGLE_WINNER_SUMMARY)
+    : null;
+
+  function updateWinnerSel(patch) {
+    setWinnerSel(prev => ({ ...prev, ...patch }));
+  }
+
+  // Parse a number-input value: '' stays '' (cleared), otherwise Number.
+  function numOrEmpty(raw) {
+    return raw === '' ? '' : Number(raw);
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
     // Phase 9 — block submission when require_polis_for_new_proposals is
@@ -589,6 +629,13 @@ function CreateProposalForm({
       }
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
+      }
+      // Multi-winner approval selection — approval method only (the
+      // backend 400s on other methods and on elections). Single-winner
+      // preset sends null = legacy behavior; in edit mode the explicit
+      // null also clears a previously-set config.
+      if (votingMethod === 'approval' && !isElection) {
+        payload.approval_winner_config = buildApprovalWinnerConfig(winnerSel);
       }
       // Phase 52 Stage 1 + Phase 62 A1 — verification floor + optional
       // jurisdiction. In create mode, only include when explicitly set
@@ -780,6 +827,134 @@ function CreateProposalForm({
       {/* Options Editor (approval and ranked-choice) */}
       {isMultiOption && (
         <OptionsEditor options={options} onChange={setOptions} />
+      )}
+
+      {/* Winner selection (approval only). Four presets writing one
+          generalized config: single winner (null = legacy behavior),
+          Top X, approval threshold, floor + conditional extras. Not
+          rendered for elections (those carry their own slate rules). */}
+      {votingMethod === 'approval' && !isElection && (
+        <div>
+          <label className="block text-xs text-gray-500 mb-2">Winner selection</label>
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="winnerSelection" value="single"
+                checked={winnerSel.mode === 'single'}
+                onChange={() => updateWinnerSel({ mode: 'single' })}
+                className="accent-[var(--brand-accent)]" />
+              <span className="text-sm text-gray-700">Single winner</span>
+              <span className="text-xs text-gray-400">(default)</span>
+            </label>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="winnerSelection" value="top_x"
+                  checked={winnerSel.mode === 'top_x'}
+                  onChange={() => updateWinnerSel({ mode: 'top_x' })}
+                  className="accent-[var(--brand-accent)]" />
+                <span className="text-sm text-gray-700">Top X</span>
+              </label>
+              {winnerSel.mode === 'top_x' && (
+                <label className="flex items-center gap-1 text-xs text-gray-600">
+                  winners:
+                  <input
+                    type="number"
+                    min={1}
+                    value={winnerSel.topX}
+                    onChange={e => updateWinnerSel({ topX: numOrEmpty(e.target.value) })}
+                    className="w-16 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                  />
+                </label>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="winnerSelection" value="threshold"
+                  checked={winnerSel.mode === 'threshold'}
+                  onChange={() => updateWinnerSel({ mode: 'threshold' })}
+                  className="accent-[var(--brand-accent)]" />
+                <span className="text-sm text-gray-700">Approval threshold</span>
+              </label>
+              {winnerSel.mode === 'threshold' && (
+                <label className="flex items-center gap-1 text-xs text-gray-600">
+                  at least
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={winnerSel.thresholdPct}
+                    onChange={e => updateWinnerSel({ thresholdPct: numOrEmpty(e.target.value) })}
+                    className="w-16 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                  />
+                  % of ballots
+                </label>
+              )}
+            </div>
+
+            <div className="space-y-1">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="winnerSelection" value="floor_extras"
+                  checked={winnerSel.mode === 'floor_extras'}
+                  onChange={() => updateWinnerSel({ mode: 'floor_extras' })}
+                  className="accent-[var(--brand-accent)]" />
+                <span className="text-sm text-gray-700">Floor + extras</span>
+              </label>
+              {winnerSel.mode === 'floor_extras' && (
+                <div className="pl-6 flex items-center gap-2 flex-wrap text-xs text-gray-600">
+                  <label className="flex items-center gap-1">
+                    at least
+                    <input
+                      type="number"
+                      min={1}
+                      value={winnerSel.floorMin}
+                      onChange={e => updateWinnerSel({ floorMin: numOrEmpty(e.target.value) })}
+                      className="w-16 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                    />
+                    winners
+                  </label>
+                  <label className="flex items-center gap-1">
+                    up to
+                    <input
+                      type="number"
+                      min={1}
+                      value={winnerSel.floorMax}
+                      placeholder="no cap"
+                      onChange={e => updateWinnerSel({ floorMax: numOrEmpty(e.target.value) })}
+                      className="w-20 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                    />
+                    total
+                  </label>
+                  <label className="flex items-center gap-1">
+                    extras need
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={winnerSel.floorPct}
+                      onChange={e => updateWinnerSel({ floorPct: numOrEmpty(e.target.value) })}
+                      className="w-16 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                    />
+                    % approval
+                  </label>
+                </div>
+              )}
+            </div>
+          </div>
+          {winnerRulePreview && (
+            <p className="text-xs text-gray-600 mt-2 font-medium">{winnerRulePreview}</p>
+          )}
+          {winnerSelectionError && (
+            <p className="text-xs text-red-500 mt-1">{winnerSelectionError}</p>
+          )}
+          {winnerSel.mode !== 'single' && (
+            <p className="text-xs text-gray-400 mt-1">
+              If options tie at a seat boundary, your organization&apos;s
+              tie-resolution method picks among them (the &quot;expand
+              winners&quot; method may seat all tied options, exceeding the cap).
+            </p>
+          )}
+        </div>
       )}
 
       {/* num_winners input (ranked-choice only) */}
@@ -1186,7 +1361,7 @@ function CreateProposalForm({
       <div className="flex gap-2 items-center">
         <button
           type="submit"
-          disabled={saving || !title.trim() || !optionsValid || !numWinnersValid}
+          disabled={saving || !title.trim() || !optionsValid || !numWinnersValid || !winnerSelectionValid}
           className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
         >
           {saving

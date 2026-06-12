@@ -867,6 +867,19 @@ class Proposal(Base):
     min_age: Mapped[Optional[int]] = mapped_column(
         Integer, nullable=True,
     )
+    # Phase 66 — multi-winner approval selection config (D1). NULL =
+    # legacy single-winner behavior, byte-for-byte (additive-layer
+    # invariant). Non-null = the generalized form
+    # ``{min_winners: int>=0, max_winners: int>=1|null,
+    #   approval_threshold: float in (0,1]|null}``; the FE's three
+    # presets (Top X / threshold / floor+extras) all write this shape.
+    # Approval voting_method only; rejected at the route layer for
+    # binary / ranked_choice and for election proposals (66a wires
+    # elections). ``approval_threshold`` is a FRACTION of ballots cast
+    # (mirrors ``pass_threshold`` conventions, D2).
+    approval_winner_config: Mapped[Optional[dict]] = mapped_column(
+        JSON, nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now, nullable=False)
 

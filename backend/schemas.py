@@ -365,6 +365,81 @@ class WriteInOptionCreate(BaseModel):
     description: str = Field(default="", max_length=2000)
 
 
+# Phase 66 — multi-winner approval selection config validation. Shared by
+# ProposalCreate + ProposalUpdate so both paths enforce identical shape
+# rules at the schema layer (422 on violation). Method-compatibility
+# (approval only, never elections) is enforced at the route layer (400)
+# because it needs the proposal/org context.
+_APPROVAL_WINNER_CONFIG_KEYS = {
+    "min_winners", "max_winners", "approval_threshold",
+}
+
+
+def _validate_approval_winner_config(v: Optional[dict]) -> Optional[dict]:
+    """Validate + normalize an ``approval_winner_config`` object.
+
+    Shape: ``{min_winners: int>=0, max_winners: int>=1|null,
+    approval_threshold: float in (0,1]|null}``. ``approval_threshold``
+    is a FRACTION of ballots cast (mirrors ``pass_threshold``
+    conventions — D2). Cross-field rules: ``max_winners >=
+    min_winners`` when both set; at least one of ``min_winners > 0`` /
+    ``approval_threshold`` set (a config that can never seat anyone is
+    rejected as vacuous).
+
+    Returns the canonical three-key form (missing optional keys
+    normalized to their defaults) or None.
+    """
+    if v is None:
+        return None
+    if not isinstance(v, dict):
+        raise ValueError("approval_winner_config must be an object")
+    unknown = set(v.keys()) - _APPROVAL_WINNER_CONFIG_KEYS
+    if unknown:
+        raise ValueError(
+            f"approval_winner_config has unknown keys: {sorted(unknown)}. "
+            f"Allowed: {sorted(_APPROVAL_WINNER_CONFIG_KEYS)}."
+        )
+    min_w = v.get("min_winners", 0)
+    if isinstance(min_w, bool) or not isinstance(min_w, int) or min_w < 0:
+        raise ValueError(
+            "approval_winner_config.min_winners must be an integer >= 0"
+        )
+    max_w = v.get("max_winners")
+    if max_w is not None and (
+        isinstance(max_w, bool) or not isinstance(max_w, int) or max_w < 1
+    ):
+        raise ValueError(
+            "approval_winner_config.max_winners must be an integer >= 1 "
+            "or null"
+        )
+    thr = v.get("approval_threshold")
+    if thr is not None:
+        if isinstance(thr, bool) or not isinstance(thr, (int, float)):
+            raise ValueError(
+                "approval_winner_config.approval_threshold must be a "
+                "number in (0, 1] or null"
+            )
+        if not (0.0 < float(thr) <= 1.0):
+            raise ValueError(
+                "approval_winner_config.approval_threshold must be in "
+                "(0, 1] (a fraction of ballots cast)"
+            )
+    if max_w is not None and max_w < min_w:
+        raise ValueError(
+            "approval_winner_config.max_winners must be >= min_winners"
+        )
+    if min_w == 0 and thr is None:
+        raise ValueError(
+            "approval_winner_config is vacuous: set min_winners > 0 "
+            "and/or approval_threshold"
+        )
+    return {
+        "min_winners": min_w,
+        "max_winners": max_w,
+        "approval_threshold": float(thr) if thr is not None else None,
+    }
+
+
 class ProposalCreate(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     body: str = Field(default="", max_length=50000)
@@ -416,6 +491,10 @@ class ProposalCreate(BaseModel):
     # ``verification_delegation_carries_weight`` setting.
     verification_floor: Optional[str] = None
     verification_jurisdiction: Optional[str] = None
+    # Phase 66 — multi-winner approval selection config. NULL = legacy
+    # single-winner behavior. Approval voting_method only (route layer
+    # 400s on other methods + on elections). Shape validated below.
+    approval_winner_config: Optional[dict] = None
 
     @field_validator("voting_method")
     @classmethod
@@ -423,6 +502,13 @@ class ProposalCreate(BaseModel):
         if v not in ("binary", "approval", "ranked_choice"):
             raise ValueError("voting_method must be binary, approval, or ranked_choice")
         return v
+
+    @field_validator("approval_winner_config")
+    @classmethod
+    def validate_approval_winner_config(
+        cls, v: Optional[dict],
+    ) -> Optional[dict]:
+        return _validate_approval_winner_config(v)
 
     @field_validator("topics", mode="before")
     @classmethod
@@ -484,6 +570,21 @@ class ProposalUpdate(BaseModel):
     # Outside draft these are rejected.
     verification_floor: Optional[str] = Field(default=None)
     verification_jurisdiction: Optional[str] = Field(default=None)
+    # Phase 66 — multi-winner approval selection config, editable while
+    # status='draft' ONLY (mirrors num_winners / voting_method — the
+    # winner-selection rule changes outcome semantics, so it's frozen
+    # once the proposal has an audience). Explicit null clears the
+    # config (back to legacy single-winner). The route enforces the
+    # draft gate, the approval-method-only rule, and the
+    # election-rejection rule.
+    approval_winner_config: Optional[dict] = Field(default=None)
+
+    @field_validator("approval_winner_config")
+    @classmethod
+    def validate_approval_winner_config(
+        cls, v: Optional[dict],
+    ) -> Optional[dict]:
+        return _validate_approval_winner_config(v)
 
     @field_validator("topics", mode="before")
     @classmethod
@@ -604,6 +705,10 @@ class ProposalOut(BaseModel):
     # FE keys the proposal-detail "direct vote only" indicator on this so
     # voters know their delegate won't cover them.
     delegation_gated: bool = False
+
+    # Phase 66 — multi-winner approval selection config. NULL for
+    # legacy single-winner proposals (all pre-66 rows).
+    approval_winner_config: Optional[dict] = None
 
     model_config = {"from_attributes": True}
 
@@ -957,6 +1062,19 @@ class ProposalResults(BaseModel):
     winners: Optional[list[str]] = None
     tied: Optional[bool] = None
     tie_resolution: Optional[dict] = None
+    # Phase 66 — multi-winner approval surface (populated only when
+    # voting_method == "approval"). ``winner_seats`` maps each winner
+    # to how it seated: "floor" (unconditional min_winners seat),
+    # "threshold" (cleared approval_threshold), or "tie_resolution"
+    # (chosen by the org's tie resolver at a seat boundary).
+    # ``boundary_tied`` + ``seats_remaining`` surface an unresolved
+    # boundary tie on a live tally (pre-close). ``approval_winner_config``
+    # echoes the proposal's config so the results page can render the
+    # selection rule. All None for legacy single-winner proposals.
+    winner_seats: Optional[dict[str, str]] = None
+    boundary_tied: Optional[list[str]] = None
+    seats_remaining: Optional[int] = None
+    approval_winner_config: Optional[dict] = None
     # Ranked-choice / STV fields (populated only when voting_method == "ranked_choice")
     rounds: Optional[list[RCVRoundOut]] = None
     method: Optional[str] = None      # "irv" or "stv"

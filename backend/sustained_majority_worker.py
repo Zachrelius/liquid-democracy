@@ -447,10 +447,14 @@ def _close_proposal_now(
     tally = delegation_engine.compute_tally(proposal, db)
 
     if proposal.voting_method == "approval":
+        # Phase 66: a multi-winner boundary tie can leave ``winners``
+        # empty with the contested set in ``boundary_tied`` — that's
+        # resolvable, not a failure (mirrors the route-layer close
+        # branches in routes/proposals.py + routes/organizations.py).
         if (
             isinstance(tally, ApprovalTally)
             and tally.quorum_met(proposal.quorum_threshold)
-            and tally.winners
+            and (tally.winners or getattr(tally, "boundary_tied", None))
         ):
             try:
                 from routes.proposals import _maybe_resolve_tie

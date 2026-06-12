@@ -36,6 +36,12 @@ import MyVoteRationaleBox from '../components/MyVoteRationaleBox';
 import { colorForOption } from '../components/voteFlowGraphUtils';
 import renderMarkdown from '../utils/renderMarkdown';
 import { urlFor } from '../utils/urls';
+// Multi-winner approval — shared rule phrasing + seat-attribution copy
+// (same helpers the creation form uses, so the wording matches).
+import {
+  describeApprovalWinnerRule,
+  SEAT_CHIP_LABELS,
+} from '../utils/approvalWinnerConfig';
 // Phase 62 A3 — full-form draft editor reused from the admin Create flow.
 // The form supports an `editingProposal` prop (Phase 62 A1) which switches
 // it from POST-to-create to PATCH-to-edit while prefilling every editable
@@ -320,6 +326,16 @@ function ApprovalResultsPanel({ tally, proposal }) {
   const tieResolution = tally.tie_resolution || proposal.tie_resolution;
   const labelOf = (id) => optionLabels[id] || id;
 
+  // Multi-winner approval — selection rule + per-winner seat
+  // attribution + live boundary-tie surface. All absent/empty for
+  // legacy single-winner proposals (NULL config).
+  const winnerConfig = tally.approval_winner_config
+    ?? proposal.approval_winner_config ?? null;
+  const winnerSeats = tally.winner_seats || {};
+  const boundaryTied = Array.isArray(tally.boundary_tied) ? tally.boundary_tied : [];
+  const seatsRemaining = tally.seats_remaining ?? 0;
+  const ruleSummary = winnerConfig ? describeApprovalWinnerRule(winnerConfig) : null;
+
   // Item 5: when proposal is in voting, the winner(s) shown are provisional.
   // Surface a tense-aware callout. Closed proposals keep the existing
   // strong-winner UI via the per-option checkmark + tieResolution banner.
@@ -330,9 +346,16 @@ function ApprovalResultsPanel({ tally, proposal }) {
 
   return (
     <div className="space-y-4">
-      <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
-        {inProgress ? 'Approval Results (in progress)' : 'Approval Results'}
-      </h3>
+      <div>
+        <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+          {inProgress ? 'Approval Results (in progress)' : 'Approval Results'}
+        </h3>
+        {/* Multi-winner selection rule — same phrasing as the creation
+            form's live preview. */}
+        {ruleSummary && (
+          <p className="text-xs text-gray-500 mt-1">{ruleSummary}</p>
+        )}
+      </div>
 
       {/* Provisional leader callout while voting is open */}
       {inProgress && !tied && winners.length === 1 && topLabel && (
@@ -342,6 +365,18 @@ function ApprovalResultsPanel({ tally, proposal }) {
           </p>
           <p className="text-base font-bold text-blue-800">
             {topLabel} <span className="text-sm font-normal text-blue-600">({topCount} approval{topCount === 1 ? '' : 's'})</span>
+          </p>
+        </div>
+      )}
+
+      {/* Multi-winner counterpart of the provisional callout. */}
+      {inProgress && winners.length > 1 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <p className="text-xs font-medium text-blue-700 uppercase tracking-wide mb-1">
+            Leading options (currently)
+          </p>
+          <p className="text-sm font-semibold text-blue-800">
+            {winners.map(id => `${labelOf(id)} (${optionApprovals[id] || 0})`).join(', ')}
           </p>
         </div>
       )}
@@ -358,7 +393,22 @@ function ApprovalResultsPanel({ tally, proposal }) {
           labelOf={labelOf}
         />
       )}
-      {tied && !tieResolution && (
+      {/* Multi-winner boundary tie — equally-approved options competing
+          for the last seat(s). On a live tally this is unresolved; the
+          org's tie-resolution method settles it when voting closes. */}
+      {boundaryTied.length > 0 && !tieResolution && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+          <p className="text-sm font-medium text-amber-800">
+            {boundaryTied.length} options are tied for the remaining{' '}
+            {seatsRemaining} seat{seatsRemaining === 1 ? '' : 's'}:{' '}
+            {boundaryTied.map(labelOf).join(', ')}.
+            {inProgress
+              ? ' If the tie stands when voting closes, it will be resolved automatically.'
+              : ''}
+          </p>
+        </div>
+      )}
+      {tied && !tieResolution && boundaryTied.length === 0 && winners.length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
           <p className="text-sm font-medium text-amber-800">
             Tied result &mdash; {winners.length} option{winners.length !== 1 ? 's' : ''} received {optionApprovals[winners[0]]} approval{optionApprovals[winners[0]] !== 1 ? 's' : ''} each.
@@ -386,6 +436,12 @@ function ApprovalResultsPanel({ tally, proposal }) {
                   && tieResolution.chosen_winners.includes(opt.id))
               )
             : false;
+          // Multi-winner seat attribution chip \u2014 "guaranteed seat"
+          // (floor), "met threshold", or "tie-break". Only rendered
+          // when the proposal carries a winner-selection config.
+          const seatChip = winnerConfig && (isWinner || isSelectedWinner)
+            ? SEAT_CHIP_LABELS[winnerSeats[opt.id]] || null
+            : null;
           return (
             <div key={opt.id}>
               <div className="flex items-center justify-between text-sm mb-0.5">
@@ -393,6 +449,11 @@ function ApprovalResultsPanel({ tally, proposal }) {
                   {opt.label}
                   {isSelectedWinner && ' \u2605'}
                   {isWinner && !tieResolution && ' \u2713'}
+                  {seatChip && (
+                    <span className="ml-1.5 inline-block align-middle text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-green-50 text-[#2D8A56] border border-green-200">
+                      {seatChip}
+                    </span>
+                  )}
                 </span>
                 <span className="text-xs text-gray-500">{count} approval{count !== 1 ? 's' : ''}</span>
               </div>
