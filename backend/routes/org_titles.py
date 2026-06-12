@@ -373,6 +373,27 @@ def delete_title(
             status_code=400,
             detail="System titles cannot be deleted.",
         )
+    # Phase 67 W4 — election proposals keep a permanent FK reference to
+    # their target title (``proposals.election_title_id``, no
+    # ondelete). Deleting such a title used to 500 with a raw FK
+    # violation; surface a friendly 400 BEFORE attempting the delete.
+    # Checked before the holders check so callers get the permanent
+    # answer first (revoking holders wouldn't make this deletable).
+    election_history_count = (
+        db.query(models.Proposal)
+        .filter(models.Proposal.election_title_id == title.id)
+        .count()
+    )
+    if election_history_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This title has election history and can't be deleted. "
+                "Past elections keep a permanent record of the title "
+                "they were held for; revoke its holders instead if it "
+                "should no longer be in use."
+            ),
+        )
     if assignment_count(db, title.id) > 0:
         raise HTTPException(
             status_code=400,
