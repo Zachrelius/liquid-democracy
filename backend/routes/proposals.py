@@ -1273,18 +1273,27 @@ def update_proposal(
         proposal.num_winners = body.num_winners
 
     # Phase 66 — approval_winner_config change (draft-only, approval
-    # method only, never on elections — 66a wires elections). Shape was
-    # validated at the Pydantic layer; explicit null clears the config
-    # (back to legacy single-winner). Runs AFTER the voting_method
-    # block so a single PATCH that switches to approval AND sets the
-    # config works.
+    # method only). Shape was validated at the Pydantic layer; explicit
+    # null clears the config (back to legacy single-winner). Runs AFTER
+    # the voting_method block so a single PATCH that switches to
+    # approval AND sets the config works.
+    #
+    # Phase 66a — approval-method ELECTIONS may now carry the config
+    # (set at open-election time via _OpenElectionBody; editable here
+    # only in the artificial draft-status case since real elections
+    # open straight into deliberation). Non-approval elections still
+    # reject it: num_winners owns RCV/STV winner counts.
     if "approval_winner_config" in body.model_fields_set:
-        if getattr(proposal, "is_election", False):
+        if (
+            getattr(proposal, "is_election", False)
+            and proposal.voting_method != "approval"
+        ):
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "approval_winner_config is not yet supported for "
-                    "elections."
+                    "approval_winner_config is only supported on "
+                    "approval-method elections (num_winners governs "
+                    f"'{proposal.voting_method}' elections)."
                 ),
             )
         if proposal.status != "draft":

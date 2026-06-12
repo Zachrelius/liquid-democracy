@@ -299,23 +299,59 @@ def finalize_election(
             "title_id": title.id,
         }
 
-    num_winners = max(1, proposal.num_winners or 1)
-    # Phase 48 Stage 2 — multi-winner resolution. For num_winners == 1
-    # this reduces to the Stage 1 path (single winner). For N > 1 the
-    # RCV/STV tally produces N option-id winners; we map them back to
-    # user_ids via option.label.
-    winner_ids = _resolve_winners(db, proposal, candidates, num_winners)
+    # Phase 66a — approval-method elections carrying an
+    # ``approval_winner_config`` resolve their winner SET from the
+    # config-driven approval tally (Phase 66 core), post boundary-tie
+    # resolution. ``num_winners`` is ignored on this path (the config
+    # owns the winner count — open_election enforces num_winners == 1
+    # when a config is supplied). All other elections take the
+    # existing Stage 2 ``num_winners`` path byte-for-byte.
+    awc = getattr(proposal, "approval_winner_config", None)
+    is_config_approval = (
+        proposal.voting_method == "approval" and bool(awc)
+    )
+    capacity_overflow: list[str] = []
+    if is_config_approval:
+        winner_ids = _resolve_approval_config_winners(
+            db, proposal, candidates, actor_id=actor_id,
+        )
+        min_w = int((awc or {}).get("min_winners") or 0)
+        auto_win_uncontested = min_w > 0 and len(candidates) <= min_w
+        # The config's winner count can exceed the title's capacity
+        # (expand_winners boundary ties; generous thresholds). Seat up
+        # to capacity in tally-winner order; record the overflow in
+        # the finalize audit detail (see helper docstring).
+        winner_ids, capacity_overflow = _cap_winners_to_title_capacity(
+            db, title, winner_ids,
+            slate_mode=getattr(
+                proposal, "election_slate_mode", "fill_vacancies",
+            ) or "fill_vacancies",
+        )
+    else:
+        num_winners = max(1, proposal.num_winners or 1)
+        # Phase 48 Stage 2 — multi-winner resolution. For num_winners
+        # == 1 this reduces to the Stage 1 path (single winner). For
+        # N > 1 the RCV/STV tally produces N option-id winners; we map
+        # them back to user_ids via option.label.
+        winner_ids = _resolve_winners(db, proposal, candidates, num_winners)
+        auto_win_uncontested = len(candidates) <= num_winners
     if not winner_ids:
+        no_winner_details = {
+            "outcome": "tie_unresolved_or_no_winner",
+            "title_id": title.id,
+        }
+        if is_config_approval:
+            no_winner_details["approval_winner_config"] = awc
+            no_winner_details["capacity_overflow_winner_ids"] = (
+                capacity_overflow
+            )
         log_audit_event(
             db,
             action="election.resolved",
             target_type="proposal",
             target_id=proposal.id,
             actor_id=actor_id,
-            details={
-                "outcome": "tie_unresolved_or_no_winner",
-                "title_id": title.id,
-            },
+            details=no_winner_details,
             ip_address=ip_address,
         )
         return {
@@ -421,23 +457,30 @@ def finalize_election(
                 "user_id": winner_id, "reason": str(e.detail),
             })
 
+    resolved_details = {
+        "outcome": "winners" if installed else "no_winner_installed",
+        "title_id": title.id,
+        "title_name": title.name,
+        "winner_ids": installed,
+        "failed_assignments": failures,
+        "slate_mode": slate_mode,
+        "candidate_count": len(candidates),
+        "auto_win_uncontested": auto_win_uncontested,
+        "elected_revert_applied": revert_applied,
+    }
+    if is_config_approval:
+        # Phase 66a — transparency keys for config-driven approval
+        # elections (absent on the legacy path so pre-66a audit shapes
+        # are unchanged).
+        resolved_details["approval_winner_config"] = awc
+        resolved_details["capacity_overflow_winner_ids"] = capacity_overflow
     log_audit_event(
         db,
         action="election.resolved",
         target_type="proposal",
         target_id=proposal.id,
         actor_id=actor_id,
-        details={
-            "outcome": "winners" if installed else "no_winner_installed",
-            "title_id": title.id,
-            "title_name": title.name,
-            "winner_ids": installed,
-            "failed_assignments": failures,
-            "slate_mode": slate_mode,
-            "candidate_count": len(candidates),
-            "auto_win_uncontested": len(candidates) <= num_winners,
-            "elected_revert_applied": revert_applied,
-        },
+        details=resolved_details,
         ip_address=ip_address,
     )
     return {
@@ -666,6 +709,178 @@ def _resolve_winners(
 
     # Defensive fallback: take the first num_winners declared.
     return [c.user_id for c in candidates[:num_winners]]
+
+
+def _resolve_approval_config_winners(
+    db: Session,
+    proposal: models.Proposal,
+    candidates: list[models.ElectionCandidacy],
+    *,
+    actor_id: Optional[str] = None,
+) -> list[str]:
+    """Phase 66a — winner-set resolution for approval-method elections
+    carrying an ``approval_winner_config``.
+
+    Mirrors ``_resolve_winners`` (Stage 2) but the winner COUNT is
+    owned by the config, not ``num_winners``: the config-driven
+    approval tally (Phase 66 core; ``_build_context`` attaches the
+    config for approval elections as of 66a) produces the winner set.
+    A boundary tie (D4) routes through the SAME Phase 17 machinery the
+    ordinary-proposal close path uses.
+
+    Tie-resolution ordering: the close path (``advance_proposal``)
+    runs ``_maybe_resolve_tie`` BEFORE this hook and persists the
+    audit record to ``proposal.tie_resolution``. Because this helper
+    recomputes its own tally (same ballots → deterministically the
+    same boundary subset), it MERGES the persisted resolution instead
+    of re-resolving (avoids a duplicate ``proposal.tie_resolved``
+    audit row). If finalize is reached WITHOUT a persisted resolution
+    (direct service calls, tests), it invokes the same
+    ``_maybe_resolve_tie`` helper itself so the resolved set seats
+    either way.
+
+    Uncontested shortcut (D6 generalization, mirroring Stage 2's
+    ``candidates <= num_winners``): when the declared candidates all
+    fit inside the config's unconditional floor (``len(candidates) <=
+    min_winners``) they all win without a tally. Threshold-only
+    configs (min_winners == 0) have no unconditional floor, so no
+    shortcut applies — candidates must clear the threshold.
+
+    Defensive fallback (Stage 1/2 pattern carried forward): if the
+    tally engine errors, fall back to the first ``min_winners``
+    declared candidates. A threshold-only config falls back to no
+    winners (the caller surfaces ``tally_did_not_produce_winner``) —
+    seating someone who never cleared the threshold would contradict
+    the config's semantics.
+    """
+    config = getattr(proposal, "approval_winner_config", None) or {}
+    min_winners = int(config.get("min_winners") or 0)
+    candidate_ids = {c.user_id for c in candidates}
+
+    # Uncontested shortcut: everyone fits the unconditional floor.
+    if min_winners > 0 and len(candidates) <= min_winners:
+        return [c.user_id for c in candidates]
+
+    try:
+        from delegation_engine import engine as delegation_engine
+        tally = delegation_engine.compute_tally(proposal, db)
+    except Exception:  # noqa: BLE001
+        log.exception(
+            "approval-config election tally failed for proposal %s; "
+            "falling back to the unconditional floor",
+            proposal.id,
+        )
+        return [c.user_id for c in candidates[:min_winners]]
+
+    # D4 — boundary tie at a seat boundary.
+    boundary_tied = list(getattr(tally, "boundary_tied", None) or [])
+    seats_remaining = int(getattr(tally, "seats_remaining", 0) or 0)
+    if boundary_tied and seats_remaining > 0:
+        persisted = getattr(proposal, "tie_resolution", None)
+        if (
+            isinstance(persisted, dict)
+            and set(persisted.get("input_winners") or [])
+            == set(boundary_tied)
+        ):
+            # The close path already resolved this exact tie — merge
+            # its picks rather than re-resolving.
+            for oid in persisted.get("chosen_winners") or []:
+                if oid not in tally.winners:
+                    tally.winners.append(oid)
+                if hasattr(tally, "winner_seats"):
+                    tally.winner_seats.setdefault(oid, "tie_resolution")
+        else:
+            # Finalize reached without a route-layer resolution —
+            # run the same resolver now (persists the audit record).
+            from routes.proposals import _maybe_resolve_tie
+            _maybe_resolve_tie(
+                proposal, tally, "approval", db,
+                current_user_id=actor_id,
+            )
+
+    # Map option-id winners back to candidate user_ids (option.label
+    # carries the user_id for elections), preserving tally seat order.
+    options_by_id = {o.id: o for o in proposal.options}
+    mapped: list[str] = []
+    for w in list(getattr(tally, "winners", None) or []):
+        opt = options_by_id.get(w)
+        if opt is None:
+            continue
+        if opt.label in candidate_ids and opt.label not in mapped:
+            mapped.append(opt.label)
+    return mapped
+
+
+def _cap_winners_to_title_capacity(
+    db: Session,
+    title: models.OrgTitle,
+    winner_ids: list[str],
+    *,
+    slate_mode: str,
+) -> tuple[list[str], list[str]]:
+    """Phase 66a — cap a config-driven winner set at the title's
+    holder capacity. Returns ``(seated, overflow)``.
+
+    The config's winner count can legitimately exceed the title's
+    capacity: the ``expand_winners`` tie method seats ALL boundary-
+    tied options (documented D4/D11 semantics), and a generous
+    ``approval_threshold`` can clear more options than ``max_holders``.
+    Decision (66a, documented here): seat up to capacity in
+    tally-winner order; the overflow is NOT installed and is recorded
+    in the finalize audit detail (``capacity_overflow_winner_ids``)
+    so the outcome is transparent rather than silently truncated.
+
+    Capacity:
+      * system titles — role-derived holders, no assignment rows; no
+        cap here (the role machinery owns those bounds).
+      * single-holder titles — capacity 1.
+      * multi-holder titles — ``max_holders`` (NULL = uncapped).
+
+    ``fill_vacancies``: current holders who are NOT in the winner set
+    keep their seats and count against capacity; winners who already
+    hold the title keep theirs (no new seat consumed beyond the one
+    they hold). ``refresh_slate``: non-winning holders are removed
+    before install, so the full capacity is available and incumbents
+    compete in tally order like everyone else (an incumbent past the
+    cap is dropped by the refresh).
+    """
+    if title.is_system:
+        return list(winner_ids), []
+    if title.cardinality_mode == "single":
+        capacity: Optional[int] = 1
+    elif title.max_holders is not None:
+        capacity = int(title.max_holders)
+    else:
+        capacity = None
+    if capacity is None:
+        return list(winner_ids), []
+
+    holder_ids = {
+        row.user_id
+        for row in db.query(models.OrgTitleAssignment)
+        .filter(models.OrgTitleAssignment.title_id == title.id)
+        .all()
+    }
+    if slate_mode == "refresh_slate":
+        used = 0  # Non-winning holders are removed before install.
+    else:
+        used = len(holder_ids - set(winner_ids))
+
+    seated: list[str] = []
+    overflow: list[str] = []
+    for uid in winner_ids:
+        if slate_mode != "refresh_slate" and uid in holder_ids:
+            # fill_vacancies: an incumbent winner keeps the seat they
+            # already occupy.
+            seated.append(uid)
+            used += 1
+            continue
+        if used < capacity:
+            seated.append(uid)
+            used += 1
+        else:
+            overflow.append(uid)
+    return seated, overflow
 
 
 def _refresh_slate_for_title(
