@@ -76,9 +76,12 @@ export default function ElectionBadge({ proposal, orgSlug, onChanged, tally }) {
   } else if (proposal.status === 'failed' && tally?.quorum_met === false) {
     phaseCopy = 'Quorum not met — no seats were changed.';
   } else if (proposal.status === 'passed') {
-    // Passed but the results tally hasn't loaded (yet) — don't claim
-    // nobody was seated.
-    phaseCopy = 'Voting has closed and the winning candidates have been seated.';
+    // Passed with a loaded tally but no winners = the zero-candidate
+    // hold-over (nothing was seated). While the tally is still loading,
+    // stay neutral — don't claim anyone was (or wasn't) seated.
+    phaseCopy = tally
+      ? 'This election closed with no candidates — no seats were changed. The title can be filled in a future election.'
+      : 'Voting has closed.';
   } else {
     phaseCopy = 'This election closed without seating a winner.';
   }
