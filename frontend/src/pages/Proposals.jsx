@@ -13,6 +13,9 @@ import ErrorMessage from '../components/ErrorMessage';
 // the displayed winner set (the live tally recompute leaves boundary-
 // tied options out of `winners`; only the persisted record has them).
 import { effectiveApprovalWinners } from '../utils/approvalWinnerConfig';
+// Phase 67 W3 — election proposals show candidate display names
+// (option.description) instead of the raw user-id UUID labels.
+import { optionDisplayLabel } from '../utils/optionDisplay';
 
 const STATUS_FILTERS = ['all', 'deliberation', 'voting', 'passed', 'failed'];
 
@@ -40,7 +43,7 @@ function buildApprovalBars(proposal, tally) {
   const total = tally?.votes_cast || tally?.total_ballots_cast || 0;
   const optsByLabel = (proposal.options || []).map(o => ({
     id: o.id,
-    label: o.label,
+    label: optionDisplayLabel(proposal, o),
     count: counts[o.id] ?? 0,
   }));
   optsByLabel.sort((a, b) => b.count - a.count);
@@ -65,7 +68,7 @@ function buildRankedChoiceBars(proposal, tally) {
   const total = tally?.votes_cast || tally?.total_ballots_cast || 0;
   const items = (proposal.options || []).map(o => ({
     id: o.id,
-    label: o.label,
+    label: optionDisplayLabel(proposal, o),
     count: counts[o.id] ?? 0,
   }));
   items.sort((a, b) => b.count - a.count);
@@ -78,7 +81,7 @@ function buildRankedChoiceBars(proposal, tally) {
 
 function lookupLabel(proposal, optionId) {
   const opt = (proposal.options || []).find(o => o.id === optionId);
-  return opt?.label || optionId;
+  return optionDisplayLabel(proposal, opt) || optionId;
 }
 
 // Heading text for closed multi-option proposals: "Winner: X" / "Winners: X, Y"
@@ -104,6 +107,8 @@ function closedHeading(proposal, tally) {
   }
   if (winnerIds.length === 0) return null;
   const labels = winnerIds.map(id => lookupLabel(proposal, id));
+  // Phase 67 W1 — elections announce the seated winner(s).
+  if (proposal.is_election) return `Elected: ${labels.join(', ')}`;
   if (winnerIds.length === 1) return `Winner: ${labels[0]}`;
   return `Winners: ${labels.join(', ')}`;
 }

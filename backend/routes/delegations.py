@@ -496,9 +496,14 @@ def personal_delegation_network(
         for d in dels:
             if d.topic_id and d.topic_id in topics:
                 t = topics[d.topic_id]
-                topic_names.append((t.description or "").strip() or t.name)
+                # Phase 67 — Topic.description was dropped as a column in
+                # Phase 58; reading it raised AttributeError and 500'd this
+                # endpoint on every My Delegations load. Topic.name is the
+                # canonical display name; the schema's description field is
+                # legacy back-compat and stays None.
+                topic_names.append(t.name)
                 edge_topics.append(schemas.PersonalNetworkEdgeTopic(
-                    name=t.name, color=t.color, description=t.description or None,
+                    name=t.name, color=t.color, description=None,
                 ))
             else:
                 topic_names.append("Global")
@@ -537,9 +542,14 @@ def personal_delegation_network(
         for d in dels:
             if d.topic_id and d.topic_id in topics:
                 t = topics[d.topic_id]
-                topic_names.append((t.description or "").strip() or t.name)
+                # Phase 67 — Topic.description was dropped as a column in
+                # Phase 58; reading it raised AttributeError and 500'd this
+                # endpoint on every My Delegations load. Topic.name is the
+                # canonical display name; the schema's description field is
+                # legacy back-compat and stays None.
+                topic_names.append(t.name)
                 edge_topics.append(schemas.PersonalNetworkEdgeTopic(
-                    name=t.name, color=t.color, description=t.description or None,
+                    name=t.name, color=t.color, description=None,
                 ))
             else:
                 topic_names.append("Global")

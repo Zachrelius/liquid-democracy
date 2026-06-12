@@ -41,7 +41,15 @@ import { urlFor } from '../utils/urls';
 import {
   describeApprovalWinnerRule,
   SEAT_CHIP_LABELS,
+  effectiveApprovalWinners,
 } from '../utils/approvalWinnerConfig';
+// Phase 67 W3 — election-aware option display labels (candidate display
+// names instead of raw user-id UUID labels on election proposals).
+import {
+  optionDisplayLabel,
+  optionLabelMap,
+  optionLabelOf,
+} from '../utils/optionDisplay';
 // Phase 62 A3 — full-form draft editor reused from the admin Create flow.
 // The form supports an `editingProposal` prop (Phase 62 A1) which switches
 // it from POST-to-create to PATCH-to-edit while prefilling every editable
@@ -206,7 +214,7 @@ function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerif
                 <p className="text-sm font-medium text-[#2D8A56] mb-1">You approved:</p>
                 <ul className="text-sm text-gray-700 list-disc list-inside">
                   {myVote.approvals.map(oid => (
-                    <li key={oid}>{optionMap[oid]?.label || oid}</li>
+                    <li key={oid}>{optionDisplayLabel(proposal, optionMap[oid]) || oid}</li>
                   ))}
                 </ul>
               </div>
@@ -224,7 +232,7 @@ function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerif
                   <p className="text-xs text-gray-400 mb-1">Delegate approved:</p>
                   <ul className="text-sm text-gray-700 list-disc list-inside">
                     {myVote.approvals.map(oid => (
-                      <li key={oid}>{optionMap[oid]?.label || oid}</li>
+                      <li key={oid}>{optionDisplayLabel(proposal, optionMap[oid]) || oid}</li>
                     ))}
                   </ul>
                 </div>
@@ -278,8 +286,12 @@ function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerif
                 className="mt-0.5 accent-[var(--brand-accent)]"
               />
               <div>
-                <span className="text-sm font-medium text-gray-800">{opt.label}</span>
-                {opt.description && <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>}
+                <span className="text-sm font-medium text-gray-800">{optionDisplayLabel(proposal, opt)}</span>
+                {/* Phase 67 W3 — on elections the description IS the
+                    primary text; don't repeat it as a sub-line. */}
+                {!proposal.is_election && opt.description && (
+                  <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>
+                )}
               </div>
             </label>
           ))}
@@ -324,7 +336,9 @@ function ApprovalResultsPanel({ tally, proposal }) {
   const winners = tally.winners || [];
   const tied = tally.tied;
   const tieResolution = tally.tie_resolution || proposal.tie_resolution;
-  const labelOf = (id) => optionLabels[id] || id;
+  // Phase 67 W3 — election-aware: candidate display names (option
+  // descriptions) take precedence over the raw UUID labels.
+  const labelOf = optionLabelOf(proposal, optionLabels);
 
   // Multi-winner approval — selection rule + per-winner seat
   // attribution + live boundary-tie surface. All absent/empty for
@@ -341,7 +355,7 @@ function ApprovalResultsPanel({ tally, proposal }) {
   // strong-winner UI via the per-option checkmark + tieResolution banner.
   const inProgress = proposal?.status === 'voting';
   const topApproval = winners[0];
-  const topLabel = topApproval ? (optionLabels[topApproval] || topApproval) : null;
+  const topLabel = topApproval ? labelOf(topApproval) : null;
   const topCount = topApproval ? (optionApprovals[topApproval] || 0) : 0;
 
   return (
@@ -446,7 +460,7 @@ function ApprovalResultsPanel({ tally, proposal }) {
             <div key={opt.id}>
               <div className="flex items-center justify-between text-sm mb-0.5">
                 <span className={`font-medium ${isWinner || isSelectedWinner ? 'text-[#2D8A56]' : 'text-gray-700'}`}>
-                  {opt.label}
+                  {optionDisplayLabel(proposal, opt)}
                   {isSelectedWinner && ' \u2605'}
                   {isWinner && !tieResolution && ' \u2713'}
                   {seatChip && (
@@ -468,11 +482,25 @@ function ApprovalResultsPanel({ tally, proposal }) {
         })}
       </div>
 
-      {/* Summary stats */}
+      {/* Summary stats. Phase 67 W1 — elections get a neutral turnout
+          line. Quorum gates seat installation: an election that closed
+          failed under an explicit quorum seated nobody, and says so
+          honestly. */}
       <div className="text-sm text-gray-500 space-y-1">
-        <p>{tally.total_ballots_cast ?? 0} ballot{(tally.total_ballots_cast ?? 0) !== 1 ? 's' : ''} cast
-          {tally.total_eligible > 0 && ` of ${tally.total_eligible} eligible (${((tally.total_ballots_cast / tally.total_eligible) * 100).toFixed(1)}%)`}
-        </p>
+        {proposal?.is_election ? (
+          <>
+            <p>{tally.total_ballots_cast ?? 0} of {tally.total_eligible ?? 0} eligible member{(tally.total_eligible ?? 0) !== 1 ? 's' : ''} voted</p>
+            {proposal.status === 'failed' && tally.quorum_met === false && (
+              <p className="text-[#C0392B] font-medium">
+                Quorum not met — no seats were changed.
+              </p>
+            )}
+          </>
+        ) : (
+          <p>{tally.total_ballots_cast ?? 0} ballot{(tally.total_ballots_cast ?? 0) !== 1 ? 's' : ''} cast
+            {tally.total_eligible > 0 && ` of ${tally.total_eligible} eligible (${((tally.total_ballots_cast / tally.total_eligible) * 100).toFixed(1)}%)`}
+          </p>
+        )}
         {(tally.total_abstain ?? 0) > 0 && (
           <p>{tally.total_abstain} empty ballot{tally.total_abstain !== 1 ? 's' : ''} (abstain)</p>
         )}
@@ -696,7 +724,8 @@ function VoteGraphLegend({ proposal, voteGraph }) {
     return (
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-gray-500">
         {options.map((opt) => {
-          const lbl = opt.label || opt.id;
+          // Phase 67 W3 — election candidates show display names.
+          const lbl = optionDisplayLabel(proposal, opt) || opt.id;
           const truncated = lbl.length > 14 ? lbl.slice(0, 13) + '…' : lbl;
           return (
             <span key={opt.id} title={lbl}>
@@ -894,7 +923,7 @@ function OptionRow({ option, index, proposal, currentUser, onDeleted }) {
       await api.delete(
         `/api/proposals/${proposal.id}/options/${option.id}`
       );
-      toast.success(`Removed "${option.label}"`);
+      toast.success(`Removed "${optionDisplayLabel(proposal, option)}"`);
       setConfirming(false);
       onDeleted?.();
     } catch (err) {
@@ -908,13 +937,15 @@ function OptionRow({ option, index, proposal, currentUser, onDeleted }) {
     <div className="flex items-start gap-3 p-2 bg-gray-50 rounded-lg">
       <span className="text-xs text-gray-400 mt-0.5">{index + 1}.</span>
       <div className="flex-1">
-        <span className="text-sm font-medium text-gray-800">{option.label}</span>
+        <span className="text-sm font-medium text-gray-800">{optionDisplayLabel(proposal, option)}</span>
         {isWriteIn && (
           <span className="ml-2 text-[10px] uppercase tracking-wide text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded">
             write-in
           </span>
         )}
-        {option.description && (
+        {/* Phase 67 W3 — election candidates use the description as the
+            primary text above; don't repeat it as a sub-line. */}
+        {!proposal.is_election && option.description && (
           <p className="text-xs text-gray-500 mt-0.5">{option.description}</p>
         )}
         {confirming && (
@@ -2041,6 +2072,7 @@ export default function ProposalDetail() {
               proposal={proposal}
               orgSlug={currentOrg.slug}
               onChanged={fetchData}
+              tally={tally}
             />
           )}
 
@@ -2275,7 +2307,7 @@ export default function ProposalDetail() {
             <TrajectorySection
               proposalId={proposal.id}
               proposal={proposal}
-              optionLabels={tally?.option_labels || {}}
+              optionLabels={optionLabelMap(proposal, tally?.option_labels || {})}
             />
           )}
 
@@ -2468,15 +2500,41 @@ export default function ProposalDetail() {
             </div>
           )}
 
-          {isClosed && (
-            <div className={`rounded-xl p-4 text-center font-semibold ${
-              proposal.status === 'passed'
-                ? 'bg-green-50 border border-green-200 text-green-700'
-                : 'bg-red-50 border border-red-200 text-red-700'
-            }`}>
-              {proposal.status === 'passed' ? 'Proposal Passed' : 'Proposal Failed'}
-            </div>
-          )}
+          {isClosed && (() => {
+            // Phase 67 W1 — election close banners. Quorum gates seat
+            // installation: a passed election seated its winners
+            // (announce them by display name); a failed election under
+            // an explicit quorum seated nobody and says so honestly.
+            if (proposal.is_election) {
+              const winnerIds = proposal.voting_method === 'approval'
+                ? effectiveApprovalWinners(tally)
+                : (Array.isArray(tally?.winners) ? tally.winners : []);
+              if (proposal.status === 'passed' && winnerIds.length > 0) {
+                const labelOf = optionLabelOf(proposal, tally?.option_labels);
+                return (
+                  <div className="rounded-xl p-4 text-center font-semibold bg-green-50 border border-green-200 text-green-700">
+                    Elected: {winnerIds.map(labelOf).join(', ')}
+                  </div>
+                );
+              }
+              if (proposal.status === 'failed' && tally?.quorum_met === false) {
+                return (
+                  <div className="rounded-xl p-4 text-center font-semibold bg-red-50 border border-red-200 text-red-700">
+                    Quorum not met — no seats were changed.
+                  </div>
+                );
+              }
+            }
+            return (
+              <div className={`rounded-xl p-4 text-center font-semibold ${
+                proposal.status === 'passed'
+                  ? 'bg-green-50 border border-green-200 text-green-700'
+                  : 'bg-red-50 border border-red-200 text-red-700'
+              }`}>
+                {proposal.status === 'passed' ? 'Proposal Passed' : 'Proposal Failed'}
+              </div>
+            );
+          })()}
 
           {/* Phase 8 — Unresolved (escalated) banner. Phase 20 removed
               the floor / escalate mechanic, but historic proposals may

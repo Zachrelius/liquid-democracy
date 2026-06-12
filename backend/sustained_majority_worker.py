@@ -446,7 +446,14 @@ def _close_proposal_now(
     old_status = proposal.status
     tally = delegation_engine.compute_tally(proposal, db)
 
-    if proposal.voting_method == "approval":
+    if getattr(proposal, "is_election", False):
+        # Phase 67 W1 — elections: quorum is the ONLY pass/fail gate
+        # (mirrors the route-layer close branches). Winner
+        # determination belongs to finalize_election, fired on the
+        # "passed" close via run_election_close_hook below.
+        from elections import election_close_status
+        new_status = election_close_status(proposal, tally)
+    elif proposal.voting_method == "approval":
         # Phase 66: a multi-winner boundary tie can leave ``winners``
         # empty with the contested set in ``boundary_tied`` — that's
         # resolvable, not a failure (mirrors the route-layer close
@@ -494,6 +501,22 @@ def _close_proposal_now(
 
     proposal.status = new_status
     db.flush()
+
+    # Phase 67 W1 — election close hook. The worker close previously
+    # never ran ``finalize_election`` (only the /api/proposals advance
+    # had the Phase 48 hook), so an election that closed naturally at
+    # voting_end (or via SRR early close) never seated its winners.
+    # Run the shared hook so the worker agrees with both route-advance
+    # paths: quorum gates seat installation — finalize only fires on a
+    # "passed" close; a "failed" (quorum unmet) close skips seating
+    # and records election.not_finalized. System actor (actor_id=None).
+    if getattr(proposal, "is_election", False) and new_status in ("passed", "failed"):
+        from elections import run_election_close_hook
+        new_status = run_election_close_hook(
+            db, proposal, new_status,
+            actor_id=None,
+            ip_address=None,
+        )
 
     log_audit_event(
         db,

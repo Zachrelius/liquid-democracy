@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom';
 import * as d3 from 'd3';
 import { sankey as d3Sankey, sankeyLinkHorizontal } from 'd3-sankey';
 import { colorForOption } from './voteFlowGraphUtils';
+// Phase 67 W3 — election proposals show candidate display names
+// (option.description) instead of the raw user-id UUID labels.
+import { optionDisplayLabel } from '../utils/optionDisplay';
 
 /**
  * RCVSankeyChart — Phase 7C round-by-round elimination Sankey for RCV/STV.
@@ -427,8 +430,11 @@ export default function RCVSankeyChart({ tally, proposal }) {
         m[k] = v;
       });
     }
+    // Phase 67 W3 — for elections the proposal options' descriptions
+    // (candidate display names) take precedence over the UUID labels.
     (proposal?.options || []).forEach((o) => {
-      if (!m[o.id]) m[o.id] = o.label;
+      const lbl = optionDisplayLabel(proposal, o);
+      if (lbl && (proposal?.is_election || !m[o.id])) m[o.id] = lbl;
     });
     return m;
   }, [tally, proposal]);

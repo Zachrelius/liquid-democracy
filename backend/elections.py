@@ -250,6 +250,12 @@ def finalize_election(
     Returns a result dict for the caller's audit + response:
       ``{"resolved": "winner" | "no_election" | "failed", "winner_id":
         ..., "title_id": ..., "reason": ...}``
+
+    Phase 67 W1 — quorum gates seat installation: the close sites call
+    this ONLY via ``run_election_close_hook`` on a "passed" close (for
+    elections, passed == quorum met). An under-quorum election closes
+    "failed" and this function never runs — seats stay exactly as they
+    were (the hook records ``election.not_finalized`` instead).
     """
     from audit_utils import log_audit_event
 
@@ -490,6 +496,123 @@ def finalize_election(
         "failures": failures,
         "elected_revert_applied": revert_applied,
     }
+
+
+def election_close_status(proposal: models.Proposal, tally) -> str:
+    """Phase 67 W1 — pass/fail computation for ELECTION proposal closes.
+
+    Elections are not pass/fail propositions: "passed" means the
+    election concluded and seating ran; "failed" means quorum was not
+    met and NOTHING was seated. Quorum is therefore the ONLY gate —
+    the per-method winner logic (tally winners, uncontested auto-win,
+    zero-candidate hold-over) all belongs to ``finalize_election``,
+    which only fires on a "passed" close (see
+    ``run_election_close_hook``).
+
+    Elections default to ``quorum_threshold=0`` at creation (this
+    pass), so the normal case closes "passed" and seats winners
+    exactly as before; an org that explicitly sets a quorum on a
+    leadership election means it.
+
+    Shared by all three close sites (routes/proposals.py advance,
+    routes/organizations.py advance, worker ``_close_proposal_now``)
+    so they can't drift.
+    """
+    try:
+        quorum_met = bool(tally.quorum_met(proposal.quorum_threshold))
+    except Exception:  # noqa: BLE001
+        # Defensive: a tally error must not wedge the close. Treat as
+        # quorum met (the pre-67 hook ran finalize on every close;
+        # erring on the seating side preserves that behavior).
+        quorum_met = True
+    return "passed" if quorum_met else "failed"
+
+
+def run_election_close_hook(
+    db: Session,
+    proposal: models.Proposal,
+    closed_status: str,
+    *,
+    actor_id: Optional[str] = None,
+    ip_address: Optional[str] = None,
+) -> str:
+    """Phase 67 W1 — shared election close hook for every site where an
+    election proposal reaches passed/failed (route advance in
+    ``routes/proposals.py``, org-scoped advance in
+    ``routes/organizations.py``, worker natural/SRR close in
+    ``sustained_majority_worker._close_proposal_now``).
+
+    Quorum gates seat installation:
+
+      * "passed" close (quorum met — see ``election_close_status``):
+        run ``finalize_election``, which owns ALL winner determination
+        (tally winners, uncontested auto-win, zero-candidate
+        hold-over, slate refresh, schedule advancement).
+      * "failed" close (quorum NOT met): seating is SKIPPED entirely —
+        incumbents stay, vacancies stay vacant, the org can re-run.
+        An explicit ``election.not_finalized`` audit row records that
+        seating was skipped. For scheduled-trigger elections the
+        title's term clock still advances (B4 cadence — pre-67
+        finalize advanced it for every scheduled outcome including
+        failures; without this the next tick would immediately re-open
+        the same election).
+
+    Non-election proposals return immediately (completely untouched).
+    Returns the close status unchanged (no status forcing). Failures
+    inside the hook are contained (logged) so a hook error never rolls
+    back the close itself — mirrors the pre-67 try/except at the
+    routes/proposals.py call site.
+    """
+    if not getattr(proposal, "is_election", False):
+        return closed_status
+    if closed_status == "passed":
+        try:
+            finalize_election(
+                db, proposal,
+                actor_id=actor_id,
+                ip_address=ip_address,
+            )
+        except Exception:  # noqa: BLE001
+            log.exception(
+                "election finalize hook raised for proposal %s; the "
+                "close still happened but no winner was installed",
+                proposal.id,
+            )
+        return closed_status
+    if closed_status == "failed":
+        # Quorum unmet (the only way an election closes "failed" as of
+        # Phase 67) — record explicitly that seating was skipped.
+        try:
+            from audit_utils import log_audit_event
+            log_audit_event(
+                db,
+                action="election.not_finalized",
+                target_type="proposal",
+                target_id=proposal.id,
+                actor_id=actor_id,
+                details={
+                    "proposal_id": proposal.id,
+                    "title_id": getattr(proposal, "election_title_id", None),
+                    "reason": "quorum_not_met",
+                    "quorum_met": False,
+                    "seats_unchanged": True,
+                },
+                ip_address=ip_address,
+            )
+            if getattr(proposal, "election_trigger", None) == "scheduled":
+                title = (
+                    db.get(models.OrgTitle, proposal.election_title_id)
+                    if proposal.election_title_id else None
+                )
+                if title is not None:
+                    _advance_schedule_for_title(db, title)
+        except Exception:  # noqa: BLE001
+            log.exception(
+                "election not-finalized bookkeeping raised for "
+                "proposal %s; the close still happened",
+                proposal.id,
+            )
+    return closed_status
 
 
 def _mode_of(org: models.Organization) -> str:
@@ -1167,7 +1290,11 @@ def _open_scheduled_election(
         deliberation_days=deliberation_days,
         voting_days=voting_days,
         pass_threshold=settings.get("default_pass_threshold", 0.50) if settings else 0.50,
-        quorum_threshold=settings.get("default_quorum_threshold", 0.40) if settings else 0.40,
+        # Phase 67 W1 — elections default to quorum 0 (mirrors the
+        # open_election route): quorum gates seat installation, and a
+        # scheduled election must seat its winners under any turnout
+        # unless the org deliberately configures otherwise.
+        quorum_threshold=0.0,
         is_election=True,
         election_title_id=title.id,
         election_slate_mode="fill_vacancies",

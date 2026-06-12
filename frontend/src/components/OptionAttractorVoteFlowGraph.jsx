@@ -145,7 +145,7 @@ function optionAnchorForce(strength) {
   return force;
 }
 
-export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
+export default function OptionAttractorVoteFlowGraph({ data, onNodeClick, proposal }) {
   // Phase 11 — user-profile is org-scoped.
   const { currentOrg, userOrgs } = useOrg();
   const profileLinkOrg = (() => {
@@ -172,7 +172,20 @@ export default function OptionAttractorVoteFlowGraph({ data, onNodeClick }) {
   const enabledRef = useRef(optionEnabled); // d3 force closure reads via ref
 
   const votingMethod = data?.voting_method;
-  const options = useMemo(() => data?.options || [], [data]);
+  // Phase 67 W3 — election proposals show candidate display names: for
+  // elections, swap each option's label for the proposal option's
+  // description (the candidate display name) at the source, so every
+  // downstream consumer (attractor labels, legend chips, tooltips,
+  // winner lines, toggles) inherits the human-readable name.
+  const options = useMemo(() => {
+    const raw = data?.options || [];
+    if (!proposal?.is_election) return raw;
+    const nameById = {};
+    (proposal.options || []).forEach((o) => {
+      if (o.description) nameById[o.id] = o.description;
+    });
+    return raw.map((o) => (nameById[o.id] ? { ...o, label: nameById[o.id] } : o));
+  }, [data, proposal]);
   const optionMap = useMemo(() => {
     const m = new Map();
     options.forEach((o) => m.set(o.id, o));

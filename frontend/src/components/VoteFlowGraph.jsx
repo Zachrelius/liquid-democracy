@@ -2,6 +2,9 @@ import { useState, useMemo } from 'react';
 import BinaryVoteFlowGraph from './BinaryVoteFlowGraph';
 import OptionAttractorVoteFlowGraph from './OptionAttractorVoteFlowGraph';
 import { formatVotingStatus } from './voteFlowGraphUtils';
+// Phase 67 W3 — election proposals show candidate display names
+// (option.description) instead of the raw user-id UUID labels.
+import { optionDisplayLabel } from '../utils/optionDisplay';
 
 /**
  * VoteFlowGraph — top-level dispatcher that renders the appropriate
@@ -33,7 +36,7 @@ export default function VoteFlowGraph({ data, onNodeClick, proposal, tally }) {
       {method === 'binary' ? (
         <BinaryVoteFlowGraph data={data} onNodeClick={onNodeClick} />
       ) : (
-        <OptionAttractorVoteFlowGraph data={data} onNodeClick={onNodeClick} />
+        <OptionAttractorVoteFlowGraph data={data} onNodeClick={onNodeClick} proposal={proposal} />
       )}
     </div>
   );
@@ -53,8 +56,14 @@ function TallySummary({ data, proposal, tally }) {
   const optionLabel = useMemo(() => {
     const m = new Map();
     (data.options || []).forEach((o) => m.set(o.id, o.label));
+    // Phase 67 W3 — for elections the proposal options' descriptions
+    // (candidate display names) take precedence over the UUID labels.
+    (proposal?.options || []).forEach((o) => {
+      const lbl = optionDisplayLabel(proposal, o);
+      if (lbl && (proposal?.is_election || !m.has(o.id))) m.set(o.id, lbl);
+    });
     return m;
-  }, [data.options]);
+  }, [data.options, proposal]);
 
   if (method === 'binary') {
     // Item 5: when in voting status, show a "Currently passing/failing"
@@ -167,7 +176,7 @@ function TallySummary({ data, proposal, tally }) {
           <ul className="text-[11px] text-gray-600 pl-2 space-y-0.5">
             {breakdown.map((o) => (
               <li key={o.id}>
-                <span className="font-medium">{o.label}:</span> {o.count} approval
+                <span className="font-medium">{optionLabel.get(o.id) || o.label}:</span> {o.count} approval
                 {o.count === 1 ? '' : 's'}
               </li>
             ))}
