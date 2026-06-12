@@ -2394,7 +2394,16 @@ def advance_proposal(
         _lock_election_candidate_options(db, proposal)
     elif next_status == "passed":
         tally = delegation_engine.compute_tally(proposal, db)
-        if proposal.voting_method == "approval":
+        if getattr(proposal, "is_election", False):
+            # Phase 67 W1 — elections: quorum is the ONLY pass/fail
+            # gate. Winner determination (tally winners, uncontested
+            # auto-win, zero-candidate hold-over) belongs to
+            # finalize_election, which fires on the "passed" close via
+            # run_election_close_hook below. An under-quorum election
+            # closes "failed" and seats NOTHING.
+            from elections import election_close_status
+            next_status = election_close_status(proposal, tally)
+        elif proposal.voting_method == "approval":
             # Approval proposals pass if quorum met and at least one option
             # has votes. Phase 66: a multi-winner boundary tie can leave
             # ``winners`` empty with the whole contested set in
@@ -2433,6 +2442,20 @@ def advance_proposal(
     proposal.status = next_status
     db.flush()
 
+    # Phase 48 Stage 1 — close→assign-title hook. Phase 67 W1: quorum
+    # gates seat installation — finalize_election (winner seating) only
+    # fires on a "passed" close; a "failed" (quorum unmet) close skips
+    # seating entirely and records election.not_finalized instead.
+    # Failure containment is inside the helper: a hook error is logged
+    # and never rolls back the proposal status transition.
+    if getattr(proposal, "is_election", False) and next_status in ("passed", "failed"):
+        from elections import run_election_close_hook
+        next_status = run_election_close_hook(
+            db, proposal, next_status,
+            actor_id=current_user.id,
+            ip_address=request.client.host if request.client else None,
+        )
+
     log_audit_event(
         db,
         action="proposal.status_changed",
@@ -2442,29 +2465,6 @@ def advance_proposal(
         details={"proposal_id": proposal.id, "old_status": old_status, "new_status": next_status},
         ip_address=request.client.host if request.client else None,
     )
-
-    # Phase 48 Stage 1 — close→assign-title hook. When an election's
-    # voting closes (passed/failed), finalize_election determines the
-    # winner per D6 and assigns the title via the Phase 47 path.
-    # Wrapped in try/except so a hook failure is logged but does not
-    # roll back the proposal status transition (the close still
-    # happened; we surface the failure for follow-up rather than
-    # leaving the proposal stuck in voting).
-    if getattr(proposal, "is_election", False) and next_status in ("passed", "failed"):
-        try:
-            from elections import finalize_election
-            ip = request.client.host if request.client else None
-            finalize_election(
-                db, proposal,
-                actor_id=current_user.id,
-                ip_address=ip,
-            )
-        except Exception:  # noqa: BLE001
-            log.exception(
-                "election finalize hook raised for proposal %s; the "
-                "close still happened but no winner was installed",
-                proposal.id,
-            )
 
     db.commit()
     db.refresh(proposal)

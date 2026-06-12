@@ -3906,7 +3906,14 @@ def advance_org_proposal(
         from delegation_engine import engine as delegation_engine, ApprovalTally, RCVTally
         from routes.proposals import _maybe_resolve_tie
         tally = delegation_engine.compute_tally(proposal, db)
-        if proposal.voting_method == "approval":
+        if getattr(proposal, "is_election", False):
+            # Phase 67 W1 — elections: quorum is the ONLY pass/fail
+            # gate (mirrors routes/proposals.py). Winner determination
+            # belongs to finalize_election, fired on the "passed"
+            # close via run_election_close_hook below.
+            from elections import election_close_status
+            next_status = election_close_status(proposal, tally)
+        elif proposal.voting_method == "approval":
             # Phase 66: a multi-winner boundary tie can leave ``winners``
             # empty with the contested set in ``boundary_tied`` — that's
             # resolvable, not a failure (mirrors routes/proposals.py).
@@ -3939,6 +3946,23 @@ def advance_org_proposal(
 
     proposal.status = next_status
     db.flush()
+
+    # Phase 67 W1 — election close hook. This org-scoped advance path
+    # previously closed election proposals WITHOUT running
+    # ``finalize_election`` at all (only the /api/proposals advance
+    # had the Phase 48 hook), so an election advanced here never
+    # seated its winners. Run the shared hook so both advance paths
+    # and the worker natural close agree: quorum gates seat
+    # installation — finalize only fires on a "passed" close; a
+    # "failed" (quorum unmet) close skips seating and records
+    # election.not_finalized.
+    if getattr(proposal, "is_election", False) and next_status in ("passed", "failed"):
+        from elections import run_election_close_hook
+        next_status = run_election_close_hook(
+            db, proposal, next_status,
+            actor_id=current_user.id,
+            ip_address=request.client.host if request.client else None,
+        )
 
     log_audit_event(
         db,

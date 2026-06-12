@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -56,6 +56,12 @@ class _OpenElectionBody(BaseModel):
     # ranked_choice/binary (num_winners owns those). NULL = legacy
     # single-winner election behavior, byte-for-byte.
     approval_winner_config: Optional[dict] = None
+    # Phase 67 W1 — elections default to quorum 0 (plurality of those
+    # who vote is the norm). An org that explicitly sets a quorum on a
+    # leadership election means it: an under-quorum close fails and
+    # seats NOTHING (incumbents stay, vacancies stay vacant). None →
+    # the route applies the 0.0 default; 0..1 enforced (422 outside).
+    quorum_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
 
     @field_validator("approval_winner_config")
     @classmethod
@@ -311,7 +317,14 @@ def open_election(
         deliberation_days=body.deliberation_days,
         voting_days=body.voting_days,
         pass_threshold=org.settings.get("default_pass_threshold", 0.50) if org.settings else 0.50,
-        quorum_threshold=org.settings.get("default_quorum_threshold", 0.40) if org.settings else 0.40,
+        # Phase 67 W1 — elections default to quorum 0, NOT the org's
+        # proposal default. Quorum now gates seat installation; the
+        # plurality-of-those-who-vote norm requires 0 unless the
+        # opener explicitly sets one.
+        quorum_threshold=(
+            body.quorum_threshold
+            if body.quorum_threshold is not None else 0.0
+        ),
         is_election=True,
         election_title_id=title.id,
         election_slate_mode=body.slate_mode,
