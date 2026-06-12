@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -48,6 +48,21 @@ class _OpenElectionBody(BaseModel):
     # advances to voting when the cosign threshold is met (Phase 46
     # path, unchanged).
     trigger: str = "admin_direct"
+    # Phase 66a — multi-winner approval selection config for
+    # approval-method elections. Same generalized shape as ordinary
+    # proposals ({min_winners, max_winners, approval_threshold});
+    # shape-validated by the shared Phase 66 validator below (422).
+    # Approval-method only — the route 400s when combined with
+    # ranked_choice/binary (num_winners owns those). NULL = legacy
+    # single-winner election behavior, byte-for-byte.
+    approval_winner_config: Optional[dict] = None
+
+    @field_validator("approval_winner_config")
+    @classmethod
+    def validate_approval_winner_config(
+        cls, v: Optional[dict],
+    ) -> Optional[dict]:
+        return schemas._validate_approval_winner_config(v)
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +258,42 @@ def open_election(
                 "must be 1."
             ),
         )
+    # Phase 66a — approval_winner_config wiring for approval-method
+    # elections. The config owns the winner count for approval
+    # elections; num_winners stays at its default (1) and is ignored
+    # by the close hook on this path.
+    if body.approval_winner_config is not None:
+        if body.voting_method != "approval":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "approval_winner_config is only supported on "
+                    "approval-method elections (num_winners governs "
+                    f"'{body.voting_method}' elections)."
+                ),
+            )
+        if body.num_winners != 1:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "num_winners must be 1 (the default) when "
+                    "approval_winner_config is set — the config owns "
+                    "the winner count for approval elections."
+                ),
+            )
+        # Mirror the num_winners single-holder check: a config that can
+        # seat more than one winner is incoherent on a single-holder
+        # title.
+        if title.cardinality_mode == "single" and (
+            body.approval_winner_config.get("max_winners") != 1
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Title '{title.name}' is single-holder; "
+                    "approval_winner_config.max_winners must be 1."
+                ),
+            )
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     proposal = models.Proposal(
@@ -265,6 +316,9 @@ def open_election(
         election_title_id=title.id,
         election_slate_mode=body.slate_mode,
         election_trigger=body.trigger,
+        # Phase 66a — NULL for non-approval methods (enforced above);
+        # NULL = legacy single-winner election behavior.
+        approval_winner_config=body.approval_winner_config,
     )
     db.add(proposal)
     db.flush()

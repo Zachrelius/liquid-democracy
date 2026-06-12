@@ -195,8 +195,8 @@ class ProposalContext:
     # Phase 66 — multi-winner approval selection config, lifted from
     # ``Proposal.approval_winner_config`` by the service layer (keeps the
     # pure layer DB-free). None = legacy single-winner approval behavior.
-    # Only populated for approval proposals that are NOT elections
-    # (elections ignore the config until 66a wires them — D6).
+    # Phase 66a: populated for ANY approval proposal carrying a config,
+    # including approval-method elections (the D6 carve-out is lifted).
     approval_winner_config: Optional[dict] = None
 
 
@@ -1561,13 +1561,13 @@ class DelegationService:
                 user_strategies[uid] = strat or "strict_precedence"
 
         # Phase 66 — lift the multi-winner approval config onto the
-        # context (the pure layer never touches the DB). Elections
-        # IGNORE the config until 66a wires them (D6) — defense in
-        # depth on top of the route-layer 400s.
+        # context (the pure layer never touches the DB). Phase 66a:
+        # approval-method ELECTIONS now attach the config too (the D6
+        # carve-out is lifted) — finalize_election consumes the
+        # resulting multi-winner set. Non-approval methods never carry
+        # a config (route-layer 400s + the method gate here).
         approval_winner_config = None
-        if voting_method == "approval" and not getattr(
-            proposal, "is_election", False,
-        ):
+        if voting_method == "approval":
             approval_winner_config = getattr(
                 proposal, "approval_winner_config", None,
             )

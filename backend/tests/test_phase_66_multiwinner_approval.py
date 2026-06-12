@@ -697,11 +697,43 @@ class TestConfigValidation:
         )
         assert resp.status_code == 422, resp.text
 
-    def test_election_patch_with_config_400(self, client, test_db):
-        """Election wiring is 66a — election proposals reject the config
-        with a clear 400."""
+    def test_election_patch_with_config_non_approval_400(
+        self, client, test_db,
+    ):
+        """Phase 66a lifted the blanket election block for APPROVAL
+        elections; non-approval elections still reject the config
+        (num_winners owns RCV/STV winner counts). Updated from the
+        Phase 66 core version of this test, which asserted the
+        pre-66a blanket 400."""
         org = _make_org(test_db, "val-elect")
         u = _make_user(test_db, "val-elect-author")
+        make_org_membership(
+            test_db, org_id=org.id, user_id=u.id, role="steward",
+        )
+        p = _make_approval_proposal(
+            test_db, u, org, option_labels=["A", "B"],
+            status="draft", is_election=True,
+        )
+        p.voting_method = "ranked_choice"
+        test_db.commit()
+        resp = client.patch(
+            f"/api/proposals/{p.id}", headers=_auth(u),
+            json={"approval_winner_config": {
+                "min_winners": 2, "max_winners": 2,
+                "approval_threshold": None,
+            }},
+        )
+        assert resp.status_code == 400, resp.text
+        assert "approval-method elections" in resp.json()["detail"]
+
+    def test_election_patch_with_config_approval_draft_ok(
+        self, client, test_db,
+    ):
+        """Phase 66a — a draft approval-method election accepts the
+        config through the same draft-edit gate as ordinary approval
+        proposals."""
+        org = _make_org(test_db, "val-elect-ok")
+        u = _make_user(test_db, "val-elect-ok-author")
         make_org_membership(
             test_db, org_id=org.id, user_id=u.id, role="steward",
         )
@@ -717,8 +749,12 @@ class TestConfigValidation:
                 "approval_threshold": None,
             }},
         )
-        assert resp.status_code == 400, resp.text
-        assert "not yet supported for elections" in resp.json()["detail"]
+        assert resp.status_code == 200, resp.text
+        test_db.expire_all()
+        assert (
+            test_db.get(models.Proposal, p.id)
+            .approval_winner_config["min_winners"] == 2
+        )
 
     def test_patch_non_draft_400(self, client, test_db):
         org = _make_org(test_db, "val-nondraft")
