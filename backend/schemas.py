@@ -717,6 +717,17 @@ class ProposalOut(BaseModel):
     # on this so it never disagrees with what the endpoint will allow.
     can_archive: bool = False
 
+    # Phase 70 — whether the requesting viewer may advance this proposal to
+    # its next status (author / platform admin / proposal.advance_phase
+    # holder, AND a next status exists). False for anonymous / list contexts
+    # without a viewer_id. The FE gates the author "Advance" control on this
+    # so it never disagrees with the /advance endpoint. ``next_status`` is
+    # the target status (draft→deliberation, deliberation→voting; null when
+    # there's nowhere to advance) so the FE can label the button without
+    # re-deriving the transition map.
+    can_advance: bool = False
+    next_status: Optional[str] = None
+
     model_config = {"from_attributes": True}
 
 

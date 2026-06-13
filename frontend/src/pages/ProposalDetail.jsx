@@ -1513,6 +1513,8 @@ export default function ProposalDetail() {
   const [draftEditMode, setDraftEditMode] = useState(false);
   // Phase 68b — archive (withdraw) busy guard for the read-view action.
   const [archiving, setArchiving] = useState(false);
+  // Phase 70 — advance-to-next-phase busy guard for the author control.
+  const [advancing, setAdvancing] = useState(false);
   // Lazy-loaded inputs for the form (topics + sub-orgs). Fetched only
   // when entering edit mode so the regular read-view path doesn't pay
   // the API cost.
@@ -1968,6 +1970,36 @@ export default function ProposalDetail() {
     );
   }
 
+  // Phase 70 — author/permitted advance to the next phase. Gated on the
+  // backend-provided can_advance flag (same ladder the /advance endpoint
+  // enforces) so the control and the endpoint never disagree. POSTs an
+  // empty body; the backend derives voting_end from voting_days / org
+  // default. Surfaces the endpoint's 400 config-error detail (Item 3) so
+  // an author without an admin around isn't stuck on a silent failure.
+  async function handleAdvance() {
+    const next = proposal.next_status;
+    const message = next === 'deliberation'
+      ? 'This opens the proposal for deliberation. Members will be able to see and discuss it.'
+      : 'This opens voting. Voting will run for the configured period and can’t be paused.';
+    const ok = await confirm({
+      title: `Advance to ${next}?`,
+      message,
+    });
+    if (!ok) return;
+    setAdvancing(true);
+    try {
+      await api.post(`/api/proposals/${proposal.id}/advance`, {});
+      toast.success(`Advanced to ${next}`);
+      fetchData();
+    } catch (err) {
+      // The endpoint returns a descriptive 400 when voting can't be opened
+      // (no voting_days + no positive org default) — show it verbatim.
+      toast.error(err?.message || 'Could not advance the proposal');
+    } finally {
+      setAdvancing(false);
+    }
+  }
+
   // Phase 68b — archive (move to the closed/withdrawn bucket). Backend
   // gates on can_archive; we render the action on that flag so the FE
   // never disagrees with what the endpoint allows. Voting-phase archive
@@ -2092,6 +2124,23 @@ export default function ProposalDetail() {
             {canEditProposal && !isDraft && (
               <div className="mt-3">
                 <EditProposalButton proposal={proposal} onSaved={fetchData} />
+              </div>
+            )}
+            {/* Phase 70 — Advance action for the author / permitted viewer.
+                Gated on can_advance (backend single-source ladder); labeled
+                from next_status ("Advance to deliberation" / "Advance to
+                voting"). Surfaced here so authors can move their own draft
+                forward without an admin (the endpoint already allowed it). */}
+            {proposal.can_advance && proposal.next_status && (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={handleAdvance}
+                  disabled={advancing}
+                  className="text-sm px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+                >
+                  {advancing ? 'Advancing…' : `Advance to ${proposal.next_status}`}
+                </button>
               </div>
             )}
             {/* Phase 68b — Archive action. Gated on the backend-provided

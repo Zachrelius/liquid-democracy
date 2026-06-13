@@ -1780,7 +1780,17 @@ export default function ProposalManagement() {
                 </svg>
               </div>
               {expandedId === p.id && (
-                <div className="px-4 py-3 bg-gray-50 flex items-center gap-3">
+                <div className="px-4 py-3 bg-gray-50 flex items-center flex-wrap gap-3">
+                  {/* Phase 70 — "View proposal page" navigates to the
+                      member-facing proposal detail (the same route a member
+                      reaches it by) so an admin can see it as members do.
+                      Pure navigation; present for every status. */}
+                  <Link
+                    to={`/${slug}/proposals/${p.id}`}
+                    className="text-xs px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-100"
+                  >
+                    View proposal page →
+                  </Link>
                   {/* Phase 12.5 F2 — phase-advance buttons gated on
                       `proposal.advance_phase`. Withdraw also routes through
                       the same advance endpoint, so we gate it identically. */}
