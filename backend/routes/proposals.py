@@ -98,6 +98,79 @@ def _compute_voting_end_at_advance(
     return voting_start + timedelta(days=float(voting_days))
 
 
+def _viewer_can_advance_permission(
+    proposal: models.Proposal,
+    db: Session,
+    viewer_id: Optional[str],
+    *,
+    user: Optional[models.User] = None,
+) -> bool:
+    """Phase 70 — THE advance permission ladder (ignoring next-status).
+
+    Single source of truth shared by ``advance_proposal`` (the endpoint
+    gate) and ``_viewer_can_advance`` (which adds the next-status check
+    to drive ``ProposalOut.can_advance``). Keeping the ladder in one
+    place means the FE control and the endpoint can never diverge.
+
+    True iff the viewer is:
+      * the proposal author, OR
+      * a platform admin, OR
+      * a holder of ``proposal.advance_phase`` in the proposal's org.
+
+    A moderator who is NOT the author is deliberately NOT in this set —
+    they need ``proposal.advance_phase`` (mirrors the endpoint, which
+    403s a moderator on someone else's proposal). ``user`` may be passed
+    to avoid a redundant User load when the caller already has it.
+    """
+    if viewer_id is None:
+        return False
+    if proposal.author_id == viewer_id:
+        return True
+    u = user if user is not None else db.get(models.User, viewer_id)
+    if u is not None and u.is_admin:
+        return True
+    if proposal.org_id is not None and _has_permission(
+        db, viewer_id, proposal.org_id, "proposal.advance_phase",
+    ):
+        return True
+    return False
+
+
+# Phase 70 — statuses the proposal-detail "Advance" control may act on.
+# Deliberately EXCLUDES "voting": ``STATUS_TRANSITIONS`` maps voting→passed
+# for the endpoint's admin force-close path, but that's "close voting early"
+# (an admin action surfaced in the admin view), NOT an author "advance to the
+# next phase". The author control is only for draft→deliberation and
+# deliberation→voting, so ``can_advance``/``next_status`` are gated to these.
+_AUTHOR_ADVANCEABLE_STATUSES = ("draft", "deliberation")
+
+
+def _author_next_status(proposal: models.Proposal) -> Optional[str]:
+    """Phase 70 — the next status the author advance control would move to,
+    or None when the proposal isn't at an author-advanceable rung."""
+    if proposal.status in _AUTHOR_ADVANCEABLE_STATUSES:
+        return STATUS_TRANSITIONS.get(proposal.status)
+    return None
+
+
+def _viewer_can_advance(
+    proposal: models.Proposal,
+    db: Session,
+    viewer_id: Optional[str],
+    *,
+    user: Optional[models.User] = None,
+) -> bool:
+    """Phase 70 — full ``can_advance`` capability: the permission ladder
+    AND an author-advanceable next status existing (True only for draft /
+    deliberation; False for voting/passed/failed/withdrawn/unresolved).
+    Drives the FE author advance control + ``ProposalOut.can_advance``.
+    """
+    return (
+        _author_next_status(proposal) is not None
+        and _viewer_can_advance_permission(proposal, db, viewer_id, user=user)
+    )
+
+
 def _proposal_or_404(proposal_id: str, db: Session) -> models.Proposal:
     p = db.get(models.Proposal, proposal_id)
     if not p:
@@ -347,6 +420,12 @@ def _build_proposal_out(
         # Phase 68b — viewer's archive capability (drives the FE "Archive"
         # action). False when no viewer context (list builds pass none).
         can_archive=_viewer_can_archive(proposal, db, viewer_id),
+        # Phase 70 — viewer's advance capability + the next status, so the
+        # FE can surface an "Advance to {next_status}" control without
+        # re-deriving the gate or the transition map. Shares the endpoint's
+        # permission ladder via _viewer_can_advance (single source of truth).
+        can_advance=_viewer_can_advance(proposal, db, viewer_id),
+        next_status=_author_next_status(proposal),
     )
 
 
@@ -2483,36 +2562,32 @@ def advance_proposal(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
-    # Permissions: platform admin, org admin/owner, proposal author, or org
-    # moderator (own proposals only). Moderators get 403 on others' proposals.
+    # Permissions: platform admin, org admin/owner (proposal.advance_phase),
+    # proposal author, or org moderator (own proposals only). Moderators get
+    # 403 on others' proposals.
+    #
+    # Phase 70 — the allow decision is centralized in
+    # _viewer_can_advance_permission (the single source of truth shared with
+    # ProposalOut.can_advance, so the FE control + this gate never diverge).
+    # The moderator-of-someone-else's-proposal case keeps its specific 403
+    # message (asserted by test_proposal_lifecycle).
     proposal = _proposal_or_404(proposal_id, db)
 
-    is_author = proposal.author_id == current_user.id
-    is_platform_admin = current_user.is_admin
-    is_org_admin_or_owner = False
-    is_org_moderator = False
-    if proposal.org_id:
-        membership = db.query(models.OrgMembership).filter(
-            models.OrgMembership.org_id == proposal.org_id,
-            models.OrgMembership.user_id == current_user.id,
-            models.OrgMembership.status == "active",
-        ).first()
-        if membership:
-            # Phase 12 — admin/Steward via has_permission(...)
-            # 'proposal.advance_phase' is the canonical gate; Steward retains
-            # the bypass via D4 + the standard grant table (admin gets it).
-            from role_permissions import has_permission as _has_permission
+    if not _viewer_can_advance_permission(
+        proposal, db, current_user.id, user=current_user,
+    ):
+        if proposal.org_id and proposal.author_id != current_user.id:
             from org_middleware import membership_role_system_key as _sk
-            if _has_permission(
-                db, current_user.id, proposal.org_id, "proposal.advance_phase"
-            ):
-                is_org_admin_or_owner = True
-            elif _sk(membership) == "moderator":
-                is_org_moderator = True
-
-    if is_org_moderator and not is_author:
-        raise HTTPException(status_code=403, detail="Moderators can only advance proposals they created")
-    if not (is_author or is_platform_admin or is_org_admin_or_owner or is_org_moderator):
+            membership = db.query(models.OrgMembership).filter(
+                models.OrgMembership.org_id == proposal.org_id,
+                models.OrgMembership.user_id == current_user.id,
+                models.OrgMembership.status == "active",
+            ).first()
+            if membership and _sk(membership) == "moderator":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Moderators can only advance proposals they created",
+                )
         raise HTTPException(status_code=403, detail="Not the proposal author or admin")
 
     next_status = STATUS_TRANSITIONS.get(proposal.status)
@@ -2634,7 +2709,10 @@ def advance_proposal(
         except Exception:  # noqa: BLE001
             pass
 
-    return _build_proposal_out(proposal, db)
+    # Phase 70 — pass viewer_id so the response's can_advance/can_archive
+    # reflect the actor's capability on the NEW status (the FE re-labels or
+    # hides the advance control from this same response).
+    return _build_proposal_out(proposal, db, viewer_id=current_user.id)
 
 
 # ---------------------------------------------------------------------------
