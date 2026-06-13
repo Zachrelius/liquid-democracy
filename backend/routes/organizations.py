@@ -9,7 +9,8 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response, status
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
@@ -3818,6 +3819,359 @@ def create_org_proposal(
 
     from routes.proposals import _build_proposal_out
     return _build_proposal_out(proposal, db)
+
+
+# ===========================================================================
+# Phase 68a — import a proposal from a JSON file
+#
+# A multi-option proposal (approval/RCV with many options) is tedious to
+# build field-by-field. This lets a user (or an AI assistant) author the
+# whole thing as a structured JSON file and import it. The import NEVER
+# writes a proposal row — it parses + validates against the SAME rules the
+# create path uses, then returns a ``ProposalCreate``-shaped payload the FE
+# pre-fills into the normal create form. The user reviews and submits
+# through the existing create endpoint (one create code path, one review
+# step). See phase68_proposal_import_and_archive_dispatch_2026-06-13.md.
+# ===========================================================================
+
+# Cap the import upload — a proposal is small text; reject larger to avoid
+# abuse / accidental huge uploads.
+_IMPORT_MAX_BYTES = 256 * 1024
+
+# Annotated template returned by the import-template endpoint. Doubles as
+# the format doc for the AI-assistant workflow. The ``_readme`` key is an
+# UNKNOWN field — importing this template back produces a "skipped unknown
+# field" warning, demonstrating the forward-compatible ignore-unknown rule.
+_IMPORT_TEMPLATE: dict = {
+    "_readme": (
+        "Liquid Democracy proposal import template. Fill in the fields "
+        "below and import via the proposal create form. 'voting_method' is "
+        "one of 'binary', 'approval', or 'ranked_choice'. Binary proposals "
+        "omit 'options'. Approval/ranked_choice need at least 2 options. "
+        "Topics may be given by 'topic_name' (resolved against this org's "
+        "topics) or 'topic_id'. Unknown fields (like this _readme) are "
+        "ignored on import. Thresholds/durations are optional — omit them "
+        "to use the organization defaults."
+    ),
+    "title": "Example: Adopt a community garden policy",
+    "body": "Markdown body explaining the proposal goes here.",
+    "voting_method": "approval",
+    "num_winners": 1,
+    "options": [
+        {"label": "Option A", "description": "What option A means."},
+        {"label": "Option B", "description": "What option B means."},
+    ],
+    "topics": [
+        {"topic_name": "Parks & Recreation", "relevance": 1.0},
+    ],
+    "pass_threshold": 0.5,
+    "quorum_threshold": 0.4,
+    "deliberation_days": 3,
+    "voting_days": 5,
+}
+
+# ProposalCreate fields the importer accepts. Computed from the schema so
+# new ProposalCreate fields are accepted automatically (forward-compat).
+_IMPORT_KNOWN_KEYS: set[str] = set(schemas.ProposalCreate.model_fields.keys())
+
+
+def _import_candidate_topics(db: Session, org: models.Organization) -> list[models.Topic]:
+    """Topics a proposal in ``org`` could attach — used to resolve
+    ``topic_name`` references and to validate ``topic_id`` references.
+
+    Mirrors the create path's scope rules: a parent-org slug resolves to
+    parent-org-wide topics; a sub-org slug resolves to that sub-org's
+    topics plus the parent-org-wide ones.
+    """
+    if org.parent_org_id is not None:
+        return (
+            db.query(models.Topic)
+            .filter(
+                models.Topic.org_id == org.parent_org_id,
+                (models.Topic.sub_org_id.is_(None))
+                | (models.Topic.sub_org_id == org.id),
+            )
+            .all()
+        )
+    return (
+        db.query(models.Topic)
+        .filter(
+            models.Topic.org_id == org.id,
+            models.Topic.sub_org_id.is_(None),
+        )
+        .all()
+    )
+
+
+def _resolve_import_topics(
+    raw_topics: object, candidates: list[models.Topic],
+) -> tuple[list[dict], list[str], list[dict], list[str]]:
+    """Resolve an imported ``topics`` list to ``[{topic_id, relevance}]``.
+
+    Accepts entries that are a bare ``topic_id`` string, ``{topic_id,
+    relevance?}``, or ``{topic_name, relevance?}`` (Phase 68a D4). Returns
+    ``(resolved_for_create, warnings, resolved_transparency, errors)``:
+      * resolved_for_create — ``[{topic_id, relevance}]`` for matched entries
+      * warnings — name→id resolution notes
+      * resolved_transparency — ``[{topic_id, topic_name, relevance}]``
+      * errors — human-readable strings for unmatched/invalid entries
+    """
+    by_name = {t.name.strip().lower(): t for t in candidates}
+    by_id = {t.id: t for t in candidates}
+    available = sorted(t.name for t in candidates)
+
+    resolved: list[dict] = []
+    warnings: list[str] = []
+    transparency: list[dict] = []
+    errors: list[str] = []
+
+    if raw_topics is None:
+        return resolved, warnings, transparency, errors
+    if not isinstance(raw_topics, list):
+        errors.append("'topics' must be a list.")
+        return resolved, warnings, transparency, errors
+
+    for entry in raw_topics:
+        relevance = 1.0
+        topic: Optional[models.Topic] = None
+        if isinstance(entry, str):
+            topic = by_id.get(entry)
+            if topic is None:
+                errors.append(
+                    f"Topic id '{entry}' not found in this organization."
+                )
+                continue
+        elif isinstance(entry, dict):
+            if entry.get("relevance") is not None:
+                relevance = entry["relevance"]
+            if entry.get("topic_id"):
+                topic = by_id.get(entry["topic_id"])
+                if topic is None:
+                    errors.append(
+                        f"Topic id '{entry['topic_id']}' not found in this "
+                        "organization."
+                    )
+                    continue
+            elif entry.get("topic_name"):
+                name = str(entry["topic_name"]).strip()
+                topic = by_name.get(name.lower())
+                if topic is None:
+                    errors.append(
+                        f"Topic name '{name}' did not match any topic in "
+                        f"this organization. Available topics: "
+                        f"{', '.join(available) if available else '(none)'}."
+                    )
+                    continue
+                warnings.append(
+                    f"Resolved topic name '{name}' to id {topic.id}."
+                )
+            else:
+                errors.append(
+                    "Each topic entry needs a 'topic_id' or 'topic_name'."
+                )
+                continue
+        else:
+            errors.append(f"Invalid topic entry: {entry!r}.")
+            continue
+
+        resolved.append({"topic_id": topic.id, "relevance": relevance})
+        transparency.append({
+            "topic_id": topic.id,
+            "topic_name": topic.name,
+            "relevance": relevance,
+        })
+
+    return resolved, warnings, transparency, errors
+
+
+@router.get("/{org_slug}/proposals/import-template")
+def get_proposal_import_template(
+    org_slug: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Phase 68a — annotated JSON template for the proposal importer.
+
+    Behind org membership (same surface as the import flow). The FE
+    "Download template" link fetches this and saves it; AI-assistant /
+    scripting workflows can GET it directly as the format reference.
+    """
+    return _IMPORT_TEMPLATE
+
+
+@router.post("/{org_slug}/proposals/import-preview")
+async def import_preview_proposal(
+    org_slug: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Phase 68a — parse + validate an imported proposal file WITHOUT
+    persisting anything.
+
+    Accepts a multipart file upload (what the FE sends) OR a raw
+    ``application/json`` body (convenient for API / AI-assistant use).
+    Returns a ``ProposalCreate``-shaped ``proposal`` payload + ``warnings``
+    + ``resolved_topics`` on success (200), or ``{errors, warnings}``
+    field-keyed on validation failure (422). NEVER writes a Proposal row
+    and emits no audit event — the eventual create through the existing
+    endpoint does that.
+
+    Auth: org member holding ``proposal.create`` (the same gate the create
+    form is behind). No new permission key.
+    """
+    # --- auth: same gate as the create form ---
+    if not has_permission(db, current_user.id, membership.org_id, "proposal.create"):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to create proposals in this organization.",
+        )
+
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    # --- read raw bytes from either transport ---
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("multipart/form-data"):
+        form = await request.form()
+        upload = None
+        for value in form.values():
+            if hasattr(value, "read"):
+                upload = value
+                break
+        if upload is None:
+            return JSONResponse(
+                status_code=422,
+                content={"errors": {"_file": ["No file was uploaded."]}, "warnings": []},
+            )
+        raw_bytes = await upload.read()
+    else:
+        raw_bytes = await request.body()
+
+    if len(raw_bytes) > _IMPORT_MAX_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "errors": {"_file": [
+                    f"Import file is too large (max {_IMPORT_MAX_BYTES // 1024} KB)."
+                ]},
+                "warnings": [],
+            },
+        )
+
+    # --- parse JSON ---
+    import json
+    try:
+        parsed = json.loads(raw_bytes.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JSONResponse(
+            status_code=422,
+            content={"errors": {"_file": ["Could not parse file as JSON."]}, "warnings": []},
+        )
+    if not isinstance(parsed, dict):
+        return JSONResponse(
+            status_code=422,
+            content={"errors": {"_file": ["Import must be a JSON object."]}, "warnings": []},
+        )
+
+    errors: dict[str, list[str]] = {}
+    warnings: list[str] = []
+
+    def add_error(field: str, message: str) -> None:
+        errors.setdefault(field, [])
+        if message not in errors[field]:
+            errors[field].append(message)
+
+    # --- split known / unknown keys (forward-compat: a future export may
+    # carry read-only fields like id/status — ignore them with a warning) ---
+    cleaned: dict = {}
+    for key, value in parsed.items():
+        if key in _IMPORT_KNOWN_KEYS:
+            cleaned[key] = value
+        else:
+            warnings.append(f"Ignored unknown field '{key}'.")
+
+    # --- resolve topics (name → id) before building ProposalCreate ---
+    candidates = _import_candidate_topics(db, org)
+    resolved_topics, topic_warnings, topic_transparency, topic_errors = (
+        _resolve_import_topics(cleaned.get("topics"), candidates)
+    )
+    warnings.extend(topic_warnings)
+    for msg in topic_errors:
+        add_error("topics", msg)
+    # Pass only the successfully-resolved topics into ProposalCreate so the
+    # rest of validation can still run when some names didn't match.
+    cleaned["topics"] = resolved_topics
+
+    # --- build ProposalCreate (Pydantic field/range/shape validation) ---
+    proposal_model: Optional[schemas.ProposalCreate] = None
+    try:
+        proposal_model = schemas.ProposalCreate(**cleaned)
+    except ValidationError as exc:
+        for err in exc.errors():
+            loc = err.get("loc") or ()
+            field = str(loc[0]) if loc else "_file"
+            add_error(field, err.get("msg", "Invalid value."))
+
+    # --- create-rule parity + floors + verification (only if it built) ---
+    if proposal_model is not None:
+        from routes.proposals import (
+            _collect_proposal_creation_errors,
+            _VOTING_DAYS_FLOOR,
+            _DELIBERATION_DAYS_FLOOR,
+        )
+        for field, _status_code, message in _collect_proposal_creation_errors(
+            proposal_model, org,
+        ):
+            add_error(field, message)
+
+        if (
+            proposal_model.voting_days is not None
+            and proposal_model.voting_days < _VOTING_DAYS_FLOOR
+        ):
+            add_error(
+                "voting_days",
+                "Voting duration must be at least 0.05 days (72 minutes).",
+            )
+        if (
+            proposal_model.deliberation_days is not None
+            and proposal_model.deliberation_days < _DELIBERATION_DAYS_FLOOR
+        ):
+            add_error("deliberation_days", "Deliberation duration cannot be negative.")
+
+        if proposal_model.verification_floor is not None:
+            from verification import VALID_STATES, ORDER, jurisdiction_required_for
+            floor = proposal_model.verification_floor
+            jur = proposal_model.verification_jurisdiction
+            jur = jur.strip() if isinstance(jur, str) else None
+            if floor not in VALID_STATES:
+                add_error(
+                    "verification_floor",
+                    f"Unknown verification_floor {floor!r}. Allowed: {list(ORDER)}.",
+                )
+            elif jurisdiction_required_for(floor) and not jur:
+                add_error(
+                    "verification_jurisdiction",
+                    f"verification_floor {floor!r} requires a non-empty "
+                    "verification_jurisdiction.",
+                )
+
+    if errors:
+        return JSONResponse(
+            status_code=422,
+            content={"errors": errors, "warnings": warnings},
+        )
+
+    return {
+        "proposal": proposal_model.model_dump(mode="json"),
+        "warnings": warnings,
+        "resolved_topics": topic_transparency,
+    }
 
 
 @router.get("/{org_slug}/proposals/{proposal_id}", response_model=schemas.ProposalOut)

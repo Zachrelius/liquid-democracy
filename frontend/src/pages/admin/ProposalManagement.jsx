@@ -712,11 +712,220 @@ function CreateProposalForm({
     }
   }
 
+  // ----- Phase 68a — import a proposal from a JSON file -----
+  // Posts to the parse+validate endpoint, which NEVER persists; on success
+  // we pre-fill this form's fields from the returned ProposalCreate-shaped
+  // payload and the user reviews + submits through the normal create path.
+  const [importOpen, setImportOpen] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [importFile, setImportFile] = useState(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importErrors, setImportErrors] = useState(null);
+  const [importWarnings, setImportWarnings] = useState([]);
+
+  // Apply an imported payload to the form's fields. Each field is guarded
+  // so a partial payload only fills what it carries (the rest keep their
+  // defaults). Permission-gated fields (thresholds/durations) are still
+  // pre-filled; the submit handler decides whether to include them.
+  function applyImport(p) {
+    if (!p || typeof p !== 'object') return;
+    if (p.title != null) setTitle(String(p.title));
+    if (p.body != null) setBody(String(p.body));
+    if (p.voting_method) setVotingMethod(p.voting_method);
+    if (Array.isArray(p.options)) {
+      setOptions(
+        p.options.length
+          ? p.options.map(o => ({ label: o.label ?? '', description: o.description ?? '' }))
+          : [{ label: '', description: '' }, { label: '', description: '' }],
+      );
+    }
+    if (p.num_winners != null) setNumWinners(p.num_winners);
+    if (p.approval_winner_config !== undefined) {
+      setWinnerSel(detectApprovalWinnerPreset(p.approval_winner_config));
+    }
+    if (Array.isArray(p.topics)) {
+      setSelectedTopics(p.topics.map(t => ({
+        topic_id: t.topic_id ?? t.id,
+        relevance: t.relevance ?? 1.0,
+      })));
+    }
+    if (p.sub_org_id != null) setScope(p.sub_org_id);
+    if (p.pass_threshold != null) setPassThreshold(p.pass_threshold);
+    if (p.quorum_threshold != null) setQuorumThreshold(p.quorum_threshold);
+    if (p.deliberation_days != null) setDeliberationDays(p.deliberation_days);
+    if (p.voting_days != null) setVotingDays(p.voting_days);
+    if (p.stable_result_required != null) setSmEnabled(p.stable_result_required);
+    if (Array.isArray(p.linked_polis_ids)) setLinkedPolisIds(p.linked_polis_ids);
+    if (p.verification_floor != null) setVerificationFloor(p.verification_floor || '');
+    if (p.verification_jurisdiction != null) setVerificationJurisdiction(p.verification_jurisdiction || '');
+    if (p.allow_write_in_options != null) setAllowWriteIns(p.allow_write_in_options);
+    if (p.allow_write_ins_during_voting != null) setAllowWriteInsDuringVoting(p.allow_write_ins_during_voting);
+    if (p.max_write_ins != null) setMaxWriteIns(p.max_write_ins);
+    if (p.allow_pre_voting != null) setAllowPreVoting(p.allow_pre_voting);
+    if (p.show_votes_during_deliberation != null) setShowVotesDuringDelib(p.show_votes_during_deliberation);
+    if (p.edit_lockout_fraction != null) setEditLockoutFrac(p.edit_lockout_fraction);
+  }
+
+  async function runImport() {
+    setImportBusy(true);
+    setImportErrors(null);
+    setImportWarnings([]);
+    try {
+      let result;
+      if (importFile) {
+        const fd = new FormData();
+        fd.append('file', importFile);
+        result = await api.postFormData(`/api/orgs/${slug}/proposals/import-preview`, fd);
+      } else {
+        if (!importText.trim()) {
+          setImportErrors({ _file: ['Paste JSON or choose a file first.'] });
+          setImportBusy(false);
+          return;
+        }
+        let parsed;
+        try {
+          parsed = JSON.parse(importText);
+        } catch {
+          setImportErrors({ _file: ['Could not parse as JSON. Check for typos.'] });
+          setImportBusy(false);
+          return;
+        }
+        result = await api.post(`/api/orgs/${slug}/proposals/import-preview`, parsed);
+      }
+      applyImport(result.proposal);
+      setImportWarnings(result.warnings || []);
+      setImportOpen(false);
+      setImportText('');
+      setImportFile(null);
+      toast.success('Imported — review the fields below and submit.');
+    } catch (e) {
+      if (e?.raw?.errors) {
+        setImportErrors(e.raw.errors);
+        setImportWarnings(e.raw.warnings || []);
+      } else {
+        setImportErrors({ _file: [e?.message || 'Import failed.'] });
+      }
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  async function downloadImportTemplate() {
+    try {
+      const tmpl = await api.get(`/api/orgs/${slug}/proposals/import-template`);
+      const blob = new Blob([JSON.stringify(tmpl, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'proposal-import-template.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      toast.error('Could not load the template.');
+    }
+  }
+
   return (
     <form onSubmit={handleSubmit} className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
       <h3 className="text-lg font-semibold text-[var(--brand-primary)]">
         {isEditMode ? 'Edit Draft Proposal' : 'Create Proposal'}
       </h3>
+
+      {/* Phase 68a — import a proposal from a JSON file. Pre-fills the form
+          below; the user reviews and submits through the normal flow.
+          Create mode only. */}
+      {!isEditMode && (
+        <div className="border border-gray-200 rounded-lg bg-gray-50">
+          <div className="flex items-center justify-between px-3 py-2">
+            <button
+              type="button"
+              onClick={() => setImportOpen(o => !o)}
+              className="text-sm font-medium text-[var(--brand-accent)] hover:underline"
+            >
+              {importOpen ? '▾ ' : '▸ '}Import from file
+            </button>
+            <button
+              type="button"
+              onClick={downloadImportTemplate}
+              className="text-xs text-gray-500 hover:text-[var(--brand-accent)] hover:underline"
+            >
+              Download template
+            </button>
+          </div>
+          {importOpen && (
+            <div className="px-3 pb-3 space-y-2">
+              <p className="text-xs text-gray-500">
+                Upload a <code>.json</code> file or paste JSON. Nothing is saved —
+                the fields below are pre-filled for you to review and submit.
+                Topics can be given by name. Download the template above for the format.
+              </p>
+              <input
+                type="file"
+                accept=".json,application/json"
+                onChange={e => setImportFile(e.target.files?.[0] || null)}
+                className="block w-full text-xs text-gray-600 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-[var(--brand-primary)] file:text-white hover:file:bg-[var(--brand-accent)]"
+              />
+              <div className="text-xs text-gray-400 text-center">— or paste —</div>
+              <textarea
+                value={importText}
+                onChange={e => setImportText(e.target.value)}
+                rows={6}
+                placeholder='{"title": "...", "voting_method": "approval", "options": [...]}'
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              />
+              {importErrors && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-2 text-xs text-red-700 space-y-1">
+                  <div className="font-medium">Import couldn't be applied:</div>
+                  <ul className="list-disc ml-4">
+                    {Object.entries(importErrors).map(([field, msgs]) => (
+                      (Array.isArray(msgs) ? msgs : [msgs]).map((m, i) => (
+                        <li key={`${field}-${i}`}>
+                          {field !== '_file' && <span className="font-medium">{field}: </span>}{m}
+                        </li>
+                      ))
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={runImport}
+                  disabled={importBusy}
+                  className="text-sm px-4 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+                >
+                  {importBusy ? 'Importing…' : 'Preview & fill form'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Phase 68a — warnings from a successful import (unknown keys skipped,
+          topic names resolved). Dismissible info note. */}
+      {!isEditMode && importWarnings.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <strong>Imported with notes:</strong>
+              <ul className="list-disc ml-4 mt-1">
+                {importWarnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            </div>
+            <button
+              type="button"
+              onClick={() => setImportWarnings([])}
+              className="text-blue-400 hover:text-blue-700 text-sm leading-none"
+              aria-label="Dismiss"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Phase 46 F2 / Phase 46a — cosign-required advisory.
           Members in cosign_required orgs see this so the creation flow

@@ -580,11 +580,24 @@ def _enforce_duration_permission(
         )
 
 
-def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[models.Organization] = None):
-    """Validate voting_method and options for proposal creation."""
+def _collect_proposal_creation_errors(
+    body: schemas.ProposalCreate,
+    org: Optional[models.Organization] = None,
+) -> list[tuple[str, int, str]]:
+    """Phase 68a — collect ``(field, status_code, message)`` for every
+    proposal-creation rule violation, rather than raising on the first.
+
+    Single source of truth for the create-time validation rules + their
+    exact messages. ``_validate_proposal_creation`` raises
+    ``HTTPException`` for the first tuple (live create path, fail-fast);
+    the import-preview path (``POST .../proposals/import-preview``)
+    groups them field-keyed so the create form can surface every error
+    at once instead of one-at-a-time round trips.
+    """
+    errors: list[tuple[str, int, str]] = []
     # Check org allowed_voting_methods. Ranked-choice in particular is
-    # opt-in per org — return 403 (not 400) when the method is not enabled,
-    # matching the Phase 7 spec.
+    # opt-in per org — surface as 403 (not 400) when the method is not
+    # enabled, matching the Phase 7 spec.
     # Phase 8.5: walk the parent chain via get_org_config so a sub-org can
     # enable a voting method its parent doesn't, or vice-versa (Decision 9).
     if org is not None:
@@ -596,10 +609,10 @@ def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[mode
         )
         if body.voting_method not in allowed:
             status_code = 403 if body.voting_method == "ranked_choice" else 400
-            raise HTTPException(
-                status_code=status_code,
-                detail=f"Voting method '{body.voting_method}' is not allowed by this organization",
-            )
+            errors.append((
+                "voting_method", status_code,
+                f"Voting method '{body.voting_method}' is not allowed by this organization",
+            ))
     # Phase 66 — approval_winner_config is approval-method-only. Shape
     # validation already happened at the Pydantic layer (422); this is
     # the method-compatibility gate (400).
@@ -607,74 +620,85 @@ def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[mode
         getattr(body, "approval_winner_config", None) is not None
         and body.voting_method != "approval"
     ):
-        raise HTTPException(
-            status_code=400,
-            detail=(
+        errors.append((
+            "approval_winner_config", 400,
+            (
                 "approval_winner_config is only supported on approval "
                 f"proposals (voting_method is '{body.voting_method}')."
             ),
-        )
+        ))
     if body.voting_method == "binary":
         if body.options:
-            raise HTTPException(
-                status_code=400,
-                detail="Binary proposals must not have options",
-            )
+            errors.append((
+                "options", 400, "Binary proposals must not have options",
+            ))
         if body.num_winners != 1:
-            raise HTTPException(
-                status_code=400,
-                detail="num_winners must be 1 for binary proposals",
-            )
+            errors.append((
+                "num_winners", 400,
+                "num_winners must be 1 for binary proposals",
+            ))
     elif body.voting_method == "approval":
         if len(body.options) < 2:
-            raise HTTPException(
-                status_code=400,
-                detail="Approval proposals require at least 2 options",
-            )
+            errors.append((
+                "options", 400,
+                "Approval proposals require at least 2 options",
+            ))
         if len(body.options) > 20:
-            raise HTTPException(
-                status_code=400,
-                detail="Approval proposals may have at most 20 options",
-            )
+            errors.append((
+                "options", 400,
+                "Approval proposals may have at most 20 options",
+            ))
         seen_labels: set[str] = set()
         for opt in body.options:
             lower = opt.label.strip().lower()
             if lower in seen_labels:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Duplicate option label: {opt.label}",
-                )
+                errors.append((
+                    "options", 400, f"Duplicate option label: {opt.label}",
+                ))
+                break
             seen_labels.add(lower)
         if body.num_winners != 1:
-            raise HTTPException(
-                status_code=400,
-                detail="num_winners must be 1 for approval proposals",
-            )
+            errors.append((
+                "num_winners", 400,
+                "num_winners must be 1 for approval proposals",
+            ))
     elif body.voting_method == "ranked_choice":
         if len(body.options) < 2:
-            raise HTTPException(
-                status_code=400,
-                detail="Ranked-choice proposals require at least 2 options",
-            )
+            errors.append((
+                "options", 400,
+                "Ranked-choice proposals require at least 2 options",
+            ))
         if len(body.options) > 20:
-            raise HTTPException(
-                status_code=400,
-                detail="Ranked-choice proposals may have at most 20 options",
-            )
+            errors.append((
+                "options", 400,
+                "Ranked-choice proposals may have at most 20 options",
+            ))
         seen_labels: set[str] = set()
         for opt in body.options:
             lower = opt.label.strip().lower()
             if lower in seen_labels:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Duplicate option label: {opt.label}",
-                )
+                errors.append((
+                    "options", 400, f"Duplicate option label: {opt.label}",
+                ))
+                break
             seen_labels.add(lower)
         if body.num_winners < 1 or body.num_winners > len(body.options):
-            raise HTTPException(
-                status_code=400,
-                detail="num_winners must be between 1 and the number of options",
-            )
+            errors.append((
+                "num_winners", 400,
+                "num_winners must be between 1 and the number of options",
+            ))
+    return errors
+
+
+def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[models.Organization] = None):
+    """Validate voting_method and options for proposal creation.
+
+    Thin fail-fast wrapper over ``_collect_proposal_creation_errors``
+    (Phase 68a) — raises ``HTTPException`` for the first rule violation,
+    preserving the historical first-error-wins behavior + status codes.
+    """
+    for _field, status_code, message in _collect_proposal_creation_errors(body, org):
+        raise HTTPException(status_code=status_code, detail=message)
 
 
 def _create_proposal_options(db: Session, proposal_id: str, options: list[schemas.OptionCreate]):
