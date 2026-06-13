@@ -4123,3 +4123,23 @@ Surfaces the existing `withdrawn` status as a user-facing "Archive" action — n
 **Tests:** 2392 → 2428 (+36: 17 import + 16 archive endpoint + 3 migration-cycle), 0 failures. PG smoke (68b) PASS all three modes incl. `actual-upgrade` with seeded legacy data proving backfill parity on real Postgres. Five pre-existing permission-count assertions updated for the new key (test_permission_registry, test_role_seed, test_phase_12_migration_cycle, test_phase_12_5_user_permissions_field).
 
 **Tech debt / followups:** `proposal.delete` is vestigial (clean up in a separate ticket — rename is a data migration). No "unarchive"/restore in this pass (deliberate; add if pilot signal asks). Voting-phase archive confirm-copy branch not browser-exercised (covered by code + backend tests; QA archived a deliberation proposal).
+
+---
+
+## Phase 70 — Author Proposal Advance + Admin-View Navigation ✅ Complete (2026-06-13)
+
+QoL bundle, single deploy, no migration. Branch `phase-70/author-advance-and-admin-nav`, merge `43642ff`, bundle `index-BlULx0bg.js`. Spec: `phase70_author_advance_and_admin_nav_2026-06-13.md`. A pilot author (non-admin) couldn't advance their own draft → deliberation: the `/advance` endpoint already permitted the author, but there was no UI surface and no server signal to show one.
+
+**Item 1 — `can_advance` + `next_status` on `ProposalOut` (additive, no migration).** Factored the advance permission ladder into `_viewer_can_advance_permission` (author / platform admin / `proposal.advance_phase` holder) — the **single source of truth** now called by BOTH `advance_proposal` (the endpoint gate) and `_build_proposal_out` (the `can_advance` flag), so the FE control and the endpoint can never diverge (relevant to the pending Phase 69 audit — no hand-rolled client gate). The endpoint keeps its moderator-specific 403 message (asserted by `test_proposal_lifecycle`). `_viewer_can_advance` = permission AND an author-advanceable next status exists; author-advanceable = `{draft, deliberation}` only — **"voting" is deliberately excluded** (the spec's grounding said `STATUS_TRANSITIONS` had two entries, but the live map also has `voting→passed`; that's the admin force-close surfaced in the admin view, NOT an author "advance to next phase", so the flag excludes it per the spec's intent + test). `next_status` is null outside those rungs. The advance endpoint's return now threads `viewer_id` so the response re-labels/hides the control for the same actor.
+
+**Item 2 — author advance control (ProposalDetail).** "Advance to {next_status}" button gated on `can_advance`, labeled from `next_status`; confirm dialog (draft→deliberation opens discussion; deliberation→voting opens voting, can't be paused); POSTs empty body; refreshes on success.
+
+**Item 3 — config-error surfacing.** The `/advance` 400 detail ("no voting_days and no positive default_voting_days") is shown to the author via toast instead of a silent failure.
+
+**Item 4 — admin-view "View proposal page →" link (ProposalManagement).** Every expanded proposal row links to the member-facing detail route, so an admin can see it as members do. Pure navigation.
+
+**Tests:** 2428 → 2453 (+25 in `test_phase_70_author_advance.py`: helper unit coverage, the load-bearing **single-source agreement test** (`can_advance==True` ⟹ `/advance` not 403; `False` for a permission reason ⟹ 403), `ProposalOut` field population per status, both-rung author advance, config-error 400). 0 failures. No migration (computed response fields). Existing advance permission tests unchanged.
+
+**Prod QA (demo-cedar-hollow, PASS 4/4):** admin "View proposal page →" link reaches the member page; author advanced own draft→deliberation→voting via the detail-view buttons with correct confirm copy; advance button gone at voting. Config-error path covered by backend test (not browser-reproduced).
+
+**Followup (minor UX):** for a draft, an author/editor lands in the full draft-edit view by default, so the read-view Advance button is reached after clicking **Cancel**. Works + discoverable; a future trim could add an advance affordance inside the draft editor form (out of scope this pass).
