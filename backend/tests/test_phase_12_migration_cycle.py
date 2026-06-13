@@ -348,17 +348,17 @@ def test_role_permissions_seeded_per_preset_role():
                 counts = {sk: cnt for sk, cnt in rows}
                 # Phase 60 Bucket 2 — bumped expected counts after
                 # Phase 47 (title.manage) + Phase 49a
-                # (org.approve_cosign_petition) additions. Steward and
-                # admin track lockstep at 28; moderator/member counts
-                # also bumped for the role_permissions rows the seed
-                # writes for non-default cases.
-                assert counts.get("steward") == 28, (
-                    f"org {org_id}: steward should have 28 permissions "
-                    f"(Phase 49a's org.approve_cosign_petition is the "
-                    f"latest addition), got {counts.get('steward')}"
+                # (org.approve_cosign_petition) additions. Phase 68b adds
+                # proposal.archive, bumping steward + admin to 29 (the
+                # backfill migration writes the row for both tiers).
+                # moderator/member are unchanged (no proposal.archive row).
+                assert counts.get("steward") == 29, (
+                    f"org {org_id}: steward should have 29 permissions "
+                    f"(Phase 68b's proposal.archive is the latest "
+                    f"addition), got {counts.get('steward')}"
                 )
-                assert counts.get("admin") == 28, (
-                    f"org {org_id}: admin should have 28 permissions "
+                assert counts.get("admin") == 29, (
+                    f"org {org_id}: admin should have 29 permissions "
                     f"(lockstep with steward), got {counts.get('admin')}"
                 )
                 assert counts.get("moderator") == 11, (

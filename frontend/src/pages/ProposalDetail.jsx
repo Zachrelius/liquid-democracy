@@ -1511,6 +1511,8 @@ export default function ProposalDetail() {
   // into draft → goes straight to the edit form" behavior). Cancel
   // returns to the read view; Save closes edit + re-fetches.
   const [draftEditMode, setDraftEditMode] = useState(false);
+  // Phase 68b — archive (withdraw) busy guard for the read-view action.
+  const [archiving, setArchiving] = useState(false);
   // Lazy-loaded inputs for the form (topics + sub-orgs). Fetched only
   // when entering edit mode so the regular read-view path doesn't pay
   // the API cost.
@@ -1966,6 +1968,38 @@ export default function ProposalDetail() {
     );
   }
 
+  // Phase 68b — archive (move to the closed/withdrawn bucket). Backend
+  // gates on can_archive; we render the action on that flag so the FE
+  // never disagrees with what the endpoint allows. Voting-phase archive
+  // preserves the votes (no result recorded) — the confirm copy says so.
+  // No "unarchive" in this pass: the copy states the move is one-way.
+  async function handleArchive() {
+    const fromVoting = proposal.status === 'voting';
+    const ok = await confirm({
+      title: 'Archive this proposal?',
+      message: (
+        'This moves the proposal out of the active list into the archive. '
+        + 'The proposal and any votes are preserved — nothing is deleted. '
+        + (fromVoting
+          ? 'Voting will be stopped and no result will be recorded. '
+          : '')
+        + "There's no undo: archiving can't be reversed from the app."
+      ),
+      destructive: true,
+    });
+    if (!ok) return;
+    setArchiving(true);
+    try {
+      await api.post(`/api/proposals/${proposal.id}/archive`);
+      toast.success('Proposal archived');
+      fetchData();
+    } catch (err) {
+      toast.error(err?.message || 'Could not archive proposal');
+    } finally {
+      setArchiving(false);
+    }
+  }
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-8">
       {/* Back link */}
@@ -2058,6 +2092,22 @@ export default function ProposalDetail() {
             {canEditProposal && !isDraft && (
               <div className="mt-3">
                 <EditProposalButton proposal={proposal} onSaved={fetchData} />
+              </div>
+            )}
+            {/* Phase 68b — Archive action. Gated on the backend-provided
+                can_archive capability (author in draft/deliberation,
+                proposal.archive holder at any phase, or platform admin). */}
+            {proposal.can_archive && (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={handleArchive}
+                  disabled={archiving}
+                  className="text-sm px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50 hover:text-gray-800 transition-colors disabled:opacity-50"
+                  title="Move this proposal out of the active list (preserved, not deleted)"
+                >
+                  {archiving ? 'Archiving…' : 'Archive proposal'}
+                </button>
               </div>
             )}
             {/* Phase 32.1 F2.3 — lockout tooltip when author/admin but

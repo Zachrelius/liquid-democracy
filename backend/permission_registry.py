@@ -55,9 +55,11 @@ CATEGORIES: list[str] = [
 ]
 
 
-# Full registry — 26 entries. Stage 1 shipped 23; Stage 2 added
+# Full registry — 29 entries. Stage 1 shipped 23; Stage 2 added
 # `role_permissions.edit`; Phase 12.5 adds `proposal.set_thresholds`;
-# Phase 16 adds `proposal.set_durations`.
+# Phase 16 adds `proposal.set_durations`; Phase 32.2 adds
+# `org.edit_proposal`; Phase 47 adds `title.manage`; Phase 68b adds
+# `proposal.archive`.
 # See spec §"Permission registry" lines 105-144 for Stage 1's 23-key table.
 PERMISSION_REGISTRY: list[PermissionDefinition] = [
     # --- Proposals (6) ---
@@ -109,6 +111,15 @@ PERMISSION_REGISTRY: list[PermissionDefinition] = [
         "org.edit_proposal",
         "Edit any proposal",
         "Allow editing proposals authored by other members during deliberation (subject to the org's edit lockout setting). Authors can always edit their own proposals.",
+        "Proposals",
+    ),
+    # Phase 68b — archive (move to the closed/withdrawn bucket) any
+    # proposal at any phase. Authors can always archive their own draft /
+    # deliberation proposals without this key.
+    PermissionDefinition(
+        "proposal.archive",
+        "Archive proposals",
+        "Allow moving any proposal — at any phase — out of the active list into the archive (preserves the proposal and any votes; nothing is deleted). Authors can always archive their own draft or deliberation proposals.",
         "Proposals",
     ),
     # --- Topics (3) ---
@@ -263,11 +274,11 @@ ALL_PERMISSION_KEYS: set[str] = {p.key for p in PERMISSION_REGISTRY}
 # backend/role_seed.py (Cluster D) imports DEFAULT_GRANTS to populate
 # role_permissions rows when an org is created.
 #
-# Counts (verified by test_permission_registry.py) — Phase 32.2 totals:
-#   steward   = 27  (every key; +1 from Phase 16: org.edit_proposal)
-#   admin     = 27  (every key; +1 from Phase 16: org.edit_proposal)
-#   moderator =  9  (no change — org.edit_proposal is governance-adjacent,
-#                    not a moderator's logistics surface)
+# Counts (verified by test_permission_registry.py) — Phase 68b totals:
+#   steward   = 29  (every key; +1 from Phase 68b: proposal.archive)
+#   admin     = 29  (every key; +1 from Phase 68b: proposal.archive)
+#   moderator =  9  (no change — proposal.archive is governance-adjacent,
+#                    not a moderator's default logistics surface)
 #   member    =  0  (no change)
 DEFAULT_GRANTS: dict[str, set[str]] = {
     "steward": set(ALL_PERMISSION_KEYS),

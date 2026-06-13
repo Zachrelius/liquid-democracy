@@ -17,7 +17,12 @@ import { effectiveApprovalWinners } from '../utils/approvalWinnerConfig';
 // (option.description) instead of the raw user-id UUID labels.
 import { optionDisplayLabel } from '../utils/optionDisplay';
 
-const STATUS_FILTERS = ['all', 'deliberation', 'voting', 'passed', 'failed'];
+// Phase 68b — "archived" is a UI filter mapping to the internal
+// `withdrawn` status. The default "all" view hides archived proposals so
+// they don't clutter the active list; the explicit "archived" filter
+// surfaces them.
+const STATUS_FILTERS = ['all', 'deliberation', 'voting', 'passed', 'failed', 'archived'];
+const FILTER_TO_STATUS = { archived: 'withdrawn' };
 
 function timeRemaining(votingEnd) {
   if (!votingEnd) return null;
@@ -319,7 +324,9 @@ export default function Proposals() {
     setLoading(true);
     setError('');
     const params = new URLSearchParams();
-    if (statusFilter !== 'all') params.set('status', statusFilter);
+    if (statusFilter !== 'all') {
+      params.set('status', FILTER_TO_STATUS[statusFilter] || statusFilter);
+    }
     if (topicFilter) params.set('topic_id', topicFilter);
     const qs = params.toString() ? `?${params}` : '';
 
@@ -372,6 +379,13 @@ export default function Proposals() {
   // proposal-detail link above (sub-org scope walks up to the parent
   // because the admin/proposals page lives under the parent's slug).
   const adminProposalsHref = linkOrg ? urlFor(linkOrg, 'admin-proposals') : null;
+
+  // Phase 68b — the "all" view hides archived (withdrawn) proposals so the
+  // default list stays focused on active governance. The explicit
+  // "archived" filter (which sends status=withdrawn) shows only those.
+  const visibleProposals = statusFilter === 'all'
+    ? proposals.filter(p => p.status !== 'withdrawn')
+    : proposals;
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -439,7 +453,7 @@ export default function Proposals() {
         <Spinner />
       ) : error ? (
         <ErrorMessage error={error} onRetry={() => { setStatusFilter('all'); setTopicFilter(''); }} />
-      ) : proposals.length === 0 ? (
+      ) : visibleProposals.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           {statusFilter === 'all' && !topicFilter ? (
             <>
@@ -463,7 +477,7 @@ export default function Proposals() {
         </div>
       ) : (
         <div className="space-y-4">
-          {proposals
+          {visibleProposals
             .map(p => {
               const subOrg = p.sub_org_id ? subOrgsById[p.sub_org_id] : null;
               // Decision 7 — non-member viewers see read-only treatment. The

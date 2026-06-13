@@ -41,11 +41,10 @@ _DUMMY_HASH = auth_utils.hash_password("demo1234")
 # ---------------------------------------------------------------------------
 
 def test_registry_has_26_entries():
-    """Per Phase 16 spec — Stage 1 shipped 23 keys; Stage 2 added
-    `role_permissions.edit` (24); Phase 12.5 added `proposal.set_thresholds`
-    (25); Phase 16 adds `proposal.set_durations` (26). Per-category
-    breakdown: 6+3+5+3+1+2+1+3+2 = 26."""
-    assert len(PERMISSION_REGISTRY) == 28
+    """Stage 1 shipped 23 keys; Stage 2 + Phase 12.5 + Phase 16 + Phase
+    32.2 + Phase 47 brought it to 28; Phase 68b adds `proposal.archive`
+    (29). Per-category breakdown: 8+3+5+3+1+2+1+4+2 = 29."""
+    assert len(PERMISSION_REGISTRY) == 29
 
 
 def test_registry_keys_are_unique():
@@ -67,11 +66,11 @@ def test_registry_uses_nine_canonical_categories():
 
 def test_registry_per_category_counts_match_spec():
     """Per spec table totals + Stage 2 + Phase 12.5 + Phase 16 + Phase 32.2
-    additions: 7+3+5+3+1+2+1+3+2 = 27. Phase 32.2 adds
-    `org.edit_proposal` to the Proposals category, bumping that
-    category from 6 to 7."""
+    + Phase 47 + Phase 68b additions: 8+3+5+3+1+2+1+4+2 = 29. Phase 68b
+    adds `proposal.archive` to the Proposals category, bumping that
+    category from 7 to 8."""
     expected = {
-        "Proposals": 7,
+        "Proposals": 8,
         "Topics": 3,
         "Members": 5,
         "Sub-organizations": 3,
@@ -100,7 +99,7 @@ def test_default_grants_steward_gets_all_26():
     column also has three lockout-protected cells per Stage 2 spec Q1,
     but those still appear in DEFAULT_GRANTS as TRUE — they're enforced
     as-locked at the PATCH endpoint, not via DEFAULT_GRANTS."""
-    assert len(DEFAULT_GRANTS["steward"]) == 28
+    assert len(DEFAULT_GRANTS["steward"]) == 29
     assert DEFAULT_GRANTS["steward"] == ALL_PERMISSION_KEYS
 
 
@@ -109,7 +108,7 @@ def test_default_grants_admin_gets_all_26():
     `role_permissions.edit`, `proposal.set_thresholds`, and
     `proposal.set_durations`. The matrix UI is what permits orgs to scope
     these back if they want stricter Admin scopes."""
-    assert len(DEFAULT_GRANTS["admin"]) == 28
+    assert len(DEFAULT_GRANTS["admin"]) == 29
     assert DEFAULT_GRANTS["admin"] == ALL_PERMISSION_KEYS
 
 
@@ -230,7 +229,7 @@ def test_get_registry_returns_26_entries_with_correct_shape(client, test_db):
 
     assert "permissions" in body
     assert "categories" in body
-    assert len(body["permissions"]) == 28
+    assert len(body["permissions"]) == 29
     for entry in body["permissions"]:
         assert set(entry.keys()) == {"key", "label", "description", "category"}
         assert isinstance(entry["key"], str) and entry["key"]

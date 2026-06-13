@@ -121,17 +121,18 @@ def test_default_grants_counts_match_spec():
     not governance — Q1; member still absent). Phase 47 added
     `title.manage` (steward/admin both 27). Phase 49a added
     `org.approve_cosign_petition` (steward/admin both 28; moderator
-    stays at 9). Current totals: 28/28/9/0.
+    stays at 9). Phase 68b added `proposal.archive` (steward/admin both
+    29; moderator stays at 9 — archive is governance-adjacent, not a
+    moderator default). Current totals: 29/29/9/0.
 
-    Phase 60 Bucket 2 — bumped literals from 27 → 28 to match
-    DEFAULT_GRANTS as it stands post-Phase-49a. The shape invariants
-    below (steward == admin, member == 0) capture the
-    structural-correctness property; the literal counts are the
-    "no accidental seed bump" signal. Update both when adding a
-    permission that goes to steward/admin.
+    Phase 68b — bumped literals from 28 → 29 to match DEFAULT_GRANTS as
+    it stands post-Phase-68b. The shape invariants below (steward ==
+    admin, member == 0) capture the structural-correctness property; the
+    literal counts are the "no accidental seed bump" signal. Update both
+    when adding a permission that goes to steward/admin.
     """
-    assert len(DEFAULT_GRANTS["steward"]) == 28
-    assert len(DEFAULT_GRANTS["admin"]) == 28
+    assert len(DEFAULT_GRANTS["steward"]) == 29
+    assert len(DEFAULT_GRANTS["admin"]) == 29
     assert len(DEFAULT_GRANTS["moderator"]) == 9
     assert len(DEFAULT_GRANTS["member"]) == 0
     # Shape invariants — steward and admin always track in lockstep

@@ -344,6 +344,9 @@ def _build_proposal_out(
         approval_winner_config=getattr(
             proposal, "approval_winner_config", None,
         ),
+        # Phase 68b — viewer's archive capability (drives the FE "Archive"
+        # action). False when no viewer context (list builds pass none).
+        can_archive=_viewer_can_archive(proposal, db, viewer_id),
     )
 
 
@@ -1595,6 +1598,127 @@ def delete_proposal(
     db.commit()
     from fastapi import Response
     return Response(status_code=204)
+
+
+# ===========================================================================
+# Phase 68b — archive a proposal (surfaces the existing `withdrawn` status
+# as a user-facing "Archive" action). No new status: `withdrawn` already
+# sits in the closed sort bucket and is excluded from the active flow, so
+# it behaves exactly as "archive" should. Votes are preserved; nothing is
+# deleted. There is no proposal-level `withdrawn` write-path before this
+# (the only prior `status='withdrawn'` write is on ElectionCandidacy), so
+# this is a brand-new endpoint per the spec's pre-flight branch.
+# ===========================================================================
+
+
+def _viewer_can_archive(
+    proposal: models.Proposal, db: Session, viewer_id: Optional[str],
+) -> bool:
+    """Phase 68b — whether ``viewer_id`` may archive ``proposal`` right now.
+
+    Mirrors the archive endpoint's permission ladder so the FE "Archive"
+    affordance can never disagree with what the endpoint will allow:
+      * platform admin → any phase
+      * ``proposal.archive`` holder → any phase
+      * author → own proposal while ``draft`` or ``deliberation``
+    Already-archived (``withdrawn``) proposals return False (idempotency —
+    the endpoint 409s, so there's nothing to offer).
+    """
+    if viewer_id is None or proposal.status == "withdrawn":
+        return False
+    user = db.get(models.User, viewer_id)
+    if user is not None and user.is_admin:
+        return True
+    if proposal.org_id is not None and _has_permission(
+        db, viewer_id, proposal.org_id, "proposal.archive",
+    ):
+        return True
+    if (
+        proposal.author_id == viewer_id
+        and proposal.status in ("draft", "deliberation")
+    ):
+        return True
+    return False
+
+
+@router.post("/{proposal_id}/archive", response_model=schemas.ProposalOut)
+def archive_proposal(
+    proposal_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 68b — archive a proposal by moving it to the ``withdrawn``
+    status (user-facing label: "Archive").
+
+    Permission ladder:
+      * platform admin → any phase
+      * ``proposal.archive`` holder → any phase (draft / deliberation /
+        voting / passed / failed)
+      * author → own proposal while ``draft`` or ``deliberation``
+
+    Archiving a ``voting`` proposal is allowed (product-owner-confirmed):
+    votes are PRESERVED on the row, no result is computed, and the audit
+    event records who archived it and from which phase. Nothing is deleted.
+    There is no "unarchive" in this pass (forward-only).
+    """
+    proposal = _proposal_or_404(proposal_id, db)
+
+    # Idempotency guard: already-archived → 409 (nothing to do).
+    if proposal.status == "withdrawn":
+        raise HTTPException(
+            status_code=409, detail="Proposal is already archived",
+        )
+
+    allowed = False
+    if current_user.is_admin:
+        allowed = True
+    elif proposal.org_id is not None and _has_permission(
+        db, current_user.id, proposal.org_id, "proposal.archive",
+    ):
+        allowed = True
+    elif (
+        proposal.author_id == current_user.id
+        and proposal.status in ("draft", "deliberation")
+    ):
+        allowed = True
+
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Not authorized to archive this proposal. Authors can "
+                "archive their own draft or deliberation proposals; "
+                "archiving at other phases requires the 'Archive proposals' "
+                "permission."
+            ),
+        )
+
+    from_status = proposal.status
+    proposal.status = "withdrawn"
+    # Touch updated_at so it sorts correctly in the closed bucket (which
+    # orders by updated_at desc). onupdate would fire on the status change
+    # too, but set it explicitly so the "most-recently-archived" ordering
+    # is unambiguous. Votes / options / tally are deliberately untouched.
+    proposal.updated_at = datetime.now(timezone.utc)
+
+    log_audit_event(
+        db,
+        action="proposal.archived",
+        target_type="proposal",
+        target_id=proposal.id,
+        actor_id=current_user.id,
+        details={
+            "proposal_id": proposal.id,
+            "from_status": from_status,
+            "by_actor": current_user.id,
+            "title": proposal.title,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    db.refresh(proposal)
+    return _build_proposal_out(proposal, db, viewer_id=current_user.id)
 
 
 # ===========================================================================
