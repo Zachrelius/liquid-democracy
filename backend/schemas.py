@@ -710,6 +710,13 @@ class ProposalOut(BaseModel):
     # legacy single-winner proposals (all pre-66 rows).
     approval_winner_config: Optional[dict] = None
 
+    # Phase 68b — whether the requesting viewer may archive this proposal
+    # right now (author in draft/deliberation, proposal.archive holder at
+    # any phase, or platform admin). False for anonymous / list contexts
+    # where no viewer_id was supplied. The FE gates the "Archive" action
+    # on this so it never disagrees with what the endpoint will allow.
+    can_archive: bool = False
+
     model_config = {"from_attributes": True}
 
 

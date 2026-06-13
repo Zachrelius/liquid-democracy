@@ -14,7 +14,10 @@ const LABELS = {
   voting:       'Voting',
   passed:       'Passed',
   failed:       'Failed',
-  withdrawn:    'Withdrawn',
+  // Phase 68b — internal status is `withdrawn`; the user-facing action is
+  // "Archive", so the badge reads "Archived". (Proposal-level `withdrawn`
+  // is only ever set by the archive action.)
+  withdrawn:    'Archived',
   unresolved:   'Awaiting Review',
 };
 
