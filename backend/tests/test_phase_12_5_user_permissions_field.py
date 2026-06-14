@@ -139,11 +139,12 @@ def test_admin_sees_all_25_permission_keys(client, test_db):
     assert len(resp.json()["user_permissions"]) == 29
 
 
-def test_moderator_sees_exactly_nine_default_grants(client, test_db):
-    """Moderator's default grant set is the 9-key subset (proposal.create
-    + advance_phase, topic.create + edit, member.approve_join + invite,
-    polis.create, comment.moderate, plus Phase 16's proposal.set_durations).
-    proposal.set_thresholds is NOT in this set per Phase 12.5 Q2 decision."""
+def test_moderator_sees_exactly_eleven_default_grants(client, test_db):
+    """Moderator's default grant set (Phase 71a: 11 keys). The Phase 12.5
+    set plus Phase 16's proposal.set_durations, plus Phase 71a's
+    member.suspend + polis.manage (config-authoritative starter values
+    matching the pre-71 moderator+ tier). proposal.set_thresholds is NOT
+    in this set per Phase 12.5 Q2 decision."""
     user = _make_user(test_db, "mod_perms")
     org = _make_org(test_db, "mod-perms")
     make_org_membership(test_db, org_id=org.id, user_id=user.id, role="moderator")
@@ -158,6 +159,7 @@ def test_moderator_sees_exactly_nine_default_grants(client, test_db):
         "member.approve_join", "member.invite",
         "polis.create", "comment.moderate",
         "proposal.set_durations",
+        "member.suspend", "polis.manage",
     }
     assert keys == expected
     assert "proposal.set_thresholds" not in keys

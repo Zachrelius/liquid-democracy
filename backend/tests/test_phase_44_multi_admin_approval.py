@@ -489,7 +489,11 @@ class TestRolePermissionsBaselineDriftD11b:
             f"/api/orgs/{org.slug}/role-permissions",
             json={"changes": [{
                 "role_system_key": "moderator",
-                "permission_key": "member.suspend",
+                # Phase 71a — must be a key NOT in the moderator default set,
+                # otherwise the "drift" PATCH is a no-op (member.suspend is
+                # now a moderator default). member.remove is admin-only by
+                # default, so flipping it True genuinely drifts the matrix.
+                "permission_key": "member.remove",
                 "enabled": True,
             }]},
             headers=auth_for(steward),
@@ -535,7 +539,11 @@ class TestRolePermissionsBaselineDriftD11b:
             f"/api/orgs/{org.slug}/role-permissions",
             json={"changes": [{
                 "role_system_key": "moderator",
-                "permission_key": "member.suspend",
+                # Phase 71a — must be a key NOT in the moderator default set,
+                # otherwise the "drift" PATCH is a no-op (member.suspend is
+                # now a moderator default). member.remove is admin-only by
+                # default, so flipping it True genuinely drifts the matrix.
+                "permission_key": "member.remove",
                 "enabled": True,
             }]},
             headers=auth_for(steward),

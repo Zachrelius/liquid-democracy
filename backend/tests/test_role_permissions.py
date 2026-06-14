@@ -163,13 +163,15 @@ def test_moderator_has_nine_default_grants(db):
     assert has_permission(db, user.id, org.id, "comment.moderate") is True
     # Phase 16 — moderators get this by default (durations are logistics).
     assert has_permission(db, user.id, org.id, "proposal.set_durations") is True
+    # Phase 71a — moderators get these by default now (config-authoritative
+    # starter values matching the pre-71 moderator+ tier behavior).
+    assert has_permission(db, user.id, org.id, "member.suspend") is True
+    assert has_permission(db, user.id, org.id, "polis.manage") is True
 
     # NOT granted to moderator by default (admin+).
     assert has_permission(db, user.id, org.id, "proposal.delete") is False
     assert has_permission(db, user.id, org.id, "topic.delete") is False
     assert has_permission(db, user.id, org.id, "member.remove") is False
-    assert has_permission(db, user.id, org.id, "member.suspend") is False
-    assert has_permission(db, user.id, org.id, "polis.manage") is False
     assert has_permission(db, user.id, org.id, "audit.view_org") is False
     # Phase 12.5 — moderators do NOT get proposal.set_thresholds by default.
     assert has_permission(db, user.id, org.id, "proposal.set_thresholds") is False
@@ -272,8 +274,10 @@ def test_parent_moderator_inherits_sub_org_permissions_by_default(db):
     # Moderator transferability defaults ON; the parent's Moderator
     # matrix grants proposal.create (in DEFAULT_GRANTS).
     assert has_permission(db, user.id, sub.id, "proposal.create") is True
-    # Moderator does NOT have polis.manage (admin-tier only by default).
-    assert has_permission(db, user.id, sub.id, "polis.manage") is False
+    # Moderator does NOT have member.remove (admin-tier only by default).
+    # (Phase 71a moved polis.manage into the moderator default set, so it's
+    # no longer a valid "admin-only" example here.)
+    assert has_permission(db, user.id, sub.id, "member.remove") is False
 
 
 def test_parent_member_does_not_inherit_sub_org_permissions_by_default(db):

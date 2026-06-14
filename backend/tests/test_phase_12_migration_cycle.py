@@ -361,11 +361,14 @@ def test_role_permissions_seeded_per_preset_role():
                     f"org {org_id}: admin should have 29 permissions "
                     f"(lockstep with steward), got {counts.get('admin')}"
                 )
-                assert counts.get("moderator") == 11, (
-                    f"org {org_id}: moderator should have 11 permission "
-                    f"rows (Stage 1 + role_permissions.edit + "
-                    f"set_thresholds + set_durations rows; Phase 47+49a "
-                    f"did NOT add additional moderator rows), "
+                # Phase 71a — backfill migration c1d2e3f4a5b6 adds two
+                # net-new moderator rows (member.suspend + polis.manage;
+                # the other newly-enforced moderator keys were already
+                # seeded at Stage 1), bumping moderator 11 → 13.
+                assert counts.get("moderator") == 13, (
+                    f"org {org_id}: moderator should have 13 permission "
+                    f"rows (prior 11 + Phase 71a's member.suspend + "
+                    f"polis.manage backfill rows), "
                     f"got {counts.get('moderator')}"
                 )
                 assert counts.get("member") == 3, (

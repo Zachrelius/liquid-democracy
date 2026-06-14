@@ -133,7 +133,10 @@ def test_default_grants_counts_match_spec():
     """
     assert len(DEFAULT_GRANTS["steward"]) == 29
     assert len(DEFAULT_GRANTS["admin"]) == 29
-    assert len(DEFAULT_GRANTS["moderator"]) == 9
+    # Phase 71a — moderator bumped 9 → 11 (member.suspend + polis.manage
+    # added so the config-authoritative starter values match the pre-71
+    # moderator+ tier behavior).
+    assert len(DEFAULT_GRANTS["moderator"]) == 11
     assert len(DEFAULT_GRANTS["member"]) == 0
     # Shape invariants — steward and admin always track in lockstep
     # (per the historical "seed both equally" rule); member always

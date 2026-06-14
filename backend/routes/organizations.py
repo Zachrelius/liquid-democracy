@@ -1498,6 +1498,23 @@ def suspend_member(
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
+    # ---- Phase 71a — CANONICAL CONFIG-AUTHORITATIVE ENFORCEMENT PATTERN ----
+    # The tier `Depends(require_org_*)` above stays as a cheap pre-filter /
+    # FLOOR (a plain member can never reach this action — the escalation
+    # invariant). On top of the floor, the org's own `role_permissions`
+    # config decides, via `has_permission`, which is per-org and already
+    # correct on sub-orgs. Add this check AFTER `org` is resolved; raise 403
+    # naming the capability. 71b copies this exact shape to the remaining
+    # tier-gated routes. (Greppable on purpose: `has_permission(..., "<key>")`
+    # must appear literally at each converted call site — Phase 69 audit's
+    # own success criterion.)
+    if org is not None and not has_permission(
+        db, current_user.id, org.id, "member.suspend"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to suspend members in this organization.",
+        )
     m = db.query(models.OrgMembership).filter(
         models.OrgMembership.org_id == org.id,
         models.OrgMembership.user_id == user_id,
@@ -4495,6 +4512,16 @@ def get_org_analytics(
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
+
+    # Phase 71a — config-authoritative enforcement (pattern: see
+    # suspend_member). Admin tier is the floor; the org's config decides.
+    if org is not None and not has_permission(
+        db, current_user.id, org.id, "analytics.view"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to view analytics for this organization.",
+        )
 
     # Member counts
     active_count = db.query(models.OrgMembership).filter(

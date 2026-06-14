@@ -112,13 +112,16 @@ def test_default_grants_admin_gets_all_26():
     assert DEFAULT_GRANTS["admin"] == ALL_PERMISSION_KEYS
 
 
-def test_default_grants_moderator_gets_9():
-    """Per Phase 16 spec — moderators get the eight original 'moderator,
-    admin, steward' rows PLUS `proposal.set_durations` (Phase 16 Q1:
-    durations are logistics, not governance, so moderators get them by
-    default — different from `proposal.set_thresholds` which 12.5 reserves
-    for Steward/Admin)."""
-    assert len(DEFAULT_GRANTS["moderator"]) == 9
+def test_default_grants_moderator_gets_11():
+    """Phase 71a — moderators get the original logistics set PLUS
+    `member.suspend` and `polis.manage`. These are NOT new powers: under
+    the pre-71 coarse-tier gates a moderator could already suspend members
+    and manage org-wide polises. Phase 71 makes the per-org config
+    authoritative for those routes, so the starter config must seed them
+    TRUE to keep current behavior (orgs can now revoke them and have it
+    actually enforced). `proposal.set_durations` (Phase 16) stays granted;
+    `proposal.set_thresholds` stays reserved for Steward/Admin."""
+    assert len(DEFAULT_GRANTS["moderator"]) == 11
     expected = {
         "proposal.create",
         "proposal.advance_phase",
@@ -129,6 +132,9 @@ def test_default_grants_moderator_gets_9():
         "polis.create",
         "comment.moderate",
         "proposal.set_durations",
+        # Phase 71a additions (config-authoritative starter values).
+        "member.suspend",
+        "polis.manage",
     }
     assert DEFAULT_GRANTS["moderator"] == expected
 
