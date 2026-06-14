@@ -35,6 +35,7 @@ from permissions import is_sub_org_admin
 from reserved_slugs import RESERVED_SLUGS
 from role_permissions import (
     effective_role_on_sub_org,
+    has_permission,
     has_permission_on_sub_org,
 )
 
@@ -312,6 +313,13 @@ def create_sub_org(
     # Now enforce parent-org admin permission inline.
     if not _is_parent_org_admin(db, current_user.id, parent):
         raise HTTPException(status_code=403, detail="Admin access required")
+    # Phase 71b — config-authoritative: parent-admin tier is the floor; the
+    # parent org's sub_org.create cell decides. (pattern: see suspend_member)
+    if not has_permission(db, current_user.id, parent.id, "sub_org.create"):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to create sub-organizations in this organization.",
+        )
 
     # Phase 11 B1: reserved-words check. Sub-slugs only ever appear as the
     # second slug position (/{org-slug}/admin/sub-orgs/{sub-slug}/...) so
@@ -492,6 +500,15 @@ def update_sub_org(
             status_code=403,
             detail="Sub-org admin (or parent-org admin) access required",
         )
+    # Phase 71b — config-authoritative. is_sub_org_admin is the tier floor;
+    # has_permission on the SUB-ORG id resolves the user's effective role
+    # (sub-org-native admin or transferable parent admin) and checks the
+    # parent matrix's sub_org.edit_settings cell at that role.
+    if not has_permission(db, current_user.id, sub_org.id, "sub_org.edit_settings"):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to edit this sub-organization's settings.",
+        )
 
     changes: dict = {}
     privacy_change: Optional[dict] = None
@@ -604,6 +621,15 @@ def delete_sub_org(
         raise HTTPException(
             status_code=403,
             detail="Parent-org admin or sub-org Steward access required",
+        )
+    # Phase 71b — config-authoritative. The (parent-admin OR sub-steward) tier
+    # is the floor; has_permission on the SUB-ORG id resolves the effective
+    # role and checks the parent matrix's sub_org.delete cell at that role
+    # (covers both the parent-admin and sub-steward paths).
+    if not has_permission(db, current_user.id, sub_org.id, "sub_org.delete"):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to delete this sub-organization.",
         )
 
     # Block delete if the sub-org has any active topics or proposals.
