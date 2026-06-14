@@ -121,16 +121,31 @@ def _viewer_can_advance_permission(
     they need ``proposal.advance_phase`` (mirrors the endpoint, which
     403s a moderator on someone else's proposal). ``user`` may be passed
     to avoid a redundant User load when the caller already has it.
+
+    Phase 71a PF-2 — RUNG-LIMITED author branch. Platform admins and
+    ``proposal.advance_phase`` holders may advance at ANY rung (including
+    the ``voting→passed`` force-close). The proposal AUTHOR, by identity
+    alone, may self-advance ONLY on the author-advanceable rungs
+    (``draft→deliberation``, ``deliberation→voting``) — they may NOT
+    force-close their own voting phase. Closing voting is governed by
+    ``proposal.advance_phase`` (or platform-admin) even for the author.
+    This closes the §69 PF-2 API-only bypass; the FE already hid the
+    voting-rung advance via ``can_advance`` (``_viewer_can_advance``).
     """
     if viewer_id is None:
         return False
-    if proposal.author_id == viewer_id:
-        return True
+    # Admin + key holders advance at any rung (incl. voting→passed).
     u = user if user is not None else db.get(models.User, viewer_id)
     if u is not None and u.is_admin:
         return True
     if proposal.org_id is not None and _has_permission(
         db, viewer_id, proposal.org_id, "proposal.advance_phase",
+    ):
+        return True
+    # Author identity suffices only on the author-advanceable rungs.
+    if (
+        proposal.author_id == viewer_id
+        and proposal.status in _AUTHOR_ADVANCEABLE_STATUSES
     ):
         return True
     return False

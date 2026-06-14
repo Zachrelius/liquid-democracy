@@ -78,7 +78,7 @@ PERMISSION_REGISTRY: list[PermissionDefinition] = [
     PermissionDefinition(
         "proposal.advance_phase",
         "Advance proposal phases",
-        "Allow moving a proposal between deliberation, voting, and closed phases.",
+        "Allow moving a proposal between deliberation, voting, and closed phases — including closing the voting phase early. Authors may advance their own proposal from draft to deliberation to voting without this permission, but closing voting requires it.",
         "Proposals",
     ),
     PermissionDefinition(
@@ -274,11 +274,15 @@ ALL_PERMISSION_KEYS: set[str] = {p.key for p in PERMISSION_REGISTRY}
 # backend/role_seed.py (Cluster D) imports DEFAULT_GRANTS to populate
 # role_permissions rows when an org is created.
 #
-# Counts (verified by test_permission_registry.py) — Phase 68b totals:
-#   steward   = 29  (every key; +1 from Phase 68b: proposal.archive)
-#   admin     = 29  (every key; +1 from Phase 68b: proposal.archive)
-#   moderator =  9  (no change — proposal.archive is governance-adjacent,
-#                    not a moderator's default logistics surface)
+# Counts (verified by test_permission_registry.py) — Phase 71a totals:
+#   steward   = 29  (every key)
+#   admin     = 29  (every key)
+#   moderator = 11  (+2 from Phase 71a: member.suspend, polis.manage —
+#                    NOT new powers; moderators could already suspend +
+#                    manage polises via the moderator+ tier. Phase 71
+#                    makes the config authoritative, so the starter config
+#                    must seed these TRUE to keep current behavior. See
+#                    phase71_permission_config_authoritative_2026-06-14.md.)
 #   member    =  0  (no change)
 DEFAULT_GRANTS: dict[str, set[str]] = {
     "steward": set(ALL_PERMISSION_KEYS),
@@ -294,6 +298,10 @@ DEFAULT_GRANTS: dict[str, set[str]] = {
         "comment.moderate",
         # Phase 16 — moderators can override per-proposal durations.
         "proposal.set_durations",
+        # Phase 71a — config-authoritative starter values matching the
+        # moderator+ tier behavior that already exists today.
+        "member.suspend",
+        "polis.manage",
     },
     "member": set(),
 }
