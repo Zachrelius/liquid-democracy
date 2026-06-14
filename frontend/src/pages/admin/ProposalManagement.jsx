@@ -293,6 +293,10 @@ function CreateProposalForm({
   // + Cancel. Caller is responsible for the API DELETE + navigation;
   // see ProposalDetail.jsx for the canonical wiring.
   onDelete = null,
+  // Phase 72 — when an import file carries 2+ proposals, the form hands the
+  // per-item preview results up to the parent to render the review list
+  // instead of prefilling a single proposal. Create-mode only.
+  onMultiImport = null,
 }) {
   const isEditMode = !!editingProposal;
   const toast = useToast();
@@ -791,6 +795,34 @@ function CreateProposalForm({
           return;
         }
         result = await api.post(`/api/orgs/${slug}/proposals/import-preview`, parsed);
+      }
+      // Phase 72 — the response is either single-shape ({proposal,...}) when
+      // the file was a JSON object, or array-shape ({items, summary}) when it
+      // was a JSON array. 1 proposal → prefill the form (today's behavior);
+      // 2+ → hand off to the multi-proposal review list.
+      if (Array.isArray(result.items)) {
+        if (result.items.length === 1) {
+          const only = result.items[0];
+          if (only.proposal) {
+            applyImport(only.proposal);
+            setImportWarnings(only.warnings || []);
+            setImportOpen(false);
+            setImportText('');
+            setImportFile(null);
+            toast.success('Imported — review the fields below and submit.');
+          } else {
+            setImportErrors(only.errors || { _file: ['Import had errors.'] });
+            setImportWarnings(only.warnings || []);
+          }
+        } else if (onMultiImport) {
+          onMultiImport(result.items);
+          setImportOpen(false);
+          setImportText('');
+          setImportFile(null);
+        } else {
+          setImportErrors({ _file: ['Multi-proposal import is not available here.'] });
+        }
+        return;
       }
       applyImport(result.proposal);
       setImportWarnings(result.warnings || []);
@@ -1606,6 +1638,206 @@ function CreateProposalForm({
 // alias keeps the existing import paths working without renaming.
 export { CreateProposalForm as ProposalForm };
 
+
+// Phase 72 — review list for a multi-proposal import. Each row is one
+// per-item preview result from import-preview ({index, proposal, warnings,
+// resolved_topics, errors}). Valid rows are selectable; "Create selected"
+// creates them sequentially through the EXISTING single-create endpoint
+// (Option A — no batch endpoint). Each created proposal is an independent
+// draft, so a mid-batch failure is resume-able: already-created drafts stay,
+// remaining rows stay actionable for retry.
+function MultiImportReview({ items, slug, onDone, onCancel }) {
+  const toast = useToast();
+  const [rows, setRows] = useState(() => items.map((it, i) => ({
+    id: it.index ?? i,
+    valid: !!it.proposal && (!it.errors || Object.keys(it.errors).length === 0),
+    title: it.proposal?.title ?? `(untitled #${(it.index ?? i) + 1})`,
+    payload: it.proposal || null,
+    warnings: it.warnings || [],
+    errors: it.errors || {},
+    selected: !!it.proposal && (!it.errors || Object.keys(it.errors).length === 0),
+    created: false,
+    failed: null,
+  })));
+  const [expanded, setExpanded] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [progress, setProgress] = useState(null);
+
+  const validCount = rows.filter(r => r.valid).length;
+  const selectedRemaining = rows.filter(r => r.selected && r.valid && !r.created);
+  const createdCount = rows.filter(r => r.created).length;
+
+  function patchRow(id, patch) {
+    setRows(prev => prev.map(r => (r.id === id ? { ...r, ...patch } : r)));
+  }
+
+  async function createSelected() {
+    setCreating(true);
+    const toCreate = rows.filter(r => r.selected && r.valid && !r.created);
+    let created = 0;
+    for (let i = 0; i < toCreate.length; i++) {
+      const row = toCreate[i];
+      setProgress({ current: i + 1, total: toCreate.length });
+      try {
+        await api.post(`/api/orgs/${slug}/proposals`, { ...row.payload, title: row.title });
+        patchRow(row.id, { created: true, selected: false, failed: null });
+        created += 1;
+      } catch (e) {
+        // Stop on the first failure — already-created drafts persist; the
+        // remaining selected rows stay checked and actionable for retry.
+        patchRow(row.id, { failed: e?.message || 'Create failed' });
+        setCreating(false);
+        setProgress(null);
+        toast.error(`${created} created, ${toCreate.length - created} remaining — retry the rest.`);
+        return;
+      }
+    }
+    setCreating(false);
+    setProgress(null);
+    toast.success(`Created ${created} proposal${created === 1 ? '' : 's'}.`);
+    if (rows.filter(r => r.selected && r.valid && !r.created).length === 0) {
+      onDone(createdCount + created);
+    }
+  }
+
+  return (
+    <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-semibold text-[var(--brand-primary)]">
+          Review imported proposals
+        </h3>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-sm text-gray-500 hover:text-gray-800"
+        >
+          Cancel
+        </button>
+      </div>
+      <p className="text-sm text-gray-500">
+        {items.length} proposals in this file · {validCount} ready ·{' '}
+        {items.length - validCount} with errors. Selected proposals are created
+        as drafts; you can review each before they go to deliberation.
+      </p>
+
+      <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
+        {rows.map((row) => (
+          <div key={row.id} className="p-3">
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                disabled={!row.valid || row.created || creating}
+                checked={row.selected && !row.created}
+                onChange={e => patchRow(row.id, { selected: e.target.checked })}
+                className="h-4 w-4"
+              />
+              {row.valid ? (
+                <input
+                  type="text"
+                  value={row.title}
+                  disabled={row.created || creating}
+                  onChange={e => patchRow(row.id, { title: e.target.value })}
+                  className="flex-1 px-2 py-1 text-sm border border-gray-200 rounded focus:outline-none focus:ring-1 focus:ring-[var(--brand-accent)] disabled:bg-gray-50 disabled:text-gray-500"
+                />
+              ) : (
+                <span className="flex-1 text-sm text-gray-700">{row.title}</span>
+              )}
+              {row.created ? (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Created ✓</span>
+              ) : row.failed ? (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-medium">Failed</span>
+              ) : row.valid ? (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">Ready</span>
+              ) : (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">Has errors</span>
+              )}
+              {row.payload && (
+                <button
+                  type="button"
+                  onClick={() => setExpanded(expanded === row.id ? null : row.id)}
+                  className="text-xs text-gray-500 hover:text-[var(--brand-accent)]"
+                >
+                  {expanded === row.id ? 'Hide' : 'View'}
+                </button>
+              )}
+            </div>
+
+            {row.failed && (
+              <p className="mt-2 ml-7 text-xs text-red-600">{row.failed}</p>
+            )}
+
+            {Object.keys(row.errors).length > 0 && (
+              <div className="mt-2 ml-7 text-xs text-red-700 space-y-0.5">
+                {Object.entries(row.errors).map(([field, msgs]) => (
+                  (Array.isArray(msgs) ? msgs : [msgs]).map((m, i) => (
+                    <div key={`${field}-${i}`}>
+                      {field !== '_item' && field !== '_file' && (
+                        <span className="font-medium">{field}: </span>
+                      )}{m}
+                    </div>
+                  ))
+                ))}
+              </div>
+            )}
+
+            {row.warnings.length > 0 && (
+              <ul className="mt-2 ml-7 text-xs text-blue-800 list-disc list-inside space-y-0.5">
+                {row.warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            )}
+
+            {expanded === row.id && row.payload && (
+              <div className="mt-2 ml-7 text-xs text-gray-600 bg-gray-50 border border-gray-100 rounded p-2 space-y-1">
+                <div><span className="font-medium">Method:</span> {row.payload.voting_method}</div>
+                {row.payload.body && (
+                  <div><span className="font-medium">Body:</span> {String(row.payload.body).slice(0, 200)}{String(row.payload.body).length > 200 ? '…' : ''}</div>
+                )}
+                {Array.isArray(row.payload.options) && row.payload.options.length > 0 && (
+                  <div><span className="font-medium">Options:</span> {row.payload.options.map(o => o.label).join(', ')}</div>
+                )}
+                {Array.isArray(row.payload.topics) && row.payload.topics.length > 0 && (
+                  <div><span className="font-medium">Topics:</span> {row.payload.topics.length}</div>
+                )}
+                {row.payload.pass_threshold != null && (
+                  <div><span className="font-medium">Pass threshold:</span> {row.payload.pass_threshold}</div>
+                )}
+                {row.payload.voting_days != null && (
+                  <div><span className="font-medium">Voting days:</span> {row.payload.voting_days}</div>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={createSelected}
+          disabled={creating || selectedRemaining.length === 0}
+          className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+        >
+          {creating
+            ? `Creating ${progress?.current ?? 0} of ${progress?.total ?? 0}…`
+            : `Create selected (${selectedRemaining.length})`}
+        </button>
+        {createdCount > 0 && (
+          <span className="text-xs text-gray-500">{createdCount} created so far</span>
+        )}
+        <button
+          type="button"
+          onClick={() => onDone(createdCount)}
+          disabled={creating}
+          className="text-sm px-3 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50"
+        >
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
 export default function ProposalManagement() {
   const { currentOrg, fetchSubOrgsFor } = useOrg();
   const toast = useToast();
@@ -1623,6 +1855,9 @@ export default function ProposalManagement() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [showCreate, setShowCreate] = useState(searchParams.get('create') === '1');
   const [expandedId, setExpandedId] = useState(null);
+  // Phase 72 — when an import file carries 2+ proposals, the create form
+  // hands the per-item preview results here and we render the review list.
+  const [multiImportItems, setMultiImportItems] = useState(null);
 
   const slug = currentOrg?.slug;
 
@@ -1719,12 +1954,32 @@ export default function ProposalManagement() {
         )}
       </div>
 
-      {showCreate && (
+      {/* Phase 72 — multi-proposal review list takes over when an import
+          file carried 2+ proposals. */}
+      {multiImportItems && (
+        <MultiImportReview
+          items={multiImportItems}
+          slug={slug}
+          onDone={() => {
+            setMultiImportItems(null);
+            setShowCreate(false);
+            if (searchParams.has('create')) {
+              searchParams.delete('create');
+              setSearchParams(searchParams, { replace: true });
+            }
+            load();
+          }}
+          onCancel={() => setMultiImportItems(null)}
+        />
+      )}
+
+      {showCreate && !multiImportItems && (
         <CreateProposalForm
           slug={slug}
           orgSettings={currentOrg.settings}
           topics={topics}
           subOrgs={subOrgs}
+          onMultiImport={setMultiImportItems}
           onCreated={() => {
             setShowCreate(false);
             // Phase 25 F1 — strip ?create=1 so back/refresh doesn't

@@ -353,11 +353,13 @@ def test_import_malformed_json(client, test_db, org_and_author):
     assert "JSON" in errors["_file"][0]
 
 
-def test_import_non_object_json(client, test_db, org_and_author):
+def test_import_scalar_top_level_rejected(client, test_db, org_and_author):
+    # Phase 72 — a top level that is neither object nor array is rejected.
+    # (An ARRAY is now a valid multi-import shape; see the Phase 72 tests.)
     org, author = org_and_author
     resp = client.post(
         f"/api/orgs/{org.slug}/proposals/import-preview",
-        json=[1, 2, 3],
+        json=42,
         headers=_auth(author),
     )
     assert resp.status_code == 422, resp.text
