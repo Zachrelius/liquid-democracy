@@ -30,6 +30,7 @@ from notification_emit import emit_notification
 from org_middleware import require_org_membership
 from permissions import is_polis_admin, is_sub_org_admin
 from polis_engine import eligible_viewers_for_polis
+from role_permissions import has_permission
 from settings import settings as app_settings
 
 
@@ -108,6 +109,32 @@ def _is_org_moderator_plus(membership: models.OrgMembership) -> bool:
     return membership.role.system_key in ("moderator", "admin", "steward")
 
 
+def _can_manage_polis(db: Session, user_id: str, polis: models.Polis) -> bool:
+    """Phase 71b — config-authoritative polis-manage check that PRESERVES the
+    creator-ownership axis (Z decision: don't let config-authoritative
+    silently strip a creator's ability to manage their own Polis).
+
+    True iff the viewer:
+      * created the Polis (ownership — always, regardless of role/config), OR
+      * passes the role-tier FLOOR (``is_polis_admin``: org-wide moderator+,
+        or sub-org admin / parent-admin implicit power) AND holds
+        ``polis.manage`` in the matrix for the Polis's scope (the sub-org for
+        sub-org Polises — ``has_permission`` auto-resolves the effective role;
+        the parent org for org-wide Polises).
+
+    The floor keeps a below-tier member from gaining manage via a stray config
+    grant (escalation invariant); the config cell lets an org revoke manage
+    from moderators and have it actually enforced. Replaces the bare
+    ``is_polis_admin`` gate at the manage/mutate call sites.
+    """
+    if polis.created_by == user_id:
+        return True
+    if not is_polis_admin(db, user_id, polis):
+        return False  # below the role-tier floor
+    scope_org_id = polis.sub_org_id or polis.org_id
+    return has_permission(db, user_id, scope_org_id, "polis.manage")
+
+
 def _resolve_sub_org(
     db: Session, parent: models.Organization, sub_org_id: str,
 ) -> models.Organization:
@@ -174,12 +201,24 @@ def create_polis(
                     "to create a sub-org-scoped Polis."
                 ),
             )
+        # Phase 71b — config-authoritative; sub-org-admin tier is the floor.
+        if not has_permission(db, current_user.id, target_sub_org.id, "polis.create"):
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have permission to create Polis conversations in this sub-organization.",
+            )
     else:
         # Org-wide: moderator+ on the parent org.
         if not _is_org_moderator_plus(membership):
             raise HTTPException(
                 status_code=403,
                 detail="Moderator access required to create an org-wide Polis",
+            )
+        # Phase 71b — config-authoritative; moderator+ tier is the floor.
+        if not has_permission(db, current_user.id, parent.id, "polis.create"):
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have permission to create Polis conversations in this organization.",
             )
 
     # Determine which path to run. The env-var check is the ONLY signal —
@@ -455,7 +494,7 @@ def update_polis(
     parent = _parent_or_404(db, org_slug)
     polis = _polis_or_404(db, parent, polis_id)
 
-    if not is_polis_admin(db, current_user.id, polis):
+    if not _can_manage_polis(db, current_user.id, polis):
         raise HTTPException(status_code=403, detail="Polis admin access required")
 
     # Conversation_id connect (one-shot, manual-fallback wire-up). Done
@@ -632,7 +671,7 @@ def export_polis(
     parent = _parent_or_404(db, org_slug)
     polis = _polis_or_404(db, parent, polis_id)
 
-    if not is_polis_admin(db, current_user.id, polis):
+    if not _can_manage_polis(db, current_user.id, polis):
         raise HTTPException(status_code=403, detail="Polis admin access required")
 
     if not (app_settings.polis_auth_token or "").strip():

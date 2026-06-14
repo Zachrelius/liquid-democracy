@@ -1466,6 +1466,17 @@ def remove_member(
             ),
         }
 
+    # Phase 71b — config-authoritative on the DIRECT path only (the Phase 44
+    # engine path above already gates the initiator on "member.remove" via
+    # required_permission_key). Floor is admin+ (require_org_admin Depends).
+    if org is not None and not has_permission(
+        db, current_user.id, org.id, "member.remove"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to remove members from this organization.",
+        )
+
     # Direct path — delegate to the shared executor so the inactive-steward
     # recovery logic + audit emission lives in one place.
     from pending_actions.registry import execute_member_remove
@@ -2759,6 +2770,15 @@ def approve_join_request(
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
+    # Phase 71b — config-authoritative (pattern: see suspend_member). Tier
+    # floor (moderator+) preserved by the Depends above.
+    if org is not None and not has_permission(
+        db, current_user.id, org.id, "member.approve_join"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to approve join requests in this organization.",
+        )
     m = db.query(models.OrgMembership).filter(
         models.OrgMembership.org_id == org.id,
         models.OrgMembership.user_id == user_id,
@@ -2807,9 +2827,9 @@ def create_invitations(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
-    admin_membership: models.OrgMembership = Depends(require_org_admin),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
 ):
-    """Send invitations (admin). Body: {emails: string[], role: string}
+    """Send invitations (moderator+ holding member.invite). Body: {emails: string[], role: string}
 
     Phase 9.6 W1 fix: previously created the Invitation DB row but never
     called send_invitation_email — invitations appeared in the admin list
@@ -2823,6 +2843,16 @@ def create_invitations(
     ).first()
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
+    # Phase 71b — member.invite is config-authoritative; Z lowered the floor
+    # from admin to moderator+ (the moderator default grant now actually
+    # works). member.invite governs the whole invitation surface (send /
+    # list / revoke / resend) so a moderator who can send also sees + manages
+    # the list — gating only "send" would show them a list that 403s.
+    if not has_permission(db, current_user.id, org.id, "member.invite"):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to send invitations in this organization.",
+        )
 
     invitations = []
     for email in body.emails:
@@ -2867,12 +2897,20 @@ def list_invitations(
     org_slug: str,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
-    admin_membership: models.OrgMembership = Depends(require_org_admin),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
 ):
-    """List invitations (admin)."""
+    """List invitations (moderator+ holding member.invite)."""
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
+    # Phase 71b — member.invite config-authoritative (floor lowered to mod+).
+    if org is not None and not has_permission(
+        db, current_user.id, org.id, "member.invite"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to view invitations in this organization.",
+        )
     invitations = db.query(models.Invitation).filter(
         models.Invitation.org_id == org.id,
     ).order_by(models.Invitation.created_at.desc()).all()
@@ -2892,12 +2930,20 @@ def revoke_invitation(
     invitation_id: str,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
-    admin_membership: models.OrgMembership = Depends(require_org_admin),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
 ):
-    """Revoke invitation (admin)."""
+    """Revoke invitation (moderator+ holding member.invite)."""
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
+    # Phase 71b — member.invite config-authoritative (floor lowered to mod+).
+    if org is not None and not has_permission(
+        db, current_user.id, org.id, "member.invite"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to revoke invitations in this organization.",
+        )
     inv = db.query(models.Invitation).filter(
         models.Invitation.id == invitation_id,
         models.Invitation.org_id == org.id,
@@ -2915,14 +2961,22 @@ def resend_invitation(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
-    admin_membership: models.OrgMembership = Depends(require_org_admin),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
 ):
-    """Resend invitation (admin) — generates a new token, extends expiry,
-    and actually sends the email (Phase 9.6 W1 fix — also previously
-    rotated the token without sending anything)."""
+    """Resend invitation (moderator+ holding member.invite) — generates a new
+    token, extends expiry, and actually sends the email (Phase 9.6 W1 fix —
+    also previously rotated the token without sending anything)."""
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
+    # Phase 71b — member.invite config-authoritative (floor lowered to mod+).
+    if org is not None and not has_permission(
+        db, current_user.id, org.id, "member.invite"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to resend invitations in this organization.",
+        )
     inv = db.query(models.Invitation).filter(
         models.Invitation.id == invitation_id,
         models.Invitation.org_id == org.id,
@@ -3246,6 +3300,15 @@ def update_org_topic(
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
+    # Phase 71b — config-authoritative (pattern: see suspend_member). Tier
+    # floor (moderator+) preserved by the Depends above.
+    if org is not None and not has_permission(
+        db, current_user.id, org.id, "topic.edit"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to edit topics in this organization.",
+        )
     topic = db.query(models.Topic).filter(
         models.Topic.id == topic_id,
         models.Topic.org_id == org.id,
@@ -3308,6 +3371,20 @@ def delete_org_topic(
             ),
         }
 
+    # Phase 71b — config-authoritative on the DIRECT path (the Phase 44
+    # engine path above already gates the initiator on "topic.delete" via
+    # required_permission_key, so it isn't double-gated). Floor is admin+
+    # (require_org_admin Depends) — VERIFIED against the live route, which
+    # disagrees with the 71b spec table's "moderator+"; live route wins, so
+    # topic.delete stays admin-floored and the 71a backfill seeded it
+    # admin-only. has_permission lets an org tighten/loosen within that floor.
+    if org is not None and not has_permission(
+        db, current_user.id, org.id, "topic.delete"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to delete topics in this organization.",
+        )
     topic = db.query(models.Topic).filter(
         models.Topic.id == topic_id,
         models.Topic.org_id == org.id,
