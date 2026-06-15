@@ -2251,6 +2251,29 @@ def get_public_org_proposal_results(
             num_winners=tally.num_winners,
             time_series=time_series, sustained_majority=sm_status,
         )
+    from budget_tally import AllocationTally
+    if (
+        proposal.voting_method == "budget_allocation"
+        and isinstance(tally, AllocationTally)
+    ):
+        option_labels = {opt.id: opt.label for opt in proposal.options}
+        cfg = getattr(proposal, "budget_config", None) or {}
+        return schemas.ProposalResults(
+            proposal_id=proposal_id, voting_method="budget_allocation",
+            not_cast=tally.not_cast, total_eligible=tally.total_eligible,
+            votes_cast=tally.total_ballots_cast,
+            quorum_met=tally.quorum_met(proposal.quorum_threshold),
+            option_labels=option_labels,
+            total_ballots_cast=tally.total_ballots_cast,
+            budget_amounts=tally.amounts,
+            budget_total_allocated=tally.total_allocated,
+            budget_unallocated_remainder=tally.unallocated_remainder,
+            budget_degenerate_no_support=tally.degenerate_no_support,
+            budget_envelope=cfg.get("envelope"),
+            budget_currency=cfg.get("currency", "USD"),
+            budget_aggregation=tally.aggregation,
+            time_series=time_series, sustained_majority=sm_status,
+        )
     return schemas.ProposalResults(
         proposal_id=proposal_id, voting_method="binary",
         yes=tally.yes, no=tally.no, abstain=tally.abstain,
@@ -3793,6 +3816,12 @@ def create_org_proposal(
         # flow through BOTH create endpoints — this is the org-scoped
         # half.)
         approval_winner_config=body.approval_winner_config,
+        # Phase 73 — budget config (allocation mode). Validated for shape at
+        # the Pydantic layer + method/mode coherence in
+        # _validate_proposal_creation above. NULL = not a budget proposal.
+        # (Phase 32.1 lesson: a new Proposal field must flow through BOTH
+        # create endpoints — this is the org-scoped half.)
+        budget_config=getattr(body, "budget_config", None),
     )
     db.add(proposal)
     db.flush()
@@ -3860,7 +3889,7 @@ def create_org_proposal(
         ))
     db.flush()
 
-    if body.voting_method in ("approval", "ranked_choice") and body.options:
+    if body.voting_method in ("approval", "ranked_choice", "budget_allocation") and body.options:
         _create_proposal_options(db, proposal.id, body.options)
 
     log_audit_event(
@@ -4541,6 +4570,19 @@ def advance_org_proposal(
                     proposal, tally, "ranked_choice", db,
                     current_user_id=current_user.id,
                 )
+                next_status = "passed"
+            else:
+                next_status = "failed"
+        elif proposal.voting_method == "budget_allocation":
+            # Phase 73 — allocation budgets pass on quorum alone (no yes/no,
+            # so pass_threshold is not consulted), including the degenerate
+            # all-zero case. No winner set → never routes to tie resolution.
+            # (Mirrors routes/proposals.py.)
+            from budget_tally import AllocationTally
+            if (
+                isinstance(tally, AllocationTally)
+                and tally.quorum_met(proposal.quorum_threshold)
+            ):
                 next_status = "passed"
             else:
                 next_status = "failed"

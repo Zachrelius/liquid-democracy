@@ -341,6 +341,9 @@ def _normalise_topics(v: Any) -> list[TopicWithRelevance]:
 class OptionCreate(BaseModel):
     label: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=2000)
+    # Phase 73 — allocation bucket ceiling. NULL = no ceiling (bucket can
+    # absorb the whole envelope). Ignored for non-budget proposals.
+    budget_max_amount: Optional[float] = Field(default=None, ge=0)
 
 
 class OptionOut(BaseModel):
@@ -355,6 +358,8 @@ class OptionOut(BaseModel):
     added_by_user_id: Optional[str] = None
     added_at: Optional[datetime] = None
     is_write_in: bool = False
+    # Phase 73 — allocation bucket ceiling (NULL on non-budget options).
+    budget_max_amount: Optional[float] = None
 
     model_config = {"from_attributes": True}
 
@@ -440,6 +445,62 @@ def _validate_approval_winner_config(v: Optional[dict]) -> Optional[dict]:
     }
 
 
+# Phase 73 — budget-voting config validation. Shared by ProposalCreate +
+# ProposalUpdate. Phase 73 ships allocation mode only; Phase 74 will extend
+# this validator to accept ``mode == "project"`` with its own key set.
+_BUDGET_ALLOCATION_KEYS = {"mode", "envelope", "currency", "aggregation"}
+_BUDGET_AGGREGATIONS = {"median", "trimmed_mean"}
+
+
+def _validate_budget_config(v: Optional[dict]) -> Optional[dict]:
+    """Validate + normalize a ``budget_config`` object (allocation mode).
+
+    Method-compatibility (budget_config only on a budget voting_method, mode
+    matching the method) is enforced at the route layer where the proposal
+    context is available; this validator just enforces shape.
+    """
+    if v is None:
+        return None
+    if not isinstance(v, dict):
+        raise ValueError("budget_config must be an object")
+    mode = v.get("mode")
+    if mode != "allocation":
+        # Phase 74 will accept "project"; only allocation is built in 73.
+        raise ValueError("budget_config.mode must be 'allocation'")
+    unknown = set(v) - _BUDGET_ALLOCATION_KEYS
+    if unknown:
+        raise ValueError(
+            f"budget_config has unknown keys: {sorted(unknown)}. "
+            f"Allowed: {sorted(_BUDGET_ALLOCATION_KEYS)}"
+        )
+    envelope = v.get("envelope")
+    if (
+        isinstance(envelope, bool)
+        or not isinstance(envelope, (int, float))
+        or envelope <= 0
+    ):
+        raise ValueError("budget_config.envelope must be a positive number")
+    aggregation = v.get("aggregation", "median")
+    if aggregation not in _BUDGET_AGGREGATIONS:
+        raise ValueError(
+            "budget_config.aggregation must be 'median' or 'trimmed_mean'"
+        )
+    currency = v.get("currency", "USD")
+    if not isinstance(currency, str) or not currency:
+        raise ValueError("budget_config.currency must be a non-empty string")
+    return {
+        "mode": "allocation",
+        "envelope": envelope,
+        "currency": currency,
+        "aggregation": aggregation,
+    }
+
+
+# Phase 73 — the canonical set of accepted voting methods. Centralized so the
+# create + update validators stay in lockstep when a method is added.
+_VOTING_METHODS = {"binary", "approval", "ranked_choice", "budget_allocation"}
+
+
 class ProposalCreate(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     body: str = Field(default="", max_length=50000)
@@ -495,12 +556,19 @@ class ProposalCreate(BaseModel):
     # single-winner behavior. Approval voting_method only (route layer
     # 400s on other methods + on elections). Shape validated below.
     approval_winner_config: Optional[dict] = None
+    # Phase 73 — budget-voting config. NULL = not a budget proposal. Required
+    # (route layer) when voting_method == "budget_allocation". Shape validated
+    # below; method/mode coherence enforced at the route layer.
+    budget_config: Optional[dict] = None
 
     @field_validator("voting_method")
     @classmethod
     def validate_voting_method(cls, v: str) -> str:
-        if v not in ("binary", "approval", "ranked_choice"):
-            raise ValueError("voting_method must be binary, approval, or ranked_choice")
+        if v not in _VOTING_METHODS:
+            raise ValueError(
+                "voting_method must be binary, approval, ranked_choice, or "
+                "budget_allocation"
+            )
         return v
 
     @field_validator("approval_winner_config")
@@ -509,6 +577,11 @@ class ProposalCreate(BaseModel):
         cls, v: Optional[dict],
     ) -> Optional[dict]:
         return _validate_approval_winner_config(v)
+
+    @field_validator("budget_config")
+    @classmethod
+    def validate_budget_config(cls, v: Optional[dict]) -> Optional[dict]:
+        return _validate_budget_config(v)
 
     @field_validator("topics", mode="before")
     @classmethod
@@ -578,6 +651,10 @@ class ProposalUpdate(BaseModel):
     # draft gate, the approval-method-only rule, and the
     # election-rejection rule.
     approval_winner_config: Optional[dict] = Field(default=None)
+    # Phase 73 — budget config, editable while status='draft' ONLY (mirrors
+    # approval_winner_config — it changes outcome semantics). The route
+    # enforces the draft gate + method/mode coherence.
+    budget_config: Optional[dict] = Field(default=None)
 
     @field_validator("approval_winner_config")
     @classmethod
@@ -585,6 +662,11 @@ class ProposalUpdate(BaseModel):
         cls, v: Optional[dict],
     ) -> Optional[dict]:
         return _validate_approval_winner_config(v)
+
+    @field_validator("budget_config")
+    @classmethod
+    def validate_budget_config(cls, v: Optional[dict]) -> Optional[dict]:
+        return _validate_budget_config(v)
 
     @field_validator("topics", mode="before")
     @classmethod
@@ -606,9 +688,10 @@ class ProposalUpdate(BaseModel):
         # Phase 59 A4 — same value set as ProposalCreate.
         if v is None:
             return v
-        if v not in ("binary", "approval", "ranked_choice"):
+        if v not in _VOTING_METHODS:
             raise ValueError(
-                "voting_method must be binary, approval, or ranked_choice"
+                "voting_method must be binary, approval, ranked_choice, or "
+                "budget_allocation"
             )
         return v
 
@@ -709,6 +792,12 @@ class ProposalOut(BaseModel):
     # Phase 66 — multi-winner approval selection config. NULL for
     # legacy single-winner proposals (all pre-66 rows).
     approval_winner_config: Optional[dict] = None
+
+    # Phase 73 — budget-voting config. NULL = not a budget proposal (every
+    # non-budget row). The FE reads this to render the allocation ballot +
+    # results UI; it must surface here or the FE silently can't tell a budget
+    # proposal apart from a binary one.
+    budget_config: Optional[dict] = None
 
     # Phase 68b — whether the requesting viewer may archive this proposal
     # right now (author in draft/deliberation, proposal.archive holder at
@@ -970,6 +1059,10 @@ class VoteCast(BaseModel):
     vote_value: Optional[str] = None
     approvals: Optional[list[str]] = None
     ranking: Optional[list[str]] = None
+    # Phase 73 — budget_allocation ballot: {option_id: amount}. Each value is
+    # a non-negative number; per-bucket cap + sum<=envelope enforced at the
+    # route layer (needs the proposal's option ceilings + envelope).
+    allocations: Optional[dict[str, float]] = None
 
     @field_validator("vote_value")
     @classmethod
@@ -1000,6 +1093,20 @@ class VoteCast(BaseModel):
                 raise ValueError("Duplicate option IDs in ranking")
         return v
 
+    @field_validator("allocations")
+    @classmethod
+    def validate_allocations(
+        cls, v: Optional[dict[str, float]],
+    ) -> Optional[dict[str, float]]:
+        if v is not None:
+            for oid, amount in v.items():
+                _validate_uuid(oid)
+                if isinstance(amount, bool) or not isinstance(amount, (int, float)):
+                    raise ValueError("allocation amounts must be numbers")
+                if amount < 0:
+                    raise ValueError("allocation amounts must be non-negative")
+        return v
+
 
 class VoteOut(BaseModel):
     id: str
@@ -1021,6 +1128,9 @@ class MyVoteStatus(BaseModel):
     vote_value: Optional[str] = None       # None if not cast (binary)
     approvals: Optional[list[str]] = None  # option IDs approved (approval)
     ranking: Optional[list[str]] = None    # option IDs ordered (ranked_choice)
+    # Phase 73 — budget_allocation: {option_id: amount}. Direct-vote only, so
+    # this is always the caller's own ballot (never a delegated one).
+    allocations: Optional[dict[str, float]] = None
     is_direct: Optional[bool] = None
     delegate_chain: Optional[list[str]] = None
     cast_by: Optional[UserOut] = None
@@ -1097,6 +1207,20 @@ class ProposalResults(BaseModel):
     rounds: Optional[list[RCVRoundOut]] = None
     method: Optional[str] = None      # "irv" or "stv"
     num_winners: Optional[int] = None
+    # Phase 73 — allocation-budget surface (populated only when
+    # voting_method == "budget_allocation"). ``budget_amounts`` maps each
+    # bucket option_id to its final whole-dollar amount; the amounts sum to
+    # ``budget_total_allocated`` (== envelope unless ceilings force a
+    # shortfall, surfaced in ``budget_unallocated_remainder``).
+    # ``budget_degenerate_no_support`` is True when the group allocated
+    # nothing anywhere (all-zero result — the group chose to spend nothing).
+    budget_amounts: Optional[dict[str, int]] = None
+    budget_total_allocated: Optional[float] = None
+    budget_unallocated_remainder: Optional[float] = None
+    budget_degenerate_no_support: Optional[bool] = None
+    budget_envelope: Optional[float] = None
+    budget_currency: Optional[str] = None
+    budget_aggregation: Optional[str] = None
     # Phase 8 / Phase 20 — Stable Result Required status block. Populated for
     # every proposal; ``active=False`` for proposals where the feature is not
     # in effect, in which case the rest of the fields are at defaults and the

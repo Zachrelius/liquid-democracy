@@ -46,6 +46,10 @@ class Ballot:
     vote_value: Optional[str] = None       # "yes" | "no" | "abstain" (binary)
     approvals: Optional[list[str]] = None  # list of option_ids (approval)
     ranking: Optional[list[str]] = None    # ranked_choice — order matters
+    # Phase 73 — budget_allocation: {option_id: amount}. Only direct budget
+    # ballots populate this (budget is direct-vote only — see §5; delegation
+    # is never resolved into an allocation ballot).
+    allocations: Optional[dict] = None
 
     @property
     def voting_method(self) -> str:
@@ -55,6 +59,8 @@ class Ballot:
             return "approval"
         if self.ranking is not None:
             return "ranked_choice"
+        if self.allocations is not None:
+            return "budget_allocation"
         return "unknown"
 
 
@@ -198,6 +204,12 @@ class ProposalContext:
     # Phase 66a: populated for ANY approval proposal carrying a config,
     # including approval-method elections (the D6 carve-out is lifted).
     approval_winner_config: Optional[dict] = None
+    # Phase 73 — budget-voting config + bucket specs, lifted from
+    # ``Proposal.budget_config`` and the option cost columns by the service
+    # layer (keeps the pure layer DB-free). None when not a budget proposal.
+    # ``budget_buckets`` is a list of ``budget_tally.BucketSpec``.
+    budget_config: Optional[dict] = None
+    budget_buckets: Optional[list] = None
 
 
 # ---------------------------------------------------------------------------
@@ -626,7 +638,40 @@ def compute_tally_pure(
         return _compute_rcv_tally_pure(
             user_ids, ctx, option_ids or [], num_winners=num_winners
         )
+    if ctx.voting_method == "budget_allocation":
+        return _compute_allocation_tally_pure(user_ids, ctx)
     return _compute_binary_tally_pure(user_ids, ctx)
+
+
+def _compute_allocation_tally_pure(
+    user_ids: list[str],
+    ctx: ProposalContext,
+):
+    """Phase 73 — allocation-budget tally.
+
+    Budget proposals are DIRECT-VOTE ONLY (§5): we read each eligible voter's
+    DIRECT allocation ballot from ``ctx.direct_ballots`` and never resolve
+    delegation. A voter with only an (inert) delegation contributes no ballot;
+    a voter who cast a direct allocation contributes it. The per-bucket median
+    counts an omitted bucket as $0 for that voter (handled inside
+    ``budget_tally.tally_allocation``).
+    """
+    import budget_tally
+
+    ballots: list[dict] = []
+    for uid in user_ids:
+        b = ctx.direct_ballots.get(uid)
+        if b is not None and b.allocations is not None:
+            ballots.append(b.allocations)
+
+    cfg = ctx.budget_config or {}
+    return budget_tally.tally_allocation(
+        envelope=cfg.get("envelope", 0),
+        buckets=ctx.budget_buckets or [],
+        ballots=ballots,
+        aggregation=cfg.get("aggregation", "median"),
+        total_eligible=len(user_ids),
+    )
 
 
 def _compute_binary_tally_pure(
@@ -1534,6 +1579,12 @@ class DelegationService:
                 ballot_data = row.ballot or {}
                 ranking = ballot_data.get("ranking", [])
                 direct_ballots[row.user_id] = Ballot(ranking=ranking)
+            elif voting_method == "budget_allocation":
+                # Phase 73 — direct allocation ballot. Delegated budget votes
+                # don't exist (rejected at cast time); only is_direct rows here.
+                ballot_data = row.ballot or {}
+                allocations = ballot_data.get("allocations", {})
+                direct_ballots[row.user_id] = Ballot(allocations=allocations)
             else:
                 if row.vote_value is not None:
                     direct_votes[row.user_id] = row.vote_value
@@ -1572,6 +1623,21 @@ class DelegationService:
                 proposal, "approval_winner_config", None,
             )
 
+        # Phase 73 — lift budget config + bucket specs onto the context for
+        # budget_allocation proposals (the pure layer never touches the DB).
+        budget_config = None
+        budget_buckets = None
+        if voting_method == "budget_allocation":
+            import budget_tally
+            budget_config = getattr(proposal, "budget_config", None)
+            budget_buckets = [
+                budget_tally.BucketSpec(
+                    option_id=opt.id,
+                    max_amount=getattr(opt, "budget_max_amount", None),
+                )
+                for opt in proposal.options
+            ]
+
         return ProposalContext(
             proposal_topics=proposal_topics,
             all_delegations=all_delegations,
@@ -1582,6 +1648,8 @@ class DelegationService:
             proposal_topic_relevances=proposal_topic_relevances,
             user_strategies=user_strategies,
             approval_winner_config=approval_winner_config,
+            budget_config=budget_config,
+            budget_buckets=budget_buckets,
         )
 
     # ------------------------------------------------------------------

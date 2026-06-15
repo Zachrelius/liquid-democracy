@@ -42,7 +42,7 @@ function pluralizeDays(value) {
   return Number(value) === 1 ? 'day' : 'days';
 }
 
-function OptionsEditor({ options, onChange }) {
+function OptionsEditor({ options, onChange, budgetCeilings = false }) {
   function updateOption(idx, field, value) {
     const updated = options.map((o, i) => i === idx ? { ...o, [field]: value } : o);
     onChange(updated);
@@ -50,7 +50,7 @@ function OptionsEditor({ options, onChange }) {
 
   function addOption() {
     if (options.length >= 20) return;
-    onChange([...options, { label: '', description: '' }]);
+    onChange([...options, { label: '', description: '', budgetMaxAmount: '' }]);
   }
 
   function removeOption(idx) {
@@ -76,7 +76,7 @@ function OptionsEditor({ options, onChange }) {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <label className="block text-xs text-gray-500">
-          Options ({options.length}/20)
+          {budgetCeilings ? 'Buckets' : 'Options'} ({options.length}/20)
           {options.length < 2 && <span className="text-amber-600 ml-2">Minimum 2 required</span>}
         </label>
         <button
@@ -127,6 +127,20 @@ function OptionsEditor({ options, onChange }) {
               className="w-full ml-8 px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
               style={{ width: 'calc(100% - 2rem)' }}
             />
+            {/* Phase 73 — optional per-bucket ceiling for budget proposals. */}
+            {budgetCeilings && (
+              <div className="ml-8 flex items-center gap-2 text-xs text-gray-500">
+                <span>Ceiling (optional):</span>
+                <span className="text-gray-400">$</span>
+                <input
+                  type="number" min="0" step="1"
+                  value={opt.budgetMaxAmount ?? ''}
+                  onChange={e => updateOption(idx, 'budgetMaxAmount', e.target.value)}
+                  placeholder="no limit"
+                  className="w-32 px-2 py-1 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                />
+              </div>
+            )}
           </div>
         );
       })}
@@ -341,10 +355,25 @@ function CreateProposalForm({
       return editingProposal.options.map(o => ({
         label: o.label ?? '',
         description: o.description ?? '',
+        // Phase 73 — per-bucket ceiling (budget proposals only).
+        budgetMaxAmount: o.budget_max_amount != null ? String(o.budget_max_amount) : '',
       }));
     }
-    return [{ label: '', description: '' }, { label: '', description: '' }];
+    return [
+      { label: '', description: '', budgetMaxAmount: '' },
+      { label: '', description: '', budgetMaxAmount: '' },
+    ];
   });
+  // Phase 73 — allocation-budget config (only used when method is
+  // budget_allocation). Envelope is the pool to split; aggregation is the
+  // per-bucket central tendency.
+  const [budgetEnvelope, setBudgetEnvelope] = useState(() => (
+    isEditMode && editingProposal.budget_config?.envelope != null
+      ? String(editingProposal.budget_config.envelope) : ''
+  ));
+  const [budgetAggregation, setBudgetAggregation] = useState(() => (
+    isEditMode ? (editingProposal.budget_config?.aggregation ?? 'median') : 'median'
+  ));
   const [numWinners, setNumWinners] = useState(() => (
     isEditMode ? (editingProposal.num_winners ?? 1) : 1
   ));
@@ -513,7 +542,11 @@ function CreateProposalForm({
   const allowedMethods = orgSettings?.allowed_voting_methods || ['binary'];
   const approvalAllowed = allowedMethods.includes('approval');
   const rankedChoiceAllowed = allowedMethods.includes('ranked_choice');
-  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice';
+  // Phase 73 — budget_allocation is opt-in per org (like ranked_choice).
+  const budgetAllowed = allowedMethods.includes('budget_allocation');
+  const isBudget = votingMethod === 'budget_allocation';
+  // Budget buckets are options too, so they share the multi-option editor.
+  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || isBudget;
 
   function toggleTopic(topicId) {
     setSelectedTopics(prev => {
@@ -545,6 +578,9 @@ function CreateProposalForm({
   const numWinnersValid = votingMethod !== 'ranked_choice' || (
     Number.isInteger(numWinners) && numWinners >= 1 && numWinners <= options.length
   );
+
+  // Phase 73 — budget proposals need a positive envelope.
+  const budgetValid = !isBudget || (Number(budgetEnvelope) > 0);
 
   // Multi-winner approval selection — client-side validation mirrors
   // the backend's approval_winner_config rules; the submit button is
@@ -629,10 +665,23 @@ function CreateProposalForm({
         payload.options = options.map(o => ({
           label: o.label.trim(),
           description: o.description.trim(),
+          // Phase 73 — bucket ceiling for budget proposals; omitted (null)
+          // for approval/RCV options.
+          ...(isBudget && o.budgetMaxAmount !== '' && o.budgetMaxAmount != null
+            ? { budget_max_amount: Number(o.budgetMaxAmount) }
+            : {}),
         }));
       }
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
+      }
+      // Phase 73 — allocation-budget config.
+      if (isBudget) {
+        payload.budget_config = {
+          mode: 'allocation',
+          envelope: Number(budgetEnvelope),
+          aggregation: budgetAggregation,
+        };
       }
       // Multi-winner approval selection — approval method only (the
       // backend 400s on other methods and on elections). Single-winner
@@ -1041,8 +1090,51 @@ function CreateProposalForm({
             <span className="text-sm text-gray-700">Ranked Choice</span>
             {!rankedChoiceAllowed && <span className="text-xs text-amber-600">(Not enabled for this org)</span>}
           </label>
+          {/* Phase 73 — allocation budget (opt-in per org). */}
+          {budgetAllowed && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="votingMethod" value="budget_allocation" checked={isBudget}
+                onChange={() => setVotingMethod('budget_allocation')} className="accent-[var(--brand-accent)]" />
+              <span className="text-sm text-gray-700">Budget (allocate funds across buckets)</span>
+            </label>
+          )}
         </div>
       </div>
+
+      {/* Phase 73 — budget envelope + aggregation. */}
+      {isBudget && (
+        <div className="border border-gray-200 rounded-lg p-3 space-y-3 bg-gray-50">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Total budget (envelope)</label>
+            <div className="flex items-center gap-1">
+              <span className="text-gray-400 text-sm">$</span>
+              <input
+                type="number" min="1" step="1" value={budgetEnvelope}
+                onChange={e => setBudgetEnvelope(e.target.value)}
+                placeholder="100000"
+                className="w-40 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+              />
+            </div>
+            {!budgetValid && (
+              <p className="text-xs text-red-600 mt-1">Enter a positive budget amount.</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Aggregation</label>
+            <select
+              value={budgetAggregation}
+              onChange={e => setBudgetAggregation(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+            >
+              <option value="median">Median (recommended — strategyproof)</option>
+              <option value="trimmed_mean">Trimmed mean (leans toward minority intensity)</option>
+            </select>
+            <p className="text-xs text-gray-400 mt-1">
+              Every bucket with support gets a proportional share; the result always sums to the budget.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div>
         <label className="block text-xs text-gray-500 mb-1">Title</label>
@@ -1065,9 +1157,9 @@ function CreateProposalForm({
         />
       </div>
 
-      {/* Options Editor (approval and ranked-choice) */}
+      {/* Options Editor (approval, ranked-choice, and budget buckets) */}
       {isMultiOption && (
-        <OptionsEditor options={options} onChange={setOptions} />
+        <OptionsEditor options={options} onChange={setOptions} budgetCeilings={isBudget} />
       )}
 
       {/* Winner selection (approval only). Four presets writing one
@@ -1602,7 +1694,7 @@ function CreateProposalForm({
       <div className="flex gap-2 items-center">
         <button
           type="submit"
-          disabled={saving || !title.trim() || !optionsValid || !numWinnersValid || !winnerSelectionValid}
+          disabled={saving || !title.trim() || !optionsValid || !numWinnersValid || !winnerSelectionValid || !budgetValid}
           className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
         >
           {saving
