@@ -575,6 +575,10 @@ class ProposalCreate(BaseModel):
     # deliberation_days >= 0 (zero is valid; negative is rejected).
     deliberation_days: Optional[float] = Field(default=None)
     voting_days: Optional[float] = Field(default=None)
+    # Phase 75a — absolute voting deadline (alternative to voting_days). When
+    # set, wins over voting_days at advance time. Accepted at create with no
+    # staleness check (the proposal may sit in draft); validated at advance.
+    voting_end_date: Optional[datetime] = Field(default=None)
     # Phase 32 — per-proposal overrides for the three new deliberation-
     # engagement features. All Optional; null = inherit org default.
     allow_write_in_options: Optional[bool] = None
@@ -667,6 +671,8 @@ class ProposalUpdate(BaseModel):
     # below-floor values return 400 (not 422). Both default to None.
     deliberation_days: Optional[float] = Field(default=None)
     voting_days: Optional[float] = Field(default=None)
+    # Phase 75a — absolute voting deadline, editable like voting_days.
+    voting_end_date: Optional[datetime] = Field(default=None)
     # Phase 32 — per-proposal overrides; null = inherit org default.
     allow_write_in_options: Optional[bool] = Field(default=None)
     allow_write_ins_during_voting: Optional[bool] = Field(default=None)
@@ -754,6 +760,8 @@ class ProposalOut(BaseModel):
     # Phase 16 — per-proposal duration overrides; null = inherit org default.
     deliberation_days: Optional[float] = None
     voting_days: Optional[float] = None
+    # Phase 75a — absolute voting deadline (NULL = use voting_days/org default).
+    voting_end_date: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     topics: list[ProposalTopicOut] = []

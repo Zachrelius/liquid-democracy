@@ -3701,9 +3701,23 @@ def create_org_proposal(
         body.voting_days
         if "voting_days" in body.model_fields_set else None
     )
+    # Phase 75a — an absolute voting_end_date implies a voting duration. When
+    # the caller sets a date (and not an explicit voting_days), fold its
+    # implied duration into the same divergence gate as voting_days so an
+    # absolute deadline can't bypass proposal.set_durations. Implied duration
+    # is measured from now (the proposal's eventual voting_start is unknown at
+    # create; this is a close proxy and the real floor check is at advance).
+    from routes.proposals import _strip_tz
+    _gate_vote_days = requested_vote_days
+    if requested_vote_days is None and getattr(body, "voting_end_date", None) is not None:
+        _end = _strip_tz(body.voting_end_date)
+        # NB: do NOT name this `_now` — that shadows the module-level `_now()`
+        # helper used later in this function (UnboundLocalError otherwise).
+        _now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+        _gate_vote_days = (_end - _now_dt).total_seconds() / 86400
     _validate_duration_floors(requested_delib_days, requested_vote_days)
     _enforce_duration_permission(
-        db, current_user.id, org, requested_delib_days, requested_vote_days,
+        db, current_user.id, org, requested_delib_days, _gate_vote_days,
     )
     default_delib_days, default_vote_days = get_default_proposal_durations(org)
     effective_delib_days = (
@@ -3815,6 +3829,8 @@ def create_org_proposal(
         quorum_threshold=effective_quorum,
         deliberation_days=effective_delib_days,
         voting_days=effective_vote_days,
+        # Phase 75a — absolute voting deadline (tz stripped to naive UTC).
+        voting_end_date=_strip_tz(getattr(body, "voting_end_date", None)),
         stable_result_required=body.stable_result_required,
         linked_polis_ids=linked_ids if linked_ids else None,
         # Phase 32.1 fixup: the org-scoped create endpoint was missed in
@@ -4008,8 +4024,10 @@ _IMPORT_TEMPLATE_BASE: dict = {
         "options. Topics may be given by 'topic_name' (resolved against this "
         "org's topics) or 'topic_id'. Unknown fields (like this _readme) are "
         "ignored on import. Threshold and duration fields are optional — "
-        "omit them to use the organization's defaults. Fields you don't have "
-        "permission to set are omitted from this template."
+        "omit them to use the organization's defaults. Set 'voting_end_date' "
+        "to an ISO datetime to specify an absolute voting deadline (e.g. a "
+        "meeting date); omit it to use voting_days or org defaults. Fields you "
+        "don't have permission to set are omitted from this template."
     ),
     "title": "Example: Adopt a community garden policy",
     "body": "Markdown body explaining the proposal goes here.",
@@ -4479,6 +4497,150 @@ async def import_preview_proposal(
             "warnings": [],
         },
     )
+
+
+@router.post("/{org_slug}/proposals/smart-import")
+async def smart_import_proposals(
+    org_slug: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Phase 75b — AI-assisted import: turn unstructured agenda content (pasted
+    text or a PDF) into the Phase 72 items response the review-list UX renders.
+
+    Accepts multipart/form-data (``file`` PDF + optional ``meeting_date`` /
+    ``instructions``) OR application/json (``{content, meeting_date,
+    instructions}``). Extracts text (pdfplumber for PDFs), asks the LLM to
+    extract substantive items + topic assignments, validates each via the
+    Phase 72 ``_preview_one_proposal`` pipeline, and returns
+    ``{items, summary, source_text_preview}`` + per-item ``ai_reasoning``.
+
+    NEVER writes a Proposal row (the eventual create through the existing
+    endpoint does that). Auth: org member holding ``proposal.create``.
+    """
+    import smart_import
+
+    if not has_permission(db, current_user.id, membership.org_id, "proposal.create"):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to create proposals in this organization.",
+        )
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    if not smart_import.is_configured():
+        return JSONResponse(
+            status_code=503,
+            content={"detail": (
+                "Smart import requires an Anthropic API key. Set the "
+                "ANTHROPIC_API_KEY environment variable."
+            )},
+        )
+
+    # --- read input from either transport ---
+    content_type = request.headers.get("content-type", "")
+    meeting_date: Optional[str] = None
+    instructions: Optional[str] = None
+    document_text: str = ""
+
+    if content_type.startswith("multipart/form-data"):
+        form = await request.form()
+        meeting_date = (form.get("meeting_date") or None)
+        instructions = (form.get("instructions") or None)
+        upload = None
+        for value in form.values():
+            if hasattr(value, "read"):
+                upload = value
+                break
+        if upload is None:
+            return JSONResponse(
+                status_code=422,
+                content={"errors": {"_file": "No file was uploaded."}, "warnings": []},
+            )
+        raw = await upload.read()
+        if len(raw) > smart_import.MAX_PDF_BYTES:
+            return JSONResponse(
+                status_code=422,
+                content={"errors": {"_file": (
+                    f"PDF is too large (max {smart_import.MAX_PDF_BYTES // (1024 * 1024)} MB)."
+                )}, "warnings": []},
+            )
+        try:
+            document_text = smart_import.extract_pdf_text(raw)
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=422,
+                content={"errors": {"_file": str(exc)}, "warnings": []},
+            )
+    else:
+        import json as _json
+        try:
+            body = _json.loads((await request.body()).decode("utf-8")) or {}
+        except (ValueError, UnicodeDecodeError):
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        document_text = (body.get("content") or "").strip()
+        meeting_date = body.get("meeting_date") or None
+        instructions = body.get("instructions") or None
+        if len(document_text.encode("utf-8")) > smart_import.MAX_TEXT_BYTES:
+            return JSONResponse(
+                status_code=422,
+                content={"errors": {"_file": (
+                    f"Text is too large (max {smart_import.MAX_TEXT_BYTES // 1024} KB)."
+                )}, "warnings": []},
+            )
+
+    if not document_text.strip():
+        return JSONResponse(
+            status_code=422,
+            content={"errors": {"_file": "No text content found in the input."}, "warnings": []},
+        )
+
+    # --- org topic taxonomy for grounding ---
+    topic_rows = _import_candidate_topics(db, org)
+    topics_for_prompt = [
+        {"name": t.name, "purpose": getattr(t, "purpose", None),
+         "category": getattr(t, "category", None)}
+        for t in topic_rows
+    ]
+
+    drafts, warning = smart_import.generate_drafts(
+        document_text=document_text, topics=topics_for_prompt,
+        meeting_date=meeting_date, instructions=instructions,
+    )
+
+    items = []
+    valid = invalid = 0
+    for idx, entry in enumerate(drafts):
+        result = _preview_one_proposal(entry["draft"], org, db, current_user)
+        ok = result.get("proposal") is not None and not result.get("errors")
+        if ok:
+            valid += 1
+        else:
+            invalid += 1
+        items.append({
+            "index": idx,
+            "proposal": result.get("proposal"),
+            "warnings": result.get("warnings", []),
+            "resolved_topics": result.get("resolved_topics", []),
+            "errors": result.get("errors", {}),
+            "ai_reasoning": entry.get("ai_reasoning", ""),
+        })
+
+    response: dict = {
+        "items": items,
+        "summary": {"total": len(items), "valid": valid, "invalid": invalid},
+        "source_text_preview": document_text[:500],
+    }
+    if warning:
+        response["warnings"] = [warning]
+    return JSONResponse(status_code=200, content=response)
 
 
 @router.get("/{org_slug}/proposals/{proposal_id}", response_model=schemas.ProposalOut)
