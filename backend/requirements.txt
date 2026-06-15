@@ -43,3 +43,6 @@ tzdata==2024.2
 # DEMO_RESET_TRIGGER_TOKEN from .env. Backend service itself doesn't import
 # requests; this is for the standalone CLI helper that ships in the same repo.
 requests==2.32.3
+# pdfplumber: PDF text extraction for smart-import (Phase 75b).
+# Deterministic text extraction — the AI step (Anthropic via httpx) is separate.
+pdfplumber==0.11.4

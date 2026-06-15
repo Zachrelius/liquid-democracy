@@ -429,6 +429,14 @@ function CreateProposalForm({
       ? editingProposal.voting_days
       : (orgSettings?.default_voting_days ?? 3)
   ));
+  // Phase 75a — optional absolute voting deadline (datetime-local string).
+  // When set, wins over voting_days at advance time. Empty = use voting_days.
+  const [votingEndDate, setVotingEndDate] = useState(() => {
+    const v = isEditMode ? editingProposal.voting_end_date : null;
+    if (!v) return '';
+    // ISO -> datetime-local value (YYYY-MM-DDTHH:mm), trimming seconds/zone.
+    return String(v).slice(0, 16);
+  });
 
   // Decision 3: sub-org proposals can use parent-org-wide topics + that sub-
   // org's own topics. Parent-org-wide proposals can use ONLY parent-org-wide
@@ -657,6 +665,15 @@ function CreateProposalForm({
         payload.deliberation_days = deliberationDays;
         payload.voting_days = votingDays;
       }
+      // Phase 75a — absolute voting deadline. In edit mode always send (incl.
+      // null to clear); in create only when set. The backend gates a divergent
+      // implied duration on proposal.set_durations, same as voting_days.
+      if (isEditMode) {
+        payload.voting_end_date = votingEndDate
+          ? new Date(votingEndDate).toISOString() : null;
+      } else if (votingEndDate) {
+        payload.voting_end_date = new Date(votingEndDate).toISOString();
+      }
       // Phase 62 A1 — sub_org_id is set only on create. Edit mode keeps
       // the proposal's existing scope; the PATCH endpoint does not accept
       // a scope change.
@@ -807,6 +824,7 @@ function CreateProposalForm({
     if (p.quorum_threshold != null) setQuorumThreshold(p.quorum_threshold);
     if (p.deliberation_days != null) setDeliberationDays(p.deliberation_days);
     if (p.voting_days != null) setVotingDays(p.voting_days);
+    if (p.voting_end_date != null) setVotingEndDate(String(p.voting_end_date).slice(0, 16));
     if (p.stable_result_required != null) setSmEnabled(p.stable_result_required);
     if (Array.isArray(p.linked_polis_ids)) setLinkedPolisIds(p.linked_polis_ids);
     if (p.verification_floor != null) setVerificationFloor(p.verification_floor || '');
@@ -1497,6 +1515,24 @@ function CreateProposalForm({
           </p>
         </div>
       )}
+
+      {/* Phase 75a — optional absolute voting deadline. Useful when an item
+          has a known meeting/decision date. Wins over the voting duration. */}
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">
+          Absolute voting deadline (optional)
+        </label>
+        <input
+          type="datetime-local"
+          value={votingEndDate}
+          onChange={e => setVotingEndDate(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+        />
+        <p className="text-xs text-gray-400 mt-1">
+          When set, voting closes at this date (overrides the voting duration).
+          Leave blank to use the duration above. Checked at advance time.
+        </p>
+      </div>
 
       {/* Phase 9 — Linked Deliberations picker. Backend currently rejects
           linked_polis_ids on parent-org-wide proposals (only org-scoped

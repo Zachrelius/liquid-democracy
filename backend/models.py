@@ -761,6 +761,13 @@ class Proposal(Base):
     # directly in `voting` status.
     deliberation_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     voting_days: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Phase 75a — absolute voting deadline. NULL = use voting_days or org
+    # default (today's behavior). When set, _compute_voting_end_at_advance uses
+    # this directly as voting_end instead of computing from voting_days.
+    # Timezone stripped at storage (naive UTC, matching voting_end convention).
+    voting_end_date: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True,
+    )
     # Phase 8 / Phase 20: per-proposal "Stable Result Required" override.
     # null = inherit org default; True/False = explicit per-proposal opt-in/out.
     # Authors can only set non-null when org has

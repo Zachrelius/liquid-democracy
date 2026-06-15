@@ -44,6 +44,14 @@ STATUS_TRANSITIONS = {
 }
 
 
+def _strip_tz(dt: Optional[datetime]) -> Optional[datetime]:
+    """Phase 75a — normalize an optional datetime to naive UTC (the platform's
+    storage convention). NULL passes through."""
+    if dt is not None and dt.tzinfo is not None:
+        return dt.replace(tzinfo=None)
+    return dt
+
+
 def _compute_voting_end_at_advance(
     *,
     voting_start: datetime,
@@ -79,6 +87,37 @@ def _compute_voting_end_at_advance(
         if body_voting_end.tzinfo is not None:
             return body_voting_end.replace(tzinfo=None)
         return body_voting_end
+
+    # Phase 75a — absolute voting end date takes priority over voting_days
+    # (and the org default). When set and valid, it becomes voting_end
+    # directly. The real staleness check is here at advance time (not at
+    # create), mirroring how voting_days has no create-time "enough time?"
+    # check — a proposal may sit in draft for days.
+    end_date = getattr(proposal, "voting_end_date", None)
+    if end_date is not None:
+        if end_date.tzinfo is not None:
+            end_date = end_date.replace(tzinfo=None)
+        if end_date <= voting_start:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"The specified voting end date "
+                    f"({end_date.strftime('%Y-%m-%d %H:%M')}) has already "
+                    "passed or is before voting would start. Update it or "
+                    "remove it to use the default voting duration."
+                ),
+            )
+        derived_days = (end_date - voting_start).total_seconds() / 86400
+        if derived_days < _VOTING_DAYS_FLOOR:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "The specified voting end date is too soon — the voting "
+                    f"window would be {derived_days:.2f} days, below the "
+                    f"minimum of {_VOTING_DAYS_FLOOR} days (~72 minutes)."
+                ),
+            )
+        return end_date
 
     voting_days: Optional[float] = getattr(proposal, "voting_days", None)
     if voting_days is None:
@@ -374,6 +413,9 @@ def _build_proposal_out(
         quorum_threshold=proposal.quorum_threshold,
         deliberation_days=getattr(proposal, "deliberation_days", None),
         voting_days=getattr(proposal, "voting_days", None),
+        # Phase 75a — absolute voting deadline (NULL falls through to the
+        # voting_days → org-default chain at advance time).
+        voting_end_date=getattr(proposal, "voting_end_date", None),
         created_at=proposal.created_at,
         updated_at=proposal.updated_at,
         topics=proposal.proposal_topics,
@@ -1163,6 +1205,8 @@ def create_proposal(
         quorum_threshold=body.quorum_threshold,
         deliberation_days=effective_delib_days,
         voting_days=effective_vote_days,
+        # Phase 75a — absolute voting deadline (tz stripped to naive UTC).
+        voting_end_date=_strip_tz(getattr(body, "voting_end_date", None)),
         stable_result_required=stable_result_required,
         # Phase 32 — per-proposal overrides; null = inherit org default
         # at read time (resolved by ``proposal_engagement_config``).
@@ -1369,6 +1413,26 @@ def update_proposal(
             and body.voting_days is not None
         ):
             proposal.voting_days = body.voting_days
+
+    # Phase 75a — absolute voting deadline edit. Setting it (incl. to null to
+    # clear) is handled independently of voting_days. The implied duration is
+    # folded into the divergence gate so an absolute deadline can't bypass
+    # proposal.set_durations. Floor/staleness are re-checked at advance.
+    if "voting_end_date" in body.model_fields_set:
+        org_for_end = (
+            db.get(models.Organization, proposal.org_id)
+            if proposal.org_id else None
+        )
+        if body.voting_end_date is not None:
+            _end = _strip_tz(body.voting_end_date)
+            _now = datetime.now(timezone.utc).replace(tzinfo=None)
+            _implied = (_end - _now).total_seconds() / 86400
+            _enforce_duration_permission(
+                db, current_user.id, org_for_end, None, _implied,
+            )
+            proposal.voting_end_date = _end
+        else:
+            proposal.voting_end_date = None
 
     # Phase 62 A2 — per-proposal verification gate edit (draft-only).
     # Mirrors the create-path normalization block: validate against
