@@ -3932,20 +3932,29 @@ def create_org_proposal(
 # abuse / accidental huge uploads.
 _IMPORT_MAX_BYTES = 256 * 1024
 
-# Annotated template returned by the import-template endpoint. Doubles as
-# the format doc for the AI-assistant workflow. The ``_readme`` key is an
-# UNKNOWN field — importing this template back produces a "skipped unknown
-# field" warning, demonstrating the forward-compatible ignore-unknown rule.
-_IMPORT_TEMPLATE: dict = {
+# Phase 72 — cap the number of proposals in one multi-import array.
+_IMPORT_MAX_PROPOSALS = 50
+
+# Annotated template base returned by the import-template endpoint (Phase
+# 72: threshold/duration fields are appended PER CALLER from the org's
+# actual defaults, only when the caller holds the matching permission — see
+# get_proposal_import_template). Doubles as the format doc for the
+# AI-assistant workflow. The ``_readme`` key is an UNKNOWN field — importing
+# this template back produces a "skipped unknown field" warning,
+# demonstrating the forward-compatible ignore-unknown rule.
+_IMPORT_TEMPLATE_BASE: dict = {
     "_readme": (
         "Liquid Democracy proposal import template. Fill in the fields "
-        "below and import via the proposal create form. 'voting_method' is "
-        "one of 'binary', 'approval', or 'ranked_choice'. Binary proposals "
-        "omit 'options'. Approval/ranked_choice need at least 2 options. "
-        "Topics may be given by 'topic_name' (resolved against this org's "
-        "topics) or 'topic_id'. Unknown fields (like this _readme) are "
-        "ignored on import. Thresholds/durations are optional — omit them "
-        "to use the organization defaults."
+        "below and import via the proposal create form. You can import a "
+        "SINGLE proposal (a JSON object like this one) OR MULTIPLE proposals "
+        "(a JSON array of these objects, e.g. [ {…}, {…} ]). 'voting_method' "
+        "is one of 'binary', 'approval', or 'ranked_choice'. Binary "
+        "proposals omit 'options'. Approval/ranked_choice need at least 2 "
+        "options. Topics may be given by 'topic_name' (resolved against this "
+        "org's topics) or 'topic_id'. Unknown fields (like this _readme) are "
+        "ignored on import. Threshold and duration fields are optional — "
+        "omit them to use the organization's defaults. Fields you don't have "
+        "permission to set are omitted from this template."
     ),
     "title": "Example: Adopt a community garden policy",
     "body": "Markdown body explaining the proposal goes here.",
@@ -3958,10 +3967,6 @@ _IMPORT_TEMPLATE: dict = {
     "topics": [
         {"topic_name": "Parks & Recreation", "relevance": 1.0},
     ],
-    "pass_threshold": 0.5,
-    "quorum_threshold": 0.4,
-    "deliberation_days": 3,
-    "voting_days": 5,
 }
 
 # ProposalCreate fields the importer accepts. Computed from the schema so
@@ -4078,6 +4083,177 @@ def _resolve_import_topics(
     return resolved, warnings, transparency, errors
 
 
+def _preview_one_proposal(
+    item: object,
+    org: models.Organization,
+    db: Session,
+    user: models.User,
+) -> dict:
+    """Phase 72 — parse + validate ONE imported proposal dict. The single
+    source of validation shared by the single-object and array import paths
+    (no duplicated logic). NEVER writes.
+
+    Returns ``{proposal: dict | None, warnings: [str], resolved_topics:
+    [dict], errors: {field: [str]}}``. ``proposal`` is non-null only when
+    the item validated cleanly.
+
+    Section B (permission-aware fallback): after a clean build, threshold /
+    duration values that DIVERGE from the org default are dropped from the
+    prefill payload (with a warning, not an error) when the caller lacks the
+    matching permission — mirroring the create-path gate's "diverges from
+    default, NOT merely present" rule (``_enforce_threshold_permission`` /
+    ``_enforce_duration_permission``). A value EQUAL to the default is kept
+    and never warns. The create-time gates remain the real boundary.
+    """
+    errors: dict[str, list[str]] = {}
+    warnings: list[str] = []
+
+    def add_error(field: str, message: str) -> None:
+        errors.setdefault(field, [])
+        if message not in errors[field]:
+            errors[field].append(message)
+
+    if not isinstance(item, dict):
+        add_error("_item", "Each proposal must be a JSON object.")
+        return {"proposal": None, "warnings": warnings, "resolved_topics": [], "errors": errors}
+
+    # --- split known / unknown keys (forward-compat: a future export may
+    # carry read-only fields like id/status — ignore them with a warning) ---
+    cleaned: dict = {}
+    for key, value in item.items():
+        if key in _IMPORT_KNOWN_KEYS:
+            cleaned[key] = value
+        else:
+            warnings.append(f"Ignored unknown field '{key}'.")
+
+    # --- resolve topics (name → id) before building ProposalCreate ---
+    candidates = _import_candidate_topics(db, org)
+    resolved_topics, topic_warnings, topic_transparency, topic_errors = (
+        _resolve_import_topics(cleaned.get("topics"), candidates)
+    )
+    warnings.extend(topic_warnings)
+    for msg in topic_errors:
+        add_error("topics", msg)
+    # Pass only the successfully-resolved topics into ProposalCreate so the
+    # rest of validation can still run when some names didn't match.
+    cleaned["topics"] = resolved_topics
+
+    # --- build ProposalCreate (Pydantic field/range/shape validation) ---
+    proposal_model: Optional[schemas.ProposalCreate] = None
+    try:
+        proposal_model = schemas.ProposalCreate(**cleaned)
+    except ValidationError as exc:
+        for err in exc.errors():
+            loc = err.get("loc") or ()
+            field = str(loc[0]) if loc else "_file"
+            add_error(field, err.get("msg", "Invalid value."))
+
+    # --- create-rule parity + floors + verification (only if it built) ---
+    if proposal_model is not None:
+        from routes.proposals import (
+            _collect_proposal_creation_errors,
+            _VOTING_DAYS_FLOOR,
+            _DELIBERATION_DAYS_FLOOR,
+        )
+        for field, _status_code, message in _collect_proposal_creation_errors(
+            proposal_model, org,
+        ):
+            add_error(field, message)
+
+        if (
+            proposal_model.voting_days is not None
+            and proposal_model.voting_days < _VOTING_DAYS_FLOOR
+        ):
+            add_error(
+                "voting_days",
+                "Voting duration must be at least 0.05 days (72 minutes).",
+            )
+        if (
+            proposal_model.deliberation_days is not None
+            and proposal_model.deliberation_days < _DELIBERATION_DAYS_FLOOR
+        ):
+            add_error("deliberation_days", "Deliberation duration cannot be negative.")
+
+        if proposal_model.verification_floor is not None:
+            from verification import VALID_STATES, ORDER, jurisdiction_required_for
+            floor = proposal_model.verification_floor
+            jur = proposal_model.verification_jurisdiction
+            jur = jur.strip() if isinstance(jur, str) else None
+            if floor not in VALID_STATES:
+                add_error(
+                    "verification_floor",
+                    f"Unknown verification_floor {floor!r}. Allowed: {list(ORDER)}.",
+                )
+            elif jurisdiction_required_for(floor) and not jur:
+                add_error(
+                    "verification_jurisdiction",
+                    f"verification_floor {floor!r} requires a non-empty "
+                    "verification_jurisdiction.",
+                )
+
+    if errors or proposal_model is None:
+        return {
+            "proposal": None,
+            "warnings": warnings,
+            "resolved_topics": topic_transparency,
+            "errors": errors,
+        }
+
+    proposal_dict = proposal_model.model_dump(mode="json")
+
+    # --- Section B: permission-aware threshold/duration handling ---
+    # Two jobs, both keyed on model_fields_set (the SAME mechanism the create
+    # endpoint uses to tell "explicitly provided" from "schema default"):
+    #   1. A field NOT in the file is dropped from the prefill so the create
+    #      form / endpoint applies the ORG default. (Otherwise ProposalCreate's
+    #      schema defaults — pass_threshold=0.50, quorum_threshold=0.40 — would
+    #      leak into the payload and, if they differ from the org's actual
+    #      defaults, trip the create gate for an unpermitted caller.)
+    #   2. A field IN the file that DIVERGES from the org default is dropped
+    #      WITH a warning when the caller lacks the permission. A value EQUAL
+    #      to the default is kept silently (mirrors _enforce_*_permission's
+    #      "diverges, not present" rule exactly). A permitted caller keeps a
+    #      divergent value (normal override).
+    fields_set = proposal_model.model_fields_set
+    can_thresholds = has_permission(db, user.id, org.id, "proposal.set_thresholds")
+    can_durations = has_permission(db, user.id, org.id, "proposal.set_durations")
+    default_pass, default_quorum = get_default_proposal_thresholds(org)
+    default_delib, default_vote = get_default_proposal_durations(org)
+
+    _threshold_duration_fields = [
+        ("pass_threshold", default_pass, can_thresholds, "pass threshold", False),
+        ("quorum_threshold", default_quorum, can_thresholds, "quorum threshold", False),
+        ("voting_days", default_vote, can_durations, "voting duration", True),
+        ("deliberation_days", default_delib, can_durations, "deliberation duration", True),
+    ]
+    for field, default_value, has_perm, label, is_duration in _threshold_duration_fields:
+        if field not in fields_set:
+            # Not provided in the file — don't leak the schema default; the
+            # org default applies at create time.
+            proposal_dict.pop(field, None)
+            continue
+        model_value = getattr(proposal_model, field)
+        if model_value is None or default_value is None:
+            continue
+        if is_duration:
+            diverges = float(model_value) != float(default_value)
+        else:
+            diverges = model_value != default_value
+        if diverges and not has_perm:
+            proposal_dict.pop(field, None)
+            warnings.append(
+                f"You don't have permission to set a custom {label}; using "
+                f"the organization default ({default_value})."
+            )
+
+    return {
+        "proposal": proposal_dict,
+        "warnings": warnings,
+        "resolved_topics": topic_transparency,
+        "errors": {},
+    }
+
+
 @router.get("/{org_slug}/proposals/import-template")
 def get_proposal_import_template(
     org_slug: str,
@@ -4085,13 +4261,35 @@ def get_proposal_import_template(
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_membership),
 ):
-    """Phase 68a — annotated JSON template for the proposal importer.
+    """Phase 68a / 72 — per-caller annotated JSON template for the importer.
 
     Behind org membership (same surface as the import flow). The FE
-    "Download template" link fetches this and saves it; AI-assistant /
-    scripting workflows can GET it directly as the format reference.
+    "Download template" link fetches this; AI-assistant / scripting
+    workflows GET it directly as the format reference.
+
+    Phase 72 B1: threshold/duration fields are seeded from the ORG's actual
+    defaults (not hardcoded examples) and OMITTED entirely when the caller
+    lacks the matching permission — so a non-admin's template carries no
+    divergent values and imports cleanly.
     """
-    return _IMPORT_TEMPLATE
+    import copy
+
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    tmpl = copy.deepcopy(_IMPORT_TEMPLATE_BASE)
+    if has_permission(db, current_user.id, membership.org_id, "proposal.set_thresholds"):
+        default_pass, default_quorum = get_default_proposal_thresholds(org)
+        tmpl["pass_threshold"] = default_pass
+        tmpl["quorum_threshold"] = default_quorum
+    if has_permission(db, current_user.id, membership.org_id, "proposal.set_durations"):
+        default_delib, default_vote = get_default_proposal_durations(org)
+        tmpl["deliberation_days"] = default_delib
+        tmpl["voting_days"] = default_vote
+    return tmpl
 
 
 @router.post("/{org_slug}/proposals/import-preview")
@@ -4167,105 +4365,65 @@ async def import_preview_proposal(
             status_code=422,
             content={"errors": {"_file": ["Could not parse file as JSON."]}, "warnings": []},
         )
-    if not isinstance(parsed, dict):
-        return JSONResponse(
-            status_code=422,
-            content={"errors": {"_file": ["Import must be a JSON object."]}, "warnings": []},
-        )
 
-    errors: dict[str, list[str]] = {}
-    warnings: list[str] = []
-
-    def add_error(field: str, message: str) -> None:
-        errors.setdefault(field, [])
-        if message not in errors[field]:
-            errors[field].append(message)
-
-    # --- split known / unknown keys (forward-compat: a future export may
-    # carry read-only fields like id/status — ignore them with a warning) ---
-    cleaned: dict = {}
-    for key, value in parsed.items():
-        if key in _IMPORT_KNOWN_KEYS:
-            cleaned[key] = value
-        else:
-            warnings.append(f"Ignored unknown field '{key}'.")
-
-    # --- resolve topics (name → id) before building ProposalCreate ---
-    candidates = _import_candidate_topics(db, org)
-    resolved_topics, topic_warnings, topic_transparency, topic_errors = (
-        _resolve_import_topics(cleaned.get("topics"), candidates)
-    )
-    warnings.extend(topic_warnings)
-    for msg in topic_errors:
-        add_error("topics", msg)
-    # Pass only the successfully-resolved topics into ProposalCreate so the
-    # rest of validation can still run when some names didn't match.
-    cleaned["topics"] = resolved_topics
-
-    # --- build ProposalCreate (Pydantic field/range/shape validation) ---
-    proposal_model: Optional[schemas.ProposalCreate] = None
-    try:
-        proposal_model = schemas.ProposalCreate(**cleaned)
-    except ValidationError as exc:
-        for err in exc.errors():
-            loc = err.get("loc") or ()
-            field = str(loc[0]) if loc else "_file"
-            add_error(field, err.get("msg", "Invalid value."))
-
-    # --- create-rule parity + floors + verification (only if it built) ---
-    if proposal_model is not None:
-        from routes.proposals import (
-            _collect_proposal_creation_errors,
-            _VOTING_DAYS_FLOOR,
-            _DELIBERATION_DAYS_FLOOR,
-        )
-        for field, _status_code, message in _collect_proposal_creation_errors(
-            proposal_model, org,
-        ):
-            add_error(field, message)
-
-        if (
-            proposal_model.voting_days is not None
-            and proposal_model.voting_days < _VOTING_DAYS_FLOOR
-        ):
-            add_error(
-                "voting_days",
-                "Voting duration must be at least 0.05 days (72 minutes).",
+    # --- Phase 72: dispatch on the input type ---
+    # Single object → 68a-compatible {proposal, warnings, resolved_topics}
+    # (success) / {errors, warnings} (422). Array → per-item {items, summary}
+    # at 200 (one bad item doesn't fail the batch). Disambiguation is by the
+    # INPUT type, not a query param.
+    if isinstance(parsed, dict):
+        result = _preview_one_proposal(parsed, org, db, current_user)
+        if result["errors"]:
+            return JSONResponse(
+                status_code=422,
+                content={"errors": result["errors"], "warnings": result["warnings"]},
             )
-        if (
-            proposal_model.deliberation_days is not None
-            and proposal_model.deliberation_days < _DELIBERATION_DAYS_FLOOR
-        ):
-            add_error("deliberation_days", "Deliberation duration cannot be negative.")
+        return {
+            "proposal": result["proposal"],
+            "warnings": result["warnings"],
+            "resolved_topics": result["resolved_topics"],
+        }
 
-        if proposal_model.verification_floor is not None:
-            from verification import VALID_STATES, ORDER, jurisdiction_required_for
-            floor = proposal_model.verification_floor
-            jur = proposal_model.verification_jurisdiction
-            jur = jur.strip() if isinstance(jur, str) else None
-            if floor not in VALID_STATES:
-                add_error(
-                    "verification_floor",
-                    f"Unknown verification_floor {floor!r}. Allowed: {list(ORDER)}.",
-                )
-            elif jurisdiction_required_for(floor) and not jur:
-                add_error(
-                    "verification_jurisdiction",
-                    f"verification_floor {floor!r} requires a non-empty "
-                    "verification_jurisdiction.",
-                )
+    if isinstance(parsed, list):
+        if len(parsed) > _IMPORT_MAX_PROPOSALS:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "errors": {"_file": [
+                        f"Too many proposals in one import (max "
+                        f"{_IMPORT_MAX_PROPOSALS}); got {len(parsed)}."
+                    ]},
+                    "warnings": [],
+                },
+            )
+        items: list[dict] = []
+        valid = 0
+        for index, raw_item in enumerate(parsed):
+            r = _preview_one_proposal(raw_item, org, db, current_user)
+            if r["proposal"] is not None and not r["errors"]:
+                valid += 1
+            items.append({
+                "index": index,
+                "proposal": r["proposal"],
+                "warnings": r["warnings"],
+                "resolved_topics": r["resolved_topics"],
+                "errors": r["errors"],
+            })
+        total = len(parsed)
+        return {
+            "items": items,
+            "summary": {"total": total, "valid": valid, "invalid": total - valid},
+        }
 
-    if errors:
-        return JSONResponse(
-            status_code=422,
-            content={"errors": errors, "warnings": warnings},
-        )
-
-    return {
-        "proposal": proposal_model.model_dump(mode="json"),
-        "warnings": warnings,
-        "resolved_topics": topic_transparency,
-    }
+    return JSONResponse(
+        status_code=422,
+        content={
+            "errors": {"_file": [
+                "Import must be a JSON object or an array of proposal objects."
+            ]},
+            "warnings": [],
+        },
+    )
 
 
 @router.get("/{org_slug}/proposals/{proposal_id}", response_model=schemas.ProposalOut)
