@@ -3711,8 +3711,10 @@ def create_org_proposal(
     _gate_vote_days = requested_vote_days
     if requested_vote_days is None and getattr(body, "voting_end_date", None) is not None:
         _end = _strip_tz(body.voting_end_date)
-        _now = datetime.now(timezone.utc).replace(tzinfo=None)
-        _gate_vote_days = (_end - _now).total_seconds() / 86400
+        # NB: do NOT name this `_now` — that shadows the module-level `_now()`
+        # helper used later in this function (UnboundLocalError otherwise).
+        _now_dt = datetime.now(timezone.utc).replace(tzinfo=None)
+        _gate_vote_days = (_end - _now_dt).total_seconds() / 86400
     _validate_duration_floors(requested_delib_days, requested_vote_days)
     _enforce_duration_permission(
         db, current_user.id, org, requested_delib_days, _gate_vote_days,
