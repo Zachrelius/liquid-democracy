@@ -19,10 +19,13 @@ import { useHasPermission } from '../../hooks/useHasPermission';
  */
 export default function SubOrgList() {
   const { currentOrg, fetchSubOrgsFor, invalidateSubOrgs } = useOrg();
-  // Phase 12.5 F2 — Create sub-org gated on `sub_org.create`. (Sub-org
-  // delete itself remains correctly matrix-routed via sub_org.delete on
-  // the SubOrgSettings surface — see Phase 12 Stage 2 F7 — and is
-  // intentionally LEFT ALONE here.)
+  // Phase 12.5 F2 — Create sub-org gated on `sub_org.create` (parent-org
+  // permission, so useHasPermission/currentOrg is correct here).
+  // Phase 71c — sub-org delete/edit are now genuinely matrix-routed: Phase 71b
+  // made sub_org.delete / sub_org.edit_settings config-authoritative on the
+  // backend, and the SubOrgSettings page gates its delete/save controls on the
+  // SUB-ORG's own user_permissions. (Pre-71b this comment was aspirational —
+  // those routes were tier-gated; the §69 audit flagged it.)
   const canCreateSubOrg = useHasPermission('sub_org.create');
   const toast = useToast();
   const [subOrgs, setSubOrgs] = useState([]);

@@ -72,7 +72,12 @@ PERMISSION_REGISTRY: list[PermissionDefinition] = [
     PermissionDefinition(
         "proposal.delete",
         "Delete proposals",
-        "Allow permanently removing proposals (including those created by other members).",
+        # Phase 71c (69.1 Tier-A relabel) — corrected to reality. The only
+        # proposal-deletion route removes DRAFT proposals only and is gated by
+        # author / "Edit any proposal" (org.edit_proposal) / platform admin —
+        # it does NOT read this key. Proposals past draft are archived
+        # (withdrawn), never deleted. This key is currently vestigial.
+        "Currently has no effect: the only deletion path removes draft proposals and is gated by the author, the 'Edit any proposal' permission, or a platform admin — not by this toggle. Proposals past the draft stage are archived, never deleted.",
         "Proposals",
     ),
     PermissionDefinition(
@@ -84,7 +89,12 @@ PERMISSION_REGISTRY: list[PermissionDefinition] = [
     PermissionDefinition(
         "proposal.resolve_tie",
         "Resolve voting ties",
-        "Allow choosing the winner when a vote ends in a tie.",
+        # Phase 71c (69.1 Tier-A relabel) — tie resolution is automated. At
+        # proposal close the configured tie-break method runs automatically
+        # (_maybe_resolve_tie); there is no manual tie-resolution action
+        # gated by this key. Kept registered (removal needs a backfill
+        # migration — out of scope).
+        "Automated — no manual action: ties are resolved automatically at proposal close using the organization's configured tie-break method. This toggle currently gates nothing.",
         "Proposals",
     ),
     # Phase 12.5 — gate on overriding org-default approval thresholds.
@@ -228,7 +238,10 @@ PERMISSION_REGISTRY: list[PermissionDefinition] = [
     PermissionDefinition(
         "org.edit_branding",
         "Edit organization branding",
-        "Allow uploading a logo and choosing the organization's display color. (Reserved for Stage 3; the permission key exists in Stage 1 but the UI to use it ships in Stage 3.)",
+        # Phase 71c (69.1 Tier-A relabel) — dropped the stale "Reserved for
+        # Stage 3" clause; the logo/color endpoints (routes/org_logos.py) are
+        # live and this key gates them.
+        "Allow uploading a logo and choosing the organization's display color.",
         "Organization",
     ),
     # Phase 12 Stage 2 — meta-permission for editing the matrix itself.
