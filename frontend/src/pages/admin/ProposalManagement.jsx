@@ -792,6 +792,15 @@ function CreateProposalForm({
   const [importBusy, setImportBusy] = useState(false);
   const [importErrors, setImportErrors] = useState(null);
   const [importWarnings, setImportWarnings] = useState([]);
+  // Phase 75b — Smart Import (AI agenda → proposals) state.
+  const [smartOpen, setSmartOpen] = useState(false);
+  const [smartMode, setSmartMode] = useState('text'); // 'text' | 'pdf'
+  const [smartText, setSmartText] = useState('');
+  const [smartFile, setSmartFile] = useState(null);
+  const [smartMeetingDate, setSmartMeetingDate] = useState('');
+  const [smartInstructions, setSmartInstructions] = useState('');
+  const [smartBusy, setSmartBusy] = useState(false);
+  const [smartError, setSmartError] = useState('');
 
   // Apply an imported payload to the form's fields. Each field is guarded
   // so a partial payload only fills what it carries (the rest keep their
@@ -909,6 +918,61 @@ function CreateProposalForm({
     }
   }
 
+  async function runSmartImport() {
+    setSmartBusy(true);
+    setSmartError('');
+    try {
+      let result;
+      if (smartMode === 'pdf') {
+        if (!smartFile) {
+          setSmartError('Choose a PDF first.');
+          setSmartBusy(false);
+          return;
+        }
+        const fd = new FormData();
+        fd.append('file', smartFile);
+        if (smartMeetingDate) fd.append('meeting_date', smartMeetingDate);
+        if (smartInstructions.trim()) fd.append('instructions', smartInstructions.trim());
+        result = await api.postFormData(`/api/orgs/${slug}/proposals/smart-import`, fd);
+      } else {
+        if (!smartText.trim()) {
+          setSmartError('Paste the agenda text first.');
+          setSmartBusy(false);
+          return;
+        }
+        result = await api.post(`/api/orgs/${slug}/proposals/smart-import`, {
+          content: smartText,
+          meeting_date: smartMeetingDate || undefined,
+          instructions: smartInstructions.trim() || undefined,
+        });
+      }
+      const items = Array.isArray(result.items) ? result.items : [];
+      if (items.length === 0) {
+        setSmartError(
+          (result.warnings && result.warnings[0])
+          || 'No proposals could be extracted from the content.',
+        );
+        return;
+      }
+      if (items.length === 1 && items[0].proposal && !Object.keys(items[0].errors || {}).length) {
+        applyImport(items[0].proposal);
+        setImportWarnings(items[0].warnings || []);
+        setSmartOpen(false);
+        toast.success('Parsed — review the fields below and submit.');
+      } else if (onMultiImport) {
+        onMultiImport(items);
+        setSmartOpen(false);
+      } else {
+        setSmartError('Multi-proposal review is not available here.');
+      }
+    } catch (e) {
+      if (e?.raw?.detail) setSmartError(e.raw.detail);
+      else setSmartError(e?.message || 'Smart import failed.');
+    } finally {
+      setSmartBusy(false);
+    }
+  }
+
   async function downloadImportTemplate() {
     try {
       const tmpl = await api.get(`/api/orgs/${slug}/proposals/import-template`);
@@ -998,6 +1062,104 @@ function CreateProposalForm({
                   {importBusy ? 'Importing…' : 'Preview & fill form'}
                 </button>
               </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Phase 75b — Smart Import: paste an agenda or upload a PDF and let the
+          AI extract proposal drafts. Hands off to the same review list as the
+          structured multi-import. Create mode only. */}
+      {!isEditMode && (
+        <div className="border border-gray-200 rounded-lg bg-gray-50">
+          <div className="flex items-center justify-between px-3 py-2">
+            <button
+              type="button"
+              onClick={() => setSmartOpen(o => !o)}
+              className="text-sm font-medium text-[var(--brand-accent)] hover:underline"
+            >
+              {smartOpen ? '▾ ' : '▸ '}Smart Import (AI agenda parser)
+            </button>
+          </div>
+          {smartOpen && (
+            <div className="px-3 pb-3 space-y-2">
+              <p className="text-xs text-gray-500">
+                Paste a meeting agenda or upload a PDF. The assistant extracts
+                substantive items as proposal drafts (skipping procedural items)
+                and assigns topics. Nothing is saved — you review every draft
+                before publishing.
+              </p>
+              <div className="flex gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setSmartMode('text')}
+                  className={`px-2 py-1 rounded ${smartMode === 'text' ? 'bg-[var(--brand-primary)] text-white' : 'bg-gray-200 text-gray-600'}`}
+                >
+                  Paste text
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSmartMode('pdf')}
+                  className={`px-2 py-1 rounded ${smartMode === 'pdf' ? 'bg-[var(--brand-primary)] text-white' : 'bg-gray-200 text-gray-600'}`}
+                >
+                  Upload PDF
+                </button>
+              </div>
+              {smartMode === 'text' ? (
+                <textarea
+                  value={smartText}
+                  onChange={e => setSmartText(e.target.value)}
+                  rows={6}
+                  placeholder="Paste the agenda text here…"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                />
+              ) : (
+                <input
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  onChange={e => setSmartFile(e.target.files?.[0] || null)}
+                  className="block w-full text-xs text-gray-600 file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-[var(--brand-primary)] file:text-white hover:file:bg-[var(--brand-accent)]"
+                />
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">
+                    Meeting date (optional)
+                  </label>
+                  <input
+                    type="date"
+                    value={smartMeetingDate}
+                    onChange={e => setSmartMeetingDate(e.target.value)}
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                  />
+                  <p className="text-[11px] text-gray-400 mt-0.5">Voting will close by this date.</p>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">
+                    Guidance (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={smartInstructions}
+                    onChange={e => setSmartInstructions(e.target.value)}
+                    placeholder="e.g., focus on zoning items"
+                    className="w-full px-2 py-1.5 border border-gray-300 rounded text-xs focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                  />
+                </div>
+              </div>
+              {smartError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-2 text-xs text-red-700">
+                  {smartError}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={runSmartImport}
+                disabled={smartBusy}
+                className="text-sm px-4 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+              >
+                {smartBusy ? 'Parsing agenda items…' : 'Parse'}
+              </button>
             </div>
           )}
         </div>
@@ -1783,6 +1945,8 @@ function MultiImportReview({ items, slug, onDone, onCancel }) {
     payload: it.proposal || null,
     warnings: it.warnings || [],
     errors: it.errors || {},
+    // Phase 75b — the AI's topic-assignment reasoning (smart import only).
+    aiReasoning: it.ai_reasoning || '',
     selected: !!it.proposal && (!it.errors || Object.keys(it.errors).length === 0),
     created: false,
     failed: null,
@@ -1912,6 +2076,13 @@ function MultiImportReview({ items, slug, onDone, onCancel }) {
               <ul className="mt-2 ml-7 text-xs text-blue-800 list-disc list-inside space-y-0.5">
                 {row.warnings.map((w, i) => <li key={i}>{w}</li>)}
               </ul>
+            )}
+
+            {/* Phase 75b — the AI's reasoning for this draft (smart import). */}
+            {row.aiReasoning && (
+              <p className="mt-1 ml-7 text-xs text-purple-700 italic">
+                <span className="font-medium not-italic">AI:</span> {row.aiReasoning}
+              </p>
             )}
 
             {expanded === row.id && row.payload && (
