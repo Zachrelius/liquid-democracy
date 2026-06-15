@@ -224,6 +224,64 @@ async def cast_vote(
                 raise HTTPException(status_code=400, detail=f"Option {oid} does not belong to this proposal")
         vote_value = None
         ballot = {"ranking": body.ranking}
+    elif proposal.voting_method == "budget_allocation":
+        # Phase 73 — allocation ballot. Direct-vote only (budget proposals
+        # don't compose with delegation — §5). This endpoint always casts
+        # is_direct=True, so the direct-only restriction holds here; the tally
+        # additionally never resolves delegation for budget.
+        if body.vote_value is not None or body.approvals is not None or body.ranking is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Use allocations for budget proposals",
+            )
+        if body.allocations is None:
+            raise HTTPException(
+                status_code=400,
+                detail="allocations is required for budget proposals",
+            )
+        cfg = getattr(proposal, "budget_config", None) or {}
+        envelope = cfg.get("envelope", 0)
+        valid_option_ids = {opt.id for opt in proposal.options}
+        caps = {
+            opt.id: (
+                opt.budget_max_amount
+                if getattr(opt, "budget_max_amount", None) is not None
+                else envelope
+            )
+            for opt in proposal.options
+        }
+        total = 0.0
+        for oid, amount in body.allocations.items():
+            if oid not in valid_option_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Option {oid} does not belong to this proposal",
+                )
+            if amount < 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Allocation amounts must be non-negative",
+                )
+            if amount > caps[oid] + 1e-9:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Allocation to option {oid} ({amount}) exceeds its "
+                        f"ceiling ({caps[oid]})"
+                    ),
+                )
+            total += amount
+        if total > envelope + 1e-9:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Total allocation ({total}) exceeds the budget envelope "
+                    f"({envelope}). Under-allocating is allowed; over-allocating "
+                    "is not."
+                ),
+            )
+        vote_value = None
+        ballot = {"allocations": body.allocations}
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported voting method: {proposal.voting_method}")
 

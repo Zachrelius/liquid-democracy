@@ -880,6 +880,15 @@ class Proposal(Base):
     approval_winner_config: Mapped[Optional[dict]] = mapped_column(
         JSON, nullable=True,
     )
+    # Phase 73 — budget-voting config (allocation mode). NULL = not a budget
+    # proposal (every non-budget row; additive-layer invariant — an existing
+    # proposal with NULL is byte-for-byte unchanged). Shape for allocation:
+    #   {"mode": "allocation", "envelope": 100000, "currency": "USD",
+    #    "aggregation": "median" | "trimmed_mean"}
+    # Phase 74 will reuse this column with mode == "project" (discrete items).
+    budget_config: Mapped[Optional[dict]] = mapped_column(
+        JSON, nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_now, onupdate=_now, nullable=False)
 
@@ -980,6 +989,17 @@ class ProposalOption(Base):
     )
     is_write_in: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0",
+    )
+
+    # Phase 73 — budget bucket metadata. NULL on every non-budget option
+    # (additive-layer invariant: approval/RCV options are unchanged). For an
+    # allocation-mode bucket this is the per-bucket ceiling: the bucket is
+    # fundable in [0, budget_max_amount]. NULL on a budget option means the
+    # ceiling is the full envelope (the bucket can absorb the whole pool).
+    # Phase 74 will extend this table again (budget_floor_amount, budget_kind,
+    # tier columns) for discrete project items.
+    budget_max_amount: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True,
     )
 
     proposal: Mapped["Proposal"] = relationship("Proposal", back_populates="options")

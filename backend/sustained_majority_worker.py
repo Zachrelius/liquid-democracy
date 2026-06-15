@@ -781,6 +781,11 @@ def run_one_tick(db: Session) -> int:
     voting_proposals = (
         db.query(models.Proposal)
         .filter(models.Proposal.status == "voting")
+        # Phase 73 — budget proposals are excluded from the sustained-majority
+        # worker. Stable-result is rejected at create for budget methods (§4),
+        # and the worker's snapshot/evaluate path reads binary/multi-option
+        # ballot shapes only — it does not understand an allocation ballot.
+        .filter(models.Proposal.voting_method != "budget_allocation")
         .all()
     )
     processed = 0

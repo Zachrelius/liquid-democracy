@@ -432,6 +432,9 @@ def _build_proposal_out(
         approval_winner_config=getattr(
             proposal, "approval_winner_config", None,
         ),
+        # Phase 73 — budget-voting config. NULL = not a budget proposal. The
+        # FE branches its ballot + results UI on this, so it MUST surface.
+        budget_config=getattr(proposal, "budget_config", None),
         # Phase 68b — viewer's archive capability (drives the FE "Archive"
         # action). False when no viewer context (list builds pass none).
         can_archive=_viewer_can_archive(proposal, db, viewer_id),
@@ -724,6 +727,32 @@ def _collect_proposal_creation_errors(
                 f"proposals (voting_method is '{body.voting_method}')."
             ),
         ))
+    # Phase 73 — budget_config method/mode coherence (shape already validated
+    # at the Pydantic layer). budget_config belongs only on a budget method,
+    # and a budget method requires it.
+    _budget_cfg = getattr(body, "budget_config", None)
+    if _budget_cfg is not None and body.voting_method != "budget_allocation":
+        errors.append((
+            "budget_config", 400,
+            (
+                "budget_config is only supported on budget proposals "
+                f"(voting_method is '{body.voting_method}')."
+            ),
+        ))
+    if body.voting_method == "budget_allocation" and _budget_cfg is None:
+        errors.append((
+            "budget_config", 400,
+            "budget_allocation proposals require a budget_config.",
+        ))
+    # Phase 73 §4 — stable-result is not supported for budget proposals.
+    if (
+        body.voting_method == "budget_allocation"
+        and getattr(body, "stable_result_required", None) is True
+    ):
+        errors.append((
+            "stable_result_required", 400,
+            "Stable-result is not yet supported for budget proposals.",
+        ))
     if body.voting_method == "binary":
         if body.options:
             errors.append((
@@ -784,6 +813,32 @@ def _collect_proposal_creation_errors(
                 "num_winners", 400,
                 "num_winners must be between 1 and the number of options",
             ))
+    elif body.voting_method == "budget_allocation":
+        # Phase 73 — each option is a continuously-fundable bucket.
+        if len(body.options) < 2:
+            errors.append((
+                "options", 400,
+                "Budget proposals require at least 2 buckets",
+            ))
+        if len(body.options) > 20:
+            errors.append((
+                "options", 400,
+                "Budget proposals may have at most 20 buckets",
+            ))
+        seen_labels: set[str] = set()
+        for opt in body.options:
+            lower = opt.label.strip().lower()
+            if lower in seen_labels:
+                errors.append((
+                    "options", 400, f"Duplicate option label: {opt.label}",
+                ))
+                break
+            seen_labels.add(lower)
+        if body.num_winners != 1:
+            errors.append((
+                "num_winners", 400,
+                "num_winners must be 1 for budget proposals",
+            ))
     return errors
 
 
@@ -806,6 +861,8 @@ def _create_proposal_options(db: Session, proposal_id: str, options: list[schema
             label=opt.label.strip(),
             description=opt.description,
             display_order=i,
+            # Phase 73 — bucket ceiling (NULL on non-budget options).
+            budget_max_amount=getattr(opt, "budget_max_amount", None),
         ))
     db.flush()
 
@@ -821,7 +878,10 @@ def _validate_and_update_options(
             status_code=409,
             detail="Options cannot be edited after voting has started",
         )
-    label_method = "Approval" if proposal.voting_method == "approval" else "Ranked-choice"
+    label_method = {
+        "approval": "Approval",
+        "budget_allocation": "Budget",
+    }.get(proposal.voting_method, "Ranked-choice")
     if len(options) < 2:
         raise HTTPException(status_code=400, detail=f"{label_method} proposals require at least 2 options")
     if len(options) > 20:
@@ -1044,6 +1104,10 @@ def create_proposal(
         # at the Pydantic layer + method-compatibility in
         # _validate_proposal_creation above. NULL = legacy single-winner.
         approval_winner_config=body.approval_winner_config,
+        # Phase 73 — budget config (allocation mode). Validated for shape at
+        # the Pydantic layer + method/mode coherence in
+        # _validate_proposal_creation above. NULL = not a budget proposal.
+        budget_config=getattr(body, "budget_config", None),
     )
     db.add(proposal)
     db.flush()
@@ -1070,7 +1134,7 @@ def create_proposal(
         ))
     db.flush()
 
-    if body.voting_method in ("approval", "ranked_choice") and body.options:
+    if body.voting_method in ("approval", "ranked_choice", "budget_allocation") and body.options:
         _create_proposal_options(db, proposal.id, body.options)
 
     log_audit_event(
@@ -1439,11 +1503,36 @@ def update_proposal(
             )
         proposal.approval_winner_config = body.approval_winner_config
 
-    if body.options is not None:
-        if proposal.voting_method not in ("approval", "ranked_choice"):
+    # Phase 73 — budget_config change (draft-only, budget method only). Shape
+    # validated at the Pydantic layer; explicit null clears it. Mirrors the
+    # approval_winner_config gate.
+    if "budget_config" in body.model_fields_set:
+        if proposal.status != "draft":
             raise HTTPException(
                 status_code=400,
-                detail="Options can only be set on approval or ranked-choice proposals",
+                detail=(
+                    "budget_config can only be changed while the proposal is "
+                    "in draft status."
+                ),
+            )
+        if (
+            body.budget_config is not None
+            and proposal.voting_method != "budget_allocation"
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "budget_config is only supported on budget proposals "
+                    f"(voting_method is '{proposal.voting_method}')."
+                ),
+            )
+        proposal.budget_config = body.budget_config
+
+    if body.options is not None:
+        if proposal.voting_method not in ("approval", "ranked_choice", "budget_allocation"):
+            raise HTTPException(
+                status_code=400,
+                detail="Options can only be set on approval, ranked-choice, or budget proposals",
             )
         _validate_and_update_options(db, proposal, body.options)
 
@@ -2681,6 +2770,21 @@ def advance_proposal(
                 next_status = "passed"
             else:
                 next_status = "failed"
+        elif proposal.voting_method == "budget_allocation":
+            # Phase 73 — allocation budgets pass on quorum alone (there is no
+            # yes/no, so pass_threshold is not consulted). At/above quorum the
+            # computed allocation is the adopted budget — INCLUDING the
+            # degenerate all-zero case (the group chose to spend nothing), which
+            # still "passes" as a budget decision. Allocation has no winner set,
+            # so it never routes through tie resolution.
+            from budget_tally import AllocationTally
+            if (
+                isinstance(tally, AllocationTally)
+                and tally.quorum_met(proposal.quorum_threshold)
+            ):
+                next_status = "passed"
+            else:
+                next_status = "failed"
         else:
             if tally.threshold_met(proposal.pass_threshold) and tally.quorum_met(proposal.quorum_threshold):
                 next_status = "passed"
@@ -3129,6 +3233,33 @@ def get_results(
             sustained_majority=sm_status,
         )
 
+    from budget_tally import AllocationTally
+    if (
+        proposal.voting_method == "budget_allocation"
+        and isinstance(tally, AllocationTally)
+    ):
+        option_labels = {opt.id: opt.label for opt in proposal.options}
+        cfg = getattr(proposal, "budget_config", None) or {}
+        return schemas.ProposalResults(
+            proposal_id=proposal_id,
+            voting_method="budget_allocation",
+            not_cast=tally.not_cast,
+            total_eligible=tally.total_eligible,
+            votes_cast=tally.total_ballots_cast,
+            quorum_met=tally.quorum_met(proposal.quorum_threshold),
+            option_labels=option_labels,
+            total_ballots_cast=tally.total_ballots_cast,
+            budget_amounts=tally.amounts,
+            budget_total_allocated=tally.total_allocated,
+            budget_unallocated_remainder=tally.unallocated_remainder,
+            budget_degenerate_no_support=tally.degenerate_no_support,
+            budget_envelope=cfg.get("envelope"),
+            budget_currency=cfg.get("currency", "USD"),
+            budget_aggregation=tally.aggregation,
+            time_series=time_series,
+            sustained_majority=sm_status,
+        )
+
     return schemas.ProposalResults(
         proposal_id=proposal_id,
         voting_method="binary",
@@ -3264,6 +3395,35 @@ def my_vote_status(
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
     proposal = _proposal_or_404(proposal_id, db)
+
+    # Phase 73 — budget proposals are direct-vote only; never resolve through
+    # delegation. Return the caller's own direct allocation ballot (or "not
+    # cast"). This keeps my-vote consistent with the direct-only tally.
+    if proposal.voting_method == "budget_allocation":
+        own = (
+            db.query(models.Vote)
+            .filter(
+                models.Vote.proposal_id == proposal.id,
+                models.Vote.user_id == current_user.id,
+                models.Vote.is_direct.is_(True),
+            )
+            .first()
+        )
+        if own is None or not own.ballot:
+            return schemas.MyVoteStatus(
+                allocations=None, is_direct=None, delegate_chain=None,
+                cast_by=None,
+                message="You have not allocated a budget on this proposal.",
+            )
+        allocations = (own.ballot or {}).get("allocations", {})
+        return schemas.MyVoteStatus(
+            allocations=allocations,
+            is_direct=True,
+            delegate_chain=None,
+            cast_by=db.get(models.User, current_user.id),
+            message=f"You allocated across {len(allocations)} bucket(s).",
+        )
+
     result = delegation_engine.resolve_vote(current_user.id, proposal.id, db)
 
     # Multi-option proposals only support strict_precedence delegation today.
