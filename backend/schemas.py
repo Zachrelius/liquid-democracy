@@ -344,6 +344,15 @@ class OptionCreate(BaseModel):
     # Phase 73 — allocation bucket ceiling. NULL = no ceiling (bucket can
     # absorb the whole envelope). Ignored for non-budget proposals.
     budget_max_amount: Optional[float] = Field(default=None, ge=0)
+    # Phase 74 — discrete project-item cost metadata. NULL on non-project
+    # options. budget_floor_amount is the all-or-nothing cost. budget_kind +
+    # mandatory + tier fields exist for forward-compat; Stage-74 core treats
+    # every item as plain discrete (mandatory/tier handled in 74a/74b).
+    budget_floor_amount: Optional[float] = Field(default=None, ge=0)
+    budget_kind: Optional[str] = Field(default=None)
+    budget_is_mandatory: Optional[bool] = Field(default=None)
+    budget_tier_parent_id: Optional[str] = Field(default=None)
+    tier_allow_fallback: Optional[bool] = Field(default=None)
 
 
 class OptionOut(BaseModel):
@@ -360,6 +369,12 @@ class OptionOut(BaseModel):
     is_write_in: bool = False
     # Phase 73 — allocation bucket ceiling (NULL on non-budget options).
     budget_max_amount: Optional[float] = None
+    # Phase 74 — discrete project-item cost metadata (NULL on non-project).
+    budget_floor_amount: Optional[float] = None
+    budget_kind: Optional[str] = None
+    budget_is_mandatory: Optional[bool] = None
+    budget_tier_parent_id: Optional[str] = None
+    tier_allow_fallback: Optional[bool] = None
 
     model_config = {"from_attributes": True}
 
@@ -446,59 +461,84 @@ def _validate_approval_winner_config(v: Optional[dict]) -> Optional[dict]:
 
 
 # Phase 73 — budget-voting config validation. Shared by ProposalCreate +
-# ProposalUpdate. Phase 73 ships allocation mode only; Phase 74 will extend
-# this validator to accept ``mode == "project"`` with its own key set.
+# ProposalUpdate. Phase 73 ships allocation mode; Phase 74 adds project mode.
 _BUDGET_ALLOCATION_KEYS = {"mode", "envelope", "currency", "aggregation"}
+_BUDGET_PROJECT_KEYS = {"mode", "envelope", "currency", "min_spend", "max_spend"}
 _BUDGET_AGGREGATIONS = {"median", "trimmed_mean"}
 
 
-def _validate_budget_config(v: Optional[dict]) -> Optional[dict]:
-    """Validate + normalize a ``budget_config`` object (allocation mode).
+def _pos_number(v, name: str, *, allow_zero: bool = False) -> float:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        raise ValueError(f"budget_config.{name} must be a number")
+    if allow_zero and v < 0:
+        raise ValueError(f"budget_config.{name} must be >= 0")
+    if not allow_zero and v <= 0:
+        raise ValueError(f"budget_config.{name} must be a positive number")
+    return v
 
-    Method-compatibility (budget_config only on a budget voting_method, mode
-    matching the method) is enforced at the route layer where the proposal
-    context is available; this validator just enforces shape.
+
+def _validate_budget_config(v: Optional[dict]) -> Optional[dict]:
+    """Validate + normalize a ``budget_config`` object (allocation OR project
+    mode). Method-compatibility (mode matching the voting_method) is enforced
+    at the route layer; this validator just enforces shape.
     """
     if v is None:
         return None
     if not isinstance(v, dict):
         raise ValueError("budget_config must be an object")
     mode = v.get("mode")
-    if mode != "allocation":
-        # Phase 74 will accept "project"; only allocation is built in 73.
-        raise ValueError("budget_config.mode must be 'allocation'")
-    unknown = set(v) - _BUDGET_ALLOCATION_KEYS
-    if unknown:
-        raise ValueError(
-            f"budget_config has unknown keys: {sorted(unknown)}. "
-            f"Allowed: {sorted(_BUDGET_ALLOCATION_KEYS)}"
-        )
-    envelope = v.get("envelope")
-    if (
-        isinstance(envelope, bool)
-        or not isinstance(envelope, (int, float))
-        or envelope <= 0
-    ):
-        raise ValueError("budget_config.envelope must be a positive number")
-    aggregation = v.get("aggregation", "median")
-    if aggregation not in _BUDGET_AGGREGATIONS:
-        raise ValueError(
-            "budget_config.aggregation must be 'median' or 'trimmed_mean'"
-        )
-    currency = v.get("currency", "USD")
-    if not isinstance(currency, str) or not currency:
-        raise ValueError("budget_config.currency must be a non-empty string")
-    return {
-        "mode": "allocation",
-        "envelope": envelope,
-        "currency": currency,
-        "aggregation": aggregation,
-    }
+    if mode == "allocation":
+        unknown = set(v) - _BUDGET_ALLOCATION_KEYS
+        if unknown:
+            raise ValueError(
+                f"budget_config has unknown keys: {sorted(unknown)}. "
+                f"Allowed: {sorted(_BUDGET_ALLOCATION_KEYS)}"
+            )
+        envelope = _pos_number(v.get("envelope"), "envelope")
+        aggregation = v.get("aggregation", "median")
+        if aggregation not in _BUDGET_AGGREGATIONS:
+            raise ValueError(
+                "budget_config.aggregation must be 'median' or 'trimmed_mean'"
+            )
+        currency = v.get("currency", "USD")
+        if not isinstance(currency, str) or not currency:
+            raise ValueError("budget_config.currency must be a non-empty string")
+        return {
+            "mode": "allocation", "envelope": envelope,
+            "currency": currency, "aggregation": aggregation,
+        }
+    if mode == "project":
+        # Phase 74 — discrete project budget. envelope is the hard ceiling;
+        # [min_spend, max_spend] is the stop-rule spend band.
+        unknown = set(v) - _BUDGET_PROJECT_KEYS
+        if unknown:
+            raise ValueError(
+                f"budget_config has unknown keys: {sorted(unknown)}. "
+                f"Allowed: {sorted(_BUDGET_PROJECT_KEYS)}"
+            )
+        envelope = _pos_number(v.get("envelope"), "envelope")
+        min_spend = _pos_number(v.get("min_spend", 0), "min_spend", allow_zero=True)
+        max_spend = _pos_number(v.get("max_spend", envelope), "max_spend", allow_zero=True)
+        if not (min_spend <= max_spend <= envelope):
+            raise ValueError(
+                "budget_config requires 0 <= min_spend <= max_spend <= envelope"
+            )
+        currency = v.get("currency", "USD")
+        if not isinstance(currency, str) or not currency:
+            raise ValueError("budget_config.currency must be a non-empty string")
+        return {
+            "mode": "project", "envelope": envelope, "currency": currency,
+            "min_spend": min_spend, "max_spend": max_spend,
+        }
+    raise ValueError("budget_config.mode must be 'allocation' or 'project'")
 
 
 # Phase 73 — the canonical set of accepted voting methods. Centralized so the
-# create + update validators stay in lockstep when a method is added.
-_VOTING_METHODS = {"binary", "approval", "ranked_choice", "budget_allocation"}
+# create + update validators stay in lockstep when a method is added. Phase 74
+# adds budget_project.
+_VOTING_METHODS = {
+    "binary", "approval", "ranked_choice", "budget_allocation", "budget_project",
+}
 
 
 class ProposalCreate(BaseModel):
@@ -1063,6 +1103,10 @@ class VoteCast(BaseModel):
     # a non-negative number; per-bucket cap + sum<=envelope enforced at the
     # route layer (needs the proposal's option ceilings + envelope).
     allocations: Optional[dict[str, float]] = None
+    # Phase 74 — budget_project ballot: ordered list of {option_id, tier_id?}
+    # (highest priority first). tier_id is forward-compat (Stage-74 core
+    # ignores it). Route-layer validates option membership + no duplicates.
+    ranked: Optional[list[dict]] = None
 
     @field_validator("vote_value")
     @classmethod
@@ -1107,6 +1151,23 @@ class VoteCast(BaseModel):
                     raise ValueError("allocation amounts must be non-negative")
         return v
 
+    @field_validator("ranked")
+    @classmethod
+    def validate_ranked(cls, v: Optional[list[dict]]) -> Optional[list[dict]]:
+        if v is not None:
+            seen = set()
+            for item in v:
+                if not isinstance(item, dict) or "option_id" not in item:
+                    raise ValueError("each ranked item must be an object with option_id")
+                oid = item["option_id"]
+                _validate_uuid(oid)
+                if oid in seen:
+                    raise ValueError("Duplicate option IDs in ranked")
+                seen.add(oid)
+                if item.get("tier_id") is not None:
+                    _validate_uuid(item["tier_id"])
+        return v
+
 
 class VoteOut(BaseModel):
     id: str
@@ -1131,6 +1192,8 @@ class MyVoteStatus(BaseModel):
     # Phase 73 — budget_allocation: {option_id: amount}. Direct-vote only, so
     # this is always the caller's own ballot (never a delegated one).
     allocations: Optional[dict[str, float]] = None
+    # Phase 74 — budget_project: ordered [{option_id, tier_id?}]. Direct-only.
+    ranked: Optional[list[dict]] = None
     is_direct: Optional[bool] = None
     delegate_chain: Optional[list[str]] = None
     cast_by: Optional[UserOut] = None
@@ -1221,6 +1284,20 @@ class ProposalResults(BaseModel):
     budget_envelope: Optional[float] = None
     budget_currency: Optional[str] = None
     budget_aggregation: Optional[str] = None
+    # Phase 74 — project-budget surface (voting_method == "budget_project").
+    # ``project_funded`` is the funded set in priority order [{option_id,
+    # amount}]; ``project_unfunded`` lists everything not funded (incl. any
+    # hard-stop-halted high-priority item). ``project_halt_reason`` is one of
+    # "stop_point" | "item_did_not_fit" | "queue_exhausted".
+    project_funded: Optional[list[dict]] = None
+    project_unfunded: Optional[list[str]] = None
+    project_priority_order: Optional[list[str]] = None
+    project_total_committed: Optional[float] = None
+    project_stop_point: Optional[float] = None
+    project_group_desired_total: Optional[float] = None
+    project_halt_reason: Optional[str] = None
+    project_min_spend: Optional[float] = None
+    project_max_spend: Optional[float] = None
     # Phase 8 / Phase 20 — Stable Result Required status block. Populated for
     # every proposal; ``active=False`` for proposals where the feature is not
     # in effect, in which case the rest of the fields are at defaults and the

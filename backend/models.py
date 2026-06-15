@@ -1001,6 +1001,29 @@ class ProposalOption(Base):
     budget_max_amount: Mapped[Optional[float]] = mapped_column(
         Float, nullable=True,
     )
+    # Phase 74 — discrete project-item cost metadata. NULL on non-project
+    # options. ``budget_floor_amount`` is the all-or-nothing cost (funded at
+    # this or $0). ``budget_kind`` ∈ {discrete, continuous-as-discrete,
+    # tier_parent}. ``budget_is_mandatory`` funds off-the-top (74a).
+    # ``budget_tier_parent_id`` FKs the tier parent on tier children (74b).
+    # ``tier_allow_fallback`` controls tier fall-back (74b). Stage-74 core
+    # reads only budget_floor_amount + budget_kind; the rest are placeholders
+    # the later stages activate.
+    budget_floor_amount: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True,
+    )
+    budget_kind: Mapped[Optional[str]] = mapped_column(
+        String, nullable=True,
+    )
+    budget_is_mandatory: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True,
+    )
+    budget_tier_parent_id: Mapped[Optional[str]] = mapped_column(
+        String, nullable=True,
+    )
+    tier_allow_fallback: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True,
+    )
 
     proposal: Mapped["Proposal"] = relationship("Proposal", back_populates="options")
     added_by: Mapped[Optional["User"]] = relationship(

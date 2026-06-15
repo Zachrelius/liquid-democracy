@@ -50,6 +50,9 @@ class Ballot:
     # ballots populate this (budget is direct-vote only — see §5; delegation
     # is never resolved into an allocation ballot).
     allocations: Optional[dict] = None
+    # Phase 74 — budget_project: ordered list of option_ids (highest priority
+    # first). Direct-vote only, same as allocation.
+    project_ranked: Optional[list] = None
 
     @property
     def voting_method(self) -> str:
@@ -61,6 +64,8 @@ class Ballot:
             return "ranked_choice"
         if self.allocations is not None:
             return "budget_allocation"
+        if self.project_ranked is not None:
+            return "budget_project"
         return "unknown"
 
 
@@ -210,6 +215,8 @@ class ProposalContext:
     # ``budget_buckets`` is a list of ``budget_tally.BucketSpec``.
     budget_config: Optional[dict] = None
     budget_buckets: Optional[list] = None
+    # Phase 74 — project-budget items (list of ``budget_tally.ProjectItemSpec``).
+    budget_items: Optional[list] = None
 
 
 # ---------------------------------------------------------------------------
@@ -640,7 +647,39 @@ def compute_tally_pure(
         )
     if ctx.voting_method == "budget_allocation":
         return _compute_allocation_tally_pure(user_ids, ctx)
+    if ctx.voting_method == "budget_project":
+        return _compute_project_tally_pure(user_ids, ctx)
     return _compute_binary_tally_pure(user_ids, ctx)
+
+
+def _compute_project_tally_pure(
+    user_ids: list[str],
+    ctx: ProposalContext,
+):
+    """Phase 74 — project-budget tally (direct-vote only, like allocation).
+
+    Reads each eligible voter's DIRECT ranked ballot from ``ctx.direct_ballots``
+    (delegation never resolved for budget). Each ballot is an ordered list of
+    option_ids; ``budget_tally.tally_project`` handles omission-at-max-spend.
+    """
+    import budget_tally
+
+    ballots: list[list[str]] = []
+    for uid in user_ids:
+        b = ctx.direct_ballots.get(uid)
+        if b is not None and b.project_ranked is not None:
+            ballots.append(list(b.project_ranked))
+
+    cfg = ctx.budget_config or {}
+    envelope = cfg.get("envelope", 0)
+    return budget_tally.tally_project(
+        envelope=envelope,
+        min_spend=cfg.get("min_spend", 0),
+        max_spend=cfg.get("max_spend", envelope),
+        items=ctx.budget_items or [],
+        ballots=ballots,
+        total_eligible=len(user_ids),
+    )
 
 
 def _compute_allocation_tally_pure(
@@ -1585,6 +1624,16 @@ class DelegationService:
                 ballot_data = row.ballot or {}
                 allocations = ballot_data.get("allocations", {})
                 direct_ballots[row.user_id] = Ballot(allocations=allocations)
+            elif voting_method == "budget_project":
+                # Phase 74 — direct project ballot: ordered list of option_ids
+                # (preserve order; tier_id ignored in Stage-74 core).
+                ballot_data = row.ballot or {}
+                ranked = [
+                    item.get("option_id")
+                    for item in (ballot_data.get("ranked") or [])
+                    if isinstance(item, dict) and item.get("option_id")
+                ]
+                direct_ballots[row.user_id] = Ballot(project_ranked=ranked)
             else:
                 if row.vote_value is not None:
                     direct_votes[row.user_id] = row.vote_value
@@ -1627,6 +1676,7 @@ class DelegationService:
         # budget_allocation proposals (the pure layer never touches the DB).
         budget_config = None
         budget_buckets = None
+        budget_items = None
         if voting_method == "budget_allocation":
             import budget_tally
             budget_config = getattr(proposal, "budget_config", None)
@@ -1634,6 +1684,21 @@ class DelegationService:
                 budget_tally.BucketSpec(
                     option_id=opt.id,
                     max_amount=getattr(opt, "budget_max_amount", None),
+                )
+                for opt in proposal.options
+            ]
+        elif voting_method == "budget_project":
+            import budget_tally
+            budget_config = getattr(proposal, "budget_config", None)
+            # Stage-74 core: every option is a plain discrete item funded at
+            # its floor. (Mandatory/tier columns ignored until 74a/74b.)
+            budget_items = [
+                budget_tally.ProjectItemSpec(
+                    option_id=opt.id,
+                    floor_amount=(
+                        getattr(opt, "budget_floor_amount", None) or 0
+                    ),
+                    kind=getattr(opt, "budget_kind", None) or "discrete",
                 )
                 for opt in proposal.options
             ]
@@ -1650,6 +1715,7 @@ class DelegationService:
             approval_winner_config=approval_winner_config,
             budget_config=budget_config,
             budget_buckets=budget_buckets,
+            budget_items=budget_items,
         )
 
     # ------------------------------------------------------------------

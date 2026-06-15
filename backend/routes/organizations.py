@@ -2251,7 +2251,7 @@ def get_public_org_proposal_results(
             num_winners=tally.num_winners,
             time_series=time_series, sustained_majority=sm_status,
         )
-    from budget_tally import AllocationTally
+    from budget_tally import AllocationTally, ProjectTally
     if (
         proposal.voting_method == "budget_allocation"
         and isinstance(tally, AllocationTally)
@@ -2272,6 +2272,32 @@ def get_public_org_proposal_results(
             budget_envelope=cfg.get("envelope"),
             budget_currency=cfg.get("currency", "USD"),
             budget_aggregation=tally.aggregation,
+            time_series=time_series, sustained_majority=sm_status,
+        )
+    if (
+        proposal.voting_method == "budget_project"
+        and isinstance(tally, ProjectTally)
+    ):
+        option_labels = {opt.id: opt.label for opt in proposal.options}
+        cfg = getattr(proposal, "budget_config", None) or {}
+        return schemas.ProposalResults(
+            proposal_id=proposal_id, voting_method="budget_project",
+            not_cast=tally.not_cast, total_eligible=tally.total_eligible,
+            votes_cast=tally.total_ballots_cast,
+            quorum_met=tally.quorum_met(proposal.quorum_threshold),
+            option_labels=option_labels,
+            total_ballots_cast=tally.total_ballots_cast,
+            project_funded=tally.funded,
+            project_unfunded=tally.unfunded,
+            project_priority_order=tally.priority_order,
+            project_total_committed=tally.total_committed,
+            project_stop_point=tally.stop_point,
+            project_group_desired_total=tally.group_desired_total,
+            project_halt_reason=tally.halt_reason,
+            project_min_spend=cfg.get("min_spend"),
+            project_max_spend=cfg.get("max_spend"),
+            budget_envelope=cfg.get("envelope"),
+            budget_currency=cfg.get("currency", "USD"),
             time_series=time_series, sustained_majority=sm_status,
         )
     return schemas.ProposalResults(
@@ -3889,7 +3915,7 @@ def create_org_proposal(
         ))
     db.flush()
 
-    if body.voting_method in ("approval", "ranked_choice", "budget_allocation") and body.options:
+    if body.voting_method in ("approval", "ranked_choice", "budget_allocation", "budget_project") and body.options:
         _create_proposal_options(db, proposal.id, body.options)
 
     log_audit_event(
@@ -4573,14 +4599,13 @@ def advance_org_proposal(
                 next_status = "passed"
             else:
                 next_status = "failed"
-        elif proposal.voting_method == "budget_allocation":
-            # Phase 73 — allocation budgets pass on quorum alone (no yes/no,
-            # so pass_threshold is not consulted), including the degenerate
-            # all-zero case. No winner set → never routes to tie resolution.
-            # (Mirrors routes/proposals.py.)
-            from budget_tally import AllocationTally
+        elif proposal.voting_method in ("budget_allocation", "budget_project"):
+            # Phase 73/74 — budget proposals pass on quorum alone (no yes/no),
+            # including the degenerate "fund nothing" case. No winner set →
+            # never routes to tie resolution. (Mirrors routes/proposals.py.)
+            from budget_tally import AllocationTally, ProjectTally
             if (
-                isinstance(tally, AllocationTally)
+                isinstance(tally, (AllocationTally, ProjectTally))
                 and tally.quorum_met(proposal.quorum_threshold)
             ):
                 next_status = "passed"
