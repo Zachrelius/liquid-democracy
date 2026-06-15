@@ -896,8 +896,9 @@ def _collect_proposal_creation_errors(
                 "num_winners must be 1 for budget proposals",
             ))
     elif body.voting_method == "budget_project":
-        # Phase 74 Stage core — each option is a discrete fundable item with a
-        # floor cost. Mandatory/tier features are NOT in the core stage.
+        # Phase 74 core + 74a — each option is a discrete fundable item OR a
+        # Mode C "continuous-as-discrete" item (funded at its ceiling/floor,
+        # all-or-$0). Cost tiers (tier_parent) are 74b — still rejected here.
         if len(body.options) < 2:
             errors.append((
                 "options", 400,
@@ -918,29 +919,49 @@ def _collect_proposal_creation_errors(
                 break
             seen_labels.add(lower)
         for opt in body.options:
-            floor = getattr(opt, "budget_floor_amount", None)
-            if floor is None or floor <= 0:
-                errors.append((
-                    "options", 400,
-                    (
-                        f"Project budget item '{opt.label}' requires a positive "
-                        "budget_floor_amount (its cost when funded)."
-                    ),
-                ))
-                break
-            # Core stage: mandatory + tiers are not yet supported.
-            if getattr(opt, "budget_is_mandatory", None):
-                errors.append((
-                    "options", 400,
-                    "Mandatory items are not yet supported (coming in a later stage).",
-                ))
-                break
-            if getattr(opt, "budget_tier_parent_id", None) or getattr(opt, "budget_kind", None) == "tier_parent":
+            kind = getattr(opt, "budget_kind", None) or "discrete"
+            # Cost tiers are 74b.
+            if kind == "tier_parent" or getattr(opt, "budget_tier_parent_id", None):
                 errors.append((
                     "options", 400,
                     "Cost tiers are not yet supported (coming in a later stage).",
                 ))
                 break
+            if kind not in ("discrete", "continuous-as-discrete"):
+                errors.append((
+                    "options", 400,
+                    (
+                        f"Project budget item '{opt.label}' has unsupported "
+                        f"budget_kind '{kind}'."
+                    ),
+                ))
+                break
+            floor = getattr(opt, "budget_floor_amount", None)
+            if kind == "continuous-as-discrete":
+                # Mode C funds at its ceiling if set, else its floor; either
+                # must resolve to a positive cost.
+                max_a = getattr(opt, "budget_max_amount", None)
+                resolved = max_a if max_a is not None else floor
+                if resolved is None or resolved <= 0:
+                    errors.append((
+                        "options", 400,
+                        (
+                            f"Continuous item '{opt.label}' requires a positive "
+                            "budget_max_amount or budget_floor_amount (its "
+                            "all-or-nothing cost)."
+                        ),
+                    ))
+                    break
+            else:  # discrete
+                if floor is None or floor <= 0:
+                    errors.append((
+                        "options", 400,
+                        (
+                            f"Project budget item '{opt.label}' requires a "
+                            "positive budget_floor_amount (its cost when funded)."
+                        ),
+                    ))
+                    break
         if body.num_winners != 1:
             errors.append((
                 "num_winners", 400,
@@ -973,7 +994,6 @@ def _create_proposal_options(db: Session, proposal_id: str, options: list[schema
             # Phase 74 — discrete project-item cost metadata (NULL otherwise).
             budget_floor_amount=getattr(opt, "budget_floor_amount", None),
             budget_kind=getattr(opt, "budget_kind", None),
-            budget_is_mandatory=getattr(opt, "budget_is_mandatory", None),
             budget_tier_parent_id=getattr(opt, "budget_tier_parent_id", None),
             tier_allow_fallback=getattr(opt, "tier_allow_fallback", None),
         ))

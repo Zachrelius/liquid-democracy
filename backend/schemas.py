@@ -345,12 +345,11 @@ class OptionCreate(BaseModel):
     # absorb the whole envelope). Ignored for non-budget proposals.
     budget_max_amount: Optional[float] = Field(default=None, ge=0)
     # Phase 74 — discrete project-item cost metadata. NULL on non-project
-    # options. budget_floor_amount is the all-or-nothing cost. budget_kind +
-    # mandatory + tier fields exist for forward-compat; Stage-74 core treats
-    # every item as plain discrete (mandatory/tier handled in 74a/74b).
+    # options. budget_floor_amount is the all-or-nothing cost. budget_kind ∈
+    # {discrete, continuous-as-discrete (74a), tier_parent (74b)}; tier fields
+    # used by 74b. (mandatory-minimum was cut; its column dropped in 74a.)
     budget_floor_amount: Optional[float] = Field(default=None, ge=0)
     budget_kind: Optional[str] = Field(default=None)
-    budget_is_mandatory: Optional[bool] = Field(default=None)
     budget_tier_parent_id: Optional[str] = Field(default=None)
     tier_allow_fallback: Optional[bool] = Field(default=None)
 
@@ -372,7 +371,6 @@ class OptionOut(BaseModel):
     # Phase 74 — discrete project-item cost metadata (NULL on non-project).
     budget_floor_amount: Optional[float] = None
     budget_kind: Optional[str] = None
-    budget_is_mandatory: Optional[bool] = None
     budget_tier_parent_id: Optional[str] = None
     tier_allow_fallback: Optional[bool] = None
 
