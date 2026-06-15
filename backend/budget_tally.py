@@ -286,14 +286,31 @@ def tally_allocation(
 
 
 @dataclass
+class TierSpec:
+    """Phase 74b — one mutually-exclusive variant of a tier-parent item
+    (e.g. "6ft pool $300k"). ``cost`` is what funding this tier spends."""
+
+    tier_id: str
+    cost: float
+
+
+@dataclass
 class ProjectItemSpec:
-    """One discrete fundable item. ``floor_amount`` is its all-or-nothing cost
-    (funded at this or $0). ``kind`` is carried for forward-compat but the core
-    tally treats every item as plain discrete."""
+    """One fundable item.
+
+    - Plain discrete / Mode C continuous-as-discrete: ``floor_amount`` is its
+      all-or-nothing cost (funded at this or $0); ``tiers`` empty.
+    - Tier parent (``kind == "tier_parent"``, Phase 74b): carries no cost of its
+      own; ``tiers`` lists its variants and ``tier_allow_fallback`` controls
+      whether the walk steps down to a cheaper affordable tier when the
+      group-preferred one doesn't fit.
+    """
 
     option_id: str
-    floor_amount: float
+    floor_amount: float = 0.0
     kind: str = "discrete"
+    tiers: list = field(default_factory=list)        # list[TierSpec] (tier parents)
+    tier_allow_fallback: bool = True
 
 
 @dataclass
@@ -325,26 +342,84 @@ class ProjectTally:
         return self.total_ballots_cast / self.total_eligible >= threshold
 
 
+def _normalize_ballot_entry(entry):
+    """Phase 74b — accept a ballot entry as a bare option_id str (non-tiered),
+    a ``(option_id, tier_id)`` tuple/list, or a ``{option_id, tier_id}`` dict.
+    Returns ``(option_id, tier_id_or_None)``. Keeps the core's bare-string
+    ballots working unchanged (backward-compat)."""
+    if isinstance(entry, str):
+        return (entry, None)
+    if isinstance(entry, dict):
+        return (entry.get("option_id"), entry.get("tier_id"))
+    # tuple / list
+    if len(entry) >= 2:
+        return (entry[0], entry[1])
+    return (entry[0], None)
+
+
 def tally_project(
     *,
     envelope: float,
     min_spend: float,
     max_spend: float,
     items: list[ProjectItemSpec],
-    ballots: list[list[str]],   # each = ordered list of option_ids (highest priority first)
+    ballots: list,   # per voter: ordered list of option_id str | (option_id, tier_id) | {option_id, tier_id}
     total_eligible: Optional[int] = None,
 ) -> ProjectTally:
-    """Tally a project-budget proposal (core: plain discrete items).
+    """Tally a project-budget proposal (discrete + Mode C + cost tiers).
 
-    ``ballots`` is one ordered ``[option_id, ...]`` list per cast voter (order
-    IS the ranking; an omitted item is ranked at ``max_spend``).
+    ``ballots`` is one ordered list per cast voter, highest priority first.
+    Each entry is a bare option_id (non-tiered item) or carries a ``tier_id``
+    naming the voter's chosen variant of a tier-parent item. An omitted item is
+    ranked at ``max_spend``.
+
+    Tiers (Phase 74b): a tier parent carries no cost itself; the voter's
+    "chosen cost" for it is the cost of the tier they selected. When the walk
+    reaches a tier parent it funds the GROUP-PREFERRED tier (plurality among
+    voters who ranked it; tiebreak lower cost then id), stepping down to the
+    most-preferred affordable tier if the preferred one doesn't fit and
+    ``tier_allow_fallback`` is True — else the item doesn't fit and the walk
+    hard-stops. At most one tier per parent is ever funded.
     """
     item_ids = [it.option_id for it in items]
-    cost = {it.option_id: float(it.floor_amount or 0) for it in items}
-    n_cast = len(ballots)
+    is_parent: dict = {}
+    fixed_cost: dict = {}
+    tier_cost: dict = {}        # parent_id -> {tier_id: cost}
+    allow_fallback: dict = {}
+    for it in items:
+        if it.kind == "tier_parent":
+            is_parent[it.option_id] = True
+            tier_cost[it.option_id] = {
+                ts.tier_id: float(ts.cost or 0) for ts in (it.tiers or [])
+            }
+            allow_fallback[it.option_id] = bool(it.tier_allow_fallback)
+        else:
+            is_parent[it.option_id] = False
+            fixed_cost[it.option_id] = float(it.floor_amount or 0)
+
+    # Normalize ballots once → list of (ordered_ids, tier_selection_map).
+    voters: list = []
+    for ballot in ballots:
+        norm = [_normalize_ballot_entry(e) for e in ballot]
+        ordered = [oid for oid, _ in norm]
+        tmap = {oid: tid for oid, tid in norm if tid is not None}
+        voters.append((ordered, tmap))
+    n_cast = len(voters)
     if total_eligible is None:
         total_eligible = n_cast
     not_cast = max(0, total_eligible - n_cast)
+
+    def chosen_cost(iid: str, tmap: dict) -> float:
+        """A voter's all-or-nothing cost for one item — for a tier parent, the
+        cost of the tier THIS voter selected (defensively the cheapest tier if
+        they ranked it without a valid selection)."""
+        if is_parent.get(iid):
+            tcosts = tier_cost.get(iid, {})
+            tid = tmap.get(iid)
+            if tid is not None and tid in tcosts:
+                return tcosts[tid]
+            return min(tcosts.values()) if tcosts else 0.0
+        return fixed_cost.get(iid, 0.0)
 
     # Step 1 — per-item group priority position + breadth.
     positions: dict = {}
@@ -352,12 +427,13 @@ def tally_project(
     for iid in item_ids:
         per_voter_pos: list[float] = []
         ranked_count = 0
-        for ballot in ballots:
-            if iid in ballot:
+        for ordered, tmap in voters:
+            if iid in ordered:
                 ranked_count += 1
-                idx = ballot.index(iid)
-                # cumulative position = sum of costs of items BEFORE iid.
-                per_voter_pos.append(sum(cost.get(o, 0) for o in ballot[:idx]))
+                idx = ordered.index(iid)
+                # cumulative position = sum of THIS voter's chosen costs of the
+                # items before iid (tier parents contribute their chosen tier).
+                per_voter_pos.append(sum(chosen_cost(o, tmap) for o in ordered[:idx]))
             else:
                 per_voter_pos.append(max_spend)  # omission = max_spend
         positions[iid] = _median(per_voter_pos) if per_voter_pos else max_spend
@@ -367,11 +443,12 @@ def tally_project(
     order = sorted(item_ids, key=lambda i: (positions[i], -breadth[i], i))
 
     # Step 3 — group desired-total = median of per-voter implied spends.
-    desired = [sum(cost.get(o, 0) for o in ballot) for ballot in ballots]
+    desired = [sum(chosen_cost(o, tmap) for o in ordered) for ordered, tmap in voters]
     group_desired = _median(desired) if desired else 0.0
     stop_point = max(min_spend, min(group_desired, max_spend))
 
     # Step 4 — the funding walk (HARD-STOP on the top unfunded item).
+    cap = min(envelope, max_spend)
     funded: list = []
     committed = 0.0
     halt_reason = "queue_exhausted"
@@ -379,15 +456,39 @@ def tally_project(
         if committed >= stop_point - _EPS:
             halt_reason = "stop_point"
             break
-        c = cost[iid]
-        if committed + c <= envelope + _EPS and committed + c <= max_spend + _EPS:
-            funded.append({"option_id": iid, "amount": c})
-            committed += c
+        if is_parent.get(iid):
+            tcosts = tier_cost.get(iid, {})
+            # Group-preferred order: plurality among voters who ranked the
+            # parent; tiebreak lower cost, then deterministic id.
+            counts: dict = {}
+            for ordered, tmap in voters:
+                if iid in ordered:
+                    tid = tmap.get(iid)
+                    if tid is not None and tid in tcosts:
+                        counts[tid] = counts.get(tid, 0) + 1
+            pref_order = sorted(
+                tcosts.keys(), key=lambda t: (-counts.get(t, 0), tcosts[t], t)
+            )
+            candidates = pref_order if allow_fallback.get(iid, True) else pref_order[:1]
+            chosen = next(
+                (t for t in candidates if committed + tcosts[t] <= cap + _EPS), None
+            )
+            if chosen is not None:
+                funded.append({"option_id": iid, "tier_id": chosen, "amount": tcosts[chosen]})
+                committed += tcosts[chosen]
+            else:
+                halt_reason = "item_did_not_fit"
+                break
         else:
-            # Highest-priority not-yet-funded item doesn't fit → STOP (do not
-            # skip past it to fund a cheaper lower-priority item).
-            halt_reason = "item_did_not_fit"
-            break
+            c = fixed_cost.get(iid, 0.0)
+            if committed + c <= envelope + _EPS and committed + c <= max_spend + _EPS:
+                funded.append({"option_id": iid, "tier_id": None, "amount": c})
+                committed += c
+            else:
+                # Highest-priority not-yet-funded item doesn't fit → STOP (do
+                # not skip past it to fund a cheaper lower-priority item).
+                halt_reason = "item_did_not_fit"
+                break
 
     funded_ids = {f["option_id"] for f in funded}
     unfunded = [i for i in item_ids if i not in funded_ids]

@@ -920,14 +920,18 @@ def _collect_proposal_creation_errors(
             seen_labels.add(lower)
         for opt in body.options:
             kind = getattr(opt, "budget_kind", None) or "discrete"
-            # Cost tiers are 74b.
-            if kind == "tier_parent" or getattr(opt, "budget_tier_parent_id", None):
+            # Tier children are created server-side from a parent's nested
+            # `tiers` (74b); a top-level option must not carry a parent link.
+            if getattr(opt, "budget_tier_parent_id", None):
                 errors.append((
                     "options", 400,
-                    "Cost tiers are not yet supported (coming in a later stage).",
+                    (
+                        f"Item '{opt.label}' must not set budget_tier_parent_id "
+                        "directly — add tiers nested under a tier_parent item."
+                    ),
                 ))
                 break
-            if kind not in ("discrete", "continuous-as-discrete"):
+            if kind not in ("discrete", "continuous-as-discrete", "tier_parent"):
                 errors.append((
                     "options", 400,
                     (
@@ -937,7 +941,27 @@ def _collect_proposal_creation_errors(
                 ))
                 break
             floor = getattr(opt, "budget_floor_amount", None)
-            if kind == "continuous-as-discrete":
+            if kind == "tier_parent":
+                # 74b — a tier parent has >=1 nested tier and NO cost of its own.
+                tiers = getattr(opt, "tiers", None) or []
+                if len(tiers) < 1:
+                    errors.append((
+                        "options", 400,
+                        f"Tier item '{opt.label}' requires at least one tier variant.",
+                    ))
+                    break
+                if floor is not None or getattr(opt, "budget_max_amount", None) is not None:
+                    errors.append((
+                        "options", 400,
+                        (
+                            f"Tier item '{opt.label}' must not carry its own cost; "
+                            "the cost lives on each tier variant."
+                        ),
+                    ))
+                    break
+                # Each tier's positive cost is enforced at the schema layer
+                # (TierOptionCreate.budget_floor_amount gt=0).
+            elif kind == "continuous-as-discrete":
                 # Mode C funds at its ceiling if set, else its floor; either
                 # must resolve to a positive cost.
                 max_a = getattr(opt, "budget_max_amount", None)
@@ -982,21 +1006,46 @@ def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[mode
 
 
 def _create_proposal_options(db: Session, proposal_id: str, options: list[schemas.OptionCreate]):
-    """Create ProposalOption rows for an approval proposal."""
-    for i, opt in enumerate(options):
-        db.add(models.ProposalOption(
+    """Create ProposalOption rows for a multi-option proposal.
+
+    Phase 74b — a tier-parent option (``budget_kind == 'tier_parent'``) carries
+    nested ``tiers``; we create the parent row (no cost) then expand each tier
+    into a child option row (``budget_kind='discrete'``,
+    ``budget_tier_parent_id=parent.id``, ``budget_floor_amount=<tier cost>``).
+    Children sort right after their parent; display_order is contiguous.
+    """
+    order = 0
+    for opt in options:
+        is_tier_parent = getattr(opt, "budget_kind", None) == "tier_parent"
+        parent = models.ProposalOption(
             proposal_id=proposal_id,
             label=opt.label.strip(),
             description=opt.description,
-            display_order=i,
+            display_order=order,
             # Phase 73 — bucket ceiling (NULL on non-budget options).
             budget_max_amount=getattr(opt, "budget_max_amount", None),
             # Phase 74 — discrete project-item cost metadata (NULL otherwise).
-            budget_floor_amount=getattr(opt, "budget_floor_amount", None),
+            # A tier parent carries NO cost of its own.
+            budget_floor_amount=(None if is_tier_parent else getattr(opt, "budget_floor_amount", None)),
             budget_kind=getattr(opt, "budget_kind", None),
             budget_tier_parent_id=getattr(opt, "budget_tier_parent_id", None),
             tier_allow_fallback=getattr(opt, "tier_allow_fallback", None),
-        ))
+        )
+        db.add(parent)
+        order += 1
+        if is_tier_parent and getattr(opt, "tiers", None):
+            db.flush()  # assign parent.id before linking children
+            for tier in opt.tiers:
+                db.add(models.ProposalOption(
+                    proposal_id=proposal_id,
+                    label=tier.label.strip(),
+                    description=tier.description,
+                    display_order=order,
+                    budget_kind="discrete",
+                    budget_floor_amount=tier.budget_floor_amount,
+                    budget_tier_parent_id=parent.id,
+                ))
+                order += 1
     db.flush()
 
 

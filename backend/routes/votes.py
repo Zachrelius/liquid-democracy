@@ -295,23 +295,62 @@ async def cast_vote(
                 status_code=400,
                 detail="ranked is required for project budget proposals",
             )
-        valid_option_ids = {opt.id for opt in proposal.options}
+        # Phase 74b — tier-aware option maps. Tier children (those with a
+        # budget_tier_parent_id) are NOT independently rankable; only the
+        # parent is ranked, carrying the voter's chosen tier_id.
+        opts_by_id = {opt.id: opt for opt in proposal.options}
+        tier_parent_ids = {
+            opt.id for opt in proposal.options
+            if getattr(opt, "budget_kind", None) == "tier_parent"
+        }
+        # parent_id -> set of its child (tier) option ids
+        tiers_of: dict = {}
+        for opt in proposal.options:
+            pid = getattr(opt, "budget_tier_parent_id", None)
+            if pid:
+                tiers_of.setdefault(pid, set()).add(opt.id)
         seen: set = set()
         normalized: list = []
         for item in body.ranked:
             oid = item.get("option_id")
-            if oid not in valid_option_ids:
+            tid = item.get("tier_id")
+            if oid not in opts_by_id:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Option {oid} does not belong to this proposal",
                 )
-            if oid in seen:
+            # Can't rank a tier child directly — rank the parent + name the tier.
+            if getattr(opts_by_id[oid], "budget_tier_parent_id", None):
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Option {oid} ranked more than once",
+                    detail=f"Option {oid} is a tier variant; rank its parent item instead",
+                )
+            if oid in seen:
+                # A second entry for one parent = selecting two tiers of it.
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Option {oid} ranked more than once (at most one tier per item)",
                 )
             seen.add(oid)
-            normalized.append({"option_id": oid, "tier_id": item.get("tier_id")})
+            if oid in tier_parent_ids:
+                # Ranking a tier parent requires naming one of ITS tiers.
+                if tid is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Tier item {oid} requires a tier_id (pick a variant)",
+                    )
+                if tid not in tiers_of.get(oid, set()):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"tier_id {tid} is not a variant of item {oid}",
+                    )
+            elif tid is not None:
+                # tier_id only valid on a tier parent.
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Option {oid} is not a tiered item; remove tier_id",
+                )
+            normalized.append({"option_id": oid, "tier_id": tid})
         vote_value = None
         ballot = {"ranked": normalized}
     else:

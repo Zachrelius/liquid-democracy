@@ -338,6 +338,17 @@ def _normalise_topics(v: Any) -> list[TopicWithRelevance]:
     return result
 
 
+class TierOptionCreate(BaseModel):
+    """Phase 74b — one variant of a tier-parent project item, nested under the
+    parent at create time. The server expands each into a child ProposalOption
+    row (budget_kind='discrete', budget_tier_parent_id=parent.id,
+    budget_floor_amount=cost) so the not-yet-created parent's id doesn't need to
+    be referenced client-side."""
+    label: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2000)
+    budget_floor_amount: float = Field(gt=0)
+
+
 class OptionCreate(BaseModel):
     label: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=2000)
@@ -346,12 +357,15 @@ class OptionCreate(BaseModel):
     budget_max_amount: Optional[float] = Field(default=None, ge=0)
     # Phase 74 — discrete project-item cost metadata. NULL on non-project
     # options. budget_floor_amount is the all-or-nothing cost. budget_kind ∈
-    # {discrete, continuous-as-discrete (74a), tier_parent (74b)}; tier fields
-    # used by 74b. (mandatory-minimum was cut; its column dropped in 74a.)
+    # {discrete, continuous-as-discrete (74a), tier_parent (74b)}.
+    # (mandatory-minimum was cut; its column dropped in 74a.)
     budget_floor_amount: Optional[float] = Field(default=None, ge=0)
     budget_kind: Optional[str] = Field(default=None)
     budget_tier_parent_id: Optional[str] = Field(default=None)
     tier_allow_fallback: Optional[bool] = Field(default=None)
+    # Phase 74b — for a budget_kind=='tier_parent' option, its variants (nested
+    # at create; the server expands them into child option rows).
+    tiers: Optional[list[TierOptionCreate]] = Field(default=None)
 
 
 class OptionOut(BaseModel):

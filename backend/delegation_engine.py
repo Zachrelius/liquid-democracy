@@ -1641,11 +1641,12 @@ class DelegationService:
                 allocations = ballot_data.get("allocations", {})
                 direct_ballots[row.user_id] = Ballot(allocations=allocations)
             elif voting_method == "budget_project":
-                # Phase 74 — direct project ballot: ordered list of option_ids
-                # (preserve order; tier_id ignored in Stage-74 core).
+                # Phase 74 + 74b — direct project ballot: ordered list of
+                # (option_id, tier_id) pairs (tier_id None for non-tiered
+                # items). Order is the ranking; tally_project normalizes.
                 ballot_data = row.ballot or {}
                 ranked = [
-                    item.get("option_id")
+                    (item.get("option_id"), item.get("tier_id"))
                     for item in (ballot_data.get("ranked") or [])
                     if isinstance(item, dict) and item.get("option_id")
                 ]
@@ -1706,19 +1707,42 @@ class DelegationService:
         elif voting_method == "budget_project":
             import budget_tally
             budget_config = getattr(proposal, "budget_config", None)
-            # Phase 74 core + 74a: discrete items fund at their floor; Mode C
-            # "continuous-as-discrete" items fund at their ceiling
-            # (budget_max_amount) if set, else their floor — treated as a plain
-            # discrete item with that resolved cost (may fund $0; §2.2). Tiers
-            # are 74b. (budget_is_mandatory dropped in 74a — never read.)
-            budget_items = [
-                budget_tally.ProjectItemSpec(
-                    option_id=opt.id,
-                    floor_amount=_resolve_project_item_cost(opt),
-                    kind=getattr(opt, "budget_kind", None) or "discrete",
-                )
-                for opt in proposal.options
-            ]
+            # Phase 74 core/74a/74b — build the item list:
+            #  - discrete + Mode C continuous-as-discrete fund at their resolved
+            #    cost (ceiling-or-floor) — _resolve_project_item_cost.
+            #  - tier parents (74b) carry no cost of their own; their tier
+            #    CHILDREN (budget_tier_parent_id set) are folded into the
+            #    parent's `tiers` and EXCLUDED from the top-level item list
+            #    (children aren't ranked directly — only the parent is).
+            opts = list(proposal.options)
+            children_by_parent: dict = {}
+            for opt in opts:
+                pid = getattr(opt, "budget_tier_parent_id", None)
+                if pid:
+                    children_by_parent.setdefault(pid, []).append(opt)
+            budget_items = []
+            for opt in opts:
+                if getattr(opt, "budget_tier_parent_id", None):
+                    continue  # a tier child — folded into its parent below
+                if getattr(opt, "budget_kind", None) == "tier_parent":
+                    tiers = [
+                        budget_tally.TierSpec(
+                            tier_id=child.id,
+                            cost=getattr(child, "budget_floor_amount", None) or 0,
+                        )
+                        for child in children_by_parent.get(opt.id, [])
+                    ]
+                    fb = getattr(opt, "tier_allow_fallback", None)
+                    budget_items.append(budget_tally.ProjectItemSpec(
+                        option_id=opt.id, kind="tier_parent", tiers=tiers,
+                        tier_allow_fallback=True if fb is None else bool(fb),
+                    ))
+                else:
+                    budget_items.append(budget_tally.ProjectItemSpec(
+                        option_id=opt.id,
+                        floor_amount=_resolve_project_item_cost(opt),
+                        kind=getattr(opt, "budget_kind", None) or "discrete",
+                    ))
 
         return ProposalContext(
             proposal_topics=proposal_topics,
