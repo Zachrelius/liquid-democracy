@@ -253,3 +253,157 @@ def tally_allocation(
         aggregation=aggregation,
         envelope=envelope,
     )
+
+
+# ===========================================================================
+# Project tally (Mode B) — Phase 74 Stage 74 (CORE: plain discrete items)
+# ===========================================================================
+#
+# The knapsack-under-scarcity world: discrete all-or-nothing items, ranked by
+# CUMULATIVE SPEND (not ordinal slot), funded in group-priority order, stopping
+# at the group's chosen spend level. Structurally different from allocation
+# (Mode A), which is why it's a separate method + tally.
+#
+# Core machinery (this stage):
+#  1. Cumulative-spend ranking — a voter's priority for an item is the running
+#     total of spend that precedes it in their list (dollars-already-committed-
+#     when-this-item-is-reached), NOT its ordinal position.
+#  2. Omission = ranked at the proposal `max_spend` — a strong "don't spend on
+#     this" signal (strictly harsher than "after my own total").
+#  3. Group priority = median of per-item cumulative positions (omitters
+#     contributing max_spend), breadth-first tiebreak on ties.
+#  4. Group desired-total = median of per-voter implied spends, clamped to
+#     [min_spend, max_spend] — the stop point. This makes min_spend=0 usable
+#     ("spend nothing if it's not worth it") without stopping after one item.
+#  5. HARD-STOP walk (the genuine values choice — see test): when the highest-
+#     priority not-yet-funded item doesn't fit, STOP the walk — do not skip it
+#     to fund cheaper lower-priority items. Protects big-ticket high-priority
+#     projects from being leapfrogged.
+#
+# NOT in core (Phase 74a/74b): mandatory-off-the-top, cost tiers, Mode C
+# continuous-as-discrete. Those columns exist on the model but the core tally
+# treats every item as a plain discrete item funded at its floor.
+
+
+@dataclass
+class ProjectItemSpec:
+    """One discrete fundable item. ``floor_amount`` is its all-or-nothing cost
+    (funded at this or $0). ``kind`` is carried for forward-compat but the core
+    tally treats every item as plain discrete."""
+
+    option_id: str
+    floor_amount: float
+    kind: str = "discrete"
+
+
+@dataclass
+class ProjectTally:
+    """Result of a project-budget tally. No winners/tied fields — funds a SET,
+    never routes to tie_resolution.py (priority ties break inside the tally)."""
+
+    funded: list = field(default_factory=list)          # [{option_id, amount}]
+    unfunded: list = field(default_factory=list)         # option_ids
+    total_committed: float = 0.0
+    stop_point: float = 0.0
+    group_desired_total: float = 0.0
+    halt_reason: str = "queue_exhausted"  # stop_point | item_did_not_fit | queue_exhausted
+    group_positions: dict = field(default_factory=dict)  # {option_id: position}
+    breadth: dict = field(default_factory=dict)          # {option_id: rank_count}
+    priority_order: list = field(default_factory=list)   # option_ids, highest priority first
+    total_ballots_cast: int = 0
+    total_eligible: int = 0
+    not_cast: int = 0
+    envelope: float = 0.0
+
+    @property
+    def votes_cast(self) -> int:
+        return self.total_ballots_cast
+
+    def quorum_met(self, threshold: float) -> bool:
+        if self.total_eligible == 0:
+            return False
+        return self.total_ballots_cast / self.total_eligible >= threshold
+
+
+def tally_project(
+    *,
+    envelope: float,
+    min_spend: float,
+    max_spend: float,
+    items: list[ProjectItemSpec],
+    ballots: list[list[str]],   # each = ordered list of option_ids (highest priority first)
+    total_eligible: Optional[int] = None,
+) -> ProjectTally:
+    """Tally a project-budget proposal (core: plain discrete items).
+
+    ``ballots`` is one ordered ``[option_id, ...]`` list per cast voter (order
+    IS the ranking; an omitted item is ranked at ``max_spend``).
+    """
+    item_ids = [it.option_id for it in items]
+    cost = {it.option_id: float(it.floor_amount or 0) for it in items}
+    n_cast = len(ballots)
+    if total_eligible is None:
+        total_eligible = n_cast
+    not_cast = max(0, total_eligible - n_cast)
+
+    # Step 1 — per-item group priority position + breadth.
+    positions: dict = {}
+    breadth: dict = {}
+    for iid in item_ids:
+        per_voter_pos: list[float] = []
+        ranked_count = 0
+        for ballot in ballots:
+            if iid in ballot:
+                ranked_count += 1
+                idx = ballot.index(iid)
+                # cumulative position = sum of costs of items BEFORE iid.
+                per_voter_pos.append(sum(cost.get(o, 0) for o in ballot[:idx]))
+            else:
+                per_voter_pos.append(max_spend)  # omission = max_spend
+        positions[iid] = _median(per_voter_pos) if per_voter_pos else max_spend
+        breadth[iid] = ranked_count
+
+    # Step 2 — total order: group position asc, breadth desc, option_id asc.
+    order = sorted(item_ids, key=lambda i: (positions[i], -breadth[i], i))
+
+    # Step 3 — group desired-total = median of per-voter implied spends.
+    desired = [sum(cost.get(o, 0) for o in ballot) for ballot in ballots]
+    group_desired = _median(desired) if desired else 0.0
+    stop_point = max(min_spend, min(group_desired, max_spend))
+
+    # Step 4 — the funding walk (HARD-STOP on the top unfunded item).
+    funded: list = []
+    committed = 0.0
+    halt_reason = "queue_exhausted"
+    for iid in order:
+        if committed >= stop_point - _EPS:
+            halt_reason = "stop_point"
+            break
+        c = cost[iid]
+        if committed + c <= envelope + _EPS and committed + c <= max_spend + _EPS:
+            funded.append({"option_id": iid, "amount": c})
+            committed += c
+        else:
+            # Highest-priority not-yet-funded item doesn't fit → STOP (do not
+            # skip past it to fund a cheaper lower-priority item).
+            halt_reason = "item_did_not_fit"
+            break
+
+    funded_ids = {f["option_id"] for f in funded}
+    unfunded = [i for i in item_ids if i not in funded_ids]
+
+    return ProjectTally(
+        funded=funded,
+        unfunded=unfunded,
+        total_committed=float(committed),
+        stop_point=float(stop_point),
+        group_desired_total=float(group_desired),
+        halt_reason=halt_reason,
+        group_positions=positions,
+        breadth=breadth,
+        priority_order=order,
+        total_ballots_cast=n_cast,
+        total_eligible=total_eligible,
+        not_cast=not_cast,
+        envelope=envelope,
+    )

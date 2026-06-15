@@ -204,11 +204,11 @@ def build_status(
     if org is None:
         return schemas.StableResultStatus(active=False)
 
-    # Phase 73 — budget proposals never run stable-result (the worker doesn't
-    # understand an allocation ballot, and budget is excluded from it). Force
-    # the status inactive so an org with stable-result default-on doesn't show
-    # the block on a budget proposal via inheritance.
-    if getattr(proposal, "voting_method", None) == "budget_allocation":
+    # Phase 73/74 — budget proposals never run stable-result (the worker
+    # doesn't understand an allocation/project ballot, and budget is excluded
+    # from it). Force the status inactive so an org with stable-result
+    # default-on doesn't show the block on a budget proposal via inheritance.
+    if getattr(proposal, "voting_method", None) in ("budget_allocation", "budget_project"):
         return schemas.StableResultStatus(active=False)
 
     config = get_stable_result_config(org)

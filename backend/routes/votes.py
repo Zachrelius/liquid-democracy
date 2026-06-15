@@ -282,6 +282,38 @@ async def cast_vote(
             )
         vote_value = None
         ballot = {"allocations": body.allocations}
+    elif proposal.voting_method == "budget_project":
+        # Phase 74 — project ballot: ordered [{option_id, tier_id?}]. Direct-
+        # vote only (always is_direct here). Order is the voter's ranking.
+        if body.vote_value is not None or body.approvals is not None or body.ranking is not None or body.allocations is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Use ranked for project budget proposals",
+            )
+        if body.ranked is None:
+            raise HTTPException(
+                status_code=400,
+                detail="ranked is required for project budget proposals",
+            )
+        valid_option_ids = {opt.id for opt in proposal.options}
+        seen: set = set()
+        normalized: list = []
+        for item in body.ranked:
+            oid = item.get("option_id")
+            if oid not in valid_option_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Option {oid} does not belong to this proposal",
+                )
+            if oid in seen:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Option {oid} ranked more than once",
+                )
+            seen.add(oid)
+            normalized.append({"option_id": oid, "tier_id": item.get("tier_id")})
+        vote_value = None
+        ballot = {"ranked": normalized}
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported voting method: {proposal.voting_method}")
 
