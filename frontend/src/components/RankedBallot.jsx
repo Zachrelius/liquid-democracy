@@ -7,6 +7,8 @@ import UserLink from './UserLink';
 // Phase 67 W3 — election proposals show candidate display names
 // (option.description) instead of the raw user-id UUID labels.
 import { optionDisplayLabel } from '../utils/optionDisplay';
+// Phase 72b — shared clamp-with-tap-to-expand option description.
+import OptionCardDescription from './OptionCardDescription';
 
 function ordinal(n) {
   const s = ['th', 'st', 'nd', 'rd'];
@@ -313,24 +315,30 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
                           ref={prov.innerRef}
                           {...prov.draggableProps}
                           {...prov.dragHandleProps}
-                          className={`flex items-start gap-3 bg-white border rounded-lg px-3 py-2 cursor-grab transition-shadow ${
+                          className={`bg-white border rounded-lg px-3 py-2 cursor-grab transition-shadow ${
                             snap.isDragging ? 'shadow-lg border-[var(--brand-accent)]' : 'border-gray-200'
                           }`}
                         >
-                          <span className="text-gray-300 text-sm select-none mt-0.5">⠿</span>
-                          <span className="text-sm font-bold text-[var(--brand-primary)] w-10 shrink-0">{ordinal(index + 1)}</span>
-                          <div className="flex-1 min-w-0">
-                            <span className="text-sm font-medium text-gray-800">{optionDisplayLabel(proposal, opt)}</span>
-                            {!proposal.is_election && opt.description && <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>}
+                          {/* Phase 72b — compact header row (grip/ordinal/remove);
+                              label + clamped description span full width below so a
+                              long title isn't squeezed against a w-10 ordinal column. */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-300 text-sm select-none">⠿</span>
+                            <span className="text-sm font-bold text-[var(--brand-primary)]">{ordinal(index + 1)}</span>
+                            <span className="flex-1" />
+                            <button
+                              type="button"
+                              onClick={() => removeFromRanking(oid)}
+                              className="text-gray-300 hover:text-red-500 text-xs px-1"
+                              title="Remove from ranking"
+                            >
+                              &#x2715;
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => removeFromRanking(oid)}
-                            className="text-gray-300 hover:text-red-500 text-xs px-1"
-                            title="Remove from ranking"
-                          >
-                            &#x2715;
-                          </button>
+                          <span className="block text-sm font-medium text-gray-800 leading-snug">{optionDisplayLabel(proposal, opt)}</span>
+                          {!proposal.is_election && opt.description && (
+                            <OptionCardDescription text={opt.description} className="mt-0.5" />
+                          )}
                         </li>
                       )}
                     </Draggable>
@@ -370,23 +378,27 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
                           ref={prov.innerRef}
                           {...prov.draggableProps}
                           {...prov.dragHandleProps}
-                          className={`flex items-start gap-3 bg-white border rounded-lg px-3 py-2 cursor-grab transition-shadow ${
+                          className={`bg-white border rounded-lg px-3 py-2 cursor-grab transition-shadow ${
                             snap.isDragging ? 'shadow-lg border-[var(--brand-accent)]' : 'border-gray-200'
                           }`}
                         >
-                          <span className="text-gray-300 text-sm select-none mt-0.5">⠿</span>
-                          <div className="flex-1 min-w-0">
-                            <span className="text-sm font-medium text-gray-800">{optionDisplayLabel(proposal, opt)}</span>
-                            {!proposal.is_election && opt.description && <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>}
+                          {/* Phase 72b — same full-width stack as the ranking zone. */}
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-300 text-sm select-none">⠿</span>
+                            <span className="flex-1" />
+                            <button
+                              type="button"
+                              onClick={() => moveToRanking(oid)}
+                              className="text-xs text-[var(--brand-accent)] hover:underline"
+                              title="Add to ranking"
+                            >
+                              Rank
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => moveToRanking(oid)}
-                            className="text-xs text-[var(--brand-accent)] hover:underline"
-                            title="Add to ranking"
-                          >
-                            Rank
-                          </button>
+                          <span className="block text-sm font-medium text-gray-800 leading-snug">{optionDisplayLabel(proposal, opt)}</span>
+                          {!proposal.is_election && opt.description && (
+                            <OptionCardDescription text={opt.description} className="mt-0.5" />
+                          )}
                         </li>
                       )}
                     </Draggable>

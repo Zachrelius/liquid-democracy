@@ -1649,6 +1649,16 @@ def delete_proposal(
     platform admin. Mirrors the PATCH /api/proposals/{id} permission
     check.
 
+    NOTE (Phase 72b): the ``proposal.delete`` permission key is
+    intentionally NOT consulted here. Draft deletion is gated by the
+    author / ``org.edit_proposal`` / platform-admin ladder above; there
+    is no other proposal-deletion path. ``proposal.delete`` remains a
+    registered-but-vestigial key (see permission_registry.py) — its
+    description states it has no effect. Do not "fix" this by adding a
+    ``proposal.delete`` check: deletion is deliberately org.edit_proposal-
+    gated, and proposals past draft are archived (withdrawn), never
+    deleted.
+
     Cascade: ORM `cascade='all, delete-orphan'` on Proposal's
     `options`, `proposal_topics`, and the rest of the relationship
     set handles dependent rows. No vote / delegation / comment rows
