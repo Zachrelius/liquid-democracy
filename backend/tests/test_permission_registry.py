@@ -88,6 +88,26 @@ def test_registry_per_category_counts_match_spec():
     assert actual == expected
 
 
+def test_proposal_delete_key_is_present_and_honestly_labeled():
+    """Phase 72b (Section B-keep) — `proposal.delete` is a registered-but-
+    vestigial key: the only proposal-deletion route is draft-only and gates
+    on author / org.edit_proposal / platform-admin, never reading this key.
+    We keep the key (removing it is a prod role_permissions data-migration
+    for zero user-facing gain) but its description must NOT overpromise. The
+    Phase 71c relabel made it honest; assert that here so a future edit can't
+    silently re-introduce the overpromise, and confirm keeping it didn't
+    change the registry count."""
+    by_key = {p.key: p for p in PERMISSION_REGISTRY}
+    assert "proposal.delete" in by_key
+    desc = by_key["proposal.delete"].description.lower()
+    # The description must disclose that the key currently does nothing.
+    assert "no effect" in desc
+    # And must NOT claim it actually gates deletion.
+    assert "allow deleting" not in desc
+    # Keeping (not removing) the key leaves the count at 29.
+    assert len(PERMISSION_REGISTRY) == 29
+
+
 # ---------------------------------------------------------------------------
 # DEFAULT_GRANTS counts
 # ---------------------------------------------------------------------------

@@ -50,6 +50,8 @@ import {
   optionLabelMap,
   optionLabelOf,
 } from '../utils/optionDisplay';
+// Phase 72b — shared clamp-with-tap-to-expand ballot option description.
+import OptionCardDescription from '../components/OptionCardDescription';
 // Phase 62 A3 — full-form draft editor reused from the admin Create flow.
 // The form supports an `editingProposal` prop (Phase 62 A1) which switches
 // it from POST-to-create to PATCH-to-edit while prefilling every editable
@@ -285,12 +287,14 @@ function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerif
                 disabled={unverified}
                 className="mt-0.5 accent-[var(--brand-accent)]"
               />
-              <div>
-                <span className="text-sm font-medium text-gray-800">{optionDisplayLabel(proposal, opt)}</span>
+              <div className="flex-1 min-w-0">
+                <span className="block text-sm font-medium text-gray-800 leading-snug">{optionDisplayLabel(proposal, opt)}</span>
                 {/* Phase 67 W3 — on elections the description IS the
-                    primary text; don't repeat it as a sub-line. */}
+                    primary text; don't repeat it as a sub-line.
+                    Phase 72b — clamp long descriptions in the narrow ballot
+                    sidebar with tap-to-expand (shared with RankedBallot). */}
                 {!proposal.is_election && opt.description && (
-                  <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>
+                  <OptionCardDescription text={opt.description} className="mt-0.5" />
                 )}
               </div>
             </label>
