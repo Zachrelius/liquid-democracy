@@ -27,6 +27,9 @@ import RCVResultsPanel from '../components/RCVResultsPanel';
 // Phase 73 — allocation-budget ballot + results.
 import BudgetBallot from '../components/BudgetBallot';
 import BudgetResultsPanel from '../components/BudgetResultsPanel';
+// Phase 74 — project-budget ballot + results.
+import BudgetProjectBallot from '../components/BudgetProjectBallot';
+import BudgetProjectResultsPanel from '../components/BudgetProjectResultsPanel';
 import RCVSankeyChart from '../components/RCVSankeyChart';
 import SupportTrajectoryChart from '../components/SupportTrajectoryChart';
 // Phase 17 F2 — auto-resolved tie banner shared across approval + RCV panels.
@@ -2373,6 +2376,8 @@ export default function ProposalDetail() {
                 <RCVResultsPanel tally={tally} proposal={proposal} />
               ) : proposal.voting_method === 'budget_allocation' ? (
                 <BudgetResultsPanel tally={tally} proposal={proposal} />
+              ) : proposal.voting_method === 'budget_project' ? (
+                <BudgetProjectResultsPanel tally={tally} proposal={proposal} />
               ) : (
                 <ResultsPanel tally={tally} proposal={proposal} />
               )}
@@ -2540,6 +2545,14 @@ export default function ProposalDetail() {
                   onVoteChange={refreshVote}
                   emailVerified={user?.email_verified}
                 />
+              ) : proposal.voting_method === 'budget_project' ? (
+                <BudgetProjectBallot
+                  proposal={proposal}
+                  myVote={myVote}
+                  proposalId={id}
+                  onVoteChange={refreshVote}
+                  emailVerified={user?.email_verified}
+                />
               ) : (
                 <VoteStatusBox
                   myVote={myVote}
@@ -2580,6 +2593,8 @@ export default function ProposalDetail() {
                 <RCVResultsPanel tally={tally} proposal={proposal} />
               ) : proposal.voting_method === 'budget_allocation' ? (
                 <BudgetResultsPanel tally={tally} proposal={proposal} />
+              ) : proposal.voting_method === 'budget_project' ? (
+                <BudgetProjectResultsPanel tally={tally} proposal={proposal} />
               ) : (
                 <ResultsPanel tally={tally} proposal={proposal} />
               )}

@@ -148,6 +148,104 @@ function OptionsEditor({ options, onChange, budgetCeilings = false }) {
   );
 }
 
+// Phase 74b — project-budget item editor. Each item has a kind (discrete /
+// continuous-as-discrete / tier_parent). Tier parents carry no cost of their
+// own; a nested sub-editor adds tier variants (label + cost) + a fallback
+// toggle. Emits items in the shape the create payload maps to options.
+function ProjectItemsEditor({ items, onChange }) {
+  function patch(idx, field, value) {
+    onChange(items.map((it, i) => (i === idx ? { ...it, [field]: value } : it)));
+  }
+  function addItem() {
+    if (items.length >= 20) return;
+    onChange([...items, { label: '', kind: 'discrete', cost: '', tiers: [], fallback: true }]);
+  }
+  function removeItem(idx) {
+    onChange(items.filter((_, i) => i !== idx));
+  }
+  function patchTier(idx, ti, field, value) {
+    const tiers = items[idx].tiers.map((t, j) => (j === ti ? { ...t, [field]: value } : t));
+    patch(idx, 'tiers', tiers);
+  }
+  function addTier(idx) {
+    patch(idx, 'tiers', [...(items[idx].tiers || []), { label: '', cost: '' }]);
+  }
+  function removeTier(idx, ti) {
+    patch(idx, 'tiers', items[idx].tiers.filter((_, j) => j !== ti));
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <label className="block text-xs text-gray-500">Projects ({items.length}/20)
+          {items.length < 2 && <span className="text-amber-600 ml-2">Minimum 2 required</span>}
+        </label>
+        <button type="button" onClick={addItem} disabled={items.length >= 20}
+          className="text-xs px-3 py-1 bg-[var(--brand-accent)] text-white rounded-lg hover:bg-[var(--brand-primary)] transition-colors disabled:opacity-50">
+          Add Project
+        </button>
+      </div>
+      {items.map((it, idx) => (
+        <div key={idx} className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400 w-6">{idx + 1}.</span>
+            <input type="text" value={it.label}
+              onChange={e => patch(idx, 'label', e.target.value)}
+              placeholder="Project name (required)" maxLength={200}
+              className="flex-1 px-2 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]" />
+            <select value={it.kind} onChange={e => patch(idx, 'kind', e.target.value)}
+              className="text-xs border border-gray-300 rounded px-1.5 py-1">
+              <option value="discrete">Fixed cost</option>
+              <option value="continuous-as-discrete">Continuous (fund full or $0)</option>
+              <option value="tier_parent">Tiered variants</option>
+            </select>
+            <button type="button" onClick={() => removeItem(idx)}
+              className="text-red-400 hover:text-red-600 text-sm px-1">✕</button>
+          </div>
+          {it.kind === 'tier_parent' ? (
+            <div className="ml-8 space-y-1">
+              <p className="text-xs text-gray-500">Tier variants (pick at most one when voting):</p>
+              {(it.tiers || []).map((t, ti) => (
+                <div key={ti} className="flex items-center gap-2">
+                  <input type="text" value={t.label}
+                    onChange={e => patchTier(idx, ti, 'label', e.target.value)}
+                    placeholder="Variant (e.g. 6ft pool)" maxLength={200}
+                    className="flex-1 px-2 py-1 border border-gray-300 rounded text-xs" />
+                  <span className="text-gray-400 text-xs">$</span>
+                  <input type="number" min="1" value={t.cost}
+                    onChange={e => patchTier(idx, ti, 'cost', e.target.value)}
+                    placeholder="cost" className="w-28 px-2 py-1 border border-gray-300 rounded text-xs" />
+                  <button type="button" onClick={() => removeTier(idx, ti)}
+                    className="text-red-400 hover:text-red-600 text-xs px-1">✕</button>
+                </div>
+              ))}
+              <div className="flex items-center gap-3">
+                <button type="button" onClick={() => addTier(idx)}
+                  className="text-xs text-[var(--brand-accent)] hover:underline">+ Add variant</button>
+                <label className="flex items-center gap-1 text-xs text-gray-600">
+                  <input type="checkbox" checked={it.fallback !== false}
+                    onChange={e => patch(idx, 'fallback', e.target.checked)}
+                    className="accent-[var(--brand-accent)]" />
+                  Fall back to a cheaper variant if the preferred one doesn’t fit
+                </label>
+              </div>
+            </div>
+          ) : (
+            <div className="ml-8 flex items-center gap-2 text-xs text-gray-600">
+              <span>{it.kind === 'continuous-as-discrete' ? 'Full amount:' : 'Cost:'}</span>
+              <span className="text-gray-400">$</span>
+              <input type="number" min="1" value={it.cost}
+                onChange={e => patch(idx, 'cost', e.target.value)}
+                placeholder="cost when funded"
+                className="w-32 px-2 py-1 border border-gray-300 rounded text-xs" />
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Phase 56 F3 — collapsible org-guidance hint shown above the
 // topic-picker. Hidden entirely when the org hasn't set any guidance,
 // so untouched orgs see no change. Default-collapsed to keep the
@@ -374,6 +472,41 @@ function CreateProposalForm({
   const [budgetAggregation, setBudgetAggregation] = useState(() => (
     isEditMode ? (editingProposal.budget_config?.aggregation ?? 'median') : 'median'
   ));
+  // Phase 74b — project-budget config + items (only when method is
+  // budget_project). Envelope reuses budgetEnvelope above.
+  const [projectMinSpend, setProjectMinSpend] = useState(() => (
+    isEditMode && editingProposal.budget_config?.min_spend != null
+      ? String(editingProposal.budget_config.min_spend) : '0'
+  ));
+  const [projectMaxSpend, setProjectMaxSpend] = useState(() => (
+    isEditMode && editingProposal.budget_config?.max_spend != null
+      ? String(editingProposal.budget_config.max_spend) : ''
+  ));
+  const [projectItems, setProjectItems] = useState(() => {
+    // Edit-mode reconstruction of project items from flat options is non-
+    // trivial (tiers fold under parents); project proposals are draft-edited
+    // rarely. Seed empty in edit mode (the create path is the primary surface).
+    if (isEditMode && editingProposal.voting_method === 'budget_project') {
+      const opts = Array.isArray(editingProposal.options) ? editingProposal.options : [];
+      const tops = opts.filter(o => !o.budget_tier_parent_id);
+      return tops.map(o => {
+        if (o.budget_kind === 'tier_parent') {
+          const kids = opts.filter(c => c.budget_tier_parent_id === o.id);
+          return { label: o.label ?? '', kind: 'tier_parent',
+            cost: '', fallback: o.tier_allow_fallback !== false,
+            tiers: kids.map(k => ({ label: k.label ?? '', cost: String(k.budget_floor_amount ?? '') })) };
+        }
+        const cost = o.budget_kind === 'continuous-as-discrete'
+          ? (o.budget_max_amount ?? o.budget_floor_amount) : o.budget_floor_amount;
+        return { label: o.label ?? '', kind: o.budget_kind || 'discrete',
+          cost: cost != null ? String(cost) : '', tiers: [], fallback: true };
+      });
+    }
+    return [
+      { label: '', kind: 'discrete', cost: '', tiers: [], fallback: true },
+      { label: '', kind: 'discrete', cost: '', tiers: [], fallback: true },
+    ];
+  });
   const [numWinners, setNumWinners] = useState(() => (
     isEditMode ? (editingProposal.num_winners ?? 1) : 1
   ));
@@ -550,10 +683,13 @@ function CreateProposalForm({
   const allowedMethods = orgSettings?.allowed_voting_methods || ['binary'];
   const approvalAllowed = allowedMethods.includes('approval');
   const rankedChoiceAllowed = allowedMethods.includes('ranked_choice');
-  // Phase 73 — budget_allocation is opt-in per org (like ranked_choice).
+  // Phase 73/74 — budget methods are opt-in per org (like ranked_choice).
   const budgetAllowed = allowedMethods.includes('budget_allocation');
+  const projectBudgetAllowed = allowedMethods.includes('budget_project');
   const isBudget = votingMethod === 'budget_allocation';
-  // Budget buckets are options too, so they share the multi-option editor.
+  const isProjectBudget = votingMethod === 'budget_project';
+  // Budget-allocation buckets are options too, so they share the multi-option
+  // editor. Project budget uses its own ProjectItemsEditor (kind + tiers).
   const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || isBudget;
 
   function toggleTopic(topicId) {
@@ -589,6 +725,21 @@ function CreateProposalForm({
 
   // Phase 73 — budget proposals need a positive envelope.
   const budgetValid = !isBudget || (Number(budgetEnvelope) > 0);
+
+  // Phase 74b — project budget validity: positive envelope, >=2 items each
+  // with a label + a resolvable cost (tier parents need >=1 tier with a cost).
+  const projectBudgetValid = !isProjectBudget || (
+    Number(budgetEnvelope) > 0
+    && projectItems.length >= 2
+    && projectItems.every(it => {
+      if (!it.label.trim()) return false;
+      if (it.kind === 'tier_parent') {
+        return (it.tiers || []).length >= 1
+          && it.tiers.every(t => t.label.trim() && Number(t.cost) > 0);
+      }
+      return Number(it.cost) > 0;
+    })
+  );
 
   // Multi-winner approval selection — client-side validation mirrors
   // the backend's approval_winner_config rules; the submit button is
@@ -699,6 +850,33 @@ function CreateProposalForm({
           envelope: Number(budgetEnvelope),
           aggregation: budgetAggregation,
         };
+      }
+      // Phase 74b — project-budget config + items (tier parents carry nested
+      // tiers; the server expands them into child option rows).
+      if (isProjectBudget) {
+        const env = Number(budgetEnvelope);
+        payload.budget_config = {
+          mode: 'project',
+          envelope: env,
+          min_spend: Number(projectMinSpend) || 0,
+          max_spend: projectMaxSpend !== '' ? Number(projectMaxSpend) : env,
+        };
+        payload.options = projectItems.map(it => {
+          const base = { label: it.label.trim(), description: '' };
+          if (it.kind === 'tier_parent') {
+            return {
+              ...base, budget_kind: 'tier_parent',
+              tier_allow_fallback: it.fallback !== false,
+              tiers: (it.tiers || []).map(t => ({
+                label: t.label.trim(), budget_floor_amount: Number(t.cost),
+              })),
+            };
+          }
+          if (it.kind === 'continuous-as-discrete') {
+            return { ...base, budget_kind: 'continuous-as-discrete', budget_max_amount: Number(it.cost) };
+          }
+          return { ...base, budget_kind: 'discrete', budget_floor_amount: Number(it.cost) };
+        });
       }
       // Multi-winner approval selection — approval method only (the
       // backend 400s on other methods and on elections). Single-winner
@@ -1278,6 +1456,13 @@ function CreateProposalForm({
               <span className="text-sm text-gray-700">Budget (allocate funds across buckets)</span>
             </label>
           )}
+          {projectBudgetAllowed && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="votingMethod" value="budget_project" checked={isProjectBudget}
+                onChange={() => setVotingMethod('budget_project')} className="accent-[var(--brand-accent)]" />
+              <span className="text-sm text-gray-700">Project budget (fund discrete projects by priority)</span>
+            </label>
+          )}
         </div>
       </div>
 
@@ -1313,6 +1498,44 @@ function CreateProposalForm({
               Every bucket with support gets a proportional share; the result always sums to the budget.
             </p>
           </div>
+        </div>
+      )}
+
+      {/* Phase 74b — project-budget config (envelope + spend band). */}
+      {isProjectBudget && (
+        <div className="border border-gray-200 rounded-lg p-3 space-y-3 bg-gray-50">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Total budget (envelope)</label>
+              <input type="number" min="1" step="1" value={budgetEnvelope}
+                onChange={e => setBudgetEnvelope(e.target.value)} placeholder="100000"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Min spend</label>
+              <input type="number" min="0" step="1" value={projectMinSpend}
+                onChange={e => setProjectMinSpend(e.target.value)} placeholder="0"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Max spend</label>
+              <input type="number" min="0" step="1" value={projectMaxSpend}
+                onChange={e => setProjectMaxSpend(e.target.value)} placeholder="= envelope"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]" />
+            </div>
+          </div>
+          <p className="text-xs text-gray-400">
+            Projects fund in the group’s priority order up to the group’s chosen
+            spend level (a median of voters’ desired totals, clamped to the
+            min/max band). Min spend 0 lets the group choose to fund little.
+          </p>
+          <ProjectItemsEditor items={projectItems} onChange={setProjectItems} />
+          {!projectBudgetValid && (
+            <p className="text-xs text-red-600">
+              Enter a positive envelope and at least 2 projects, each with a name
+              and a positive cost (tiered items need at least one priced variant).
+            </p>
+          )}
         </div>
       )}
 
@@ -1892,7 +2115,7 @@ function CreateProposalForm({
       <div className="flex gap-2 items-center">
         <button
           type="submit"
-          disabled={saving || !title.trim() || !optionsValid || !numWinnersValid || !winnerSelectionValid || !budgetValid}
+          disabled={saving || !title.trim() || !optionsValid || !numWinnersValid || !winnerSelectionValid || !budgetValid || !projectBudgetValid}
           className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
         >
           {saving
