@@ -36,6 +36,22 @@ import models
 log = logging.getLogger(__name__)
 
 
+def _resolve_project_item_cost(opt) -> float:
+    """Phase 74a — the all-or-nothing cost a project-budget item funds at.
+
+    Discrete items fund at ``budget_floor_amount``. Mode C
+    ``continuous-as-discrete`` items fund at ``budget_max_amount`` (the
+    Phase-73 ceiling field) if set, else ``budget_floor_amount`` — treated as
+    a plain discrete item with that resolved cost. NULL → 0.
+    """
+    kind = getattr(opt, "budget_kind", None) or "discrete"
+    if kind == "continuous-as-discrete":
+        max_a = getattr(opt, "budget_max_amount", None)
+        if max_a is not None:
+            return max_a
+    return getattr(opt, "budget_floor_amount", None) or 0
+
+
 # ---------------------------------------------------------------------------
 # Shared data classes
 # ---------------------------------------------------------------------------
@@ -1690,14 +1706,15 @@ class DelegationService:
         elif voting_method == "budget_project":
             import budget_tally
             budget_config = getattr(proposal, "budget_config", None)
-            # Stage-74 core: every option is a plain discrete item funded at
-            # its floor. (Mandatory/tier columns ignored until 74a/74b.)
+            # Phase 74 core + 74a: discrete items fund at their floor; Mode C
+            # "continuous-as-discrete" items fund at their ceiling
+            # (budget_max_amount) if set, else their floor — treated as a plain
+            # discrete item with that resolved cost (may fund $0; §2.2). Tiers
+            # are 74b. (budget_is_mandatory dropped in 74a — never read.)
             budget_items = [
                 budget_tally.ProjectItemSpec(
                     option_id=opt.id,
-                    floor_amount=(
-                        getattr(opt, "budget_floor_amount", None) or 0
-                    ),
+                    floor_amount=_resolve_project_item_cost(opt),
                     kind=getattr(opt, "budget_kind", None) or "discrete",
                 )
                 for opt in proposal.options

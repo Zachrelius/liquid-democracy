@@ -357,7 +357,11 @@ def test_create_requires_floor_amounts(client, test_db):
     assert r.status_code == 400, r.text
 
 
-def test_mandatory_rejected_in_core(client, test_db):
+def test_mandatory_field_cut_is_ignored(client, test_db):
+    """Phase 74 follow-up — the mandatory-minimum feature was CUT and the
+    budget_is_mandatory column dropped (74a). A stale ``budget_is_mandatory``
+    key in the payload is now simply an unknown field (ignored by the schema),
+    so the proposal creates normally rather than 400-ing."""
     org, author, *_ = _setup(test_db)
     r = client.post(f"/api/orgs/{org.slug}/proposals", headers=_auth(author), json={
         "title": "x", "voting_method": "budget_project",
@@ -367,8 +371,7 @@ def test_mandatory_rejected_in_core(client, test_db):
             {"label": "b", "budget_floor_amount": 10000},
         ],
     })
-    assert r.status_code == 400, r.text
-    assert "mandatory" in r.json()["detail"].lower()
+    assert r.status_code in (200, 201), r.text
 
 
 def test_tier_rejected_in_core(client, test_db):
