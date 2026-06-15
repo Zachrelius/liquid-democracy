@@ -246,6 +246,18 @@ export default function SubOrgSettings() {
 
   const deleteBlocked = topicCount > 0 || proposalCount > 0;
 
+  // Phase 71c — control gates use the SUB-ORG's OWN permission set (resolved
+  // server-side via has_permission_on_sub_org and surfaced on the sub-org
+  // detail response as `user_permissions`), NOT useHasPermission — which reads
+  // the PARENT org (currentOrg) and would wrongly hide these controls from a
+  // sub-org-native admin who isn't a parent admin. This is defense-in-depth +
+  // correct UX; the real boundary is the backend (Phase 71b made sub_org.*
+  // config-authoritative) and the page already 403/404s non-members via
+  // SubOrgErrorState above.
+  const subPerms = subOrg?.user_permissions || [];
+  const canEditSubOrg = subPerms.includes('sub_org.edit_settings');
+  const canDeleteSubOrg = subPerms.includes('sub_org.delete');
+
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-10">
       <div>
@@ -473,43 +485,53 @@ export default function SubOrgSettings() {
         </div>
       </section>
 
-      {/* Save */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="px-6 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
-        >
-          {saving ? 'Saving...' : 'Save Settings'}
-        </button>
-      </div>
-
-      {/* Danger zone */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-red-500 uppercase tracking-wide">Danger Zone</h2>
-        <div className="bg-white border border-red-200 rounded-xl p-5 space-y-3">
-          <div className="text-xs text-gray-500">
-            <p>Topics scoped to this sub-org: <strong>{topicCount}</strong></p>
-            <p>Proposals scoped to this sub-org: <strong>{proposalCount}</strong></p>
-          </div>
+      {/* Save — Phase 71c: only when the viewer holds sub_org.edit_settings
+          on THIS sub-org. */}
+      {canEditSubOrg ? (
+        <div className="flex items-center gap-3">
           <button
-            onClick={handleDelete}
-            disabled={deleteBlocked}
-            title={deleteBlocked
-              ? 'Move or delete all sub-org-scoped topics and proposals first.'
-              : 'Permanently delete this sub-organization.'}
-            className="text-sm px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            onClick={handleSave}
+            disabled={saving}
+            className="px-6 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
           >
-            Delete Sub-Organization
+            {saving ? 'Saving...' : 'Save Settings'}
           </button>
-          {deleteBlocked && (
-            <p className="text-xs text-amber-600">
-              This sub-org has scoped content. Promote scoped topics to org-wide, or
-              archive scoped proposals, before deleting.
-            </p>
-          )}
         </div>
-      </section>
+      ) : (
+        <p className="text-xs text-gray-500">
+          You have read-only access to this sub-organization's settings.
+        </p>
+      )}
+
+      {/* Danger zone — Phase 71c: only when the viewer holds sub_org.delete
+          on THIS sub-org. */}
+      {canDeleteSubOrg && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-red-500 uppercase tracking-wide">Danger Zone</h2>
+          <div className="bg-white border border-red-200 rounded-xl p-5 space-y-3">
+            <div className="text-xs text-gray-500">
+              <p>Topics scoped to this sub-org: <strong>{topicCount}</strong></p>
+              <p>Proposals scoped to this sub-org: <strong>{proposalCount}</strong></p>
+            </div>
+            <button
+              onClick={handleDelete}
+              disabled={deleteBlocked}
+              title={deleteBlocked
+                ? 'Move or delete all sub-org-scoped topics and proposals first.'
+                : 'Permanently delete this sub-organization.'}
+              className="text-sm px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Delete Sub-Organization
+            </button>
+            {deleteBlocked && (
+              <p className="text-xs text-amber-600">
+                This sub-org has scoped content. Promote scoped topics to org-wide, or
+                archive scoped proposals, before deleting.
+              </p>
+            )}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
