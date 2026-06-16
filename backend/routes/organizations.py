@@ -4084,9 +4084,13 @@ def _resolve_import_topics(
     relevance?}``, or ``{topic_name, relevance?}`` (Phase 68a D4). Returns
     ``(resolved_for_create, warnings, resolved_transparency, errors)``:
       * resolved_for_create — ``[{topic_id, relevance}]`` for matched entries
-      * warnings — name→id resolution notes
+      * warnings — name→id resolution notes + topic-not-found drops (Phase
+        72c: an unmatched topic_name/topic_id is a warn-and-drop, NOT an
+        error — keep matched siblings, skip the unmatched one)
       * resolved_transparency — ``[{topic_id, topic_name, relevance}]``
-      * errors — human-readable strings for unmatched/invalid entries
+      * errors — structural file errors ONLY ('topics' not a list, entry
+        missing both id+name, non-dict entry); topic-not-found is no longer
+        here (downgraded to warnings in 72c)
     """
     by_name = {t.name.strip().lower(): t for t in candidates}
     by_id = {t.id: t for t in candidates}
@@ -4109,8 +4113,14 @@ def _resolve_import_topics(
         if isinstance(entry, str):
             topic = by_id.get(entry)
             if topic is None:
-                errors.append(
-                    f"Topic id '{entry}' not found in this organization."
+                # Phase 72c — topic-not-found is warn-and-drop (non-blocking),
+                # NOT a hard error. The proposal imports with whatever topics
+                # did match; the unmatched one is skipped. (Mirrors how 72
+                # already warns-and-skips unknown keys + warns-and-falls-back
+                # on threshold/duration overreach.)
+                warnings.append(
+                    f"Topic id '{entry}' isn't in this organization — "
+                    "importing without it."
                 )
                 continue
         elif isinstance(entry, dict):
@@ -4119,18 +4129,19 @@ def _resolve_import_topics(
             if entry.get("topic_id"):
                 topic = by_id.get(entry["topic_id"])
                 if topic is None:
-                    errors.append(
-                        f"Topic id '{entry['topic_id']}' not found in this "
-                        "organization."
+                    warnings.append(
+                        f"Topic id '{entry['topic_id']}' isn't in this "
+                        "organization — importing without it."
                     )
                     continue
             elif entry.get("topic_name"):
                 name = str(entry["topic_name"]).strip()
                 topic = by_name.get(name.lower())
                 if topic is None:
-                    errors.append(
-                        f"Topic name '{name}' did not match any topic in "
-                        f"this organization. Available topics: "
+                    warnings.append(
+                        f"Topic '{name}' isn't in this organization yet — "
+                        "importing without it. Add the topic and re-import "
+                        "if you want it attached. Available topics: "
                         f"{', '.join(available) if available else '(none)'}."
                     )
                     continue
@@ -4138,6 +4149,8 @@ def _resolve_import_topics(
                     f"Resolved topic name '{name}' to id {topic.id}."
                 )
             else:
+                # Structural file error (entry has neither id nor name) —
+                # stays a blocking error; the user must fix the file.
                 errors.append(
                     "Each topic entry needs a 'topic_id' or 'topic_name'."
                 )

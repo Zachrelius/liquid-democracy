@@ -155,7 +155,11 @@ def test_pdf_input(client, test_db, monkeypatch):
     assert r.json()["summary"]["total"] == 1
 
 
-def test_unknown_topic_yields_item_error(client, test_db, monkeypatch):
+def test_unknown_topic_warns_and_drops(client, test_db, monkeypatch):
+    # Phase 72c — an unknown topic is warn-and-drop, NOT an item error (the
+    # change to _resolve_import_topics applies to smart-import too, since it
+    # shares the per-item preview pipeline). The item stays valid and imports
+    # topic-less with a warning naming the skipped topic.
     org, author = _setup(test_db)
     _mock_llm(monkeypatch, """[
       {"title": "Item", "body": "Body text here.",
@@ -165,7 +169,10 @@ def test_unknown_topic_yields_item_error(client, test_db, monkeypatch):
                     json={"content": "some agenda"})
     assert r.status_code == 200, r.text
     item = r.json()["items"][0]
-    assert item["errors"].get("topics")
+    assert not item["errors"].get("topics")
+    assert item["proposal"] is not None
+    assert item["proposal"]["topics"] == []
+    assert any("Nonexistent Topic" in w for w in item["warnings"])
 
 
 def test_meeting_date_maps_to_voting_end_date(client, test_db, monkeypatch):
