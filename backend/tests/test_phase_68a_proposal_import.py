@@ -220,7 +220,10 @@ def test_import_topic_name_resolves_with_warning(client, test_db, org_and_author
     assert test_db.query(models.Proposal).count() == 0
 
 
-def test_import_topic_name_unmatched_lists_available(client, test_db, org_and_author):
+def test_import_topic_name_unmatched_warns_and_drops(client, test_db, org_and_author):
+    # Phase 72c — an unmatched topic_name is now a WARN-AND-DROP, not a
+    # blocking error: the proposal imports topic-less with a warning naming
+    # the skipped topic + the available topics.
     org, author = org_and_author
     _make_topic(test_db, org, "Budget")
     _make_topic(test_db, org, "Safety")
@@ -231,10 +234,12 @@ def test_import_topic_name_unmatched_lists_available(client, test_db, org_and_au
         "voting_method": "binary",
         "topics": [{"topic_name": "Nonexistent"}],
     }, _auth(author))
-    assert resp.status_code == 422, resp.text
+    assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert "topics" in body["errors"]
-    msg = " ".join(body["errors"]["topics"])
+    assert "errors" not in body  # single-object success shape
+    assert body["proposal"]["topics"] == []  # unmatched topic dropped
+    assert body["resolved_topics"] == []
+    msg = " ".join(body["warnings"])
     assert "Nonexistent" in msg
     assert "Budget" in msg and "Safety" in msg
     assert test_db.query(models.Proposal).count() == 0

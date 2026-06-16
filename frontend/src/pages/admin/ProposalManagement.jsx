@@ -1050,25 +1050,19 @@ function CreateProposalForm({
         }
         result = await api.post(`/api/orgs/${slug}/proposals/import-preview`, parsed);
       }
-      // Phase 72 — the response is either single-shape ({proposal,...}) when
-      // the file was a JSON object, or array-shape ({items, summary}) when it
-      // was a JSON array. 1 proposal → prefill the form (today's behavior);
-      // 2+ → hand off to the multi-proposal review list.
+      // The response is either single-shape ({proposal,...}) when the file
+      // was a JSON OBJECT, or array-shape ({items, summary}) when it was a
+      // JSON ARRAY.
+      //
+      // Phase 72c — an ARRAY response ALWAYS routes to the multi-proposal
+      // review list: for any item count, and even when every item is invalid
+      // (summary.valid === 0). We do NOT unwrap an array-of-one into the
+      // prefill form and we NEVER show the single-import "review the fields
+      // below" copy on the array path. (That was the 72 bug: a 200 {items}
+      // response carrying per-item errors showed a success toast and then
+      // rendered nothing — the review list never mounted.)
       if (Array.isArray(result.items)) {
-        if (result.items.length === 1) {
-          const only = result.items[0];
-          if (only.proposal) {
-            applyImport(only.proposal);
-            setImportWarnings(only.warnings || []);
-            setImportOpen(false);
-            setImportText('');
-            setImportFile(null);
-            toast.success('Imported — review the fields below and submit.');
-          } else {
-            setImportErrors(only.errors || { _file: ['Import had errors.'] });
-            setImportWarnings(only.warnings || []);
-          }
-        } else if (onMultiImport) {
+        if (onMultiImport) {
           onMultiImport(result.items);
           setImportOpen(false);
           setImportText('');
@@ -1078,6 +1072,7 @@ function CreateProposalForm({
         }
         return;
       }
+      // Single-object response → prefill the create form (unchanged).
       applyImport(result.proposal);
       setImportWarnings(result.warnings || []);
       setImportOpen(false);
@@ -2234,6 +2229,15 @@ function MultiImportReview({ items, slug, onDone, onCancel }) {
         {items.length - validCount} with errors. Selected proposals are created
         as drafts; you can review each before they go to deliberation.
       </p>
+
+      {/* Phase 72c — all-invalid is a rendered state, not a blank screen or a
+          false success. Every row is still shown below with its errors. */}
+      {validCount === 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900">
+          No proposals are ready to create yet — fix the flagged items below
+          (or cancel).
+        </div>
+      )}
 
       <div className="border border-gray-200 rounded-lg divide-y divide-gray-100">
         {rows.map((row) => (
