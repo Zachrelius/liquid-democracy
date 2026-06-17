@@ -4225,3 +4225,23 @@ Bug-fix. The first real-world use of Phase 72 multi-import failed: Z imported a 
 **Tests:** +10 in `test_phase_72c_topic_warn_and_drop.py` (warn-not-error for name+id; partial match keeps matched; all-unmatched → topic-less; **structural errors still block** — regression guard; **Z's housing-file fixture → 3 valid warned items** with the sibling topic retained; create-through attaches matched + drops unmatched). Updated 3 prior tests that asserted the old hard-error (68a `test_import_topic_name_unmatched`, 72 `test_array_per_item_topic_and_unknown`, 75b `test_unknown_topic_yields_item_error`) to the warn-and-drop contract. **Full regression: 2641 passed / 0 failed** (the one initial failure was the 75b assertion, now updated). No migration.
 
 **Browser QA: PENDING** — the Claude-in-Chrome extension was not connected at QA time (no browser paired to the session), so the spec's verification on The Reform Table with the real housing file (3-row review list with Housing warnings → create 3 drafts with matched topics attached, Housing absent; add-Housing-topic re-preview control; malformed-item isolation) could not run. The fix is deployed + backend-verified; the FE-rendering verification needs Chrome with the extension connected, then a QA re-run. (Since this is Z's own org + file, Z can also verify directly.)
+
+**72c Part C (topic-name display) was incomplete at 72c ship time.** The resolution warning for a matched `topic_name` emitted the internal UUID (`"Resolved topic name 'Budget' to id abc-123..."`) instead of the topic's display name. This was diagnosed and fixed in Phase 72d.
+
+---
+
+## Phase 72d — 72c Confirmation + Method-Switch Option-Preservation Fix ✅ Complete (2026-06-17)
+
+No migration. Branch `phase-72d/methodswitch-and-72c-confirm`. Spec: `phase72d_methodswitch_and_72c_confirm_2026-06-15.md`.
+
+**Part 0 — 72c audit.** Read live `_resolve_import_topics` and the multi-import FE flow (ProposalManagement.jsx / CreateProposalForm). Status of 72c's three sections:
+
+- **A (warn-and-drop):** ✅ Fully present — both `topic_id`-not-found and `topic_name`-not-found routes append a warning and continue (non-blocking); structural errors stay blocking.
+- **B (FE array always renders review list):** ✅ Fully present — `if (Array.isArray(result.items))` routes to `onMultiImport(result.items)` unconditionally, regardless of `summary.valid`.
+- **C (topic-name display):** ❌ **Incomplete.** The resolution warning emitted `"Resolved topic name '{name}' to id {topic.id}."` — the UUID was meaningless to users. **Fixed here:** changed to `"Matched topic '{topic.name}'."`. One-line change in `_resolve_import_topics` (routes/organizations.py ~L4149). New test `test_resolution_warning_shows_topic_name_not_uuid` asserts the warning contains the topic name and no UUID-shaped string.
+
+**Settings.py extra-field fix (incidental blocker).** A new env var (`RAILWAY_TOKEN`, `DEMO_RESET_TRIGGER_TOKEN`, `DB_USER`, `DB_PASSWORD`) added to `.env` after the last test run caused `pydantic_settings.Settings` to reject them with `extra_forbidden`. Fixed by adding `"extra": "ignore"` to `model_config`. This was blocking all tests before any code changes; it's unrelated to 72d but was the only way to run the suite.
+
+**Part 1 — Method-switch warning.** Investigation found that `willDiscardOptions` was ALREADY correctly gated on `method === 'binary'` (the `&&` condition is in the existing code). The destructive confirm dialog only fires when switching TO binary — no behavior change needed on that path. However, the informational note for non-binary method changes read "You'll be able to add options after applying the change." even when existing options would carry over, which was misleading. **Fixed:** when `hasExistingOptions` is true, the note now reads "Your existing options will carry over to the new method." Binary → non-binary (no existing options) continues to show the "add options" copy. The amber destructive warning for binary target is unchanged. Backend not touched.
+
+**Tests:** +1 in `test_phase_72c_topic_warn_and_drop.py` (Part C UUID-regression guard). Updated `test_phase_72_multi_proposal_import.py::test_array_per_item_topic_and_unknown` to assert topic name (not UUID) in resolution warning. Full suite: 2641 → **2642** passed / 0 failed. No migration. Bundle `index-BMKhI2qP.js`.

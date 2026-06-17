@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     # Base URL for the pol.is API. Override for self-hosted instances.
     polis_api_base_url: str = "https://pol.is"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
 def _build_settings() -> Settings:

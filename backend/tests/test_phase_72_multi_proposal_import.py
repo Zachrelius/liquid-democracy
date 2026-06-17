@@ -213,7 +213,7 @@ def test_array_per_item_topic_and_unknown(client, test_db, setup):
     # Item 0: topic resolved + unknown-key warning; valid.
     assert body["items"][0]["proposal"]["topics"] == [{"topic_id": topic.id, "relevance": 1.0}]
     w0 = " ".join(body["items"][0]["warnings"])
-    assert topic.id in w0 and "bogus" in w0
+    assert "Budget" in w0 and "bogus" in w0  # Phase 72d: resolution note shows name, not UUID
     # Item 1 (Phase 72c): unmatched topic is now warn-and-drop, NOT an error —
     # the item is VALID, imports topic-less, with a warning naming the topic.
     assert body["items"][1]["errors"] == {}
