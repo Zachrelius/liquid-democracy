@@ -213,7 +213,7 @@ def test_import_topic_name_resolves_with_warning(client, test_db, org_and_author
     assert body["proposal"]["topics"] == [
         {"topic_id": topic.id, "relevance": 0.8}
     ]
-    assert any(topic.id in w for w in body["warnings"])
+    assert any("Parks & Recreation" in w for w in body["warnings"])  # Phase 72d: resolution note shows name, not UUID
     assert body["resolved_topics"] == [
         {"topic_id": topic.id, "topic_name": "Parks & Recreation", "relevance": 0.8}
     ]
