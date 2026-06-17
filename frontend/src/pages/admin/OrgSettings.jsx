@@ -1849,6 +1849,42 @@ export default function OrgSettings() {
               <p className="text-xs text-gray-400">Voters rank options in preference order. 1 winner = IRV; multiple winners = STV.</p>
             </div>
           </label>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={(settings.allowed_voting_methods || ['binary']).includes('budget_allocation')}
+              onChange={e => {
+                const current = settings.allowed_voting_methods || ['binary'];
+                const updated = e.target.checked
+                  ? [...new Set([...current, 'budget_allocation'])]
+                  : current.filter(m => m !== 'budget_allocation');
+                updateSetting('allowed_voting_methods', updated);
+              }}
+              className="accent-[var(--brand-accent)]"
+            />
+            <div>
+              <span className="text-sm text-gray-700">Budget — Allocation (split a pool)</span>
+              <p className="text-xs text-gray-400">Voters split a fixed budget across continuous buckets. Every funded bucket gets a share proportional to support.</p>
+            </div>
+          </label>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={(settings.allowed_voting_methods || ['binary']).includes('budget_project')}
+              onChange={e => {
+                const current = settings.allowed_voting_methods || ['binary'];
+                const updated = e.target.checked
+                  ? [...new Set([...current, 'budget_project'])]
+                  : current.filter(m => m !== 'budget_project');
+                updateSetting('allowed_voting_methods', updated);
+              }}
+              className="accent-[var(--brand-accent)]"
+            />
+            <div>
+              <span className="text-sm text-gray-700">Budget — Projects (fund a ranked list)</span>
+              <p className="text-xs text-gray-400">Voters rank discrete projects under a fixed budget. Funds top priorities until the money runs out; supports fixed-cost, fund-or-skip, and tiered-variant items.</p>
+            </div>
+          </label>
           {/* Phase 34 F1 — per-section save button. */}
           <button
             onClick={handleSaveVotingMethods}
