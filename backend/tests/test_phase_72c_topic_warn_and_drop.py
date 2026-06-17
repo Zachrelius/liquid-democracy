@@ -248,6 +248,24 @@ def test_housing_file_yields_three_valid_warned(client, test_db, setup):
     assert test_db.query(models.Proposal).count() == 0
 
 
+def test_resolution_warning_shows_topic_name_not_uuid(client, test_db, setup):
+    """Part C — resolution note must contain the topic NAME, not the internal UUID."""
+    import re
+    _make_topic(test_db, setup["org"], "Budget")
+    test_db.commit()
+    resp = _preview(client, setup["org"].slug, {
+        "title": "P", "voting_method": "binary",
+        "topics": [{"topic_name": "Budget"}],
+    }, _auth(setup["steward"]))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    resolution_warnings = [w for w in body["warnings"] if "Budget" in w and "Matched" in w]
+    assert resolution_warnings, f"Expected a resolution note; got warnings={body['warnings']}"
+    uuid_pattern = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+    for w in resolution_warnings:
+        assert not uuid_pattern.search(w), f"Resolution warning should not contain UUID: {w!r}"
+
+
 def test_create_through_attaches_matched_drops_unmatched(client, test_db, setup):
     healthcare = _make_topic(test_db, setup["org"], "Healthcare")
     test_db.commit()

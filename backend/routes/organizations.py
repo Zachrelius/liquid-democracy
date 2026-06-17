@@ -4146,7 +4146,7 @@ def _resolve_import_topics(
                     )
                     continue
                 warnings.append(
-                    f"Resolved topic name '{name}' to id {topic.id}."
+                    f"Matched topic '{topic.name}'."
                 )
             else:
                 # Structural file error (entry has neither id nor name) —

@@ -1408,8 +1408,9 @@ function DraftActionsPanel({ proposal, onSaved, linkOrg }) {
         </div>
         {method !== 'binary' && method !== proposal.voting_method && (
           <p className="mt-1 text-xs text-gray-500">
-            You&apos;ll be able to add options after applying the
-            change{willDiscardOptions ? ' (existing options will be discarded)' : ''}.
+            {hasExistingOptions
+              ? <>Your existing options will carry over to the new method.</>
+              : <>You&apos;ll be able to add options after applying the change.</> }
           </p>
         )}
         {willDiscardOptions && (
