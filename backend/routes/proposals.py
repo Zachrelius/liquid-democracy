@@ -2514,6 +2514,140 @@ def delete_write_in_option(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+def _assert_not_edit_locked(db: Session, proposal: models.Proposal) -> None:
+    """Phase 76b — raise 403 if the proposal is in the locked tail of
+    deliberation. Mirrors the lockout block inside ``update_proposal`` so
+    in-place option edits respect the same window as title/body edits.
+    No-op in draft (the author is still composing)."""
+    if proposal.status != "deliberation":
+        return
+    from proposal_engagement_config import resolve_edit_lockout_fraction
+    org_for_lockout = (
+        db.get(models.Organization, proposal.org_id)
+        if proposal.org_id else None
+    )
+    lockout = resolve_edit_lockout_fraction(proposal, org_for_lockout)
+    delib_start = proposal.deliberation_start
+    if delib_start is not None and proposal.deliberation_days is not None:
+        delib_end = delib_start + timedelta(days=float(proposal.deliberation_days))
+        duration = (delib_end - delib_start).total_seconds()
+        if duration > 0:
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            elapsed = (now - delib_start).total_seconds()
+            if elapsed / duration >= lockout:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Editing is locked for the final "
+                        f"{int(round((1 - lockout) * 100))}% of deliberation"
+                    ),
+                )
+
+
+@router.patch(
+    "/{proposal_id}/options/{option_id}",
+    response_model=schemas.ProposalOut,
+)
+def update_option_text(
+    proposal_id: str,
+    option_id: str,
+    body: schemas.OptionTextUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Phase 76b — in-place edit of an option's label / description.
+
+    Editing original options used to require the proposal PATCH ``options``
+    full-replace, which deletes + recreates every option row. That's safe in
+    draft but lossy during deliberation: it changes option ids (orphaning any
+    pre-votes cast while ``allow_pre_voting`` is on), drops write-in
+    attribution, and would need budget tier structure reconstructed. This
+    endpoint edits the row in place, so ids + ballots + budget metadata all
+    survive.
+
+    Permission ladder mirrors ``update_proposal``: author OR ``org.edit_proposal``
+    (platform admin bypasses via ``has_permission``). Allowed in draft /
+    deliberation only; the deliberation edit-lockout window applies.
+    """
+    proposal = _proposal_or_404(proposal_id, db)
+    option = db.get(models.ProposalOption, option_id)
+    if option is None or option.proposal_id != proposal.id:
+        raise HTTPException(status_code=404, detail="Option not found")
+
+    if proposal.status not in ("draft", "deliberation"):
+        raise HTTPException(
+            status_code=409,
+            detail="Options cannot be edited after voting has started",
+        )
+    # Election candidate options store the candidate's user-id as the label and
+    # the display name as the description; editing that text here would corrupt
+    # the engine's stable keys. Election candidates are managed elsewhere.
+    if getattr(proposal, "is_election", False):
+        raise HTTPException(
+            status_code=400,
+            detail="Election candidate options can't be edited here",
+        )
+
+    if not (
+        proposal.author_id == current_user.id
+        or current_user.is_admin
+        or (
+            proposal.org_id is not None
+            and _has_permission(
+                db, current_user.id, proposal.org_id, "org.edit_proposal",
+            )
+        )
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Not authorized to edit this proposal",
+        )
+
+    _assert_not_edit_locked(db, proposal)
+
+    fields = body.model_fields_set
+    if not ({"label", "description"} & fields):
+        raise HTTPException(
+            status_code=400,
+            detail="Provide a label and/or description to update",
+        )
+
+    changed = {}
+    if "label" in fields:
+        new_label = (body.label or "").strip()
+        if not new_label:
+            raise HTTPException(status_code=400, detail="Option label cannot be empty")
+        lower = new_label.lower()
+        for sibling in proposal.options:
+            if sibling.id != option.id and sibling.label.strip().lower() == lower:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Duplicate option label: {new_label}",
+                )
+        if new_label != option.label:
+            changed["label"] = {"old": option.label, "new": new_label}
+            option.label = new_label
+    if "description" in fields:
+        new_desc = body.description or ""
+        if new_desc != (option.description or ""):
+            changed["description"] = True
+            option.description = new_desc
+
+    if changed:
+        log_audit_event(
+            db,
+            action="proposal.option_edited",
+            target_type="proposal_option",
+            target_id=option.id,
+            actor_id=current_user.id,
+            details={"proposal_id": proposal.id, "changed": list(changed.keys())},
+        )
+
+    db.commit()
+    db.refresh(proposal)
+    return _build_proposal_out(proposal, db)
+
+
 def _is_delegate_target_for_proposal(
     db: Session, user_id: str, proposal: models.Proposal,
 ) -> bool:

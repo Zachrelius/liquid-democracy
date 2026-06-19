@@ -397,6 +397,19 @@ class WriteInOptionCreate(BaseModel):
     description: str = Field(default="", max_length=2000)
 
 
+class OptionTextUpdate(BaseModel):
+    """Phase 76b — body for ``PATCH /api/proposals/{id}/options/{option_id}``.
+
+    In-place edit of an existing option's display text (label and/or
+    description) during draft / deliberation. Distinct from the proposal
+    PATCH ``options`` full-replace: this keeps the option row (and its id),
+    so any pre-votes cast during deliberation, write-in attribution, and
+    budget metadata survive untouched. Both fields are optional; only those
+    present in the request are applied (``model_fields_set``)."""
+    label: Optional[str] = Field(default=None, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=2000)
+
+
 # Phase 66 — multi-winner approval selection config validation. Shared by
 # ProposalCreate + ProposalUpdate so both paths enforce identical shape
 # rules at the schema layer (422 on violation). Method-compatibility

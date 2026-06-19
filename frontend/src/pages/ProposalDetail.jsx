@@ -1168,22 +1168,55 @@ function EditProposalButton({ proposal, onSaved }) {
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState(proposal.title);
   const [body, setBody] = useState(proposal.body || '');
+  // Phase 76b — option text editing during deliberation. Original options are
+  // edited in place via PATCH /options/{id} (preserves ids + any pre-votes).
+  // Not offered for elections (labels are candidate user-ids).
+  const optionsEditable = !proposal.is_election && (proposal.options?.length > 0);
+  const [optDrafts, setOptDrafts] = useState(() => (
+    (proposal.options || []).map(o => ({ id: o.id, label: o.label || '', description: o.description || '' }))
+  ));
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     setTitle(proposal.title);
     setBody(proposal.body || '');
-  }, [proposal.title, proposal.body]);
+    setOptDrafts((proposal.options || []).map(o => ({ id: o.id, label: o.label || '', description: o.description || '' })));
+  }, [proposal.title, proposal.body, proposal.options]);
+
+  const allOptionLabelsValid = optDrafts.every(o => o.label.trim().length > 0);
+
+  function updateOptDraft(id, field, value) {
+    setOptDrafts(prev => prev.map(o => (o.id === id ? { ...o, [field]: value } : o)));
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (!title.trim() || !allOptionLabelsValid) return;
     setSubmitting(true);
     try {
-      await api.patch(`/api/proposals/${proposal.id}`, {
-        title: title.trim(),
-        body,
-      });
+      // 1. Proposal title / body — only when actually changed, to avoid
+      //    spurious revision-log entries on an options-only edit.
+      const titleChanged = title.trim() !== proposal.title;
+      const bodyChanged = body !== (proposal.body || '');
+      if (titleChanged || bodyChanged) {
+        await api.patch(`/api/proposals/${proposal.id}`, {
+          title: title.trim(),
+          body,
+        });
+      }
+      // 2. Each changed option, edited in place.
+      if (optionsEditable) {
+        for (const draft of optDrafts) {
+          const orig = (proposal.options || []).find(o => o.id === draft.id);
+          if (!orig) continue;
+          const payload = {};
+          if (draft.label.trim() !== (orig.label || '')) payload.label = draft.label.trim();
+          if (draft.description !== (orig.description || '')) payload.description = draft.description;
+          if (Object.keys(payload).length > 0) {
+            await api.patch(`/api/proposals/${proposal.id}/options/${draft.id}`, payload);
+          }
+        }
+      }
       toast.success('Proposal updated');
       setOpen(false);
       onSaved?.();
@@ -1232,17 +1265,55 @@ function EditProposalButton({ proposal, onSaved }) {
           className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:border-[var(--brand-accent)] resize-y"
         />
       </div>
+      {/* Phase 76b — edit option label + description in place. Costs /
+          ceilings / structure aren't editable here (those are draft-only);
+          this is text only, so pre-votes and budget metadata are preserved. */}
+      {optionsEditable && (
+        <div className="space-y-2">
+          <label className="block text-xs font-medium text-gray-600">
+            {proposal.voting_method === 'budget_project' ? 'Projects' : 'Options'}
+          </label>
+          {optDrafts.map((o, idx) => (
+            <div key={o.id} className="p-2 bg-white border border-gray-200 rounded space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-400">{idx + 1}.</span>
+                <input
+                  type="text"
+                  value={o.label}
+                  onChange={(e) => updateOptDraft(o.id, 'label', e.target.value)}
+                  maxLength={200}
+                  placeholder="Label (required)"
+                  className={`flex-1 px-2 py-1 text-sm border rounded focus:outline-none focus:border-[var(--brand-accent)] ${o.label.trim() ? 'border-gray-300' : 'border-red-400'}`}
+                />
+              </div>
+              <textarea
+                value={o.description}
+                onChange={(e) => updateOptDraft(o.id, 'description', e.target.value)}
+                rows={2}
+                maxLength={2000}
+                placeholder="Description (optional)"
+                className="w-full px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:border-[var(--brand-accent)] resize-y"
+              />
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex gap-2">
         <button
           type="submit"
-          disabled={submitting || !title.trim()}
+          disabled={submitting || !title.trim() || !allOptionLabelsValid}
           className="px-3 py-1 text-xs font-medium text-white bg-[var(--brand-accent)] rounded hover:opacity-90 disabled:opacity-50"
         >
           {submitting ? 'Saving…' : 'Save changes'}
         </button>
         <button
           type="button"
-          onClick={() => { setOpen(false); setTitle(proposal.title); setBody(proposal.body || ''); }}
+          onClick={() => {
+            setOpen(false);
+            setTitle(proposal.title);
+            setBody(proposal.body || '');
+            setOptDrafts((proposal.options || []).map(o => ({ id: o.id, label: o.label || '', description: o.description || '' })));
+          }}
           className="px-3 py-1 text-xs text-gray-600 hover:text-gray-800"
         >
           Cancel
