@@ -1,4 +1,5 @@
 import { optionLabelOf } from '../utils/optionDisplay';
+import { formatBudget as fmt } from '../utils/budgetFormat';
 
 /**
  * BudgetResultsPanel — Phase 73 allocation-budget results.
@@ -8,15 +9,6 @@ import { optionLabelOf } from '../utils/optionDisplay';
  * force a shortfall) and a degenerate "the group chose to allocate nothing"
  * empty-state.
  */
-function fmt(n, currency = 'USD') {
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency', currency, maximumFractionDigits: 0,
-    }).format(n);
-  } catch {
-    return `$${Math.round(n).toLocaleString()}`;
-  }
-}
 
 export default function BudgetResultsPanel({ tally, proposal }) {
   if (!tally || tally.voting_method !== 'budget_allocation') return null;
@@ -37,7 +29,7 @@ export default function BudgetResultsPanel({ tally, proposal }) {
 
       {tally.budget_degenerate_no_support ? (
         <p className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
-          The group chose to allocate nothing — every bucket received $0.
+          The group chose to allocate nothing — every bucket received {fmt(0, currency)}.
         </p>
       ) : (
         <div className="space-y-2">

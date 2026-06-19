@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import api from '../api';
 import { useToast } from './Toast';
 import { optionDisplayLabel } from '../utils/optionDisplay';
+import { formatBudget as fmt, unitInputSymbol } from '../utils/budgetFormat';
 
 /**
  * BudgetBallot — Phase 73 allocation-budget ballot.
@@ -12,21 +13,13 @@ import { optionDisplayLabel } from '../utils/optionDisplay';
  * ceiling. Under-allocation is allowed (the unspent remainder is explicit).
  * Budget proposals are direct-vote only, so there's no delegate path here.
  */
-function fmt(n, currency = 'USD') {
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency', currency, maximumFractionDigits: 0,
-    }).format(n);
-  } catch {
-    return `$${Math.round(n).toLocaleString()}`;
-  }
-}
 
 export default function BudgetBallot({ proposal, myVote, proposalId, onVoteChange, emailVerified }) {
   const toast = useToast();
   const cfg = proposal.budget_config || {};
   const envelope = Number(cfg.envelope || 0);
   const currency = cfg.currency || 'USD';
+  const inputSymbol = unitInputSymbol(currency);
   const options = useMemo(() => proposal.options || [], [proposal.options]);
 
   const [showBallot, setShowBallot] = useState(false);
@@ -158,7 +151,7 @@ export default function BudgetBallot({ proposal, myVote, proposalId, onVoteChang
               <div className="flex items-center justify-between gap-2">
                 <span className="text-sm font-medium text-gray-800 leading-snug">{optionDisplayLabel(proposal, o)}</span>
                 <div className="flex items-center gap-1 shrink-0">
-                  <span className="text-gray-400 text-sm">$</span>
+                  {inputSymbol && <span className="text-gray-400 text-sm">{inputSymbol}</span>}
                   <input
                     type="number"
                     min="0"

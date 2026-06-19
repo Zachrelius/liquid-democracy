@@ -30,6 +30,8 @@ import BudgetResultsPanel from '../components/BudgetResultsPanel';
 // Phase 74 — project-budget ballot + results.
 import BudgetProjectBallot from '../components/BudgetProjectBallot';
 import BudgetProjectResultsPanel from '../components/BudgetProjectResultsPanel';
+// Phase 76a — main-view catalog of budget buckets / projects.
+import BudgetOptionsSummary from '../components/BudgetOptionsSummary';
 import RCVSankeyChart from '../components/RCVSankeyChart';
 import SupportTrajectoryChart from '../components/SupportTrajectoryChart';
 // Phase 17 F2 — auto-resolved tie banner shared across approval + RCV panels.
@@ -2359,6 +2361,16 @@ export default function ProposalDetail() {
                 onAdded={fetchData}
               />
             </div>
+          )}
+
+          {/* Phase 76a — budget proposals show their buckets / projects in the
+              main column too (not only inside the sidebar ballot). Visible
+              across deliberation + voting + closed so the catalog of what's on
+              offer is always legible; the ballot/results add the interactive +
+              outcome layers. */}
+          {(proposal.voting_method === 'budget_allocation' || proposal.voting_method === 'budget_project')
+            && proposal.options?.length > 0 && (
+            <BudgetOptionsSummary proposal={proposal} />
           )}
 
           {/* Phase 32.2 hotfix #2 — Write-in adder for voting phase.

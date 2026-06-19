@@ -1,4 +1,5 @@
 import { optionLabelOf } from '../utils/optionDisplay';
+import { formatBudget as fmt } from '../utils/budgetFormat';
 
 /**
  * BudgetProjectResultsPanel — Phase 74 project-budget results.
@@ -8,15 +9,6 @@ import { optionLabelOf } from '../utils/optionDisplay';
  * total ("the group chose to spend ~$X of $Y"), the halt reason, and the
  * unfunded list (high-priority items that didn't fit are marked).
  */
-function fmt(n, currency = 'USD') {
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency', currency, maximumFractionDigits: 0,
-    }).format(n || 0);
-  } catch {
-    return `$${Math.round(n || 0).toLocaleString()}`;
-  }
-}
 
 const HALT_COPY = {
   stop_point: 'Stopped at the group’s chosen spend level.',
