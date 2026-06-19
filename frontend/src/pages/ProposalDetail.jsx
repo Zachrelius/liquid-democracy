@@ -1976,6 +1976,11 @@ export default function ProposalDetail() {
           onCreated={() => { setDraftEditMode(false); fetchData(); }}
           onCancel={() => setDraftEditMode(false)}
           onDelete={handleDeleteDraft}
+          onAdvance={
+            proposal.can_advance && proposal.next_status ? handleAdvance : null
+          }
+          advanceLabel={proposal.next_status ? `Save & advance to ${proposal.next_status}` : null}
+          advancing={advancing}
         />
       </div>
     );
@@ -1987,7 +1992,13 @@ export default function ProposalDetail() {
   // empty body; the backend derives voting_end from voting_days / org
   // default. Surfaces the endpoint's 400 config-error detail (Item 3) so
   // an author without an admin around isn't stuck on a silent failure.
-  async function handleAdvance() {
+  //
+  // saveFirst (optional): an async () => boolean supplied by the draft
+  // editor's "Save & advance" button. When present we persist the open
+  // form edits AFTER the user confirms but BEFORE advancing, so an author
+  // never loses in-progress edits by advancing. A falsy return aborts the
+  // advance (save failed / was cancelled) and leaves the editor open.
+  async function handleAdvance(saveFirst = null) {
     const next = proposal.next_status;
     const message = next === 'deliberation'
       ? 'This opens the proposal for deliberation. Members will be able to see and discuss it.'
@@ -1999,6 +2010,10 @@ export default function ProposalDetail() {
     if (!ok) return;
     setAdvancing(true);
     try {
+      if (typeof saveFirst === 'function') {
+        const saved = await saveFirst();
+        if (!saved) return; // save failed/cancelled — keep editor open
+      }
       await api.post(`/api/proposals/${proposal.id}/advance`, {});
       toast.success(`Advanced to ${next}`);
       fetchData();
@@ -2146,7 +2161,7 @@ export default function ProposalDetail() {
               <div className="mt-3">
                 <button
                   type="button"
-                  onClick={handleAdvance}
+                  onClick={() => handleAdvance()}
                   disabled={advancing}
                   className="text-sm px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
                 >
