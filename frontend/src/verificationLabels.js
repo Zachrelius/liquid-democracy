@@ -9,6 +9,7 @@
  * this module — keep the label tables in one place so a future
  * copy change is a one-file edit.
  */
+import { countryName } from './utils/countries';
 
 // Long labels intentionally spell out what was verified (a government
 // ID was confirmed for the account) so the badge doesn't overclaim —
@@ -91,6 +92,8 @@ export function ctaCopyForVerificationRequired(detail) {
     const labels = scope.map(e => {
       if (e && e.city) return `${e.city}, ${e.state}`;
       if (e && e.state) return e.state;
+      // Phase 76c — country-level entry (no US state). Name the country.
+      if (e && e.country) return countryName(e.country);
       return null;
     }).filter(Boolean);
     if (!labels.length) {

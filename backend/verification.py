@@ -981,14 +981,34 @@ def _residency_scope_entries(org) -> list[dict]:
             if not isinstance(entry, dict):
                 continue
             state = entry.get("state")
-            if not isinstance(state, str) or not state.strip():
+            state_clean: Optional[str] = (
+                state.strip().upper()
+                if isinstance(state, str) and state.strip() else None
+            )
+            # Phase 76c — optional ISO 3166-1 alpha-2 country. An entry
+            # is kept if it carries a state (US state/city entry, the
+            # existing shape) OR a country (country-level entry). An
+            # entry with neither is ambiguous and dropped.
+            country = entry.get("country")
+            country_clean: Optional[str] = (
+                country.strip().upper()
+                if isinstance(country, str) and country.strip() else None
+            )
+            if not state_clean and not country_clean:
                 continue
-            state_clean = state.strip().upper()
             city = entry.get("city")
             city_clean: Optional[str] = None
             if isinstance(city, str) and city.strip():
                 city_clean = city.strip()
-            normalized.append({"state": state_clean, "city": city_clean})
+            # City is hashed with its state (US-only for now); a city
+            # without a state can't be matched, so drop it.
+            if city_clean and not state_clean:
+                city_clean = None
+            normalized.append({
+                "country": country_clean,
+                "state": state_clean,
+                "city": city_clean,
+            })
         return normalized
 
     # Back-compat: synthesize from old 52i single-value keys.
@@ -996,7 +1016,7 @@ def _residency_scope_entries(org) -> list[dict]:
     if not isinstance(old_state, str) or not old_state.strip():
         return []
     old_city = settings.get(SETTING_MEMBERSHIP_LOCALITY)
-    entry: dict = {"state": old_state.strip().upper(), "city": None}
+    entry: dict = {"country": None, "state": old_state.strip().upper(), "city": None}
     if isinstance(old_city, str) and old_city.strip():
         entry["city"] = old_city.strip()
     return [entry]
@@ -1033,10 +1053,24 @@ def user_satisfies_residency_scope(user, org) -> bool:
         user_jurisdiction.strip().upper()
         if isinstance(user_jurisdiction, str) else None
     )
+    user_country = getattr(user, "verification_country", None)
+    user_country_norm = (
+        user_country.strip().upper()
+        if isinstance(user_country, str) else None
+    )
     user_locality_hash = getattr(user, "verification_locality_hash", None)
 
     import verification_hashing
     for entry in entries:
+        # Phase 76c — a state (US) entry is matched on its own terms
+        # (jurisdiction / locality), as before; state takes precedence
+        # when an entry carries both. An entry with only a country is a
+        # country-level match against ``verification_country``.
+        if not entry.get("state"):
+            if entry.get("country"):
+                if user_country_norm and user_country_norm == entry["country"]:
+                    return True
+            continue
         if entry["city"] is None:
             # State-only entry — jurisdiction match.
             if user_jurisdiction_norm == entry["state"]:
@@ -1084,7 +1118,8 @@ def _residency_payload(org) -> dict:
         "error": "verification_required",
         "scope": "residency_scope",
         "residency_scope": [
-            {"state": e["state"], "city": e["city"]} for e in entries
+            {"country": e.get("country"), "state": e["state"], "city": e["city"]}
+            for e in entries
         ],
     }
 

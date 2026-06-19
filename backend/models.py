@@ -516,6 +516,16 @@ class User(Base):
     verification_jurisdiction: Mapped[Optional[str]] = mapped_column(
         String(length=16), nullable=True,
     )
+    # Phase 76c — residency country (ISO 3166-1 alpha-2 code, e.g. "US",
+    # "CA"). Captured from the ID's parsed residential address country,
+    # independent of the (US-centric) ``verification_jurisdiction`` /
+    # state ladder so non-US members can be gated by country. Readable
+    # (low-sensitivity, same as jurisdiction); NEVER serialized to
+    # non-admin clients. NULL until a verification (or the US backfill)
+    # populates it.
+    verification_country: Mapped[Optional[str]] = mapped_column(
+        String(length=2), nullable=True,
+    )
     verification_attestation_id: Mapped[Optional[str]] = mapped_column(
         String(length=128), nullable=True,
     )

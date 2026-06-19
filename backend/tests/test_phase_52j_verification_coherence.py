@@ -245,7 +245,8 @@ class TestMembershipResidencyCheck:
         d = exc.value.detail
         assert d["error"] == "verification_required"
         assert d["scope"] == "residency_scope"
-        assert d["residency_scope"] == [{"state": "MA", "city": None}]
+        # Phase 76c — entries now also carry an (optional) country key.
+        assert d["residency_scope"] == [{"country": None, "state": "MA", "city": None}]
 
 
 class TestRoleResidencyCheck:

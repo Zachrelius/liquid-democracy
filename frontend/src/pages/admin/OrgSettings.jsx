@@ -15,6 +15,8 @@ import { getDerivedAccent } from '../../utils/color_derive';
 // same renderer as proposal bodies, so what stewards see here matches what
 // renders on the public landing page.
 import renderMarkdown from '../../utils/renderMarkdown';
+// Phase 76c — country picker for residency-scope entries.
+import { COUNTRIES, countryName } from '../../utils/countries';
 
 // Phase 14 F3 — public landing page intro text length cap. Matches the
 // backend B4 cap (5000 chars; a longer payload returns 400). Enforcing it
@@ -2588,59 +2590,91 @@ export default function OrgSettings() {
                 Residency scope (where members must live, when a gate requires it)
               </label>
               <p className="text-xs text-gray-500">
-                Add one or more allowed locations. Use the two-letter US state code (MA, NH, CA, NY — not the full name). The city is optional; leave it blank to match anyone in that state. City entries are hashed with the state, so "Springfield, MA" and "Springfield, IL" are treated as different places.
+                Add one or more allowed locations; a member qualifies by matching any of them. Pick a country first. For the United States you can narrow to a two-letter state code (MA, NH, CA — leave it blank to match anyone in the US) and an optional city. City entries are hashed with the state, so "Springfield, MA" and "Springfield, IL" are treated as different places. For other countries, matching is at the country level for now (state/province + city within non-US countries is coming soon).
               </p>
               <div className="space-y-2">
-                {(settings.verification_residency_scope || []).map((entry, idx) => (
-                  <div key={idx} className="flex flex-wrap items-center gap-2">
-                    <input
-                      type="text"
-                      value={entry.state || ''}
-                      onChange={e => {
-                        const next = [...(settings.verification_residency_scope || [])];
-                        // Force 2-letter uppercase US state codes — the
-                        // backend's normalize_jurisdiction expects this
-                        // form, and a typed-out "Massachusetts" works at
-                        // hash time but the FE input shouldn't suggest
-                        // it's accepted.
-                        const v = (e.target.value || '').toUpperCase().slice(0, 2);
-                        next[idx] = { ...next[idx], state: v };
-                        updateSetting('verification_residency_scope', next);
-                      }}
-                      placeholder="State"
-                      maxLength={2}
-                      className="w-20 px-2 py-1 border border-gray-300 rounded text-sm uppercase tracking-wider"
-                    />
-                    <input
-                      type="text"
-                      value={entry.city || ''}
-                      onChange={e => {
-                        const next = [...(settings.verification_residency_scope || [])];
-                        const v = e.target.value || '';
-                        if (v) next[idx] = { ...next[idx], city: v };
-                        else { const { city: _drop, ...rest } = next[idx] || {}; next[idx] = rest; }
-                        updateSetting('verification_residency_scope', next);
-                      }}
-                      placeholder="City (optional, e.g. Boston)"
-                      className="flex-1 max-w-xs px-2 py-1 border border-gray-300 rounded text-sm"
-                    />
-                    <button
-                      type="button"
-                      className="text-xs text-red-600 hover:underline"
-                      onClick={() => {
-                        const next = (settings.verification_residency_scope || []).filter((_, i) => i !== idx);
-                        updateSetting('verification_residency_scope', next.length ? next : null);
-                      }}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
+                {(settings.verification_residency_scope || []).map((entry, idx) => {
+                  const country = (entry.country || 'US').toUpperCase();
+                  const isUS = country === 'US';
+                  return (
+                    <div key={idx} className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={country}
+                        onChange={e => {
+                          const next = [...(settings.verification_residency_scope || [])];
+                          const v = e.target.value;
+                          // Non-US entries are country-level only — drop any
+                          // state/city so the saved shape is unambiguous. US
+                          // keeps its existing state/city inputs.
+                          next[idx] = v === 'US'
+                            ? { ...next[idx], country: 'US' }
+                            : { country: v };
+                          updateSetting('verification_residency_scope', next);
+                        }}
+                        className="px-2 py-1 border border-gray-300 rounded text-sm max-w-[12rem]"
+                      >
+                        {COUNTRIES.map(c => (
+                          <option key={c.code} value={c.code}>{c.name}</option>
+                        ))}
+                      </select>
+                      {isUS ? (
+                        <>
+                          <input
+                            type="text"
+                            value={entry.state || ''}
+                            onChange={e => {
+                              const next = [...(settings.verification_residency_scope || [])];
+                              // Force 2-letter uppercase US state codes — the
+                              // backend's normalize_jurisdiction expects this
+                              // form, and a typed-out "Massachusetts" works at
+                              // hash time but the FE input shouldn't suggest
+                              // it's accepted.
+                              const v = (e.target.value || '').toUpperCase().slice(0, 2);
+                              next[idx] = { ...next[idx], country: 'US', state: v };
+                              updateSetting('verification_residency_scope', next);
+                            }}
+                            placeholder="State"
+                            maxLength={2}
+                            className="w-20 px-2 py-1 border border-gray-300 rounded text-sm uppercase tracking-wider"
+                          />
+                          <input
+                            type="text"
+                            value={entry.city || ''}
+                            onChange={e => {
+                              const next = [...(settings.verification_residency_scope || [])];
+                              const v = e.target.value || '';
+                              if (v) next[idx] = { ...next[idx], country: 'US', city: v };
+                              else { const { city: _drop, ...rest } = next[idx] || {}; next[idx] = rest; }
+                              updateSetting('verification_residency_scope', next);
+                            }}
+                            placeholder="City (optional, e.g. Boston)"
+                            className="flex-1 max-w-xs px-2 py-1 border border-gray-300 rounded text-sm"
+                          />
+                        </>
+                      ) : (
+                        <span className="text-xs text-gray-500 italic">
+                          Matches anyone verified in {countryName(country)}. State/city
+                          matching within non-US countries is coming soon.
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        className="text-xs text-red-600 hover:underline"
+                        onClick={() => {
+                          const next = (settings.verification_residency_scope || []).filter((_, i) => i !== idx);
+                          updateSetting('verification_residency_scope', next.length ? next : null);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })}
                 <button
                   type="button"
                   className="text-xs text-blue-600 hover:underline"
                   onClick={() => {
-                    const next = [...(settings.verification_residency_scope || []), { state: '' }];
+                    const next = [...(settings.verification_residency_scope || []), { country: 'US', state: '' }];
                     updateSetting('verification_residency_scope', next);
                   }}
                 >
