@@ -405,6 +405,16 @@ function CreateProposalForm({
   // + Cancel. Caller is responsible for the API DELETE + navigation;
   // see ProposalDetail.jsx for the canonical wiring.
   onDelete = null,
+  // Advance-to-next-phase callback surfaced in edit mode alongside Save +
+  // Cancel + Delete. When supplied (parent gates on the proposal's
+  // can_advance flag), an "Advance to {next}" button is rendered in the
+  // footer so an author can move a draft into deliberation without leaving
+  // the editor. advanceLabel is the button text; advancing is the in-flight
+  // disabled state. The parent owns the confirm dialog + API call; see
+  // ProposalDetail.jsx for the canonical wiring.
+  onAdvance = null,
+  advanceLabel = null,
+  advancing = false,
   // Phase 72 — when an import file carries 2+ proposals, the form hands the
   // per-item preview results up to the parent to render the review list
   // instead of prefilling a single proposal. Create-mode only.
@@ -763,12 +773,22 @@ function CreateProposalForm({
 
   async function handleSubmit(e) {
     e.preventDefault();
+    const ok = await saveChanges();
+    if (ok) onCreated();
+  }
+
+  // Persist the form (create or edit). Returns true on success, false on a
+  // validation-cancel or an API failure. Split out from handleSubmit so the
+  // edit-mode "Save & advance" button can save and THEN advance without
+  // closing the editor (which onCreated does). The advance handler invokes
+  // this via the onAdvance(saveChanges) wiring.
+  async function saveChanges() {
     // Phase 9 — block submission when require_polis_for_new_proposals is
     // true and the picker is empty. Server enforces this too; we surface
     // it inline so the operator doesn't round-trip a 400.
     if (!isEditMode && requirePolis && (linkedPolisIds || []).length === 0 && scope) {
       setError('At least one linked Polis is required for proposals in this scope.');
-      return;
+      return false;
     }
     // Phase 62 A1 — voting_method change during edit discards existing
     // options (matches the Phase 59 A4 backend's option-reshape behavior).
@@ -789,7 +809,7 @@ function CreateProposalForm({
         ),
         destructive: true,
       });
-      if (!ok) return;
+      if (!ok) return false;
     }
     setSaving(true);
     setError('');
@@ -952,9 +972,10 @@ function CreateProposalForm({
         await api.post(`/api/orgs/${slug}/proposals`, payload);
         toast.success('Proposal created');
       }
-      onCreated();
+      return true;
     } catch (err) {
       setError(err.message || (isEditMode ? 'Failed to save changes' : 'Failed to create proposal'));
+      return false;
     } finally {
       setSaving(false);
     }
@@ -2124,6 +2145,22 @@ function CreateProposalForm({
         >
           Cancel
         </button>
+        {/* Save & advance button (edit mode only, when the caller supplies
+            an onAdvance handler — gated upstream on can_advance). Lets an
+            author move a draft into deliberation from the editor. We pass
+            saveChanges so the handler confirms, persists the open form
+            edits, THEN advances — the author never loses in-progress edits.
+            The parent owns the confirm dialog + advance API call. */}
+        {isEditMode && onAdvance && (
+          <button
+            type="button"
+            onClick={() => onAdvance(saveChanges)}
+            disabled={advancing || saving || !title.trim() || !optionsValid || !numWinnersValid || !winnerSelectionValid || !budgetValid || !projectBudgetValid}
+            className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+          >
+            {advancing ? 'Advancing…' : (advanceLabel || 'Advance')}
+          </button>
+        )}
         {/* Phase 62 A3 — Delete-draft button (edit mode only, when caller
             supplies an onDelete handler). Destructive styling; the
             handler is responsible for confirm dialog + navigation. */}
