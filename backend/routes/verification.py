@@ -465,6 +465,7 @@ def _apply_decision(
     mapped = verification_provider.map_decision_to_state(decision)
     new_state = mapped["verification_state"]
     new_jurisdiction = mapped["verification_jurisdiction"]
+    new_country = mapped.get("verification_country")
     new_attestation = mapped["verification_attestation_id"]
 
     if new_state == verification.EMAIL_ONLY:
@@ -493,6 +494,8 @@ def _apply_decision(
 
     target_user.verification_state = new_state
     target_user.verification_jurisdiction = new_jurisdiction
+    # Phase 76c — residency country (independent of the state ladder).
+    target_user.verification_country = new_country
     target_user.verification_attestation_id = new_attestation
     target_user.verification_provenance = verification.PROV_DIDIT
     target_user.verification_updated_at = datetime.now(timezone.utc).replace(tzinfo=None)

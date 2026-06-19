@@ -348,8 +348,9 @@ class TestMembershipGateSideEffect:
         # Phase 52j J1 — unified residency_scope payload (an entry
         # list). The city + state are embedded inside the scope entry.
         assert detail["scope"] == "residency_scope"
+        # Phase 76c — entries now also carry an (optional) country key.
         assert detail["residency_scope"] == [
-            {"state": "MA", "city": "Boston"},
+            {"country": None, "state": "MA", "city": "Boston"},
         ]
         # No membership row written.
         m = db.query(models.OrgMembership).filter_by(

@@ -412,6 +412,60 @@ def _extract_jurisdiction(decision: dict) -> Optional[str]:
     return None
 
 
+def _extract_country(decision: dict) -> Optional[str]:
+    """Phase 76c — extract the holder's residency country (ISO 3166-1
+    alpha-2 code, e.g. ``"US"``, ``"CA"``) from a Didit decision.
+
+    The real payload carries it at
+    ``decision.id_verifications[0].parsed_address.country`` (2-char
+    code) — the same parsed-address block ``_extract_jurisdiction``
+    reads ``region`` from. Unlike jurisdiction (US-state-specific,
+    normalized to a curated table), country is taken as-is and only
+    upper-cased / length-checked: the gate compares it to an
+    ISO-code the admin picks from a dropdown, so both sides are the
+    provider's native form.
+
+    Returns the 2-char upper-cased code or None (unknown / non-2-char
+    → None, the safe miss direction). Legacy singular paths probed as
+    fallbacks, mirroring ``_extract_jurisdiction``.
+    """
+    if not isinstance(decision, dict):
+        return None
+
+    candidates: list[Any] = []
+    iv_list = decision.get("id_verifications")
+    if isinstance(iv_list, list) and iv_list:
+        first = iv_list[0]
+        if isinstance(first, dict):
+            pa = first.get("parsed_address")
+            if isinstance(pa, dict):
+                v = pa.get("country")
+                if v is not None:
+                    candidates.append(v)
+    iv_singular = decision.get("id_verification")
+    if isinstance(iv_singular, dict):
+        for key in ("country", "address_country"):
+            v = iv_singular.get(key)
+            if v is not None:
+                candidates.append(v)
+        addr = iv_singular.get("address")
+        if isinstance(addr, dict):
+            v = addr.get("country")
+            if v is not None:
+                candidates.append(v)
+    for key in ("country", "address_country"):
+        v = decision.get(key)
+        if v is not None:
+            candidates.append(v)
+
+    for c in candidates:
+        if isinstance(c, str):
+            code = c.strip().upper()
+            if len(code) == 2 and code.isalpha():
+                return code
+    return None
+
+
 def _decision_passed_id(decision: dict) -> bool:
     """True iff the decision indicates a passed ID-verification check.
 
@@ -492,9 +546,15 @@ def map_decision_to_state(decision: dict) -> dict:
         return {
             "verification_state": EMAIL_ONLY,
             "verification_jurisdiction": None,
+            "verification_country": None,
             "verification_attestation_id": None,
         }
     jurisdiction = _extract_jurisdiction(decision)
+    # Phase 76c — country is captured independently of the (US-centric)
+    # state ladder: a non-US address parses a country but no recognized
+    # US jurisdiction, so ``verification_state`` stays IDENTITY while
+    # ``verification_country`` is still populated for country-scope gates.
+    country = _extract_country(decision)
     # Ordinal pick: highest satisfied rung. IDENTITY_UNIQUE is no
     # longer reachable from this mapper (Phase 52h Stage 2).
     state = ADDRESS_ON_ID if jurisdiction else IDENTITY
@@ -504,6 +564,7 @@ def map_decision_to_state(decision: dict) -> dict:
     return {
         "verification_state": state,
         "verification_jurisdiction": jurisdiction,
+        "verification_country": country,
         "verification_attestation_id": attestation_id,
     }
 
