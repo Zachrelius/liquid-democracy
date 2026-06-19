@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import api from '../api';
 import { useToast } from './Toast';
 import { optionDisplayLabel } from '../utils/optionDisplay';
+import { formatBudget as fmt } from '../utils/budgetFormat';
 
 /**
  * BudgetProjectBallot — Phase 74 project-budget ballot.
@@ -12,15 +13,6 @@ import { optionDisplayLabel } from '../utils/optionDisplay';
  * voter's ranking commits. Omitted items sit in a visible "Not funding" tray so
  * the omission-deprioritizes semantics are legible. Direct-vote only.
  */
-function fmt(n, currency = 'USD') {
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: 'currency', currency, maximumFractionDigits: 0,
-    }).format(n || 0);
-  } catch {
-    return `$${Math.round(n || 0).toLocaleString()}`;
-  }
-}
 
 export default function BudgetProjectBallot({ proposal, myVote, proposalId, onVoteChange, emailVerified }) {
   const toast = useToast();

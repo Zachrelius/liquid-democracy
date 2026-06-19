@@ -9,6 +9,7 @@ import LinkedPolisesPicker from '../../components/LinkedPolisesPicker';
 // Phase 56 F3 — markdown renderer reused for the topic-guidance hint in
 // the proposal-creation topic picker.
 import renderMarkdown from '../../utils/renderMarkdown';
+import { unitInputSymbol } from '../../utils/budgetFormat';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
 // Phase 52 Stage 1 — shared verification state label tables.
@@ -42,7 +43,7 @@ function pluralizeDays(value) {
   return Number(value) === 1 ? 'day' : 'days';
 }
 
-function OptionsEditor({ options, onChange, budgetCeilings = false }) {
+function OptionsEditor({ options, onChange, budgetCeilings = false, unitSymbol = '$' }) {
   function updateOption(idx, field, value) {
     const updated = options.map((o, i) => i === idx ? { ...o, [field]: value } : o);
     onChange(updated);
@@ -131,7 +132,7 @@ function OptionsEditor({ options, onChange, budgetCeilings = false }) {
             {budgetCeilings && (
               <div className="ml-8 flex items-center gap-2 text-xs text-gray-500">
                 <span>Ceiling (optional):</span>
-                <span className="text-gray-400">$</span>
+                {unitSymbol && <span className="text-gray-400">{unitSymbol}</span>}
                 <input
                   type="number" min="0" step="1"
                   value={opt.budgetMaxAmount ?? ''}
@@ -152,7 +153,7 @@ function OptionsEditor({ options, onChange, budgetCeilings = false }) {
 // continuous-as-discrete / tier_parent). Tier parents carry no cost of their
 // own; a nested sub-editor adds tier variants (label + cost) + a fallback
 // toggle. Emits items in the shape the create payload maps to options.
-function ProjectItemsEditor({ items, onChange }) {
+function ProjectItemsEditor({ items, onChange, unitSymbol = '$' }) {
   function patch(idx, field, value) {
     onChange(items.map((it, i) => (i === idx ? { ...it, [field]: value } : it)));
   }
@@ -196,7 +197,7 @@ function ProjectItemsEditor({ items, onChange }) {
             <select value={it.kind} onChange={e => patch(idx, 'kind', e.target.value)}
               className="text-xs border border-gray-300 rounded px-1.5 py-1">
               <option value="discrete">Fixed cost</option>
-              <option value="continuous-as-discrete">Continuous (fund full or $0)</option>
+              <option value="continuous-as-discrete">Continuous (fund fully or not at all)</option>
               <option value="tier_parent">Tiered variants</option>
             </select>
             <button type="button" onClick={() => removeItem(idx)}
@@ -211,7 +212,7 @@ function ProjectItemsEditor({ items, onChange }) {
                     onChange={e => patchTier(idx, ti, 'label', e.target.value)}
                     placeholder="Variant (e.g. 6ft pool)" maxLength={200}
                     className="flex-1 px-2 py-1 border border-gray-300 rounded text-xs" />
-                  <span className="text-gray-400 text-xs">$</span>
+                  {unitSymbol && <span className="text-gray-400 text-xs">{unitSymbol}</span>}
                   <input type="number" min="1" value={t.cost}
                     onChange={e => patchTier(idx, ti, 'cost', e.target.value)}
                     placeholder="cost" className="w-28 px-2 py-1 border border-gray-300 rounded text-xs" />
@@ -233,7 +234,7 @@ function ProjectItemsEditor({ items, onChange }) {
           ) : (
             <div className="ml-8 flex items-center gap-2 text-xs text-gray-600">
               <span>{it.kind === 'continuous-as-discrete' ? 'Full amount:' : 'Cost:'}</span>
-              <span className="text-gray-400">$</span>
+              {unitSymbol && <span className="text-gray-400">{unitSymbol}</span>}
               <input type="number" min="1" value={it.cost}
                 onChange={e => patch(idx, 'cost', e.target.value)}
                 placeholder="cost when funded"
@@ -392,6 +393,29 @@ function TopicPickerList({
 // `linked_polis_ids` — both are deliberately not editable post-creation
 // in this pass (scope is structural; linked Polises are a structural
 // link, and changing either has broader implications beyond the draft).
+// Phase 76a — optional display unit for budget amounts. Free text stored in
+// budget_config.currency; blank means "$" (USD). Purely cosmetic — never
+// affects tally math. Shared by the allocation + project budget config blocks.
+function BudgetUnitField({ value, onChange }) {
+  return (
+    <div>
+      <label className="block text-xs text-gray-500 mb-1">Unit (optional)</label>
+      <input
+        type="text"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder="$ (default) — e.g. pesos, credits, thousand, €"
+        maxLength={24}
+        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+      />
+      <p className="text-xs text-gray-400 mt-1">
+        How amounts are labeled. Short symbols ($, €) sit before the number;
+        words (“pesos”, “credits”) sit after. Display only — doesn’t change any math.
+      </p>
+    </div>
+  );
+}
+
 function CreateProposalForm({
   slug,
   orgSettings,
@@ -482,6 +506,14 @@ function CreateProposalForm({
   const [budgetAggregation, setBudgetAggregation] = useState(() => (
     isEditMode ? (editingProposal.budget_config?.aggregation ?? 'median') : 'median'
   ));
+  // Phase 76a — display unit for budget amounts (allocation + project). Stored
+  // in budget_config.currency (any non-empty string). Blank → backend default
+  // "USD" → "$". Purely cosmetic; doesn't affect any tally math.
+  const [budgetUnit, setBudgetUnit] = useState(() => {
+    if (!isEditMode) return '';
+    const c = editingProposal.budget_config?.currency;
+    return c && c !== 'USD' ? c : '';
+  });
   // Phase 74b — project-budget config + items (only when method is
   // budget_project). Envelope reuses budgetEnvelope above.
   const [projectMinSpend, setProjectMinSpend] = useState(() => (
@@ -869,6 +901,7 @@ function CreateProposalForm({
           mode: 'allocation',
           envelope: Number(budgetEnvelope),
           aggregation: budgetAggregation,
+          currency: budgetUnit.trim() || 'USD',
         };
       }
       // Phase 74b — project-budget config + items (tier parents carry nested
@@ -880,6 +913,7 @@ function CreateProposalForm({
           envelope: env,
           min_spend: Number(projectMinSpend) || 0,
           max_spend: projectMaxSpend !== '' ? Number(projectMaxSpend) : env,
+          currency: budgetUnit.trim() || 'USD',
         };
         payload.options = projectItems.map(it => {
           const base = { label: it.label.trim(), description: '' };
@@ -1488,7 +1522,9 @@ function CreateProposalForm({
           <div>
             <label className="block text-xs text-gray-500 mb-1">Total budget (envelope)</label>
             <div className="flex items-center gap-1">
-              <span className="text-gray-400 text-sm">$</span>
+              {unitInputSymbol(budgetUnit) && (
+                <span className="text-gray-400 text-sm">{unitInputSymbol(budgetUnit)}</span>
+              )}
               <input
                 type="number" min="1" step="1" value={budgetEnvelope}
                 onChange={e => setBudgetEnvelope(e.target.value)}
@@ -1500,6 +1536,7 @@ function CreateProposalForm({
               <p className="text-xs text-red-600 mt-1">Enter a positive budget amount.</p>
             )}
           </div>
+          <BudgetUnitField value={budgetUnit} onChange={setBudgetUnit} />
           <div>
             <label className="block text-xs text-gray-500 mb-1">Aggregation</label>
             <select
@@ -1545,7 +1582,8 @@ function CreateProposalForm({
             spend level (a median of voters’ desired totals, clamped to the
             min/max band). Min spend 0 lets the group choose to fund little.
           </p>
-          <ProjectItemsEditor items={projectItems} onChange={setProjectItems} />
+          <BudgetUnitField value={budgetUnit} onChange={setBudgetUnit} />
+          <ProjectItemsEditor items={projectItems} onChange={setProjectItems} unitSymbol={unitInputSymbol(budgetUnit)} />
           {!projectBudgetValid && (
             <p className="text-xs text-red-600">
               Enter a positive envelope and at least 2 projects, each with a name
@@ -1578,7 +1616,7 @@ function CreateProposalForm({
 
       {/* Options Editor (approval, ranked-choice, and budget buckets) */}
       {isMultiOption && (
-        <OptionsEditor options={options} onChange={setOptions} budgetCeilings={isBudget} />
+        <OptionsEditor options={options} onChange={setOptions} budgetCeilings={isBudget} unitSymbol={unitInputSymbol(budgetUnit)} />
       )}
 
       {/* Winner selection (approval only). Four presets writing one
