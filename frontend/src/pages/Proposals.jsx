@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api';
 import { useOrg } from '../OrgContext';
@@ -21,8 +21,40 @@ import { optionDisplayLabel } from '../utils/optionDisplay';
 // `withdrawn` status. The default "all" view hides archived proposals so
 // they don't clutter the active list; the explicit "archived" filter
 // surfaces them.
-const STATUS_FILTERS = ['all', 'deliberation', 'voting', 'passed', 'failed', 'archived'];
+// Phase 76e — "unvoted" is a client-side refinement of the voting list:
+// proposals in voting status with no ballot attributed to the viewer
+// (neither a direct vote nor one a delegate cast for them). It queries the
+// server for status=voting, then filters by the viewer's my-vote results.
+const STATUS_FILTERS = ['all', 'deliberation', 'voting', 'unvoted', 'passed', 'failed', 'archived'];
 const FILTER_TO_STATUS = { archived: 'withdrawn' };
+// Friendlier labels where the raw filter key isn't self-explanatory.
+const FILTER_LABELS = { unvoted: 'To vote' };
+
+// sessionStorage key for persisting the list filters across navigation
+// (e.g. clicking into a proposal and coming back). Keyed per org so a
+// topic id from one org never leaks into another's filter.
+const filtersKey = (slug) => `proposalsFilters:${slug || 'global'}`;
+
+// Has the viewer cast a ballot on this proposal? Counts a vote whether it
+// was direct or resolved via a delegate — "haven't voted on yet" means
+// nothing is recorded on the viewer's behalf. Shape per voting method.
+function userHasVoted(proposal, myVote) {
+  if (!myVote) return false;
+  switch (proposal.voting_method) {
+    case 'binary':
+      return !!myVote.vote_value;
+    case 'approval':
+      return Array.isArray(myVote.approvals) && myVote.approvals.length > 0;
+    case 'ranked_choice':
+      return Array.isArray(myVote.ranking) && myVote.ranking.length > 0;
+    case 'budget_allocation':
+      return myVote.allocations != null;
+    case 'budget_project':
+      return myVote.ranked != null;
+    default:
+      return false;
+  }
+}
 
 function timeRemaining(votingEnd) {
   if (!votingEnd) return null;
@@ -291,6 +323,37 @@ export default function Proposals() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  // Phase 76e — restore the saved status + topic filters once the org is
+  // known (so returning from a proposal keeps the list as the user left
+  // it). restoredSlugRef ensures we restore exactly once per org and never
+  // clobber a filter the user changes afterward.
+  const restoredSlugRef = useRef(null);
+  useEffect(() => {
+    if (!currentOrg) return;
+    if (restoredSlugRef.current === currentOrg.slug) return;
+    restoredSlugRef.current = currentOrg.slug;
+    try {
+      const raw = sessionStorage.getItem(filtersKey(currentOrg.slug));
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (typeof saved.statusFilter === 'string') setStatusFilter(saved.statusFilter);
+        setTopicFilter(typeof saved.topicFilter === 'string' ? saved.topicFilter : '');
+      }
+    } catch { /* ignore malformed storage */ }
+  }, [currentOrg]);
+
+  // Persist filters whenever they change — but only after the restore for
+  // this org has run, so the initial defaults don't overwrite saved values.
+  useEffect(() => {
+    if (!currentOrg || restoredSlugRef.current !== currentOrg.slug) return;
+    try {
+      sessionStorage.setItem(
+        filtersKey(currentOrg.slug),
+        JSON.stringify({ statusFilter, topicFilter }),
+      );
+    } catch { /* ignore quota / disabled storage */ }
+  }, [statusFilter, topicFilter, currentOrg]);
+
   useEffect(() => {
     const topicsUrl = currentOrg
       ? `/api/orgs/${currentOrg.slug}/topics`
@@ -324,8 +387,10 @@ export default function Proposals() {
     setLoading(true);
     setError('');
     const params = new URLSearchParams();
-    if (statusFilter !== 'all') {
-      params.set('status', FILTER_TO_STATUS[statusFilter] || statusFilter);
+    // 'unvoted' is a client-side refinement over the voting list.
+    const serverStatus = statusFilter === 'unvoted' ? 'voting' : statusFilter;
+    if (serverStatus !== 'all') {
+      params.set('status', FILTER_TO_STATUS[serverStatus] || serverStatus);
     }
     if (topicFilter) params.set('topic_id', topicFilter);
     const qs = params.toString() ? `?${params}` : '';
@@ -383,9 +448,18 @@ export default function Proposals() {
   // Phase 68b — the "all" view hides archived (withdrawn) proposals so the
   // default list stays focused on active governance. The explicit
   // "archived" filter (which sends status=withdrawn) shows only those.
-  const visibleProposals = statusFilter === 'all'
-    ? proposals.filter(p => p.status !== 'withdrawn')
-    : proposals;
+  // Phase 76e — "unvoted" keeps only voting proposals the viewer hasn't
+  // cast a ballot on yet (server already scoped to status=voting).
+  let visibleProposals;
+  if (statusFilter === 'unvoted') {
+    visibleProposals = proposals.filter(
+      p => p.status === 'voting' && !userHasVoted(p, myVotes[p.id]),
+    );
+  } else if (statusFilter === 'all') {
+    visibleProposals = proposals.filter(p => p.status !== 'withdrawn');
+  } else {
+    visibleProposals = proposals;
+  }
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
@@ -413,13 +487,14 @@ export default function Proposals() {
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
+              title={s === 'unvoted' ? "Voting proposals you haven't voted on yet" : undefined}
               className={`px-3 py-1.5 text-sm capitalize transition-colors ${
                 statusFilter === s
                   ? 'bg-[var(--brand-primary)] text-white'
                   : 'text-gray-600 hover:bg-gray-50'
               }`}
             >
-              {s}
+              {FILTER_LABELS[s] || s}
             </button>
           ))}
         </div>
@@ -455,7 +530,16 @@ export default function Proposals() {
         <ErrorMessage error={error} onRetry={() => { setStatusFilter('all'); setTopicFilter(''); }} />
       ) : visibleProposals.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
-          {statusFilter === 'all' && !topicFilter ? (
+          {statusFilter === 'unvoted' ? (
+            <>
+              <p className="text-lg mb-2">You&apos;re all caught up</p>
+              <p className="text-sm">
+                {topicFilter
+                  ? 'No open votes left for you in this topic.'
+                  : "There are no open votes you haven't cast yet."}
+              </p>
+            </>
+          ) : statusFilter === 'all' && !topicFilter ? (
             <>
               <p className="text-lg mb-2">No proposals yet</p>
               <p className="text-sm">Create one from the admin panel to get started.</p>
