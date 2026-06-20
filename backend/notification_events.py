@@ -71,6 +71,7 @@ CATEGORIES: tuple[str, ...] = (
     "Delegation",
     "Polis",
     "Admin actions",
+    "Messages",
 )
 
 
@@ -332,6 +333,21 @@ EVENT_REGISTRY: list[EventDefinition] = [
         description="An action you submitted reached approval but could not be executed (target changed, permission lost, or matrix drifted).",
         category="Admin actions",
         signal_level="critical",
+    ),
+    # ---- Messages (Phase 77) --------------------------------------------
+    EventDefinition(
+        key="message.received",
+        label="New direct message",
+        description="Someone sent you a direct message within an organization.",
+        category="Messages",
+        signal_level="standard",
+    ),
+    EventDefinition(
+        key="message.org_inbox",
+        label="New message in org inbox",
+        description="A member sent a message to the organization's shared inbox.",
+        category="Messages",
+        signal_level="standard",
     ),
 ]
 

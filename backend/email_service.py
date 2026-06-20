@@ -87,6 +87,9 @@ _SUBJECTS: dict[str, str] = {
     "invitation": "You're invited to join {org_name} — Liquid Democracy",
     "digest.daily": "Your Liquid Democracy daily digest",
     "digest.weekly": "Your Liquid Democracy weekly digest",
+    # Phase 77 — messaging.
+    "message.received": "New message from {sender_display_name} in {org_name}",
+    "message.org_inbox": "New org inbox message in {org_name} from {sender_display_name}",
 }
 
 
@@ -506,6 +509,9 @@ def _build_event_template_vars(
         "rationale_excerpt": payload.get("rationale_excerpt") or "",
         "voting_end": payload.get("voting_end") or "",
         "percent_elapsed": payload.get("percent_elapsed") or "",
+        # Phase 77 — messaging event payload keys.
+        "sender_display_name": payload.get("sender_display_name") or "Someone",
+        "preview": payload.get("preview") or "",
         # CTA label is per-event but we don't currently use it as a
         # substitution slot in the templates (button text is hardcoded
         # per template). Kept here for future templates that want it.
@@ -538,6 +544,9 @@ _DEFAULT_CTA_LABELS: dict[str, str] = {
     "delegate.posted_rationale": "Open proposal",
     "voting.halfway_delegate_silent": "Open proposal",
     "voting.halfway_you_havent_voted": "Open proposal",
+    # Phase 77 — messaging.
+    "message.received": "View message",
+    "message.org_inbox": "Open org inbox",
 }
 
 
@@ -604,6 +613,17 @@ def _build_cta_url(
         return f"{base_url}/follows/incoming"
     if event_type == "follow.approved":
         return f"{base_url}/follows/following"
+    # Phase 77 — messaging. message.received deep-links to the conversation;
+    # message.org_inbox lands on the messages page (org inbox tab).
+    if event_type == "message.received":
+        conversation_id = payload.get("conversation_id") or ""
+        if not org_slug or not conversation_id:
+            return fallback
+        return f"{base_url}/{org_slug}/messages/{conversation_id}"
+    if event_type == "message.org_inbox":
+        if not org_slug:
+            return fallback
+        return f"{base_url}/{org_slug}/messages"
     return fallback
 
 

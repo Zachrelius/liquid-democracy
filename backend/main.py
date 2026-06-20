@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from delegation_engine import graph_store
 from settings import settings
 from websocket import manager as ws_manager
-from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars, comments, permissions, role_permissions_routes, org_logos, notifications, delegate_profiles, demo_reset, pending_actions, org_titles as org_titles_routes, elections as elections_routes
+from routes import auth, topics, proposals, delegations, votes, admin, users, delegates, follows, organizations, sub_organizations, polises, invitations, avatars, comments, permissions, role_permissions_routes, org_logos, notifications, delegate_profiles, demo_reset, pending_actions, org_titles as org_titles_routes, elections as elections_routes, messages as messages_routes
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +232,8 @@ app.include_router(role_permissions_routes.router)
 app.include_router(pending_actions.router)
 app.include_router(org_titles_routes.router)
 app.include_router(elections_routes.router)
+# Phase 77 — org-scoped direct messaging.
+app.include_router(messages_routes.router)
 # Phase 12.7 B1+B2 — org branding endpoints (logo upload/delete, color PATCH).
 # Mounted on /api/orgs/{slug}/logo + /branding; gated by org.edit_branding.
 app.include_router(org_logos.router)

@@ -352,13 +352,13 @@ def test_role_permissions_seeded_per_preset_role():
                 # proposal.archive, bumping steward + admin to 29 (the
                 # backfill migration writes the row for both tiers).
                 # moderator/member are unchanged (no proposal.archive row).
-                assert counts.get("steward") == 29, (
-                    f"org {org_id}: steward should have 29 permissions "
+                assert counts.get("steward") == 30, (
+                    f"org {org_id}: steward should have 30 permissions "
                     f"(Phase 68b's proposal.archive is the latest "
                     f"addition), got {counts.get('steward')}"
                 )
-                assert counts.get("admin") == 29, (
-                    f"org {org_id}: admin should have 29 permissions "
+                assert counts.get("admin") == 30, (
+                    f"org {org_id}: admin should have 30 permissions "
                     f"(lockstep with steward), got {counts.get('admin')}"
                 )
                 # Phase 71a — backfill migration c1d2e3f4a5b6 adds two

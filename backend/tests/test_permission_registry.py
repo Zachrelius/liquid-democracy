@@ -44,7 +44,7 @@ def test_registry_has_26_entries():
     """Stage 1 shipped 23 keys; Stage 2 + Phase 12.5 + Phase 16 + Phase
     32.2 + Phase 47 brought it to 28; Phase 68b adds `proposal.archive`
     (29). Per-category breakdown: 8+3+5+3+1+2+1+4+2 = 29."""
-    assert len(PERMISSION_REGISTRY) == 29
+    assert len(PERMISSION_REGISTRY) == 30
 
 
 def test_registry_keys_are_unique():
@@ -59,7 +59,7 @@ def test_registry_uses_nine_canonical_categories():
     categories: Proposals, Topics, Members, Sub-organizations, Delegate
     applications, Polis (deliberation), Comments, Organization, Audit
     and analytics."""
-    assert len(CATEGORIES) == 9
+    assert len(CATEGORIES) == 10
     seen_categories = {p.category for p in PERMISSION_REGISTRY}
     assert seen_categories == set(CATEGORIES)
 
@@ -81,6 +81,8 @@ def test_registry_per_category_counts_match_spec():
         # existing 3 + title.manage).
         "Organization": 4,
         "Audit and analytics": 2,
+        # Phase 77 — Messages category (org_inbox.view).
+        "Messages": 1,
     }
     actual: dict[str, int] = {}
     for p in PERMISSION_REGISTRY:
@@ -105,7 +107,7 @@ def test_proposal_delete_key_is_present_and_honestly_labeled():
     # And must NOT claim it actually gates deletion.
     assert "allow deleting" not in desc
     # Keeping (not removing) the key leaves the count at 29.
-    assert len(PERMISSION_REGISTRY) == 29
+    assert len(PERMISSION_REGISTRY) == 30
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +121,7 @@ def test_default_grants_steward_gets_all_26():
     column also has three lockout-protected cells per Stage 2 spec Q1,
     but those still appear in DEFAULT_GRANTS as TRUE — they're enforced
     as-locked at the PATCH endpoint, not via DEFAULT_GRANTS."""
-    assert len(DEFAULT_GRANTS["steward"]) == 29
+    assert len(DEFAULT_GRANTS["steward"]) == 30
     assert DEFAULT_GRANTS["steward"] == ALL_PERMISSION_KEYS
 
 
@@ -128,7 +130,7 @@ def test_default_grants_admin_gets_all_26():
     `role_permissions.edit`, `proposal.set_thresholds`, and
     `proposal.set_durations`. The matrix UI is what permits orgs to scope
     these back if they want stricter Admin scopes."""
-    assert len(DEFAULT_GRANTS["admin"]) == 29
+    assert len(DEFAULT_GRANTS["admin"]) == 30
     assert DEFAULT_GRANTS["admin"] == ALL_PERMISSION_KEYS
 
 
@@ -255,7 +257,7 @@ def test_get_registry_returns_26_entries_with_correct_shape(client, test_db):
 
     assert "permissions" in body
     assert "categories" in body
-    assert len(body["permissions"]) == 29
+    assert len(body["permissions"]) == 30
     for entry in body["permissions"]:
         assert set(entry.keys()) == {"key", "label", "description", "category"}
         assert isinstance(entry["key"], str) and entry["key"]
@@ -274,7 +276,7 @@ def test_get_registry_returns_nine_categories(client, test_db):
     body = resp.json()
 
     assert body["categories"] == list(CATEGORIES)
-    assert len(body["categories"]) == 9
+    assert len(body["categories"]) == 10
 
 
 def test_get_registry_includes_known_keys(client, test_db):

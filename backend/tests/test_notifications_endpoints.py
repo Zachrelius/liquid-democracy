@@ -698,7 +698,7 @@ def test_get_registry_returns_all_entries(client, test_db):
     # Phase 44 added "Admin actions" for the multi-admin approval events).
     assert set(body["categories"]) == {
         "Comments", "Proposals", "Membership", "Delegation", "Polis",
-        "Admin actions",
+        "Admin actions", "Messages",
     }
 
 
