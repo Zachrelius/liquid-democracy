@@ -384,6 +384,13 @@ export default function Proposals() {
   }, [currentOrg, userOrgs]);
 
   useEffect(() => {
+    // Phase 76e fix — stale-response guard. On remount the restore effect
+    // changes statusFilter/topicFilter right after the initial default
+    // fetch fires, so two fetches race. Since topic + most status filtering
+    // is server-side, the wrong list wins if the stale (default) fetch
+    // resolves last — which showed "all proposals" despite the restored
+    // criteria. Ignoring superseded responses keeps only the latest.
+    let cancelled = false;
     setLoading(true);
     setError('');
     const params = new URLSearchParams();
@@ -401,6 +408,7 @@ export default function Proposals() {
 
     api.get(proposalsUrl)
       .then(async (data) => {
+        if (cancelled) return;
         setProposals(data);
 
         // Fetch tallies for voting/passed/failed proposals
@@ -415,6 +423,7 @@ export default function Proposals() {
             api.get(`/api/proposals/${p.id}/my-vote`)
           )),
         ]);
+        if (cancelled) return;
 
         const newTallies = {};
         const newMyVotes = {};
@@ -425,8 +434,10 @@ export default function Proposals() {
         setTallies(newTallies);
         setMyVotes(newMyVotes);
       })
-      .catch(err => setError(err.message || 'Failed to load proposals'))
-      .finally(() => setLoading(false));
+      .catch(err => { if (!cancelled) setError(err.message || 'Failed to load proposals'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
   }, [statusFilter, topicFilter, currentOrg]);
 
   // Phase 16 F2 — surface a "Create proposal" button to any user with the
