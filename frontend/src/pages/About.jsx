@@ -139,49 +139,114 @@ export default function About() {
           </p>
         </Section>
 
-        <Section title="What's built, and what's next">
+        <Section title="What's built">
           <p>
-            Today, the platform supports:
-          </p>
-          <ul className="list-disc pl-6 space-y-2">
-            <li>
-              Binary voting (yes/no/abstain), approval voting (pick any
-              subset of options), and ranked-choice voting including single
-              transferable vote, with method-aware tallying for each.
-            </li>
-            <li>
-              Topic-based delegation with public and private delegates,
-              mutual-consent permissions, configurable chain behavior, and
-              cycle prevention.
-            </li>
-            <li>
-              An interactive graph view of how delegations and votes flow
-              through the system.
-            </li>
-            <li>
-              Fully transparent voting and delegation history for public
-              delegates, so accountability is not a promise but a receipt.
-            </li>
-            <li>
-              Organization-scoped multi-tenancy: the same platform can host
-              many independent groups, each with their own members, topics,
-              and proposals.
-            </li>
-            <li>
-              The usual operational necessities: email verification,
-              password reset, audit logs, role-based permissions, admin
-              analytics.
-            </li>
-          </ul>
-          <p>
-            Coming next, in roughly this order: sustained-majority support
-            for decisions that shouldn't be settled by a one-day spike,
-            structured deliberation tooling around proposals, richer
-            delegation analytics, and configurable role permissions for
-            organizations with more complex governance needs.
+            The platform is live at liquiddemocracy.us and in pilot use by
+            real organizations. Everything below is shipped and running.
           </p>
           <p>
-            The full roadmap is public, and the code is open.
+            <strong>Voting.</strong> Binary (yes/no/abstain), approval,
+            ranked-choice including single transferable vote, and budget
+            voting — either allocating a fixed pool of money across competing
+            priorities or deciding whether to fund discrete items. Approval and
+            ranked-choice voting support single and multi-winner
+            configurations, configurable by proposal and by org. Method-aware
+            tallying, configurable pass and quorum thresholds, and write-in
+            options during deliberation. A sustained-majority mode that
+            requires a winning result to hold stable across multiple evaluation
+            windows before a proposal resolves — a guard against last-minute
+            vote spikes.
+          </p>
+          <p>
+            <strong>Delegation.</strong> Topic-based delegation with public and
+            private delegates, mutual-consent permissions, configurable chain
+            behavior (accept sub-delegation, revert to direct, or abstain), and
+            cycle prevention. Public delegates register on specific topics,
+            post position statements, vote in the open, and build a visible
+            track record with per-vote rationales. Private delegations require
+            a consent-gated follow relationship. Delegation strategy is
+            configurable per user: strict topic-precedence ordering or
+            relevance-weighted resolution that considers how well a delegate's
+            topics match a given proposal. Per-topic delegation can be disabled
+            by org admins for decisions that should be direct-vote-only.
+          </p>
+          <p>
+            <strong>Visualization.</strong> Interactive D3 force-directed
+            graphs showing how votes and delegations flow through the network
+            for each proposal, with method-aware layouts for binary, approval,
+            and ranked-choice votes. A Sankey chart for round-by-round RCV
+            transfers. A support trajectory chart tracking vote momentum over a
+            proposal's voting window. Privacy-preserving by default: unfollowed
+            voters appear as unlinkable anonymous nodes.
+          </p>
+          <p>
+            <strong>Governance.</strong> Elections are a proposal subtype that
+            reuse the full voting and tally machinery — self-nomination during
+            deliberation, any voting method, slate refresh or vacancy-fill
+            modes, and configurable quorum. Named titles and offices
+            (President, Treasurer, Council Member, etc.) with optional binding
+            to platform roles, configurable cardinality, and support for both
+            direct appointment and elections. Scheduled fixed-term elections
+            with automatic re-election triggers. Cosign-gated proposals let
+            members without proposal-create permission petition for a vote by
+            gathering signatures. Multi-admin approval for destructive actions
+            requiring N-of-M ratification. Organizations can run in
+            single-steward mode with one designated leader or admin-council
+            mode with shared authority, each with a cardinality floor
+            guaranteeing at least one governor at all times.
+          </p>
+          <p>
+            <strong>Organizations.</strong> Multi-tenant: many independent
+            organizations on one platform, each with their own members, topics,
+            proposals, and configuration. Sub-organizations for nested decision
+            scopes (departments, locals, committees). A three-axis access model
+            controlling join policy (open, approval, invite-only),
+            discoverability (listed, unlisted, hidden), and activity visibility
+            (public or members-only) independently. A public discovery page for
+            browsing listed organizations. Per-org branding. Email-based
+            invitations with role assignment.
+          </p>
+          <p>
+            <strong>Identity verification.</strong> Five-level verification
+            state model from email-only through residency-verified, integrated
+            with Didit for real KYC verification. Privacy-preserving duplicate
+            detection via HMAC-SHA256 hashing. Per-proposal gates on
+            verification level, jurisdiction, and minimum age. Org-scoped
+            duplicate flags with admin adjudication.
+          </p>
+          <p>
+            <strong>Deliberation.</strong> Pol.is integration as a first-class
+            deliberation artifact, structurally linked to proposals. Threaded
+            comments on proposals. Proposal revisions with full edit history
+            visible to all members. Configurable engagement settings: write-in
+            options, advisory pre-voting during deliberation, live tally
+            visibility, and edit lockout windows.
+          </p>
+          <p>
+            <strong>Operations.</strong> Configurable role-permission matrix
+            with 29+ permission keys across 9 categories, editable per org.
+            Notification system with in-app feed, per-event email delivery,
+            daily and weekly digests, quiet hours, and signal-level presets.
+            Comprehensive audit log with ballot-content redaction and elevated
+            access controls. Proposal import from JSON files. A help system
+            with role-specific onboarding guides. Three demo organizations with
+            daily content reset for evaluation. Rate limiting, input
+            sanitization, and a full security review with fixes shipped.
+          </p>
+        </Section>
+
+        <Section title="What's next">
+          <p>
+            Whatever you need. The platform is built to be shaped by the
+            organizations that use it. If there's a feature that would make
+            liquid democracy work for your group, tell us — either in the
+            Platform Feedback organization on the site or by emailing{' '}
+            <a
+              href="mailto:z@liquiddemocracy.us"
+              className="text-[var(--brand-accent)] hover:text-[var(--brand-primary)] underline"
+            >
+              z@liquiddemocracy.us
+            </a>.
           </p>
         </Section>
 
