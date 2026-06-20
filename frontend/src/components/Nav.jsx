@@ -347,16 +347,11 @@ export default function Nav() {
               /{sub}/proposals shape (same fix shape as Phase 34.2 E1 on
               the nav links). Brand link preserves the current org/sub-
               org context per locked decision 4. */}
+          {/* Brand → main home page (the landing at /, which renders for
+              logged-in users too). Org-scoped nav lives in the links + org
+              switcher to the right. */}
           <Link
-            to={
-              navOrg
-                ? (
-                    navOrg.parent_org_id && parentSlugForLinks
-                      ? urlFor(parentSlugForLinks, 'sub-org-proposals', navOrg.slug)
-                      : urlFor(navOrg, 'proposals')
-                  )
-                : '/orgs'
-            }
+            to="/"
             className="font-semibold text-sm tracking-wide hover:text-blue-100 transition-colors"
           >
             Liquid Democracy

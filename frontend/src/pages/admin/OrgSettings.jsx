@@ -1150,6 +1150,11 @@ export default function OrgSettings() {
               rows={3}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] resize-none"
             />
+            <p className="mt-1 text-xs text-gray-400">
+              The short blurb shown under your organization&apos;s name on its
+              public landing page and in discovery. For a longer write-up, use
+              the <em>Public landing page intro</em> section below.
+            </p>
           </div>
           {/* Phase 57 F2 — Access & visibility section. The three axes
               replace the Phase 14 four-policy radio: join policy (how
@@ -1480,7 +1485,10 @@ export default function OrgSettings() {
             )}
             <p className="text-xs text-gray-500">
               A longer introduction shown on your organization&apos;s public
-              landing page at <code>/{currentOrg.slug}</code>. Visible whenever
+              landing page at <code>/{currentOrg.slug}</code>, <strong>below</strong> the
+              short Description (the blurb under your org name — edit that in
+              the General section above). This is an optional, separate field;
+              leaving it empty just hides the intro section. Visible whenever
               discoverability is <em>Listed</em> or <em>Unlisted</em>. Markdown
               supported (same syntax as proposal bodies).
             </p>

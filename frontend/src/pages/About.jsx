@@ -215,6 +215,12 @@ export default function About() {
               Try the demo
             </Link>
             <Link
+              to="/explore"
+              className="inline-flex items-center px-5 py-2.5 bg-white text-[var(--brand-primary)] text-sm font-medium rounded-lg border border-gray-300 hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors"
+            >
+              Browse organizations
+            </Link>
+            <Link
               to="/security"
               className="inline-flex items-center px-5 py-2.5 bg-white text-[var(--brand-primary)] text-sm font-medium rounded-lg border border-gray-300 hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors"
             >
