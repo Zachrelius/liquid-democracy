@@ -8,6 +8,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
@@ -489,6 +490,18 @@ class User(Base):
         server_default="09:00",
     )
     notification_intro_dismissed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False,
+        server_default="0",
+    )
+    # Phase 77 — per-user opt-out of receiving NEW direct-message
+    # conversation initiations (conversation_type='direct'). Delegate
+    # messages + org-inbox messages still arrive (role-scoped, not
+    # personal-preference-scoped); existing conversations stay writable by
+    # both participants. server_default mirrors the migration's column-add
+    # default so raw-SQL inserts (fixtures, migration-cycle seeds) satisfy
+    # NOT NULL. The spec assumed a User.settings JSON blob, which this
+    # model doesn't have — a dedicated boolean column is the minimal fit.
+    dm_disabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False,
         server_default="0",
     )
@@ -2291,4 +2304,130 @@ class VerificationSession(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_now, onupdate=_now, nullable=False,
+    )
+
+
+# ===========================================================================
+# Phase 77 — Org-scoped direct messaging
+# ===========================================================================
+
+class Conversation(Base):
+    """Phase 77 — a 1:1 (or org-inbox) message thread, scoped to one org.
+
+    ``conversation_type`` differentiates the three surfaces (D1):
+      * ``direct``    — member-to-member DM (gated by member_dm_policy).
+      * ``delegate``  — a member contacting a delegate (gated by the
+                        delegate's profile visibility).
+      * ``org_inbox`` — a member contacting org leadership; ``recipient_id``
+                        is NULL and any ``org_inbox.view`` holder can read/reply.
+
+    Creation gates control who can START a conversation; once it exists both
+    participants can always send (D5) unless a MessageBlock intervenes.
+    """
+    __tablename__ = "conversations"
+    __table_args__ = (
+        # Dedup guard for direct/delegate (recipient_id non-null). org_inbox
+        # rows have recipient_id NULL — NULLs are distinct under PG/SQLite, so
+        # this does not enforce one-inbox-per-initiator; that's handled at the
+        # application layer (access-control matrix §org_inbox dedup).
+        UniqueConstraint(
+            "org_id", "conversation_type", "initiator_id", "recipient_id",
+            name="uq_conversation_participants",
+        ),
+        Index("ix_conversations_org_recipient_status", "org_id", "recipient_id", "status"),
+        Index("ix_conversations_org_initiator_status", "org_id", "initiator_id", "status"),
+        Index("ix_conversations_org_type", "org_id", "conversation_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    conversation_type: Mapped[str] = mapped_column(String, nullable=False)
+    initiator_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False,
+    )
+    recipient_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id"), nullable=True,
+    )
+    context_proposal_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("proposals.id"), nullable=True,
+    )
+    subject: Mapped[Optional[str]] = mapped_column(String(length=200), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String, nullable=False, default="active", server_default="active",
+    )
+    # Denormalized sort key for conversation lists; updated on each new message.
+    last_message_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
+    )
+
+
+class Message(Base):
+    """Phase 77 — a single message in a conversation. Append-only (D12):
+    no edit, no delete. Body sanitized via the comment nh3 pipeline."""
+    __tablename__ = "messages"
+    __table_args__ = (
+        Index("ix_messages_conversation_created", "conversation_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    conversation_id: Mapped[str] = mapped_column(
+        String, ForeignKey("conversations.id"), nullable=False, index=True,
+    )
+    sender_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False,
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    # System messages ("Conversation closed by {name}.") render distinctly.
+    is_system: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
+    )
+
+
+class ConversationRead(Base):
+    """Phase 77 — per-user read marker for a conversation. Unread count =
+    messages with ``created_at > last_read_at`` and ``sender_id != user_id``.
+    """
+    __tablename__ = "conversation_reads"
+
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), primary_key=True,
+    )
+    conversation_id: Mapped[str] = mapped_column(
+        String, ForeignKey("conversations.id"), primary_key=True,
+    )
+    last_read_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class MessageBlock(Base):
+    """Phase 77 — org-scoped block (D7). Blocking someone in one org does not
+    affect another. Blocks are silent: the blocked user gets a generic
+    'unable to send' error, never 'you are blocked'."""
+    __tablename__ = "message_blocks"
+    __table_args__ = (
+        UniqueConstraint(
+            "blocker_id", "blocked_id", "org_id",
+            name="uq_message_block_pair_org",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    blocker_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True,
+    )
+    blocked_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id"), nullable=False, index=True,
+    )
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False,
     )

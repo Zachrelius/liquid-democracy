@@ -52,6 +52,7 @@ CATEGORIES: list[str] = [
     "Comments",
     "Organization",
     "Audit and analytics",
+    "Messages",
 ]
 
 
@@ -275,6 +276,13 @@ PERMISSION_REGISTRY: list[PermissionDefinition] = [
         "Allow viewing org-level participation, voting, and delegation analytics.",
         "Audit and analytics",
     ),
+    # --- Messages (1) — Phase 77 ---
+    PermissionDefinition(
+        "org_inbox.view",
+        "View org inbox",
+        "Allow viewing and responding to messages sent to the organization's shared inbox.",
+        "Messages",
+    ),
 ]
 
 
@@ -288,8 +296,8 @@ ALL_PERMISSION_KEYS: set[str] = {p.key for p in PERMISSION_REGISTRY}
 # role_permissions rows when an org is created.
 #
 # Counts (verified by test_permission_registry.py) — Phase 71a totals:
-#   steward   = 29  (every key)
-#   admin     = 29  (every key)
+#   steward   = 30  (every key; Phase 77 added org_inbox.view)
+#   admin     = 30  (every key; Phase 77 added org_inbox.view)
 #   moderator = 11  (+2 from Phase 71a: member.suspend, polis.manage —
 #                    NOT new powers; moderators could already suspend +
 #                    manage polises via the moderator+ tier. Phase 71

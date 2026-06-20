@@ -2716,3 +2716,79 @@ class DelegateVoteRationaleUpsert(BaseModel):
     """Body for ``PUT /api/votes/{vote_id}/rationale``. Non-empty content."""
 
     content: str = Field(min_length=1, max_length=10000)
+
+
+# ===========================================================================
+# Phase 77 — Org-scoped direct messaging
+# ===========================================================================
+
+class ConversationCreate(BaseModel):
+    """Body for ``POST /api/orgs/{slug}/conversations``. First message body
+    is required — no empty conversations."""
+    conversation_type: str = Field(..., min_length=1)
+    recipient_id: Optional[str] = None
+    subject: Optional[str] = Field(default=None, max_length=200)
+    context_proposal_id: Optional[str] = None
+    body: str = Field(..., min_length=1, max_length=5000)
+
+    @field_validator("body")
+    @classmethod
+    def sanitize_body(cls, v: str) -> str:
+        return _sanitize_markdown(v)
+
+
+class MessageCreate(BaseModel):
+    """Body for ``POST /api/orgs/{slug}/conversations/{id}/messages``."""
+    body: str = Field(..., min_length=1, max_length=5000)
+
+    @field_validator("body")
+    @classmethod
+    def sanitize_body(cls, v: str) -> str:
+        return _sanitize_markdown(v)
+
+
+class MessageBlockCreate(BaseModel):
+    """Body for ``POST /api/orgs/{slug}/message-blocks``."""
+    blocked_id: str = Field(..., min_length=1)
+
+
+class MessageOut(BaseModel):
+    id: str
+    conversation_id: str
+    sender_id: str
+    sender_display_name: str
+    body: str
+    is_system: bool
+    created_at: datetime
+
+
+class ConversationOut(BaseModel):
+    id: str
+    org_id: str
+    conversation_type: str  # direct | delegate | org_inbox
+    initiator_id: str
+    recipient_id: Optional[str]
+    subject: Optional[str]
+    context_proposal_id: Optional[str]
+    status: str  # active | closed
+    last_message_at: Optional[datetime]
+    created_at: datetime
+    # Denormalized for list views:
+    other_party_display_name: str
+    other_party_id: Optional[str]
+    unread_count: int
+    last_message_preview: Optional[str]
+
+
+class ConversationDetailOut(BaseModel):
+    conversation: ConversationOut
+    messages: list[MessageOut]
+    context_proposal: Optional[dict] = None
+
+
+class MessageBlockOut(BaseModel):
+    id: str
+    blocked_id: str
+    blocked_display_name: str
+    org_id: str
+    created_at: datetime

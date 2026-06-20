@@ -145,6 +145,9 @@ _EXPECTED_SIGNAL_LEVEL: dict[str, str] = {
     "pending_action.declined": "critical",
     "pending_action.expired": "standard",
     "pending_action.failed": "critical",
+    # Phase 77 — messaging.
+    "message.received": "standard",
+    "message.org_inbox": "standard",
 }
 
 
