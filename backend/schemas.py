@@ -119,6 +119,8 @@ class UserOut(BaseModel):
     verification_jurisdiction: Optional[str] = None
     verification_provenance: str = "none"
     verification_updated_at: Optional[datetime] = None
+    # Phase 77 — direct-message opt-out (drives the Settings toggle).
+    dm_disabled: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -161,6 +163,9 @@ class SetupStatusOut(BaseModel):
 class UserUpdate(BaseModel):
     display_name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     default_follow_policy: Optional[str] = None
+    # Phase 77 — per-user opt-out of new direct-message conversation
+    # initiations from other members.
+    dm_disabled: Optional[bool] = None
 
     @field_validator("default_follow_policy")
     @classmethod

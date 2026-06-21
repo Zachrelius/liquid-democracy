@@ -8,6 +8,7 @@ import BrandingThemeApplier from '../components/BrandingThemeApplier';
 import PublicLayout from '../components/PublicLayout';
 import Nav from '../components/Nav';
 import EmailVerificationBanner from '../components/EmailVerificationBanner';
+import MessageButton from '../components/MessageButton';
 import renderMarkdown from '../utils/renderMarkdown';
 import { urlFor } from '../utils/urls';
 // Phase 52 Stage 1 — structured-403 verification_required handling.
@@ -323,13 +324,23 @@ function JoinCta({
         <p className="text-sm text-green-700 font-medium">
           <span aria-hidden="true">✓ </span>You&apos;re a member
         </p>
-        <button
-          type="button"
-          onClick={onGoToProposals}
-          className="inline-block px-5 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
-        >
-          Go to proposals
-        </button>
+        <div className="flex items-center justify-center gap-3 flex-wrap">
+          <button
+            type="button"
+            onClick={onGoToProposals}
+            className="inline-block px-5 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
+          >
+            Go to proposals
+          </button>
+          {/* Phase 77 — contact org leadership via the org inbox. */}
+          <MessageButton
+            orgSlug={slug}
+            type="org_inbox"
+            label="Contact organization"
+            title="Message the organization"
+            className="inline-block px-5 py-2 border border-gray-300 text-[var(--brand-primary)] text-sm rounded-lg hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors"
+          />
+        </div>
       </div>
     );
   }

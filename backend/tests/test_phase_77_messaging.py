@@ -478,6 +478,23 @@ def test_block_crud(client, test_db):
     assert client.post(f"/api/orgs/{org.slug}/message-blocks", headers=_auth(a), json={"blocked_id": b.id}).status_code == 201
 
 
+def test_dm_disabled_via_me_endpoint(client, test_db):
+    """PATCH /api/auth/me persists dm_disabled and UserOut surfaces it;
+    a direct-message initiation to that user is then blocked."""
+    org, a, b = _two_members(test_db, dm_policy="open")
+    test_db.commit()
+    # b opts out of DMs via the account endpoint.
+    r = client.patch("/api/auth/me", headers=_auth(b), json={"dm_disabled": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["dm_disabled"] is True
+    # a can no longer start a DM with b.
+    r2 = client.post(f"/api/orgs/{org.slug}/conversations", headers=_auth(a), json={
+        "conversation_type": "direct", "recipient_id": b.id, "body": "hi",
+    })
+    assert r2.status_code == 403
+    assert r2.json()["detail"]["error"] == "recipient_unavailable"
+
+
 def test_cannot_block_self(client, test_db):
     org, a, b = _two_members(test_db, dm_policy="open")
     test_db.commit()

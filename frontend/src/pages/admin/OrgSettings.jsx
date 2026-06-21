@@ -227,6 +227,8 @@ export default function OrgSettings() {
   const [settings, setSettings] = useState({});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  // Phase 77 — member DM policy save-in-flight flag.
+  const [savingDmPolicy, setSavingDmPolicy] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
   const [showDelete, setShowDelete] = useState(false);
 
@@ -720,6 +722,26 @@ export default function OrgSettings() {
 
   function updateSetting(key, value) {
     setSettings(prev => ({ ...prev, [key]: value }));
+  }
+
+  // Phase 77 — member-to-member DM policy. Save-on-change (mirrors the
+  // topic-categories toggle pattern). Persists settings.member_dm_policy.
+  async function handleSaveMemberDmPolicy(value) {
+    setSavingDmPolicy(true);
+    const prev = settings.member_dm_policy || 'follow_only';
+    updateSetting('member_dm_policy', value);
+    try {
+      await api.patch(`/api/orgs/${currentOrg.slug}`, {
+        settings: { member_dm_policy: value },
+      });
+      await refreshOrgs();
+      toast.success('Messaging settings saved');
+    } catch (err) {
+      updateSetting('member_dm_policy', prev);
+      toast.error(err.message || 'Failed to save messaging settings');
+    } finally {
+      setSavingDmPolicy(false);
+    }
   }
 
   // Phase 12.7 F4 — branding handlers.
@@ -1529,6 +1551,47 @@ export default function OrgSettings() {
                 {savingIntro ? 'Saving…' : 'Save intro text'}
               </button>
             </div>
+          </div>
+        </section>
+      )}
+
+      {/* Phase 77 — Messaging: member-to-member DM policy. Delegate
+          messaging + the org inbox are always available regardless. */}
+      {canEditOrgSettings && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Messaging
+          </h2>
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
+            <p className="text-xs text-gray-500">
+              Controls whether members can send direct messages to other members.
+              Delegate messaging and the organization inbox are always available
+              regardless of this setting.
+            </p>
+            {[
+              ['follow_only', 'Members who follow each other', 'A member can DM another member if either one follows the other.'],
+              ['open', 'Any member can message any member', 'No follow relationship required.'],
+              ['disabled', 'Disabled', 'No member-to-member DMs. Delegate and org-inbox messaging still work.'],
+            ].map(([value, label, help]) => {
+              const current = settings.member_dm_policy || 'follow_only';
+              return (
+                <label key={value} className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="member_dm_policy"
+                    value={value}
+                    checked={current === value}
+                    disabled={savingDmPolicy}
+                    onChange={() => handleSaveMemberDmPolicy(value)}
+                    className="mt-0.5 accent-[var(--brand-accent)]"
+                  />
+                  <span>
+                    <span className="block text-sm text-gray-700">{label}</span>
+                    <span className="block text-xs text-gray-400">{help}</span>
+                  </span>
+                </label>
+              );
+            })}
           </div>
         </section>
       )}

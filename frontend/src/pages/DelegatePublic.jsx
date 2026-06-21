@@ -36,6 +36,7 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import MessageButton from '../components/MessageButton';
 import api from '../api';
 import { useOrg } from '../OrgContext';
 import { useAuth } from '../AuthContext';
@@ -274,13 +275,23 @@ export default function DelegatePublic() {
           >
             Browse other delegates →
           </Link>
-          {isSelf && (
+          {isSelf ? (
             <Link
               to={`/${slug}/delegate-profile`}
               className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
             >
               Edit my page
             </Link>
+          ) : (
+            /* Phase 77 — message this delegate. Backend gates on the
+               delegate's profile visibility; a 403 surfaces inline. */
+            <MessageButton
+              orgSlug={slug}
+              type="delegate"
+              recipientId={userObj.id}
+              title={`Message ${userObj.display_name || userObj.username}`}
+              className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
+            />
           )}
         </div>
       </header>

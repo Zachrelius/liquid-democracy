@@ -5,6 +5,7 @@ import { useOrg } from '../OrgContext';
 import { urlFor } from '../utils/urls';
 import api from '../api';
 import Avatar from '../components/Avatar';
+import MessageButton from '../components/MessageButton';
 import TopicBadge from '../components/TopicBadge';
 
 function VoteRecordCell({ vote }) {
@@ -197,6 +198,19 @@ export default function UserProfile() {
             >
               Request Follow
             </button>
+            {/* Phase 77 — direct message. Hidden when the org disables
+                member DMs; a follow_only org surfaces a 403 inline if the
+                pair don't share a follow. */}
+            {proposalLinkOrg && (currentOrg?.settings?.member_dm_policy || 'follow_only') !== 'disabled' && (
+              <MessageButton
+                orgSlug={proposalLinkOrg.slug}
+                type="direct"
+                recipientId={id}
+                title={`Message ${user.display_name}`}
+                label="Message"
+                className="text-sm px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
+              />
+            )}
             <button
               onClick={handleRequestDelegate}
               className="text-sm px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
