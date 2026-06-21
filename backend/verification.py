@@ -496,6 +496,15 @@ def ensure_can_join_real_org(user, org) -> None:
     (so the verification structured-403 wins when both fire). No-op
     when the target org is itself a demo org or the user is not on
     ``demo_stub`` provenance.
+
+    Phase 79 note: this is the backend half of demo session fencing and
+    it gates ``demo_stub`` ONLY — the genuine demo personas seeded by
+    the demo pipeline. ``backdoor`` provenance is deliberately NOT
+    gated here: the admin verification-state endpoint stamps
+    ``backdoor`` on REAL users to grant them verification (see
+    routes/admin.py + the Phase 52 enforcement suite), so blocking it
+    would lock real verified users out of joining. ``demo_stub`` is the
+    only provenance that marks an actual demo identity on the backend.
     """
     from fastapi import HTTPException
     if getattr(org, "is_demo", False):

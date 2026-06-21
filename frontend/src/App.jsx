@@ -1,4 +1,5 @@
-import { Routes, Route, Navigate, Link } from 'react-router-dom';
+import { useEffect, useRef } from 'react';
+import { Routes, Route, Navigate, Link, useNavigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './AuthContext';
 import { OrgProvider, useOrg } from './OrgContext';
 import { PublicConfigProvider } from './PublicConfigContext';
@@ -98,6 +99,10 @@ import DelegateApplicationsReview from './pages/DelegateApplicationsReview';
 // Phase 77 — org-scoped messaging.
 import Messages from './pages/Messages';
 import ConversationDetail from './pages/ConversationDetail';
+// Phase 79 — demo session fencing: app-level guard + shared fence message.
+import DemoUserGuard, { DEMO_FENCE_MESSAGE } from './components/DemoUserGuard';
+import { useToast } from './components/Toast';
+import { useIsDemoPersona } from './hooks/useIsDemoUser';
 
 function Layout({ children }) {
   return (
@@ -141,6 +146,31 @@ function OrgScopedBrandingTheme() {
  */
 function OrgScopedLayout({ children }) {
   const { accessDenied, loading, currentOrg } = useOrg();
+  // Phase 79 — Layer 2 demo session fence. Once OrgContext resolves, a demo
+  // persona (demo_stub) sitting on a NON-demo org's scoped routes
+  // (proposals, delegations, admin, etc.) gets logged out and bounced to
+  // /demo. The app-level DemoUserGuard can't do this — it has no resolved
+  // org to read `is_demo` from; this is the only place that does. The bare
+  // /:org_slug public landing is intentionally exempt (read-only, not wrapped
+  // in this layout); the backend join gate blocks the harmful action there.
+  // Fences demo_stub ONLY (not backdoor — those are real admin-verified users).
+  const isDemoUser = useIsDemoPersona();
+  const { logout } = useAuth();
+  const toast = useToast();
+  const navigate = useNavigate();
+  // Guard against double-firing logout/toast if the effect re-runs during
+  // the async logout window (mirrors DemoUserGuard's firedRef).
+  const fencedRef = useRef(false);
+  useEffect(() => {
+    if (loading || !isDemoUser || !currentOrg || currentOrg.is_demo) return;
+    if (fencedRef.current) return;
+    fencedRef.current = true;
+    (async () => {
+      await logout();
+      toast.info(DEMO_FENCE_MESSAGE);
+      navigate('/demo', { replace: true });
+    })();
+  }, [loading, isDemoUser, currentOrg, logout, toast, navigate]);
   if (loading) {
     return (
       <Layout>
@@ -218,6 +248,10 @@ export default function App() {
           listens for the SW controllerchange-driven custom event and surfaces
           a toast with a Refresh action when a new bundle takes control. */}
       <BundleUpdateNotifier />
+      {/* Phase 79 — app-level demo session fence. Renders nothing; logs demo
+          users out of recruitment/real-org routes (/, /explore, /orgs/create,
+          /setup). Org-scoped real-org routes are caught by OrgScopedLayout. */}
+      <DemoUserGuard />
       <Routes>
         {/* ------------------------------------------------------------- */}
         {/* Public marketing — no auth, no Nav, top-level (Phase 11 D4)   */}
