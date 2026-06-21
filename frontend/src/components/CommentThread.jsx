@@ -36,7 +36,11 @@ import CommentComposer from './CommentComposer';
  */
 export default function CommentThread({ proposalId }) {
   const { user } = useAuth();
-  const { currentOrg } = useOrg();
+  const { currentOrg, isMember } = useOrg();
+  // Phase 80 — non-members of a public read-only org read comments from the
+  // anon /public endpoint (the member endpoint would 401-bounce a logged-out
+  // viewer). The composer already self-gates on membership below.
+  const readOnly = currentOrg ? !isMember : false;
   // Phase 10.1 W2: default expanded based on count once loaded.
   // null = not yet known (waiting on count), true/false = current state.
   // Once the user toggles, their explicit choice persists for the session.
@@ -54,14 +58,17 @@ export default function CommentThread({ proposalId }) {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.get(`/api/proposals/${proposalId}/comments`);
+      const url = (readOnly && currentOrg?.slug)
+        ? `/api/orgs/${currentOrg.slug}/public/proposals/${proposalId}/comments`
+        : `/api/proposals/${proposalId}/comments`;
+      const data = await api.get(url);
       setComments(Array.isArray(data) ? data : []);
     } catch (e) {
       setError(e);
     } finally {
       setLoading(false);
     }
-  }, [proposalId]);
+  }, [proposalId, readOnly, currentOrg?.slug]);
 
   // Phase 10.1 W2: eager fetch on mount so we know the count for default
   // expand decision. Cost is one extra GET per proposal-detail visit; the

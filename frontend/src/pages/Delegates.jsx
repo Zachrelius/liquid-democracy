@@ -108,7 +108,10 @@ function DelegateCard({ delegate, slug }) {
 
 export default function Delegates() {
   const { org_slug } = useParams();
-  const { currentOrg } = useOrg();
+  const { currentOrg, isMember } = useOrg();
+  // Phase 80 — public read-only mode: non-members browse delegates but get
+  // no member-only controls. The browse endpoint already serves non-members.
+  const readOnly = currentOrg ? !isMember : false;
 
   const [delegates, setDelegates] = useState([]);
   const [topics, setTopics] = useState([]);
@@ -155,15 +158,17 @@ export default function Delegates() {
   useEffect(() => { load(); }, [load]);
 
   // Topics dropdown: load once for the org.
+  // Phase 80 — the topics endpoint is member-gated; skip it in read-only
+  // mode (a stray 401 would bounce a logged-out viewer to login).
   useEffect(() => {
-    if (!slug) return;
+    if (!slug || readOnly) { setTopics([]); return; }
     (async () => {
       try {
         const tops = await api.get(`/api/orgs/${slug}/topics`);
         setTopics(tops || []);
       } catch { /* ignore — topic filter just won't populate */ }
     })();
-  }, [slug]);
+  }, [slug, readOnly]);
 
   // Reset offset when filters change.
   useEffect(() => { setOffset(0); }, [topicFilter, activeOnly]);
@@ -198,12 +203,14 @@ export default function Delegates() {
             Public delegates accepting delegation in {currentOrg?.name || slug}.
           </p>
         </div>
-        <Link
-          to={`/${slug}/delegate-profile`}
-          className="text-sm px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
-        >
-          My Delegate Page
-        </Link>
+        {!readOnly && (
+          <Link
+            to={`/${slug}/delegate-profile`}
+            className="text-sm px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
+          >
+            My Delegate Page
+          </Link>
+        )}
       </div>
 
       {/* Filters / sort row */}

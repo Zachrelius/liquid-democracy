@@ -106,8 +106,11 @@ function VoteRow({ vote, slug, rationale, allRationalesExpanded }) {
 
 export default function DelegatePublic() {
   const { org_slug, handle_or_username } = useParams();
-  const { currentOrg } = useOrg();
+  const { currentOrg, isMember } = useOrg();
   const { user: currentUser } = useAuth();
+  // Phase 80 — public read-only mode: non-members view the delegate page but
+  // get no participation controls (delegate-to, message, my-page).
+  const readOnly = currentOrg ? !isMember : false;
   const [delegate, setDelegate] = useState(null);
   const [profile, setProfile] = useState(null); // { user, delegate_profiles, votes }
   const [rationales, setRationales] = useState({}); // { vote_id: rationale }
@@ -173,19 +176,26 @@ export default function DelegatePublic() {
         setProfile(prof);
 
         // Step 3: best-effort fetch of rationale per visible vote.
-        const visibleVotes = (prof?.votes || []).filter(v => v.visible);
-        const ratEntries = await Promise.all(
-          visibleVotes.map(v =>
-            api.get(`/api/votes/${v.id}/rationale`)
-              .then(r => [v.id, r])
-              .catch(() => [v.id, null])
-          )
-        );
-        const ratMap = {};
-        for (const [vid, r] of ratEntries) {
-          if (r) ratMap[vid] = r;
+        // Phase 80 — the rationale endpoint requires hard auth; skip it
+        // entirely for logged-out viewers (a 401 fires auth:unauthorized
+        // and would bounce them to /login despite the per-call .catch).
+        if (currentUser) {
+          const visibleVotes = (prof?.votes || []).filter(v => v.visible);
+          const ratEntries = await Promise.all(
+            visibleVotes.map(v =>
+              api.get(`/api/votes/${v.id}/rationale`)
+                .then(r => [v.id, r])
+                .catch(() => [v.id, null])
+            )
+          );
+          const ratMap = {};
+          for (const [vid, r] of ratEntries) {
+            if (r) ratMap[vid] = r;
+          }
+          setRationales(ratMap);
+        } else {
+          setRationales({});
         }
-        setRationales(ratMap);
       } catch {
         // Profile fetch failed (likely 404) — render delegate header only.
         setProfile(null);
@@ -195,7 +205,7 @@ export default function DelegatePublic() {
     } finally {
       setLoading(false);
     }
-  }, [slug, handle_or_username]);
+  }, [slug, handle_or_username, currentUser]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -275,7 +285,8 @@ export default function DelegatePublic() {
           >
             Browse other delegates →
           </Link>
-          {isSelf ? (
+          {/* Phase 80 — no participation controls in read-only mode. */}
+          {readOnly ? null : isSelf ? (
             <Link
               to={`/${slug}/delegate-profile`}
               className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors"
@@ -368,7 +379,8 @@ export default function DelegatePublic() {
                       )}
                     </div>
                   )}
-                  {t.visibility === 'public_accepting' && !isSelf && (
+                  {/* Phase 80 — delegation requires membership; hidden read-only. */}
+                  {!readOnly && t.visibility === 'public_accepting' && !isSelf && (
                     <button
                       onClick={() => setDelegateModalTopic({
                         id: t.topic_id, name: topicLabel,

@@ -32,6 +32,17 @@ export function OrgProvider({ children }) {
   const [userOrgs, setUserOrgs] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Phase 80 — public read-only fallback. When the URL points at an org the
+  // viewer is NOT a member of (incl. logged-out visitors), we fetch the
+  // org's public info; if it's `activity_visibility='public'` we render the
+  // org-scoped pages in read-only mode rather than the access-denied pane.
+  const [publicOrg, setPublicOrg] = useState(null);
+  // The slug whose public-info check has COMPLETED (success or fail). While
+  // this !== urlOrgSlug for a non-member, the org is still "resolving" and we
+  // must show a loading state rather than flashing access-denied or falling
+  // through to a member render with a null org.
+  const [publicOrgCheckedSlug, setPublicOrgCheckedSlug] = useState(null);
+
   // Phase 8.5: cache of sub-orgs visible to the current user, keyed by parent
   // org slug. Populated lazily — see fetchSubOrgsFor.
   const [subOrgsByParent, setSubOrgsByParent] = useState({});
@@ -94,35 +105,85 @@ export function OrgProvider({ children }) {
     fetchSubOrgsFor(urlOrgSlug);
   }, [urlOrgSlug, urlSubSlug, fetchSubOrgsFor]);
 
+  // Phase 80 — whether the URL org is one the viewer is an active member of.
+  const isMemberOfUrlOrg = useMemo(() => {
+    if (!urlOrgSlug || loading) return false;
+    return userOrgs.some(o => o.slug === urlOrgSlug);
+  }, [urlOrgSlug, userOrgs, loading]);
+
+  // Phase 80 — fetch the public org info when the viewer is NOT a member of
+  // the URL org. Gated on `!isMemberOfUrlOrg` so members never pay this
+  // round-trip. Skipped for sub-org URLs (public surface is parent-only).
+  useEffect(() => {
+    let alive = true;
+    if (!urlOrgSlug || loading || isMemberOfUrlOrg || urlSubSlug) {
+      setPublicOrg(null);
+      setPublicOrgCheckedSlug(null);
+      return;
+    }
+    // Mark this slug as not-yet-resolved so the memo/layout show a loading
+    // state until the fetch settles (avoids an access-denied flash + a stray
+    // member-endpoint fetch with a null org).
+    setPublicOrgCheckedSlug(null);
+    api.get(`/api/orgs/${urlOrgSlug}/public`)
+      .then(data => {
+        if (alive) setPublicOrg(data && data.slug === urlOrgSlug ? data : null);
+      })
+      .catch(() => { if (alive) setPublicOrg(null); })
+      .finally(() => { if (alive) setPublicOrgCheckedSlug(urlOrgSlug); });
+    return () => { alive = false; };
+  }, [urlOrgSlug, urlSubSlug, loading, isMemberOfUrlOrg]);
+
+  // True while we still don't know whether a non-member URL org is a public
+  // read-only org. OrgScopedLayout shows a loading state during this window.
+  const resolvingPublicOrg = !!urlOrgSlug && !urlSubSlug && !loading
+    && !isMemberOfUrlOrg && publicOrgCheckedSlug !== urlOrgSlug;
+
   // URL-derived currentOrg.
   // - When the URL has org_slug + sub_slug, prefer the matching sub-org
   //   (falling back to the parent until the sub-org cache loads).
   // - When the URL has just org_slug, use the parent.
   // - Otherwise null.
   // Membership check: the parent must be in userOrgs (a slug we're a member
-  // of). Non-member slug → currentOrg stays null and `accessDenied` is true,
-  // letting the wrapper render the inline "no access" surface.
-  const { currentOrg, accessDenied } = useMemo(() => {
-    if (!urlOrgSlug) return { currentOrg: null, accessDenied: false };
+  // of). Non-member slug → Phase 80 public read-only fallback (when the org
+  // is activity_visibility='public') or else `accessDenied`.
+  const { currentOrg, accessDenied, isMember, isPublicReadOnly } = useMemo(() => {
+    const none = { currentOrg: null, accessDenied: false, isMember: false, isPublicReadOnly: false };
+    if (!urlOrgSlug) return none;
     // While userOrgs is still loading, suppress the access-denied flag so
     // we don't flash the error on first paint.
-    if (loading) return { currentOrg: null, accessDenied: false };
+    if (loading) return none;
     const parent = userOrgs.find(o => o.slug === urlOrgSlug);
     if (!parent) {
-      return { currentOrg: null, accessDenied: true };
+      // Non-member. Phase 80 — public read-only fallback (parent-org only).
+      if (urlSubSlug) return { ...none, accessDenied: true };
+      if (publicOrgCheckedSlug !== urlOrgSlug) return none; // resolving; don't flash denied
+      if (
+        publicOrg
+        && publicOrg.slug === urlOrgSlug
+        && publicOrg.activity_visibility === 'public'
+      ) {
+        return {
+          currentOrg: publicOrg,
+          accessDenied: false,
+          isMember: false,
+          isPublicReadOnly: true,
+        };
+      }
+      return { ...none, accessDenied: true };
     }
     if (urlSubSlug) {
       const subs = subOrgsByParent[urlOrgSlug] || [];
       const sub = subs.find(s => s.slug === urlSubSlug);
       if (sub) {
-        return { currentOrg: sub, accessDenied: false };
+        return { currentOrg: sub, accessDenied: false, isMember: true, isPublicReadOnly: false };
       }
       // Sub cache hasn't loaded yet — fall back to parent so child pages
       // see *something* useful while useSubOrg / fetchSubOrgsFor finishes.
-      return { currentOrg: parent, accessDenied: false };
+      return { currentOrg: parent, accessDenied: false, isMember: true, isPublicReadOnly: false };
     }
-    return { currentOrg: parent, accessDenied: false };
-  }, [urlOrgSlug, urlSubSlug, userOrgs, subOrgsByParent, loading]);
+    return { currentOrg: parent, accessDenied: false, isMember: true, isPublicReadOnly: false };
+  }, [urlOrgSlug, urlSubSlug, userOrgs, subOrgsByParent, loading, publicOrg, publicOrgCheckedSlug]);
 
   // Persist last-used org slug whenever URL-derived currentOrg changes —
   // used by OrgSelector to decide whether to auto-redirect a single-org
@@ -135,7 +196,9 @@ export function OrgProvider({ children }) {
   //     is non-org-scoped. Single key would have worked too; dual-write
   //     keeps the older read path stable and honors the spec naming.
   useEffect(() => {
-    if (currentOrg?.slug && !currentOrg.parent_org_id) {
+    // Phase 80 — only persist the "last used org" hint for actual members;
+    // a non-member's read-only browse shouldn't become their resume target.
+    if (isMember && currentOrg?.slug && !currentOrg.parent_org_id) {
       // Track the parent slug as "last used" — sub-org slugs aren't useful
       // as a sign-in-resume hint because they require parent context.
       try {
@@ -143,7 +206,7 @@ export function OrgProvider({ children }) {
         localStorage.setItem('lastOrgSlug', currentOrg.slug);
       } catch { /* best-effort */ }
     }
-  }, [currentOrg]);
+  }, [currentOrg, isMember]);
 
   // setCurrentOrg — kept for OrgSelector / CreateOrg's "pick" surfaces.
   // Writes localStorage as a sign-in hint; does NOT navigate (callers do).
@@ -188,6 +251,10 @@ export function OrgProvider({ children }) {
       invalidateSubOrgs,
       // Phase 11 — true when URL has org_slug but user isn't a member.
       accessDenied,
+      // Phase 80 — membership + read-only flags for the public surface.
+      isMember,
+      isPublicReadOnly,
+      resolvingPublicOrg,
     }}>
       {children}
     </OrgContext.Provider>

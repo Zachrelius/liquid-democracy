@@ -101,6 +101,7 @@ import Messages from './pages/Messages';
 import ConversationDetail from './pages/ConversationDetail';
 // Phase 79 — demo session fencing: app-level guard + shared fence message.
 import DemoUserGuard, { DEMO_FENCE_MESSAGE } from './components/DemoUserGuard';
+import PublicOrgChrome from './components/PublicOrgChrome';
 import { useToast } from './components/Toast';
 import { useIsDemoPersona } from './hooks/useIsDemoUser';
 
@@ -145,7 +146,7 @@ function OrgScopedBrandingTheme() {
  * switch / route leave).
  */
 function OrgScopedLayout({ children }) {
-  const { accessDenied, loading, currentOrg } = useOrg();
+  const { accessDenied, loading, currentOrg, isPublicReadOnly, resolvingPublicOrg } = useOrg();
   // Phase 79 — Layer 2 demo session fence. Once OrgContext resolves, a demo
   // persona (demo_stub) sitting on a NON-demo org's scoped routes
   // (proposals, delegations, admin, etc.) gets logged out and bounced to
@@ -171,7 +172,10 @@ function OrgScopedLayout({ children }) {
       navigate('/demo', { replace: true });
     })();
   }, [loading, isDemoUser, currentOrg, logout, toast, navigate]);
-  if (loading) {
+  // Phase 80 — also show the loading state while we resolve whether a
+  // non-member URL org is a public read-only org (avoids an access-denied
+  // flash + a stray member-endpoint fetch with a null org).
+  if (loading || resolvingPublicOrg) {
     return (
       <Layout>
         <OrgScopedBrandingTheme />
@@ -179,6 +183,17 @@ function OrgScopedLayout({ children }) {
           <div className="text-gray-500 text-sm">Loading…</div>
         </div>
       </Layout>
+    );
+  }
+  // Phase 80 — public read-only mode: a non-member viewing an
+  // activity_visibility='public' org. Render the lightweight public chrome
+  // (not the member Nav, which assumes an authed user + permissions). The
+  // reused pages self-gate their participation controls on `isMember`.
+  if (isPublicReadOnly) {
+    return (
+      <PublicOrgChrome org={currentOrg}>
+        {children}
+      </PublicOrgChrome>
     );
   }
   if (accessDenied) {
@@ -224,6 +239,21 @@ function OrgScopedLayout({ children }) {
  * auto-redirects single-org users to /{slug}/proposals). If unauthenticated,
  * render the Landing page as before.
  */
+/**
+ * Phase 80 — wrapper for org-scoped routes that should be reachable by
+ * non-members (incl. logged-out visitors) when the org is
+ * activity_visibility='public'. Unlike ProtectedRoute, it does NOT require
+ * login. OrgScopedLayout decides member vs read-only vs access-denied, and
+ * the page self-gates participation controls on `isMember`.
+ */
+function PublicReadableOrgRoute({ children }) {
+  return (
+    <OrgProvider>
+      <OrgScopedLayout>{children}</OrgScopedLayout>
+    </OrgProvider>
+  );
+}
+
 function LandingOrRedirect() {
   // Phase 43 Cluster F: previously redirected authenticated users to /orgs.
   // The new "Start an organization" CTA needs to be reachable from / for
@@ -370,24 +400,18 @@ export default function App() {
         {/* ------------------------------------------------------------- */}
         {/* Org-scoped app routes (Phase 11 D1)                           */}
         {/* ------------------------------------------------------------- */}
+        {/* Phase 80 — proposals list + detail are public-readable for
+            non-members when activity_visibility='public'. */}
         <Route
           path="/:org_slug/proposals"
           element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <OrgScopedLayout><Proposals /></OrgScopedLayout>
-              </OrgProvider>
-            </ProtectedRoute>
+            <PublicReadableOrgRoute><Proposals /></PublicReadableOrgRoute>
           }
         />
         <Route
           path="/:org_slug/proposals/:id"
           element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <OrgScopedLayout><ProposalDetail /></OrgScopedLayout>
-              </OrgProvider>
-            </ProtectedRoute>
+            <PublicReadableOrgRoute><ProposalDetail /></PublicReadableOrgRoute>
           }
         />
         <Route
@@ -458,14 +482,12 @@ export default function App() {
         {/* Phase 19 F4 — org-scoped public delegate browse page. Visible to
             all org members; the backend endpoint also serves non-members
             for publicly-listed orgs (matching org public landing semantics). */}
+        {/* Phase 80 — delegates browse is public-readable for non-members
+            when activity_visibility='public'. */}
         <Route
           path="/:org_slug/delegates"
           element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <OrgScopedLayout><Delegates /></OrgScopedLayout>
-              </OrgProvider>
-            </ProtectedRoute>
+            <PublicReadableOrgRoute><Delegates /></PublicReadableOrgRoute>
           }
         />
         {/* Phase 19 F2 — public-facing per-delegate page. Reads the browse
@@ -474,11 +496,7 @@ export default function App() {
         <Route
           path="/:org_slug/delegates/:handle_or_username"
           element={
-            <ProtectedRoute>
-              <OrgProvider>
-                <OrgScopedLayout><DelegatePublic /></OrgScopedLayout>
-              </OrgProvider>
-            </ProtectedRoute>
+            <PublicReadableOrgRoute><DelegatePublic /></PublicReadableOrgRoute>
           }
         />
         {/* Phase 19 F5 — approver-only dashboard for delegate applications

@@ -1545,7 +1545,11 @@ function TrajectorySection({ proposalId, proposal, optionLabels }) {
 export default function ProposalDetail() {
   const { id } = useParams();
   const { user } = useAuth();
-  const { currentOrg, userOrgs } = useOrg();
+  const { currentOrg, userOrgs, isMember } = useOrg();
+  // Phase 80 — public read-only mode for non-members of an
+  // activity_visibility='public' org. Read from /public endpoints and hide
+  // all participation controls. Members keep the full experience.
+  const readOnly = currentOrg ? !isMember : false;
   // Phase 62 A3 — used by the draft-edit delete handler. Lifted to the
   // top of the component so the handler isn't a hook-violating closure.
   const navigate = useNavigate();
@@ -1616,6 +1620,32 @@ export default function ProposalDetail() {
     // button on ErrorMessage actually exits the error UI on a
     // successful refetch (same pattern as Delegations.jsx).
     setError('');
+    // Phase 80 — read-only viewers fetch the anon /public endpoints only
+    // (detail + aggregate results). All the member-gated extras (my-vote,
+    // vote-graph, delegations, verification-weight) are skipped — a stray
+    // 401 would bounce a logged-out viewer to /login, and individual votes
+    // must not be exposed.
+    if (readOnly && currentOrg?.slug) {
+      try {
+        const base = `/api/orgs/${currentOrg.slug}/public/proposals/${id}`;
+        const [p, t] = await Promise.allSettled([
+          api.get(base),
+          api.get(`${base}/results`),
+        ]);
+        if (p.status === 'fulfilled') setProposal(p.value);
+        else throw p.reason;
+        if (t.status === 'fulfilled') setTally(t.value);
+        setMyVote(null);
+        setVoteGraph(null);
+        setDelegations([]);
+        setVerificationWeight(null);
+      } catch (e) {
+        setError(e.message || 'Failed to load proposal');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     try {
       const [p, t, mv] = await Promise.allSettled([
         api.get(`/api/proposals/${id}`),
@@ -1666,7 +1696,7 @@ export default function ProposalDetail() {
     } finally {
       setLoading(false);
     }
-  }, [id, linkOrg?.slug]);
+  }, [id, linkOrg?.slug, readOnly, currentOrg?.slug]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -1717,6 +1747,9 @@ export default function ProposalDetail() {
   // (for name + the viewer's user_role) and the member roster so we can
   // detect membership for both the viewer and any candidate delegate.
   useEffect(() => {
+    // Phase 80 — public surface is parent-org only; skip sub-org lookups
+    // (member-gated endpoints) entirely in read-only mode.
+    if (readOnly) { setSubOrg(null); setSubOrgMembers(null); return; }
     if (!proposal?.sub_org_id) {
       setSubOrg(null);
       setSubOrgMembers(null);
@@ -1755,7 +1788,7 @@ export default function ProposalDetail() {
       } catch {/* ignore — we degrade gracefully */}
     })();
     return () => { cancelled = true; };
-  }, [proposal?.sub_org_id, currentOrg, userOrgs]);
+  }, [proposal?.sub_org_id, currentOrg, userOrgs, readOnly]);
 
   // Phase 9 — resolve linked Polises for the link-card section.
   //
@@ -1771,6 +1804,10 @@ export default function ProposalDetail() {
   //      to plain links in the body (we don't render a "missing" card for
   //      URL-detected references — only for structural ids that fail).
   useEffect(() => {
+    // Phase 80 — the org polis list is member-gated; skip linked-deliberation
+    // resolution in read-only mode (avoids a 401 bounce for logged-out
+    // viewers). Polis surfaces aren't part of the public read-only scope.
+    if (readOnly) { setLinkedPolises([]); return; }
     if (!proposal) {
       setLinkedPolises([]);
       return;
@@ -1857,7 +1894,7 @@ export default function ProposalDetail() {
       if (!cancelled) setLinkedPolises(out);
     })();
     return () => { cancelled = true; };
-  }, [proposal, currentOrg, userOrgs]);
+  }, [proposal, currentOrg, userOrgs, readOnly]);
 
   const refreshVote = useCallback(async () => {
     try {
@@ -2316,7 +2353,11 @@ export default function ProposalDetail() {
                   )}
                 </div>
                 <div>
-                  {isAuthor ? (
+                  {readOnly ? (
+                    <span className="text-xs italic text-amber-700">
+                      Join to sign this petition.
+                    </span>
+                  ) : isAuthor ? (
                     <span className="text-xs italic text-amber-700">
                       Your signature is implicit (you proposed this).
                     </span>
@@ -2343,8 +2384,10 @@ export default function ProposalDetail() {
           )}
 
           {/* Phase 32.1 F2.4 — change-log accordion. Hidden when no
-              revisions exist. Visible to all org members. */}
-          <ProposalChangeLog proposalId={proposal.id} />
+              revisions exist. Visible to all org members.
+              Phase 80 — hidden in read-only mode (revisions endpoint is
+              member-gated; not part of the public surface). */}
+          {!readOnly && <ProposalChangeLog proposalId={proposal.id} />}
 
           {/* Phase 20 F2 — Stable Result Required status panel.
               Renders only when stable-result is active for the proposal.
@@ -2426,11 +2469,14 @@ export default function ProposalDetail() {
                   the new option appears without a full page reload.
                   Voting-phase mount is below (the options-list section
                   hides during voting to avoid duplicating the ballot UI;
-                  the Adder still needs to surface). */}
-              <WriteInOptionAdder
-                proposal={proposal}
-                onAdded={fetchData}
-              />
+                  the Adder still needs to surface).
+                  Phase 80 — write-ins require membership; hidden read-only. */}
+              {!readOnly && (
+                <WriteInOptionAdder
+                  proposal={proposal}
+                  onAdded={fetchData}
+                />
+              )}
             </div>
           )}
 
@@ -2452,7 +2498,8 @@ export default function ProposalDetail() {
               write-ins when `effective_allow_write_ins_during_voting`
               is true. The component self-gates on the resolver flags,
               so this returns null if write-ins-during-voting is off. */}
-          {(proposal.voting_method === 'approval' || proposal.voting_method === 'ranked_choice')
+          {!readOnly
+            && (proposal.voting_method === 'approval' || proposal.voting_method === 'ranked_choice')
             && isVoting
             && proposal.effective_allow_write_in_options
             && proposal.effective_allow_write_ins_during_voting && (
@@ -2518,7 +2565,9 @@ export default function ProposalDetail() {
               extends back to deliberation_start naturally; the
               "Voting opens" phase-transition line renders once
               voting_start falls inside the data range. */}
-          {(isVoting || isClosed
+          {/* Phase 80 — trajectory fetches a member-gated history endpoint;
+              omit it in read-only mode (aggregate results above still show). */}
+          {!readOnly && (isVoting || isClosed
             || (isDeliberation && proposal.effective_show_votes_during_deliberation === true)
           ) && (
             <TrajectorySection
@@ -2554,6 +2603,27 @@ export default function ProposalDetail() {
 
         {/* Sidebar — 1/3 width */}
         <div className="mt-8 lg:mt-0 space-y-4">
+          {/* Phase 80 — read-only viewers (non-members of a public org) see a
+              join prompt where the ballot would be. */}
+          {readOnly && (isVoting || isDeliberation) && (
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-5">
+              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2">
+                Your Vote
+              </h3>
+              <p className="text-sm text-gray-600">
+                You&apos;re viewing this in read-only mode.{' '}
+                {currentOrg?.slug && (
+                  <Link
+                    to={`/${currentOrg.slug}`}
+                    className="text-[var(--brand-accent)] hover:underline"
+                  >
+                    Join to vote
+                  </Link>
+                )}
+                .
+              </p>
+            </div>
+          )}
           {/* Phase 8.5 — Decision 7 read-only treatment for non-members of a
               sub-org-scoped proposal. Replaces the vote panel with text and
               suppresses the Delegate button (also hidden by virtue of not
@@ -2612,7 +2682,8 @@ export default function ProposalDetail() {
               `effective_allow_pre_voting=True` covers both explicit
               proposal override AND the org-level `always_on` /
               `default_on` modes. */}
-          {(isVoting || (isDeliberation && proposal.effective_allow_pre_voting === true))
+          {!readOnly
+            && (isVoting || (isDeliberation && proposal.effective_allow_pre_voting === true))
             && (!hasSubOrgScope || isSubOrgMember) && (
             <div id="vote-panel" className="bg-white border border-gray-200 rounded-xl p-5">
               {isDeliberation && (
