@@ -95,6 +95,9 @@ import DelegateProfile from './pages/DelegateProfile';
 import Delegates from './pages/Delegates';
 import DelegatePublic from './pages/DelegatePublic';
 import DelegateApplicationsReview from './pages/DelegateApplicationsReview';
+// Phase 77 — org-scoped messaging.
+import Messages from './pages/Messages';
+import ConversationDetail from './pages/ConversationDetail';
 
 function Layout({ children }) {
   return (
@@ -359,6 +362,27 @@ export default function App() {
             <ProtectedRoute>
               <OrgProvider>
                 <OrgScopedLayout><Delegations /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 77 — org-scoped messaging. */}
+        <Route
+          path="/:org_slug/messages"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><Messages /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/:org_slug/messages/:conversation_id"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><ConversationDetail /></OrgScopedLayout>
               </OrgProvider>
             </ProtectedRoute>
           }

@@ -926,6 +926,8 @@ def update_me(
         current_user.display_name = body.display_name
     if body.default_follow_policy is not None:
         current_user.default_follow_policy = body.default_follow_policy
+    if body.dm_disabled is not None:
+        current_user.dm_disabled = body.dm_disabled
     db.commit()
     db.refresh(current_user)
     return current_user

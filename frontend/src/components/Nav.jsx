@@ -7,6 +7,7 @@ import { ADMIN_NAV_SUBSECTION_PERMISSIONS } from '../constants/admin_nav_permiss
 import Avatar from './Avatar';
 import NotificationBadge from './NotificationBadge';
 import usePendingActionsCount from '../hooks/usePendingActionsCount';
+import useUnreadMessageCount from '../hooks/useUnreadMessageCount';
 import { useIsDemoUser } from '../hooks/useIsDemoUser';
 
 /**
@@ -328,6 +329,11 @@ export default function Nav() {
   );
   const pendingCount = pendingActions.eligible ? pendingActions.count : 0;
 
+  // Phase 77 — unread message count for the Messages nav badge. Messaging
+  // is parent-org-scoped, so resolve against the parent slug.
+  const messagesSlug = navOrg ? (parentSlugForLinks || navOrg.slug) : null;
+  const unreadMessages = useUnreadMessageCount(messagesSlug);
+
   useEffect(() => {
     function handleClick(e) {
       if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
@@ -418,6 +424,24 @@ export default function Nav() {
               >
                 Delegates
               </NavLink>
+
+              {/* Phase 77 — Messages link with unread badge. Messaging is
+                  parent-org-scoped (messagesSlug resolves to the parent). */}
+              {messagesSlug && (
+                <NavLink
+                  to={urlFor(messagesSlug, 'messages')}
+                  className={({ isActive }) =>
+                    `text-sm transition-colors flex items-center gap-1.5 ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                  }
+                >
+                  Messages
+                  {unreadMessages.count > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[11px] font-semibold bg-[var(--brand-accent)] text-white rounded-full">
+                      {unreadMessages.count}
+                    </span>
+                  )}
+                </NavLink>
+              )}
 
               {/* Phase 43 Cluster H — Help link in the authenticated nav.
                   Public route so always reachable; sits between Delegates
@@ -667,6 +691,21 @@ export default function Nav() {
               >
                 Delegates
               </Link>
+              {/* Phase 77 — mobile Messages link with unread badge. */}
+              {messagesSlug && (
+                <Link
+                  to={urlFor(messagesSlug, 'messages')}
+                  onClick={() => setMobileOpen(false)}
+                  className="flex items-center gap-2 py-2 text-sm text-blue-200 hover:text-white"
+                >
+                  Messages
+                  {unreadMessages.count > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[11px] font-semibold bg-[var(--brand-accent)] text-white rounded-full">
+                      {unreadMessages.count}
+                    </span>
+                  )}
+                </Link>
+              )}
               {/* Phase 43 Cluster H — Help link in the mobile drawer too. */}
               <Link
                 to="/help"

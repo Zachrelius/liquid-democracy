@@ -52,6 +52,13 @@ export function urlFor(org, kind, ...args) {
     }
     case 'delegate-applications-review':
       return `/${slug}/delegate-applications`;
+    // Phase 77 — org-scoped messaging.
+    case 'messages':
+      return `/${slug}/messages`;
+    case 'message-detail': {
+      const [conversationId] = args;
+      return `/${slug}/messages/${conversationId}`;
+    }
 
     // Org-scoped admin routes
     case 'admin-settings':

@@ -161,6 +161,9 @@ export default function Settings() {
   const [policy, setPolicy] = useState('require_approval');
   const [profileMsg, setProfileMsg] = useState('');
   const [policyMsg, setPolicyMsg] = useState('');
+  // Phase 77 — direct-message opt-out.
+  const [dmDisabled, setDmDisabled] = useState(false);
+  const [dmMsg, setDmMsg] = useState('');
   const [pwCurrent, setPwCurrent] = useState('');
   const [pwNew, setPwNew] = useState('');
   const [pwConfirm, setPwConfirm] = useState('');
@@ -175,6 +178,7 @@ export default function Settings() {
       setUser(me);
       setDisplayName(me.display_name);
       setPolicy(me.default_follow_policy);
+      setDmDisabled(!!me.dm_disabled);
     } catch { /* ignore */ } finally {
       setLoading(false);
     }
@@ -201,6 +205,20 @@ export default function Settings() {
       setTimeout(() => setPolicyMsg(''), 2000);
     } catch (e) {
       setPolicyMsg(e.message);
+    }
+  }
+
+  // Phase 77 — toggle DM opt-out (save-on-change).
+  async function toggleDmDisabled(next) {
+    setDmMsg('');
+    setDmDisabled(next);
+    try {
+      await api.patch('/api/auth/me', { dm_disabled: next });
+      setDmMsg('Saved');
+      setTimeout(() => setDmMsg(''), 2000);
+    } catch (e) {
+      setDmDisabled(!next);
+      setDmMsg(e.message || 'Could not save');
     }
   }
 
@@ -415,6 +433,30 @@ export default function Settings() {
             </button>
             {policyMsg && <span className={`text-xs ${policyMsg === 'Saved' ? 'text-green-600' : 'text-red-600'}`}>{policyMsg}</span>}
           </div>
+        </div>
+      </section>
+
+      {/* Section: Messaging (Phase 77) */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Messaging</h2>
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={dmDisabled}
+              onChange={(e) => toggleDmDisabled(e.target.checked)}
+              className="mt-0.5 accent-[var(--brand-accent)]"
+            />
+            <span>
+              <span className="block text-sm text-gray-700">Disable direct messages from other members</span>
+              <span className="block text-xs text-gray-400">
+                When enabled, other members can't start new message conversations with
+                you. You can still be contacted by delegates you follow and via the org
+                inbox. Existing conversations are not affected.
+              </span>
+            </span>
+          </label>
+          {dmMsg && <p className={`text-xs mt-2 ${dmMsg === 'Saved' ? 'text-green-600' : 'text-red-600'}`}>{dmMsg}</p>}
         </div>
       </section>
 
