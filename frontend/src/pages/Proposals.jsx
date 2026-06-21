@@ -299,7 +299,11 @@ function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly, linkOr
 }
 
 export default function Proposals() {
-  const { currentOrg, userOrgs } = useOrg();
+  const { currentOrg, userOrgs, isMember } = useOrg();
+  // Phase 80 — when the viewer isn't a member (public read-only org), read
+  // from the anon /public endpoints and hide all participation controls.
+  // Members keep the full member experience unchanged.
+  const readOnly = currentOrg ? !isMember : false;
   // Phase 11 — proposal-detail routes are parent-org-rooted. If currentOrg
   // is itself a sub-org, walk up to the parent for link construction.
   const linkOrg = (() => {
@@ -355,17 +359,23 @@ export default function Proposals() {
   }, [statusFilter, topicFilter, currentOrg]);
 
   useEffect(() => {
+    // Phase 80 — the org topics endpoint is member-gated; skip it in
+    // read-only mode (a stray 401 would bounce a logged-out viewer to login).
+    if (readOnly) { setTopics([]); return; }
     const topicsUrl = currentOrg
       ? `/api/orgs/${currentOrg.slug}/topics`
       : '/api/topics';
     api.get(topicsUrl).then(setTopics).catch(() => {});
-  }, [currentOrg]);
+  }, [currentOrg, readOnly]);
 
   // Phase 8.5 — fetch the parent's sub-orgs so we can render scope badges
   // and the Decision-7 read-only hint on cards. Resolves the parent slug
   // from currentOrg (walking up if currentOrg is itself a sub-org).
   useEffect(() => {
     if (!currentOrg) return;
+    // Phase 80 — sub-orgs endpoint is member-gated and the public surface is
+    // parent-org only; skip in read-only mode.
+    if (readOnly) { setSubOrgsById({}); return; }
     let parentSlug;
     if (currentOrg.parent_org_id) {
       const parent = userOrgs.find(o => o.id === currentOrg.parent_org_id);
@@ -402,14 +412,22 @@ export default function Proposals() {
     if (topicFilter) params.set('topic_id', topicFilter);
     const qs = params.toString() ? `?${params}` : '';
 
-    const proposalsUrl = currentOrg
-      ? `/api/orgs/${currentOrg.slug}/proposals${qs}`
-      : `/api/proposals${qs}`;
+    // Phase 80 — read-only viewers read the anon public list endpoint.
+    const proposalsUrl = readOnly
+      ? `/api/orgs/${currentOrg.slug}/public/proposals${qs}`
+      : currentOrg
+        ? `/api/orgs/${currentOrg.slug}/proposals${qs}`
+        : `/api/proposals${qs}`;
 
     api.get(proposalsUrl)
       .then(async (data) => {
         if (cancelled) return;
         setProposals(data);
+
+        // Phase 80 — skip per-proposal tally + my-vote fetches in read-only
+        // mode (both hit member-gated endpoints; the detail page shows
+        // aggregate results to non-members instead).
+        if (readOnly) { setTallies({}); setMyVotes({}); return; }
 
         // Fetch tallies for voting/passed/failed proposals
         const votingProposals = data.filter(p =>
@@ -438,7 +456,7 @@ export default function Proposals() {
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [statusFilter, topicFilter, currentOrg]);
+  }, [statusFilter, topicFilter, currentOrg, readOnly]);
 
   // Phase 16 F2 — surface a "Create proposal" button to any user with the
   // `proposal.create` permission. Routes to the existing creation form on
@@ -494,7 +512,7 @@ export default function Proposals() {
       <div className="flex flex-wrap gap-3 mb-6">
         {/* Status filter */}
         <div className="flex bg-white border border-gray-200 rounded-lg overflow-hidden">
-          {STATUS_FILTERS.map(s => (
+          {STATUS_FILTERS.filter(s => !(readOnly && s === 'unvoted')).map(s => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}

@@ -550,22 +550,39 @@ function PublicProposalsPanel({ slug }) {
       {!loading && !error && proposals.length > 0 && (
         <ul className="space-y-2">
           {proposals.map(p => (
-            <li
-              key={p.id}
-              className="bg-white border border-gray-200 rounded-xl p-4 flex items-start justify-between gap-4"
-            >
-              <div className="min-w-0 flex-1">
+            // Phase 80 — proposals are now clickable into the read-only
+            // detail view (public surface for activity_visibility='public').
+            <li key={p.id}>
+              <Link
+                to={`/${slug}/proposals/${p.id}`}
+                className="block bg-white border border-gray-200 rounded-xl p-4 hover:border-[var(--brand-accent)] transition-colors"
+              >
                 <p className="text-sm font-medium text-gray-800 truncate">
                   {p.title || '(untitled)'}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
                   Status: {p.status}
                 </p>
-              </div>
+              </Link>
             </li>
           ))}
         </ul>
       )}
+      {/* Phase 80 — entry points into the full read-only surface. */}
+      <div className="mt-4 flex flex-wrap gap-4 text-sm">
+        <Link
+          to={`/${slug}/proposals`}
+          className="text-[var(--brand-accent)] hover:underline"
+        >
+          View all proposals →
+        </Link>
+        <Link
+          to={`/${slug}/delegates`}
+          className="text-[var(--brand-accent)] hover:underline"
+        >
+          Browse delegates →
+        </Link>
+      </div>
       <p className="text-xs text-gray-400 mt-3 italic">
         Joining this organization lets you vote, comment, and start your
         own proposals.
