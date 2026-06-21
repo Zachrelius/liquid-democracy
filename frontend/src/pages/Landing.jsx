@@ -65,7 +65,7 @@ export default function Landing() {
           </h1>
           <p className="mt-5 text-lg sm:text-xl text-[#2C3E50] max-w-2xl mx-auto leading-relaxed">
             Vote directly or delegate to people you trust, on every issue, any time.
-            An open-source platform for flexible accountable governance at any level.
+            An open-source platform for flexible, accountable governance at any level.
           </p>
 
           {/* Phase 78 — reordered CTAs. Create-an-org hidden for demo users. */}
