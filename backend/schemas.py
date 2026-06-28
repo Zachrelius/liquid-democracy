@@ -2374,23 +2374,31 @@ class PromoteTopicToOrgwide(BaseModel):
 class PolisCreate(BaseModel):
     """Body for `POST /api/orgs/{slug}/polises`.
 
-    Dual-path create per `phase9_polis_api_findings.md`:
-      - Programmatic path (settings.polis_auth_token set): the route calls
-        pol.is to create the conversation and seed it; `polis_conversation_id`
-        in the body is ignored (the route computes it from the API response).
-      - Manual-fallback (no auth token): the operator created the conversation
-        on pol.is themselves and pastes the slug in `polis_conversation_id`.
-        The seed_statements list is preserved as `intended_seed_statements`
-        on the platform record so the FE can render "paste these into pol.is
-        admin UI" UX.
+    Phase 81 — the frontend now links an EXISTING pol.is conversation:
+    `polis_conversation_id` is required and `title` (Discussion topic) +
+    `prompt` (Description) are optional (default `""`; the FE falls back to
+    a "Linked pol.is conversation <id>" label when topic is empty).
+
+    `seed_statements` is RETAINED for back-compat and the untouched
+    programmatic path (settings.polis_auth_token set) + a future Phase 69
+    programmatic-wiring pass; the new frontend no longer sends it. When set
+    on the manual path it is still preserved as `intended_seed_statements`
+    on the platform record.
     """
-    title: str = Field(min_length=1, max_length=500)
-    prompt: str = Field(min_length=1, max_length=10000)
+    title: str = Field(default="", max_length=500)
+    prompt: str = Field(default="", max_length=10000)
     sub_org_id: Optional[str] = None
     seed_statements: list[str] = Field(default_factory=list, max_length=200)
     polis_conversation_id: Optional[str] = Field(
         default=None, min_length=1, max_length=300,
     )
+
+    @field_validator("title", "prompt")
+    @classmethod
+    def _blank_to_empty(cls, v: Optional[str]) -> str:
+        # Whitespace-only topic/description collapse to "" so the empty-
+        # fallback logic downstream (D4) only has to check for "".
+        return (v or "").strip()
 
 
 class PolisUpdate(BaseModel):
@@ -2406,7 +2414,10 @@ class PolisUpdate(BaseModel):
     the Polis's current `polis_conversation_id` is NULL. Once set, swapping
     it out requires admin tooling (audited as `polis.connected`).
     """
-    title: Optional[str] = Field(default=None, min_length=1, max_length=500)
+    # Phase 81 — drop min_length so the discussion topic can be cleared back
+    # to empty (consistent with topic being optional at create; the FE
+    # fallback handles display). None means "leave unchanged" on PATCH.
+    title: Optional[str] = Field(default=None, max_length=500)
     status: Optional[str] = Field(default=None)
     polis_conversation_id: Optional[str] = None
 

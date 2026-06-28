@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { polisTopicLabel } from '../utils/polis';
 
 /**
  * Phase 9 Session 4 — Linked-Polis card for proposal-detail rendering.
@@ -94,7 +95,7 @@ export default function LinkedPolisCard({
         )}
       </div>
       <h3 className="text-sm font-semibold text-[var(--brand-primary)] leading-snug">
-        {polis.title}
+        {polisTopicLabel(polis)}
       </h3>
       {truncatedPrompt && (
         <p className="text-xs text-gray-600 leading-relaxed">

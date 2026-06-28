@@ -1046,3 +1046,140 @@ class TestPolisExport:
         assert b"--- POLIS EXPORT ---" in body
         # Original export bytes preserved AFTER the separator.
         assert body.endswith(b"votes,xid\n1,abc")
+
+
+# ===========================================================================
+# Phase 81 — link-existing simplification: topic/description optional,
+# conversation_id required, seed field retained for back-compat, topic
+# clearable via PATCH. (autouse _no_polis_token keeps the token unset =
+# prod state.)
+# ===========================================================================
+
+class TestPhase81LinkExisting:
+    def test_create_with_no_topic_or_description(self, db, client):
+        # VM #1 — empty topic/description + conversation_id persists "".
+        admin = _user(db, "admin")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        db.commit()
+
+        resp = client.post(
+            f"/api/orgs/{parent.slug}/polises",
+            json={"polis_conversation_id": "3jrhnuhnjs"},
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 201, resp.text
+        pid = resp.json()["polis"]["id"]
+        row = db.get(models.Polis, pid)
+        assert row.title == ""
+        assert row.prompt == ""
+        assert row.polis_conversation_id == "3jrhnuhnjs"
+        assert row.intended_seed_statements is None
+
+    def test_create_with_topic_and_description(self, db, client):
+        # VM #2 — trimmed values persist.
+        admin = _user(db, "admin")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        db.commit()
+
+        resp = client.post(
+            f"/api/orgs/{parent.slug}/polises",
+            json={
+                "polis_conversation_id": "abc123",
+                "title": "  Budget priorities  ",
+                "prompt": "  What should we fund?  ",
+            },
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 201, resp.text
+        row = db.get(models.Polis, resp.json()["polis"]["id"])
+        assert row.title == "Budget priorities"
+        assert row.prompt == "What should we fund?"
+
+    def test_create_whitespace_topic_collapses_to_empty(self, db, client):
+        # VM #3 — _blank_to_empty validator.
+        admin = _user(db, "admin")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        db.commit()
+
+        resp = client.post(
+            f"/api/orgs/{parent.slug}/polises",
+            json={"polis_conversation_id": "ws1", "title": "   ", "prompt": "  "},
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 201, resp.text
+        row = db.get(models.Polis, resp.json()["polis"]["id"])
+        assert row.title == ""
+        assert row.prompt == ""
+
+    def test_create_without_conversation_id_400_no_fallback_term(self, db, client):
+        # VM #4 — required conversation_id; reworded detail (no "manual-fallback").
+        admin = _user(db, "admin")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        db.commit()
+
+        resp = client.post(
+            f"/api/orgs/{parent.slug}/polises",
+            json={"title": "No conv id"},
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert "polis_conversation_id" in detail
+        assert "manual-fallback" not in detail.lower()
+
+    def test_create_still_accepts_seed_statements_backcompat(self, db, client):
+        # VM #5 — retained field / Phase 69 path: seeds still stored.
+        admin = _user(db, "admin")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        db.commit()
+
+        resp = client.post(
+            f"/api/orgs/{parent.slug}/polises",
+            json={
+                "polis_conversation_id": "bc1",
+                "seed_statements": ["one", "two"],
+            },
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 201, resp.text
+        row = db.get(models.Polis, resp.json()["polis"]["id"])
+        assert row.intended_seed_statements == ["one", "two"]
+
+    def test_patch_title_to_empty_clears_topic(self, db, client):
+        # VM #6 — min_length drop lets the discussion topic be cleared.
+        admin = _user(db, "admin")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        polis = _polis_row(db, parent, admin, title="Has a topic")
+        db.commit()
+
+        resp = client.patch(
+            f"/api/orgs/{parent.slug}/polises/{polis.id}",
+            json={"title": ""},
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["title"] == ""
+        db.refresh(polis)
+        assert polis.title == ""
+
+    def test_polisout_serializes_empty_title(self, db, client):
+        # VM #7 — a title="" row serializes fine on GET.
+        admin = _user(db, "admin")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        polis = _polis_row(db, parent, admin, title="", prompt="")
+        db.commit()
+
+        resp = client.get(
+            f"/api/orgs/{parent.slug}/polises/{polis.id}",
+            headers=_auth(admin),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["title"] == ""
+        assert resp.json()["prompt"] == ""

@@ -5,6 +5,7 @@ import { urlFor } from '../../utils/urls';
 import api from '../../api';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
+import { polisTopicLabel } from '../../utils/polis';
 
 /**
  * Phase 9 Session 3 — Polises list page (parent-org scope).
@@ -167,7 +168,7 @@ export default function Polises() {
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           <div className="grid grid-cols-12 gap-3 px-4 py-2 bg-gray-50 text-xs font-medium text-gray-500 uppercase">
-            <span className="col-span-4">Title</span>
+            <span className="col-span-4">Discussion topic</span>
             <span className="col-span-2">Scope</span>
             <span className="col-span-1">Status</span>
             <span className="col-span-2">Creator</span>
@@ -182,7 +183,7 @@ export default function Polises() {
                 onClick={() => navigate(urlFor(parentSlug, 'admin-polis-detail', p.id))}
                 className="w-full text-left grid grid-cols-12 gap-3 px-4 py-3 text-sm border-t border-gray-100 hover:bg-gray-50 transition-colors items-center"
               >
-                <span className="col-span-4 font-medium text-gray-800 truncate">{p.title}</span>
+                <span className="col-span-4 font-medium text-gray-800 truncate">{polisTopicLabel(p)}</span>
                 <span className="col-span-2 text-xs text-gray-600">
                   {p.sub_org_id ? (
                     <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] uppercase">

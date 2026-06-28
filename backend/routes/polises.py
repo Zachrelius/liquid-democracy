@@ -252,14 +252,14 @@ def create_polis(
         failures = [r for r in seed_results if not r.get("ok")]
         partial_seed_failures = failures or None
     else:
-        # Manual-fallback: operator must supply the conversation_id.
+        # Link-existing path: operator must supply the conversation_id.
         if not body.polis_conversation_id:
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "polis_conversation_id is required when POLIS_AUTH_TOKEN "
-                    "is not configured (manual-fallback flow). Create the "
-                    "conversation on pol.is first, then paste the slug."
+                    "polis_conversation_id is required. Create the "
+                    "conversation on pol.is first, then paste its "
+                    "conversation_id."
                 ),
             )
         polis_conversation_id = body.polis_conversation_id
@@ -272,9 +272,12 @@ def create_polis(
         prompt=body.prompt,
         created_by=current_user.id,
         status="active",
-        # Always preserve the operator's intent regardless of path —
-        # programmatic uses it for replay/repair; manual-fallback uses
-        # it for "paste these in" UX.
+        # Phase 81 — the new link-existing frontend no longer sends
+        # seed_statements, so this stores None for FE-created polises. The
+        # column is INTENTIONALLY RETAINED (not dead code): the untouched
+        # programmatic path still writes it, and Phase 69 programmatic
+        # wiring will use it for replay/repair + server-side seed insertion.
+        # Do not "clean up" its absence from the UI as unused.
         intended_seed_statements=seed_statements or None,
     )
     db.add(polis)
