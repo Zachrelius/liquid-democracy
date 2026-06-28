@@ -241,6 +241,10 @@ def _org_to_out(
         created_at=org.created_at,
         member_count=member_count,
         user_role=user_role,
+        # Phase 80.1 hotfix — demo orgs must self-identify so the FE demo
+        # banner renders and the Phase 79 fence doesn't log demo personas
+        # out of their own demo org.
+        is_demo=bool(org.is_demo),
         user_permissions=user_permissions,
         branding=branding_out,
         # Phase 45b — surface the governance mode so the FE can render

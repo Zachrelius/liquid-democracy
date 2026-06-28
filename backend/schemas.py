@@ -2128,6 +2128,11 @@ class OrgOut(BaseModel):
     created_at: datetime
     member_count: Optional[int] = None
     user_role: Optional[str] = None
+    # Phase 80.1 hotfix — surface is_demo so the FE can (a) keep the demo
+    # disclosure banner rendering on demo orgs and (b) let the Phase 79 demo
+    # session fence trust `currentOrg.is_demo`. Its absence here was the
+    # root cause of the fence logging demo personas out of their own demo org.
+    is_demo: bool = False
     # Phase 12.5 — resolved permission keys the current user holds on this
     # org (computed via the per-request cache; one DB load for all 25 keys).
     # Empty list for non-members. Frontend uses this to drive admin-nav and
