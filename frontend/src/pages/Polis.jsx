@@ -7,6 +7,7 @@ import api from '../api';
 import PolisEmbed from '../components/PolisEmbed';
 import PolisDisclosureModal from '../components/PolisDisclosureModal';
 import useShouldShowDisclosure from '../hooks/useShouldShowDisclosure';
+import { polisTopicLabel } from '../utils/polis';
 
 /**
  * Phase 9 Session 4 — voter-facing Polis page.
@@ -203,7 +204,7 @@ export default function Polis() {
           ← Back to proposals
         </Link>
         <div className="flex items-center gap-3 flex-wrap">
-          <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">{polis.title}</h1>
+          <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">{polisTopicLabel(polis)}</h1>
           <span
             className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
               isArchived ? 'bg-gray-200 text-gray-600' : 'bg-green-100 text-green-700'
@@ -221,7 +222,7 @@ export default function Polis() {
             </span>
           )}
         </div>
-        <p className="text-sm text-gray-700 whitespace-pre-line">{polis.prompt}</p>
+        {polis.prompt && <p className="text-sm text-gray-700 whitespace-pre-line">{polis.prompt}</p>}
         <p className="text-xs text-gray-400">
           Created {new Date(polis.created_at).toLocaleDateString()}
           {creator ? <> by <span className="text-gray-600">{creator.display_name}</span></> : null}
@@ -282,7 +283,7 @@ export default function Polis() {
               </p>
               <p className="text-xs text-gray-500 max-w-md">
                 The deliberation is open to {polis.sub_org_id ? 'sub-org members' : 'eligible members'} only.
-                You can see the title and prompt but not the conversation itself.
+                You can see the discussion topic and description but not the conversation itself.
               </p>
             </div>
           </div>

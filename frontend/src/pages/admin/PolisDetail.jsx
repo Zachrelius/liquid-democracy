@@ -2,11 +2,11 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
 import { useAuth } from '../../AuthContext';
-import { usePublicConfig } from '../../PublicConfigContext';
 import { urlFor } from '../../utils/urls';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
+import { polisTopicLabel } from '../../utils/polis';
 import useSubOrg from '../../useSubOrg';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
@@ -39,7 +39,6 @@ export default function PolisDetail() {
   const { currentOrg, userOrgs } = useOrg();
   const toast = useToast();
   const confirm = useConfirm();
-  const publicConfig = usePublicConfig();
   // Phase 12.5 F2 — Admin controls (Edit title, Archive, Export) gated on
   // `polis.manage`. Hook called here at the top so it runs every render
   // (rules-of-hooks); the resolved value flows into showAdminControls below.
@@ -193,24 +192,19 @@ export default function PolisDetail() {
   }
 
   async function handleArchive() {
-    const tokenConfigured = !!publicConfig.polis_token_configured;
-    const message = tokenConfigured
-      ? 'Archiving this Polis closes participation. This is the v1-only lifecycle transition (no un-archive yet).'
-      : 'The Polis will be archived on the platform. Don\'t forget to close the conversation on pol.is so participants can no longer add statements.';
     const ok = await confirm({
       title: 'Archive this Polis?',
-      message,
+      message:
+        'Archiving here marks the platform record archived (v1-only lifecycle '
+        + '— no un-archive yet). To stop participation, also close the '
+        + 'conversation on pol.is.',
       destructive: true,
     });
     if (!ok) return;
     setArchiving(true);
     try {
       await api.patch(`/api/orgs/${parentSlug}/polises/${polisId}`, { status: 'archived' });
-      if (tokenConfigured) {
-        toast.success('Polis archived.');
-      } else {
-        toast.info('Archived on platform. Don\'t forget to close on pol.is.');
-      }
+      toast.info('Archived on platform. Don\'t forget to close on pol.is.');
       load();
     } catch (e) {
       toast.error(e.message || 'Failed to archive');
@@ -293,7 +287,7 @@ export default function PolisDetail() {
           ) : (
             <Link to={urlFor(parentSlug, 'admin-polises')} className="hover:underline">Polises</Link>
           )}
-          {' / '}<span>{polis.title}</span>
+          {' / '}<span>{polisTopicLabel(polis)}</span>
         </p>
       </div>
 
@@ -320,7 +314,7 @@ export default function PolisDetail() {
               </div>
             ) : (
               <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">{polis.title}</h1>
+                <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">{polisTopicLabel(polis)}</h1>
                 {statusBadge(polis.status)}
                 {polis.sub_org_id ? (
                   <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-blue-50 text-blue-700">
@@ -335,7 +329,7 @@ export default function PolisDetail() {
             )}
           </div>
         </div>
-        <p className="text-sm text-gray-700 whitespace-pre-line">{polis.prompt}</p>
+        {polis.prompt && <p className="text-sm text-gray-700 whitespace-pre-line">{polis.prompt}</p>}
         <p className="text-xs text-gray-400">
           Created {new Date(polis.created_at).toLocaleDateString()}
           {creator ? <> by <span className="text-gray-600">{creator.display_name}</span></> : null}
@@ -374,7 +368,7 @@ export default function PolisDetail() {
 
       {/* Embed — Session 4: live pol.is embed via shared PolisEmbed.
           Falls back to a friendly "not yet connected" placeholder when the
-          conversation_id is absent (manual-fallback pre-paste state). */}
+          conversation_id is absent. */}
       <section className="space-y-2">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Conversation</h2>
         <PolisEmbed
@@ -413,9 +407,9 @@ export default function PolisDetail() {
                   className="text-sm text-[var(--brand-accent)] hover:underline"
                   disabled={isArchived}
                 >
-                  Edit title
+                  Edit discussion topic
                 </button>
-                {isArchived && <span className="text-xs text-gray-400 ml-2">(archived — title locked)</span>}
+                {isArchived && <span className="text-xs text-gray-400 ml-2">(archived — topic locked)</span>}
               </div>
             )}
 
@@ -428,13 +422,10 @@ export default function PolisDetail() {
                 >
                   {archiving ? 'Archiving…' : 'Archive Polis'}
                 </button>
-                {!publicConfig.polis_token_configured && (
-                  <p className="text-xs text-amber-600 mt-1">
-                    Manual-fallback mode: archive will mark the platform record
-                    archived but won't close the pol.is conversation. You'll
-                    need to close it on pol.is too.
-                  </p>
-                )}
+                <p className="text-xs text-gray-400 mt-1">
+                  Archiving here marks the platform record archived. To stop
+                  participation, also close the conversation on pol.is.
+                </p>
               </div>
             )}
 
@@ -455,13 +446,10 @@ export default function PolisDetail() {
               >
                 Download {deanonymize ? 'deanonymized ' : ''}export
               </button>
-              {!publicConfig.polis_token_configured && (
-                <p className="text-xs text-gray-400">
-                  Export requires a configured pol.is API token. Without one,
-                  the server returns 503 and you'll need to export manually
-                  from the pol.is admin UI.
-                </p>
-              )}
+              <p className="text-xs text-gray-400">
+                Export pulls participation data from pol.is; the conversation
+                must be reachable.
+              </p>
             </div>
           </div>
         </section>
@@ -488,22 +476,10 @@ export default function PolisDetail() {
         </section>
       )}
 
-      {/* Intended seed statements (read-only reference for manual-fallback path) */}
-      {Array.isArray(polis.intended_seed_statements) && polis.intended_seed_statements.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Intended seed statements</h2>
-          <p className="text-xs text-gray-500">
-            {publicConfig.polis_token_configured
-              ? 'These were inserted into pol.is at creation. Re-insert any that fell through if the create response flagged partial failure.'
-              : 'These statements were captured at create-time. Paste them into the pol.is admin UI for this conversation.'}
-          </p>
-          <ol className="list-decimal pl-5 bg-white border border-gray-200 rounded-xl p-5 space-y-1.5 text-sm text-gray-700">
-            {polis.intended_seed_statements.map((s, i) => (
-              <li key={i}>{s}</li>
-            ))}
-          </ol>
-        </section>
-      )}
+      {/* Phase 81 — the "Intended seed statements" section was removed. New
+          polises link an existing pol.is conversation that already has its own
+          statements; the intended_seed_statements column is retained for the
+          programmatic path / Phase 69 but is no longer surfaced here. */}
     </div>
   );
 }
