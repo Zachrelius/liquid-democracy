@@ -146,7 +146,7 @@ function OrgScopedBrandingTheme() {
  * switch / route leave).
  */
 function OrgScopedLayout({ children }) {
-  const { accessDenied, loading, currentOrg, isPublicReadOnly, resolvingPublicOrg } = useOrg();
+  const { accessDenied, loading, currentOrg, isMember, isPublicReadOnly, resolvingPublicOrg } = useOrg();
   // Phase 79 — Layer 2 demo session fence. Once OrgContext resolves, a demo
   // persona (demo_stub) sitting on a NON-demo org's scoped routes
   // (proposals, delegations, admin, etc.) gets logged out and bounced to
@@ -163,7 +163,14 @@ function OrgScopedLayout({ children }) {
   // the async logout window (mirrors DemoUserGuard's firedRef).
   const fencedRef = useRef(false);
   useEffect(() => {
-    if (loading || !isDemoUser || !currentOrg || currentOrg.is_demo) return;
+    // Phase 80.1 hotfix — NEVER fence an actual member. Demo personas are, by
+    // construction (seed pipeline) + the Phase 79 backend join gate, only ever
+    // members of demo orgs, so isMember ⟹ a demo org they belong in. This is
+    // the load-bearing skip: OrgOut historically omitted `is_demo`, so
+    // `currentOrg.is_demo` was undefined for member orgs and the old
+    // is_demo-only check logged demo personas out of their OWN demo org. The
+    // is_demo check still guards the non-member public-read-only path (Phase 80).
+    if (loading || !isDemoUser || !currentOrg || isMember || currentOrg.is_demo) return;
     if (fencedRef.current) return;
     fencedRef.current = true;
     (async () => {
@@ -171,7 +178,7 @@ function OrgScopedLayout({ children }) {
       toast.info(DEMO_FENCE_MESSAGE);
       navigate('/demo', { replace: true });
     })();
-  }, [loading, isDemoUser, currentOrg, logout, toast, navigate]);
+  }, [loading, isDemoUser, currentOrg, isMember, logout, toast, navigate]);
   // Phase 80 — also show the loading state while we resolve whether a
   // non-member URL org is a public read-only org (avoids an access-denied
   // flash + a stray member-endpoint fetch with a null org).

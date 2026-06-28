@@ -78,6 +78,10 @@ _MUST_SURFACE_FIELDS: list[str] = [
     # surface.
     "discoverability",
     "activity_visibility",
+    # Phase 80.1 hotfix — demo orgs self-identify so the FE demo banner
+    # renders and the Phase 79 demo session fence trusts currentOrg.is_demo
+    # (its absence logged demo personas out of their own demo org).
+    "is_demo",
 ]
 
 # The Phase 45a hotfix surfaces OWNER_ONLY_KEYS via user_permissions
