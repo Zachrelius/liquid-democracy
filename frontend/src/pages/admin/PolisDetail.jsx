@@ -7,13 +7,12 @@ import api from '../../api';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
 import { polisTopicLabel } from '../../utils/polis';
+import PolisSeedGenerator from '../../components/PolisSeedGenerator';
 import useSubOrg from '../../useSubOrg';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
 import PolisEmbed from '../../components/PolisEmbed';
-import PolisDisclosureModal from '../../components/PolisDisclosureModal';
-import useShouldShowDisclosure from '../../hooks/useShouldShowDisclosure';
 
 /**
  * Phase 9 Session 3 — Polis detail page (admin scope).
@@ -76,12 +75,6 @@ export default function PolisDetail() {
   // return the same xid for (user, org).
   const [polisXid, setPolisXid] = useState(null);
   const xidRequested = useRef(false);
-
-  // Phase 9 Session 4 — privacy disclosure modal also fires on the admin
-  // detail page when an admin who hasn't dismissed it for THIS Polis
-  // visits. Per-Polis localStorage keying ensures dismissing on one
-  // Polis doesn't suppress the modal on another.
-  const [shouldShow, dismiss] = useShouldShowDisclosure(polisId);
 
   const load = useCallback(async () => {
     if (!parentSlug || !polisId) return;
@@ -270,9 +263,6 @@ export default function PolisDetail() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
-      {/* First-visit-per-Polis privacy disclosure (Decision 4 — verbatim) */}
-      <PolisDisclosureModal open={shouldShow} onDismiss={dismiss} />
-
       {/* Breadcrumb */}
       <div>
         <p className="text-xs text-gray-400 mb-1">
@@ -452,6 +442,19 @@ export default function PolisDetail() {
               </p>
             </div>
           </div>
+        </section>
+      )}
+
+      {/* Phase 82 C1 — seed-statement generator (reads the saved topic/
+          description). The "I linked it first, now generate seeds" path. */}
+      {showAdminControls && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Seed statements</h2>
+          <PolisSeedGenerator
+            topic={polis.title}
+            description={polis.prompt}
+            slug={parentSlug}
+          />
         </section>
       )}
 

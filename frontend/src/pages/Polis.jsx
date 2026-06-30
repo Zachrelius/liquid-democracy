@@ -5,8 +5,6 @@ import { useOrg } from '../OrgContext';
 import { urlFor } from '../utils/urls';
 import api from '../api';
 import PolisEmbed from '../components/PolisEmbed';
-import PolisDisclosureModal from '../components/PolisDisclosureModal';
-import useShouldShowDisclosure from '../hooks/useShouldShowDisclosure';
 import { polisTopicLabel } from '../utils/polis';
 
 /**
@@ -50,8 +48,6 @@ export default function Polis() {
   const [polisXid, setPolisXid] = useState(null);
   const [readOnlyReason, setReadOnlyReason] = useState(null);
   const xidRequested = useRef(false);
-
-  const [shouldShow, dismiss] = useShouldShowDisclosure(polisId);
 
   // Resolve parent slug — Polis routes are always parent-org-rooted, so
   // when the URL slug points at a sub-org we walk up via userOrgs.
@@ -195,9 +191,6 @@ export default function Polis() {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 space-y-8">
-      {/* Privacy disclosure modal — fires once per Polis on first visit */}
-      <PolisDisclosureModal open={shouldShow} onDismiss={dismiss} />
-
       {/* Header — no admin controls; voter view */}
       <section className="space-y-3">
         <Link to={parentSlug ? urlFor(parentSlug, 'proposals') : '/orgs'} className="text-sm text-[var(--brand-accent)] hover:underline">
@@ -265,7 +258,14 @@ export default function Polis() {
 
       {/* Embed (or read-only placeholder for non-member sub-org viewers) */}
       <section className="space-y-2">
-        <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Conversation</h2>
+        <div className="flex items-baseline justify-between gap-3 flex-wrap">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Conversation</h2>
+          {/* Phase 82 C3 — quiet, non-modal identity link (replaces the
+              first-visit disclosure modal). */}
+          <Link to="/help/polis#identity" className="text-xs text-[var(--brand-accent)] hover:underline">
+            How your identity works here
+          </Link>
+        </div>
         {showEmbed ? (
           <PolisEmbed
             conversationId={polis.polis_conversation_id}

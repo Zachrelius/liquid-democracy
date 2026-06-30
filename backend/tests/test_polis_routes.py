@@ -1183,3 +1183,202 @@ class TestPhase81LinkExisting:
         assert resp.status_code == 200, resp.text
         assert resp.json()["title"] == ""
         assert resp.json()["prompt"] == ""
+
+
+# ===========================================================================
+# Phase 82 C1 — seed-statement generator (module + route) and C2 access.
+# ===========================================================================
+
+import polis_seed_generator  # noqa: E402
+
+
+class TestPhase82SeedGeneratorModule:
+    def test_parses_trims_dedupes(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        called = {}
+
+        def fake(*, system, user, api_key, model):
+            called["yes"] = True
+            return '["  A  ", "B", "B", "", "C"]'
+
+        monkeypatch.setattr(polis_seed_generator, "_call_anthropic", fake)
+        out, warn = polis_seed_generator.generate_statements(topic="Housing")
+        assert warn is None
+        assert out == ["A", "B", "C"]  # trimmed, deduped, empties dropped
+        assert called.get("yes") is True
+
+    def test_empty_input_does_not_call_api(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        called = {}
+
+        def fake(**kwargs):
+            called["yes"] = True
+            return "[]"
+
+        monkeypatch.setattr(polis_seed_generator, "_call_anthropic", fake)
+        out, warn = polis_seed_generator.generate_statements(
+            topic="", description="", steer="",
+        )
+        assert out == []
+        assert warn is not None
+        assert "yes" not in called  # API was NOT invoked
+
+    def test_api_failure_degrades_no_raise(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+        def boom(**kwargs):
+            raise RuntimeError("transport down")
+
+        monkeypatch.setattr(polis_seed_generator, "_call_anthropic", boom)
+        out, warn = polis_seed_generator.generate_statements(topic="Housing")
+        assert out == []
+        assert warn
+
+    def test_unparseable_output_degrades(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        monkeypatch.setattr(
+            polis_seed_generator, "_call_anthropic",
+            lambda **k: "here are some statements: nope",
+        )
+        out, warn = polis_seed_generator.generate_statements(topic="Housing")
+        assert out == []
+        assert warn
+
+
+class TestPhase82SeedGeneratorRoute:
+    def test_503_when_unconfigured(self, db, client, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        admin = _user(db, "admin")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        db.commit()
+        r = client.post(
+            f"/api/orgs/{parent.slug}/polises/seed-statements/generate",
+            json={"topic": "Housing"},
+            headers=_auth(admin),
+        )
+        assert r.status_code == 503
+
+    def test_member_without_perm_forbidden(self, db, client, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        admin = _user(db, "admin")
+        member = _user(db, "member")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        _membership(db, parent, member, role="member")
+        db.commit()
+        r = client.post(
+            f"/api/orgs/{parent.slug}/polises/seed-statements/generate",
+            json={"topic": "Housing"},
+            headers=_auth(member),
+        )
+        assert r.status_code == 403
+
+    def test_org_description_only_sent_when_opted_in(self, db, client, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        captured = {}
+
+        def fake(*, system, user, api_key, model):
+            captured["user"] = user
+            return '["A statement"]'
+
+        monkeypatch.setattr(polis_seed_generator, "_call_anthropic", fake)
+        admin = _user(db, "admin")
+        parent = _org(db, "parent")
+        parent.description = "We are the Maple Street tenants union."
+        _membership(db, parent, admin, role="admin")
+        db.commit()
+
+        # Opted in → org description reaches the user message.
+        r = client.post(
+            f"/api/orgs/{parent.slug}/polises/seed-statements/generate",
+            json={"topic": "Repairs", "include_org_description": True},
+            headers=_auth(admin),
+        )
+        assert r.status_code == 200, r.text
+        assert "Maple Street tenants union" in captured["user"]
+
+        # Opted out → absent.
+        captured.clear()
+        r = client.post(
+            f"/api/orgs/{parent.slug}/polises/seed-statements/generate",
+            json={"topic": "Repairs", "include_org_description": False},
+            headers=_auth(admin),
+        )
+        assert r.status_code == 200, r.text
+        assert "Maple Street tenants union" not in captured["user"]
+
+    def test_audit_does_not_log_statement_text(self, db, client, monkeypatch):
+        import json as _json
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        monkeypatch.setattr(
+            polis_seed_generator, "_call_anthropic",
+            lambda **k: '["Secret confidential statement"]',
+        )
+        admin = _user(db, "admin")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        db.commit()
+        r = client.post(
+            f"/api/orgs/{parent.slug}/polises/seed-statements/generate",
+            json={"topic": "Housing"},
+            headers=_auth(admin),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["statements"] == ["Secret confidential statement"]
+        audits = _audit(db, "polis.seed_statements_generated")
+        assert len(audits) >= 1
+        details = audits[-1].details
+        if not isinstance(details, dict):
+            details = _json.loads(details)
+        assert details.get("count") == 1
+        assert "Secret confidential statement" not in _json.dumps(details)
+
+
+class TestPhase82MemberAccess:
+    def test_private_suborg_polis_hidden_from_non_member(self, db, client):
+        # VM #13 — eligibility filter (load-bearing).
+        admin = _user(db, "admin")
+        outsider = _user(db, "outsider")
+        parent = _org(db, "parent")
+        sub = _org(db, "engineering", parent_org_id=parent.id,
+                   settings={"private": True})
+        _membership(db, parent, admin, role="admin")
+        _membership(db, parent, outsider, role="member")  # parent member, NOT in sub
+        polis = _polis_row(db, parent, admin, sub_org=sub, conversation_id="c1")
+        db.commit()
+
+        # list as outsider → the private sub-org polis must NOT appear.
+        r = client.get(
+            f"/api/orgs/{parent.slug}/polises", headers=_auth(outsider),
+        )
+        assert r.status_code == 200, r.text
+        assert polis.id not in [p["id"] for p in r.json()]
+
+        # has-visible → False (no org-wide polis, sub is private).
+        r2 = client.get(
+            f"/api/orgs/{parent.slug}/polises/has-visible",
+            headers=_auth(outsider),
+        )
+        assert r2.json()["has_visible"] is False
+
+    def test_org_wide_polis_visible_and_has_visible_true(self, db, client):
+        admin = _user(db, "admin")
+        member = _user(db, "member")
+        parent = _org(db, "parent")
+        _membership(db, parent, admin, role="admin")
+        _membership(db, parent, member, role="member")
+        polis = _polis_row(db, parent, admin, conversation_id="c2")
+        db.commit()
+
+        r = client.get(
+            f"/api/orgs/{parent.slug}/polises", headers=_auth(member),
+        )
+        assert r.status_code == 200
+        assert polis.id in [p["id"] for p in r.json()]
+
+        r2 = client.get(
+            f"/api/orgs/{parent.slug}/polises/has-visible",
+            headers=_auth(member),
+        )
+        assert r2.json()["has_visible"] is True

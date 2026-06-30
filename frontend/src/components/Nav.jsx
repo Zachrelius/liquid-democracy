@@ -8,6 +8,7 @@ import Avatar from './Avatar';
 import NotificationBadge from './NotificationBadge';
 import usePendingActionsCount from '../hooks/usePendingActionsCount';
 import useUnreadMessageCount from '../hooks/useUnreadMessageCount';
+import useHasVisiblePolises from '../hooks/useHasVisiblePolises';
 import { useIsDemoUser } from '../hooks/useIsDemoUser';
 
 /**
@@ -333,6 +334,10 @@ export default function Nav() {
   // is parent-org-scoped, so resolve against the parent slug.
   const messagesSlug = navOrg ? (parentSlugForLinks || navOrg.slug) : null;
   const unreadMessages = useUnreadMessageCount(messagesSlug);
+  // Phase 82 C2 — Deliberations link is presence-gated: shown only when the
+  // org has ≥1 Polis this member can see. Parent-org-scoped (the list
+  // endpoint already filters by eligibility incl. visible sub-org Polises).
+  const hasVisiblePolises = useHasVisiblePolises(messagesSlug);
 
   useEffect(() => {
     function handleClick(e) {
@@ -424,6 +429,18 @@ export default function Nav() {
               >
                 Delegates
               </NavLink>
+
+              {/* Phase 82 C2 — Deliberations (pol.is) link, presence-gated. */}
+              {hasVisiblePolises && messagesSlug && (
+                <NavLink
+                  to={urlFor(messagesSlug, 'deliberations')}
+                  className={({ isActive }) =>
+                    `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                  }
+                >
+                  Deliberations
+                </NavLink>
+              )}
 
               {/* Phase 77 — Messages link with unread badge. Messaging is
                   parent-org-scoped (messagesSlug resolves to the parent). */}
@@ -691,6 +708,16 @@ export default function Nav() {
               >
                 Delegates
               </Link>
+              {/* Phase 82 C2 — mobile Deliberations link, presence-gated. */}
+              {hasVisiblePolises && messagesSlug && (
+                <Link
+                  to={urlFor(messagesSlug, 'deliberations')}
+                  onClick={() => setMobileOpen(false)}
+                  className="block py-2 text-sm text-blue-200 hover:text-white"
+                >
+                  Deliberations
+                </Link>
+              )}
               {/* Phase 77 — mobile Messages link with unread badge. */}
               {messagesSlug && (
                 <Link

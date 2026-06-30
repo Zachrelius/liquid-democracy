@@ -52,6 +52,10 @@ export function urlFor(org, kind, ...args) {
     }
     case 'delegate-applications-review':
       return `/${slug}/delegate-applications`;
+    // Phase 82 C2 — member-facing deliberations (Polis) list. Items link to
+    // the existing voter view via the 'polis-voter' case.
+    case 'deliberations':
+      return `/${slug}/deliberations`;
     // Phase 77 — org-scoped messaging.
     case 'messages':
       return `/${slug}/messages`;

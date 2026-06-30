@@ -5,6 +5,7 @@ import { urlFor } from '../../utils/urls';
 import api from '../../api';
 import { useToast } from '../../components/Toast';
 import { polisTopicLabel } from '../../utils/polis';
+import PolisSeedGenerator from '../../components/PolisSeedGenerator';
 import useSubOrg from '../../useSubOrg';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
 
@@ -259,6 +260,10 @@ export default function CreatePolis() {
           </Link>
         </div>
       </form>
+
+      {/* Phase 82 C1 — seed-statement generator. Reads topic/description from
+          live form state; produces a CSV the admin uploads on pol.is. */}
+      <PolisSeedGenerator topic={title} description={prompt} slug={parentSlug} />
     </div>
   );
 }
