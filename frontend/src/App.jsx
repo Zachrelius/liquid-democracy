@@ -60,6 +60,8 @@ import PolisDetail from './pages/admin/PolisDetail';
 import CreatePolis from './pages/admin/CreatePolis';
 import SubOrgPolises from './pages/admin/SubOrgPolises';
 import Polis from './pages/Polis';
+// Phase 82 C2 — member-facing deliberations (Polis) list.
+import Deliberations from './pages/Deliberations';
 import VotingMethodsHelp from './pages/VotingMethodsHelp';
 // Phase 20 F3 — renamed from SustainedMajorityHelp; serves both
 // /help/stable-result (canonical) and /help/sustained-majority (kept as
@@ -586,6 +588,17 @@ export default function App() {
             <ProtectedRoute>
               <OrgProvider>
                 <OrgScopedLayout><Polis /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 82 C2 — member-facing deliberations list. */}
+        <Route
+          path="/:org_slug/deliberations"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><Deliberations /></OrgScopedLayout>
               </OrgProvider>
             </ProtectedRoute>
           }

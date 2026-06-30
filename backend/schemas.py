@@ -2467,6 +2467,29 @@ class PolisCreateResponse(BaseModel):
     partial_seed_failures: Optional[list[dict]] = None
 
 
+class PolisSeedGenerateRequest(BaseModel):
+    """Phase 82 C1 — body for the seed-statement generator. The generated
+    statements are returned to the client for review + CSV download; nothing
+    is persisted."""
+    topic: str = Field(default="", max_length=2000)
+    description: str = Field(default="", max_length=2000)
+    steer: str = Field(default="", max_length=2000)
+    include_org_description: bool = False
+
+
+class PolisSeedGenerateResponse(BaseModel):
+    """Phase 82 C1 — generated seed statements + an optional non-blocking
+    degradation warning (empty input / AI unreachable / unparseable)."""
+    statements: list[str]
+    warning: Optional[str] = None
+
+
+class PolisHasVisibleResponse(BaseModel):
+    """Phase 82 C2 — cheap nav presence check: does this member have ≥1
+    visible Polis in the org?"""
+    has_visible: bool
+
+
 class PolisXidResponse(BaseModel):
     """Response for `POST /api/orgs/{slug}/polises/{polis_id}/xid`.
 

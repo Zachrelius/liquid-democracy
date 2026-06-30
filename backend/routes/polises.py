@@ -398,6 +398,117 @@ def list_polises(
 
 
 # ============================================================================
+# Phase 82 C2 — cheap nav presence check (has ≥1 visible Polis?)
+# ============================================================================
+
+@router.get(
+    "/{org_slug}/polises/has-visible",
+    response_model=schemas.PolisHasVisibleResponse,
+)
+def has_visible_polises(
+    org_slug: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Phase 82 C2 — boolean used by the member nav to decide whether to show
+    the "Deliberations" link. Short-circuits on the first visible Polis so the
+    nav poll stays cheap. Declared BEFORE the `/{polis_id}` detail route so
+    "has-visible" isn't captured as a polis_id.
+    """
+    parent = _parent_or_404(db, org_slug)
+    polises = db.query(models.Polis).filter(
+        models.Polis.org_id == parent.id,
+    ).all()
+    for polis in polises:
+        # Org-wide Polises are visible to every active member (matches the
+        # list_polises fast path).
+        if polis.sub_org_id is None:
+            return schemas.PolisHasVisibleResponse(has_visible=True)
+        if current_user.id in eligible_viewers_for_polis(db, polis):
+            return schemas.PolisHasVisibleResponse(has_visible=True)
+    return schemas.PolisHasVisibleResponse(has_visible=False)
+
+
+# ============================================================================
+# Phase 82 C1 — AI seed-statement generator (stateless; CSV built client-side)
+# ============================================================================
+
+@router.post(
+    "/{org_slug}/polises/seed-statements/generate",
+    response_model=schemas.PolisSeedGenerateResponse,
+)
+def generate_seed_statements(
+    org_slug: str,
+    body: schemas.PolisSeedGenerateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Phase 82 C1 — draft pol.is seed statements via Sonnet. Stateless: the
+    statements are returned for client-side review + CSV download and are NOT
+    persisted (no `intended_seed_statements` write). Degradation is carried in
+    the `warning` field (200), except the not-configured case (503).
+
+    Permission: `polis.create` OR `polis.manage` on the parent org (whoever
+    can create or manage a Polis can generate seeds). Declared before the
+    `/{polis_id}` POST routes so "seed-statements" isn't captured as a
+    polis_id.
+    """
+    import polis_seed_generator
+
+    parent = _parent_or_404(db, org_slug)
+
+    # Permission: create OR manage on the parent org.
+    can_generate = (
+        has_permission(db, current_user.id, parent.id, "polis.create")
+        or has_permission(db, current_user.id, parent.id, "polis.manage")
+    )
+    if not can_generate:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to generate seed statements.",
+        )
+
+    if not polis_seed_generator.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="AI seed generation isn't configured on this platform.",
+        )
+
+    # Resolve org description server-side only when opted in (never trust a
+    # client-passed description).
+    org_description = ""
+    if body.include_org_description:
+        org_description = parent.description or ""
+
+    statements, warning = polis_seed_generator.generate_statements(
+        topic=body.topic,
+        description=body.description,
+        steer=body.steer,
+        org_description=org_description,
+    )
+
+    # Light audit — aggregate only, NEVER the statement text.
+    log_audit_event(
+        db,
+        action="polis.seed_statements_generated",
+        target_type="organization",
+        target_id=parent.id,
+        actor_id=current_user.id,
+        details={
+            "count": len(statements),
+            "include_org_description": bool(body.include_org_description),
+            "had_warning": bool(warning),
+        },
+    )
+    db.commit()
+
+    return schemas.PolisSeedGenerateResponse(statements=statements, warning=warning)
+
+
+# ============================================================================
 # GET — detail with optional live participation stats
 # ============================================================================
 

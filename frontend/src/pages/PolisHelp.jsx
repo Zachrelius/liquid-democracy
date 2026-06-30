@@ -78,24 +78,19 @@ export default function PolisHelp() {
       </section>
 
       {/* Privacy framing */}
-      <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Privacy &amp; identity</h2>
-        <p className="text-sm text-gray-700 leading-relaxed">
-          Polises are different from proposal votes. <strong>Your votes and
-          statements in a Polis are visible to other participants.</strong>
-          They&apos;re tied to a per-org pseudonym, not your real name. When
-          you participate, the platform creates an opaque random ID for you
-          (your <code className="text-xs bg-gray-100 px-1 rounded">data-xid</code>);
-          pol.is sees only that ID, not your username or email.
-        </p>
-        <p className="text-sm text-gray-700 leading-relaxed">
-          The platform itself <strong>can</strong> identify who said what when
-          needed for moderation — the mapping between your platform identity
-          and your Polis pseudonym is stored on the platform side and used
-          only when an admin needs to act on a moderation issue. Your
-          participation is recorded for cross-session continuity (so the
-          same dot keeps moving as you vote across visits).
-        </p>
+      {/* Phase 82 C3 — identity mechanics relocated here from the removed
+          first-visit disclosure modal. The #identity anchor is linked by the
+          quiet "How your identity works here" link on each deliberation. */}
+      <section id="identity" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3 scroll-mt-20">
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">How your identity works here</h2>
+        <ul className="list-disc pl-5 space-y-2 text-sm text-gray-700 leading-relaxed">
+          <li>You participate under a random ID, not your name, username, or profile.</li>
+          <li>The ID is randomly generated the first time you open a deliberation in this organization.</li>
+          <li>You get a <strong>different</strong> random ID in each organization, so your activity can&apos;t be linked across organizations.</li>
+          <li>The same ID is reused each time you return to deliberations in this organization, so you can pick up where you left off.</li>
+          <li>Your individual statements and agree/disagree votes in a deliberation are shown to other participants (attached to that random ID) — this is how the clustering visualization works.</li>
+          <li>Organizers with the right permission can look up who is behind an ID if needed for moderation.</li>
+        </ul>
         <p className="text-sm text-gray-700 leading-relaxed">
           This is a different model from <strong>voting on proposals</strong>,
           which stays private by default — your individual proposal votes are
