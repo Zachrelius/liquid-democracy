@@ -226,7 +226,12 @@ PERMISSION_REGISTRY: list[PermissionDefinition] = [
     PermissionDefinition(
         "comment.moderate",
         "Moderate comments",
-        "Allow soft-deleting comments posted by other members. (Members can always edit and delete their own comments within the edit window.)",
+        # Phase 85 (B-1) — this key is now enforced by DELETE /api/comments/{id}.
+        # Moderator removal is a distinct, attributed action: the comment shows
+        # as removed by a moderator, the author is notified, and the acting
+        # moderator is recorded in the audit log. Members can always edit and
+        # delete their own comments within the edit window.
+        "Allow removing comments posted by other members. Removal is attributed (the comment shows as removed by a moderator) and the author is notified. Members can always edit and delete their own comments within the edit window.",
         "Comments",
     ),
     # --- Organization (3) ---

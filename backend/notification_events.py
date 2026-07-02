@@ -99,6 +99,16 @@ EVENT_REGISTRY: list[EventDefinition] = [
         category="Comments",
         signal_level="ambient",
     ),
+    # Phase 85 (B-1) — attributed moderator removal. Emitted to the comment's
+    # author when a moderator removes their comment. Transparency of
+    # moderation is a product value.
+    EventDefinition(
+        key="comment.moderated",
+        label="Your comment was removed by a moderator",
+        description="A moderator removed a comment you posted on a proposal.",
+        category="Comments",
+        signal_level="standard",
+    ),
     # ---- Proposals ------------------------------------------------------
     EventDefinition(
         key="proposal.entered_voting",

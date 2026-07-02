@@ -3,23 +3,37 @@ import { createContext, useContext, useState, useCallback, useEffect, useRef } f
 const ConfirmContext = createContext(null);
 
 export function ConfirmProvider({ children }) {
-  const [state, setState] = useState(null); // { title, message, destructive, resolve }
+  // Phase 85 — optional `checkbox: { label, description }`. When present the
+  // dialog renders a checkbox and resolves with an object
+  // `{ confirmed, checked }`; without it the dialog resolves a plain boolean
+  // (unchanged for every existing caller).
+  const [state, setState] = useState(null);
+  const [checked, setChecked] = useState(false);
   const confirmBtnRef = useRef(null);
   const cancelBtnRef = useRef(null);
 
-  const confirm = useCallback(({ title, message, destructive = false } = {}) => {
+  const confirm = useCallback(({ title, message, destructive = false, checkbox = null } = {}) => {
     return new Promise((resolve) => {
-      setState({ title, message, destructive, resolve });
+      setChecked(false);
+      setState({ title, message, destructive, checkbox, resolve });
     });
   }, []);
 
   function handleConfirm() {
-    state?.resolve(true);
+    if (state?.checkbox) {
+      state.resolve({ confirmed: true, checked });
+    } else {
+      state?.resolve(true);
+    }
     setState(null);
   }
 
   function handleCancel() {
-    state?.resolve(false);
+    if (state?.checkbox) {
+      state.resolve({ confirmed: false, checked: false });
+    } else {
+      state?.resolve(false);
+    }
     setState(null);
   }
 
@@ -68,6 +82,24 @@ export function ConfirmProvider({ children }) {
               <h3 className="text-lg font-semibold text-gray-800">{state.title}</h3>
             )}
             <p className="text-sm text-gray-600">{state.message}</p>
+            {state.checkbox && (
+              <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => setChecked(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">{state.checkbox.label}</span>
+                  {state.checkbox.description && (
+                    <span className="block text-xs text-gray-500">
+                      {state.checkbox.description}
+                    </span>
+                  )}
+                </span>
+              </label>
+            )}
             <div className="flex justify-end gap-3 pt-2">
               <button
                 ref={cancelBtnRef}
