@@ -63,6 +63,8 @@ TEMPLATE_DIR = Path(__file__).parent / "email_templates"
 _SUBJECTS: dict[str, str] = {
     "comment.replied": "New reply on your comment",
     "comment.posted_on_your_proposal": "New comment on '{proposal_title}'",
+    # Phase 85 (B-1) — attributed moderator removal, emitted to the author.
+    "comment.moderated": "Your comment on '{proposal_title}' was removed",
     "proposal.entered_voting": "Voting has opened on '{proposal_title}'",
     "proposal.closed": "Proposal '{proposal_title}' has closed",
     "sustained_majority.floor_approached": "Vote support nearing floor: '{proposal_title}'",
@@ -568,6 +570,7 @@ def _build_cta_url(
     if event_type in (
         "comment.replied",
         "comment.posted_on_your_proposal",
+        "comment.moderated",
         "proposal.entered_voting",
         "proposal.closed",
         "sustained_majority.floor_approached",

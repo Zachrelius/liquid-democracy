@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import api from '../api';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
+import { useHasPermission } from '../hooks/useHasPermission';
 import Spinner from './Spinner';
 import ErrorMessage from './ErrorMessage';
 import Comment from './Comment';
@@ -51,6 +52,8 @@ export default function CommentThread({ proposalId }) {
 
   const isOrgMember = !!currentOrg?.user_role;
   const canPost = isOrgMember && !!user?.email_verified;
+  // Phase 85 (B-1) — holders of comment.moderate can remove others' comments.
+  const canModerate = useHasPermission('comment.moderate');
   const showComposer = isOrgMember; // unverified members see the composer's
                                     // own VerifyEmailInlineNote treatment
 
@@ -152,6 +155,7 @@ export default function CommentThread({ proposalId }) {
                   proposalId={proposalId}
                   isReply={isReply}
                   canPost={canPost}
+                  canModerate={canModerate}
                   onChanged={load}
                 />
               ))}

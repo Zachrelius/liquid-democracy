@@ -169,6 +169,13 @@ def _consume_invitation(
             ),
         )
 
+    # Phase 85 (B-8) — a banned user cannot re-enter via the register/login
+    # invite-consume path either (this is the ban-evasion vector where a
+    # banned user logs in with their existing account and consumes an invite
+    # token). Same 403 as every other join path; ban must be revoked first.
+    from org_bans import raise_if_banned
+    raise_if_banned(db, inv.org_id, user.id)
+
     # Idempotent OrgMembership: if the user is already active in the inviting
     # org, leave it alone. If suspended/pending, reactivate to the invitation's
     # role (matches the existing accept_invitation route's pattern).

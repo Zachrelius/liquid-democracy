@@ -2178,6 +2178,22 @@ class OrgMemberOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class OrgBanOut(BaseModel):
+    """Phase 85 (B-8) — one active org rejoin ban, for the admin Members
+    "Banned" section. Surfaces the banned user, who banned them, when, and
+    the admin-facing reason (never shown to the banned user)."""
+    id: str
+    user_id: str
+    user_display_name: str
+    user_username: str
+    banned_by_id: Optional[str] = None
+    banned_by_display_name: Optional[str] = None
+    reason: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class InvitationCreate(BaseModel):
     emails: list[str]
     role: str = "member"
@@ -2566,6 +2582,12 @@ class CommentOut(BaseModel):
     parent_comment_id: Optional[str] = None
     body: str
     body_deleted: bool = False
+    # Phase 85 (B-1) — distinguishes an attributed moderator removal from an
+    # author self-delete. True iff the row is soft-deleted AND ``removed_by_id``
+    # is set. The FE renders "[removed by a moderator]" vs "[deleted]"
+    # accordingly. The acting moderator's identity is NOT surfaced here (it
+    # lives in the audit log); only the fact of moderation is public.
+    moderator_removed: bool = False
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime] = None

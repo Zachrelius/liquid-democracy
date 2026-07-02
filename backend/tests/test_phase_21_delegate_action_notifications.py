@@ -125,6 +125,8 @@ _EXPECTED_SIGNAL_LEVEL: dict[str, str] = {
     "delegate.applied": "standard",
     "delegate_application_submitted": "standard",
     "follow.requested": "standard",
+    # Phase 85 (B-1) — attributed moderator removal, emitted to the author.
+    "comment.moderated": "standard",
     # ambient
     "comment.posted_on_your_proposal": "ambient",
     "polis.created": "ambient",

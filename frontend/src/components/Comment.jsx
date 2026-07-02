@@ -47,6 +47,7 @@ export default function Comment({
   isReply = false,
   onChanged,
   canPost = false,
+  canModerate = false,
 }) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -68,6 +69,9 @@ export default function Comment({
   const showReply = !isDeleted && !isReply && canPost;
   const showEdit = !isDeleted && isAuthor && withinEditWindow;
   const showDelete = !isDeleted && isAuthor;
+  // Phase 85 (B-1) — moderators can remove OTHERS' comments (never their own
+  // via this control; authors use Delete). Distinct affordance + copy.
+  const showModerate = !isDeleted && !isAuthor && canModerate;
 
   // Indent replies with a left-border. Top-level rows have no indent.
   const wrapperClass = isReply
@@ -113,7 +117,33 @@ export default function Comment({
     }
   }
 
+  // Phase 85 (B-1) — moderator removal of someone else's comment. Distinct
+  // confirm copy so the moderator understands this is a visible, attributed
+  // moderation action (the author is notified).
+  async function handleModerate() {
+    const ok = await confirm({
+      title: 'Remove this comment?',
+      message:
+        'This removes another member’s comment. It will show as “[removed by a moderator]” and the author will be notified. Replies stay visible. You cannot undo this.',
+      destructive: true,
+    });
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/api/comments/${comment.id}`);
+      toast.success('Comment removed');
+      onChanged?.();
+    } catch (e) {
+      toast.error(e?.message || 'Failed to remove comment');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   // ---- Soft-deleted render (no avatar, no affordances) -------------
+  // Phase 85 (B-1) — distinguish attributed moderator removal from a plain
+  // author self-delete. The acting moderator is NOT named here (that lives in
+  // the audit log); only the fact of moderation is shown.
   if (isDeleted) {
     return (
       <div className={wrapperClass}>
@@ -121,7 +151,9 @@ export default function Comment({
           <span>{timeAgo(comment.created_at)}</span>
         </div>
         <div className="mt-1 text-sm">
-          <em className="text-gray-400">[deleted]</em>
+          <em className="text-gray-400">
+            {comment.moderator_removed ? '[removed by a moderator]' : '[deleted]'}
+          </em>
         </div>
       </div>
     );
@@ -178,7 +210,7 @@ export default function Comment({
             />
           )}
 
-          {!editing && (showReply || showEdit || showDelete) && (
+          {!editing && (showReply || showEdit || showDelete || showModerate) && (
             <div className="flex gap-3 mt-1 text-xs text-gray-500">
               {showReply && (
                 <button
@@ -209,6 +241,16 @@ export default function Comment({
                   className="hover:text-red-600 hover:underline disabled:opacity-50"
                 >
                   {deleting ? 'Deleting…' : 'Delete'}
+                </button>
+              )}
+              {showModerate && (
+                <button
+                  type="button"
+                  onClick={handleModerate}
+                  disabled={deleting}
+                  className="hover:text-red-600 hover:underline disabled:opacity-50"
+                >
+                  {deleting ? 'Removing…' : 'Remove'}
                 </button>
               )}
             </div>

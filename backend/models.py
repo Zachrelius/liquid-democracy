@@ -354,6 +354,61 @@ class SubOrgMembership(Base):
     role: Mapped["Role"] = relationship("Role", foreign_keys=[role_id])
 
 
+class OrgBan(Base):
+    """Phase 85 (B-8 fix) — org-scoped rejoin ban.
+
+    Written when a member is removed with the ``ban`` option set. An active
+    ban (``revoked_at IS NULL``) blocks EVERY join / membership-creation path
+    for that ``(org_id, user_id)`` — open join, approval-mode join request,
+    and invitation acceptance — until an admin revokes it. Bans are org-scoped
+    only; there is no platform-level ban in this pass.
+
+    Unban sets ``revoked_at`` / ``revoked_by_id`` and NEVER deletes the row —
+    the ban history is an audit surface. A partial unique index enforces at
+    most one ACTIVE ban per (org_id, user_id); revoked rows don't collide, so
+    a user can be banned, unbanned, and re-banned over time.
+    """
+    __tablename__ = "org_bans"
+    __table_args__ = (
+        # At most one active (un-revoked) ban per (org_id, user_id).
+        # Partial index so revoked rows are exempt. Declared for both PG and
+        # SQLite so the unit-test dialect enforces it too.
+        Index(
+            "uq_org_ban_active",
+            "org_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("revoked_at IS NULL"),
+            sqlite_where=text("revoked_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    banned_by_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    # Admin-facing only; never surfaced to the banned user.
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    revoked_by_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    organization: Mapped["Organization"] = relationship("Organization", foreign_keys=[org_id])
+    user: Mapped["User"] = relationship("User", foreign_keys=[user_id])
+    banned_by: Mapped[Optional["User"]] = relationship("User", foreign_keys=[banned_by_id])
+    revoked_by: Mapped[Optional["User"]] = relationship("User", foreign_keys=[revoked_by_id])
+
+
 class Invitation(Base):
     __tablename__ = "invitations"
 
@@ -1719,6 +1774,16 @@ class Comment(Base):
         DateTime, default=_now, onupdate=_now, nullable=False,
     )
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Phase 85 (B-1 fix) — attributed moderator removal. Semantics:
+    #   deleted_at set + removed_by_id NULL = author self-delete (existing)
+    #   deleted_at set + removed_by_id set  = moderator removal
+    # ondelete SET NULL (not CASCADE): deleting the moderator's account must
+    # NOT delete comments they moderated. Attribution lives in the audit log;
+    # this column only distinguishes the two soft-delete flavors for render.
+    removed_by_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
 
     proposal: Mapped["Proposal"] = relationship("Proposal", foreign_keys=[proposal_id])
     author: Mapped["User"] = relationship("User", foreign_keys=[author_id])

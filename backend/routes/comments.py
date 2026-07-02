@@ -65,6 +65,7 @@ import schemas
 from audit_utils import log_audit_event
 from database import get_db
 from notification_emit import emit_notification
+from role_permissions import has_permission
 
 
 log = logging.getLogger(__name__)
@@ -154,6 +155,9 @@ def _build_comment_out(c: models.Comment, db: Session | None = None) -> schemas.
         parent_comment_id=c.parent_comment_id,
         body="" if is_deleted else c.body,
         body_deleted=is_deleted,
+        # Phase 85 (B-1) — moderator removal is a distinct, publicly-visible
+        # state. removed_by_id set (on an already-deleted row) = moderated.
+        moderator_removed=is_deleted and c.removed_by_id is not None,
         created_at=c.created_at,
         updated_at=c.updated_at,
         deleted_at=c.deleted_at,
@@ -434,42 +438,124 @@ def update_comment(
 def delete_comment(
     comment_id: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
-    comment = _comment_or_404(comment_id, db)
+    """Soft-delete a comment.
 
-    if comment.author_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only delete your own comments.",
-        )
+    Two paths (Phase 85, B-1 fix):
+      * Author self-delete — existing behavior, byte-for-byte unchanged.
+        ``removed_by_id`` stays NULL; audit ``comment.deleted``; renders
+        ``[deleted]``.
+      * Moderator removal — a non-author holding ``comment.moderate`` in the
+        proposal's org context (sub-org-scoped proposals resolve through the
+        sub-org id, which ``has_permission`` routes internally). Sets
+        ``removed_by_id``; audit ``comment.moderated``; notifies the author;
+        renders ``[removed by a moderator]``. No moderator EDIT capability —
+        removal only.
+    """
+    comment = _comment_or_404(comment_id, db)
+    is_author = comment.author_id == current_user.id
+
+    if not is_author:
+        # Moderator path — resolve the proposal's org context. Sub-org-scoped
+        # proposals gate on the sub-org id (has_permission detects a sub-org
+        # id and defers to the parent-matrix resolution), org-wide proposals
+        # on org_id. This mirrors how comment READ eligibility resolves scope.
+        proposal = comment.proposal
+        org_context_id = (
+            getattr(proposal, "sub_org_id", None) if proposal is not None else None
+        ) or (getattr(proposal, "org_id", None) if proposal is not None else None)
+        if org_context_id is None or not has_permission(
+            db, current_user.id, org_context_id, "comment.moderate"
+        ):
+            # Same denial message as the pre-Phase-85 author-only gate — we do
+            # not disclose the existence of a moderation capability to callers
+            # who don't hold it.
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only delete your own comments.",
+            )
 
     if comment.deleted_at is not None:
-        # Idempotent — already soft-deleted. Return 204 without re-auditing.
+        # Idempotent — already soft-deleted (by the author or a prior
+        # moderation). Return 204 without re-auditing and WITHOUT overwriting
+        # ``removed_by_id`` on the already-deleted row (a moderator "removing"
+        # an already-self-deleted comment must not retroactively re-attribute
+        # it as a moderation).
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     comment.deleted_at = _now_naive()
     # Blank the body in the DB too — the row stays so reply children still
     # render correctly, but the original body content is gone. The audit
     # event intentionally omits body content (only ``comment_id`` +
-    # ``proposal_id``) so we don't recreate the deleted text in the audit
-    # trail. If future moderation needs the original, that's a heavier
-    # workflow that should be designed deliberately.
+    # ``proposal_id`` [+ ``author_id`` for moderation]) so we don't recreate
+    # the deleted text in the audit trail.
     comment.body = ""
 
+    if is_author:
+        log_audit_event(
+            db,
+            action="comment.deleted",
+            target_type="comment",
+            target_id=comment.id,
+            actor_id=current_user.id,
+            details={
+                "comment_id": comment.id,
+                "proposal_id": comment.proposal_id,
+            },
+            ip_address=_client_ip(request),
+        )
+        db.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    # Moderator removal — attribute + audit + notify the author.
+    comment.removed_by_id = current_user.id
     log_audit_event(
         db,
-        action="comment.deleted",
+        action="comment.moderated",
         target_type="comment",
         target_id=comment.id,
         actor_id=current_user.id,
         details={
             "comment_id": comment.id,
             "proposal_id": comment.proposal_id,
+            "author_id": comment.author_id,
         },
         ip_address=_client_ip(request),
     )
-
     db.commit()
+
+    # Notify the author their comment was removed. Wrapped so a notification
+    # failure never sinks the moderation action (spec §B3 pattern).
+    try:
+        proposal = comment.proposal
+        emit_notification(
+            db,
+            background_tasks,
+            event_type="comment.moderated",
+            user_id=comment.author_id,
+            org_id=getattr(proposal, "org_id", None),
+            actor_id=current_user.id,
+            target_type="comment",
+            target_id=comment.id,
+            payload={
+                "proposal_id": comment.proposal_id,
+                "proposal_title": getattr(proposal, "title", None),
+                "org_slug": getattr(getattr(proposal, "organization", None), "slug", None),
+                "comment_id": comment.id,
+            },
+        )
+        db.commit()
+    except Exception as e:  # noqa: BLE001 — never block the moderation action
+        log.warning(
+            "comment.moderated notification emit failed: %s: %s",
+            type(e).__name__, e,
+        )
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -445,6 +445,8 @@ def execute_member_remove(
     successor_user_id: Optional[str] = None,
     actor_id: Optional[str] = None,
     ip_address: Optional[str] = None,
+    ban: bool = False,
+    ban_reason: Optional[str] = None,
 ) -> None:
     """Hard-delete the OrgMembership row. Mirrors the live direct path
     at ``routes/organizations.py::remove_member``.
@@ -455,6 +457,12 @@ def execute_member_remove(
     steward in the same transaction (D3). The asymmetry vs. the active-
     steward block is recorded with a ``steward.removed_while_inactive``
     audit event.
+
+    Phase 85 (B-8) — when ``ban`` is True, an ``OrgBan`` row is written in
+    the SAME transaction so the removal has teeth in open-join orgs (the
+    removed user cannot immediately rejoin). The ban write happens AFTER the
+    governance-floor guards below, so a blocked removal never leaves a
+    dangling ban.
     """
     m = (
         db.query(models.OrgMembership)
@@ -532,6 +540,21 @@ def execute_member_remove(
             )
 
     db.delete(m)
+
+    # Phase 85 (B-8) — write the rejoin ban in the same transaction. Placed
+    # after the governance-floor guards so a blocked removal never creates a
+    # dangling ban. db.delete(m) above removes the active membership, so the
+    # active-ban partial unique index cannot collide.
+    if ban:
+        from org_bans import create_ban
+        create_ban(
+            db,
+            org_id=org.id,
+            user_id=target_user_id,
+            banned_by_id=actor_id,
+            reason=ban_reason,
+            ip_address=ip_address,
+        )
 
 
 def _promote_successor_to_top_tier(
@@ -800,6 +823,9 @@ def _exec_member_remove(
         db, org, target_user_id,
         successor_user_id=successor_user_id,
         actor_id=actor_user.id if actor_user else None,
+        # Phase 85 (B-8) — carry the ban decision through the approval queue.
+        ban=bool(action.payload.get("ban", False)),
+        ban_reason=action.payload.get("ban_reason"),
     )
 
 

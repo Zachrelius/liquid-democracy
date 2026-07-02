@@ -130,12 +130,20 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, pe
           {canRemove && (
             <button
               onClick={async () => {
-                const ok = await confirm({
+                // Phase 85 (B-8) — removal dialog gains a "Ban from rejoining"
+                // checkbox. In an open-join org, removal without a ban lets the
+                // member rejoin immediately.
+                const res = await confirm({
                   title: 'Remove Member',
                   message: `Remove ${member.display_name} from the organization?`,
                   destructive: true,
+                  checkbox: {
+                    label: 'Ban from rejoining',
+                    description:
+                      'In an open-join organization, removal without a ban lets this member rejoin immediately. Banning prevents them from rejoining until an admin unbans them.',
+                  },
                 });
-                if (ok) onRemove(member.user_id);
+                if (res && res.confirmed) onRemove(member.user_id, res.checked);
               }}
               className="text-xs px-3 py-1.5 border border-red-300 text-red-600 rounded-lg hover:bg-red-50"
             >
@@ -162,6 +170,8 @@ export default function Members() {
   const [members, setMembers] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [invitations, setInvitations] = useState([]);
+  // Phase 85 (B-8) — active rejoin bans (member.remove gates read + revoke).
+  const [bans, setBans] = useState([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [inviteEmails, setInviteEmails] = useState('');
@@ -200,8 +210,17 @@ export default function Members() {
     } else {
       setInvitations([]);
     }
+    // Phase 85 (B-8) — bans list is gated on member.remove server-side.
+    if (canRemove) {
+      try {
+        const b = await api.get(`/api/orgs/${slug}/bans`);
+        setBans(b);
+      } catch { setBans([]); /* may 403 — fall through */ }
+    } else {
+      setBans([]);
+    }
     setLoading(false);
-  }, [slug, canInvite]);
+  }, [slug, canInvite, canRemove]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -239,9 +258,13 @@ export default function Members() {
     }
   }
 
-  async function handleRemove(userId) {
+  async function handleRemove(userId, ban = false) {
     try {
-      const res = await api.delete(`/api/orgs/${slug}/members/${userId}`);
+      // Phase 85 (B-8) — carry the optional rejoin ban in the DELETE body.
+      const res = await api.delete(
+        `/api/orgs/${slug}/members/${userId}`,
+        ban ? { body: { ban: true } } : undefined,
+      );
       // Phase 44 — when approval is on, the backend returns 200 +
       // {status: "submitted_for_approval", ...} instead of 204. Show a
       // different toast so the user knows the action is pending.
@@ -251,6 +274,22 @@ export default function Members() {
       } else {
         toast.success('Member removed');
       }
+      load();
+    } catch (e) {
+      toast.error(e.message);
+    }
+  }
+
+  async function handleUnban(ban) {
+    const ok = await confirm({
+      title: 'Unban member?',
+      message: `Allow ${ban.user_display_name} to rejoin this organization? They can rejoin per the org's join policy (you can also re-invite them).`,
+      destructive: false,
+    });
+    if (!ok) return;
+    try {
+      await api.post(`/api/orgs/${slug}/bans/${ban.id}/revoke`);
+      toast.success('Ban revoked');
       load();
     } catch (e) {
       toast.error(e.message);
@@ -418,6 +457,36 @@ export default function Members() {
           )}
         </div>
       </section>
+
+      {/* Phase 85 (B-8) — Banned members. Gated on `member.remove`. */}
+      {canRemove && bans.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Banned ({bans.length})
+          </h2>
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden divide-y divide-gray-100">
+            {bans.map((b) => (
+              <div key={b.id} className="flex items-center gap-4 px-4 py-3 text-sm">
+                <span className="flex-1 font-medium text-gray-800">
+                  {b.user_display_name}
+                  <span className="ml-2 text-gray-500 font-normal">@{b.user_username}</span>
+                </span>
+                <span className="hidden sm:block text-xs text-gray-500">
+                  {b.banned_by_display_name ? `by ${b.banned_by_display_name}` : ''}
+                  {b.created_at ? ` · ${new Date(b.created_at).toLocaleDateString()}` : ''}
+                  {b.reason ? ` · ${b.reason}` : ''}
+                </span>
+                <button
+                  onClick={() => handleUnban(b)}
+                  className="text-xs px-3 py-1.5 border border-green-400 text-green-700 rounded-lg hover:bg-green-50"
+                >
+                  Unban
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Invite Members — gated on `member.invite` (Phase 12.5 F2). */}
       {canInvite && <section className="space-y-3">

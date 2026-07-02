@@ -1417,6 +1417,10 @@ class _MemberRemoveBody(BaseModel):
     # Phase 45a B2 — optional successor required when removing the org's
     # sole (inactive) steward. Ignored for non-steward removals.
     successor_user_id: Optional[str] = None
+    # Phase 85 (B-8) — optional rejoin ban. When True, removal also writes an
+    # org_bans row so the removed user cannot immediately rejoin an open org.
+    ban: bool = False
+    ban_reason: Optional[str] = None
 
 
 @router.delete("/{org_slug}/members/{user_id}")
@@ -1446,6 +1450,8 @@ def remove_member(
     ).first()
 
     successor_user_id = body.successor_user_id if body is not None else None
+    ban = bool(body.ban) if body is not None else False
+    ban_reason = body.ban_reason if body is not None else None
 
     # Phase 44 intercept — when approval is on, hand off to the engine.
     from pending_actions import engine as p44_engine, settings as p44_settings
@@ -1454,6 +1460,11 @@ def remove_member(
         payload: dict = {"target_user_id": user_id}
         if successor_user_id:
             payload["successor_user_id"] = successor_user_id
+        # Phase 85 (B-8) — carry the ban decision into the approval queue so
+        # the eventual execution applies it atomically with the removal.
+        if ban:
+            payload["ban"] = True
+            payload["ban_reason"] = ban_reason
         result = p44_engine.submit_pending_action(
             db, org, current_user, "member.remove",
             payload,
@@ -1489,6 +1500,8 @@ def remove_member(
         successor_user_id=successor_user_id,
         actor_id=current_user.id,
         ip_address=request.client.host if request.client else None,
+        ban=ban,
+        ban_reason=ban_reason,
     )
     # Phase 45b B4 — detect + audit zero-governor recovery condition.
     from governance import check_and_audit_rebootstrap
@@ -1499,6 +1512,92 @@ def remove_member(
     )
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Phase 85 (B-8) — org rejoin-ban admin surface
+# ---------------------------------------------------------------------------
+
+@router.get("/{org_slug}/bans", response_model=list[schemas.OrgBanOut])
+def list_org_bans(
+    org_slug: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    admin_membership: models.OrgMembership = Depends(require_org_admin),
+):
+    """List active (un-revoked) rejoin bans for the org. Gated on
+    ``member.remove`` (banning is an extension of removal; no new key)."""
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if not has_permission(db, current_user.id, org.id, "member.remove"):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to manage bans in this organization.",
+        )
+    rows = (
+        db.query(models.OrgBan)
+        .filter(
+            models.OrgBan.org_id == org.id,
+            models.OrgBan.revoked_at.is_(None),
+        )
+        .order_by(models.OrgBan.created_at.desc())
+        .all()
+    )
+    out: list[schemas.OrgBanOut] = []
+    for b in rows:
+        banned_user = db.get(models.User, b.user_id)
+        actor = db.get(models.User, b.banned_by_id) if b.banned_by_id else None
+        out.append(schemas.OrgBanOut(
+            id=b.id,
+            user_id=b.user_id,
+            user_display_name=(banned_user.display_name if banned_user else b.user_id),
+            user_username=(banned_user.username if banned_user else ""),
+            banned_by_id=b.banned_by_id,
+            banned_by_display_name=(actor.display_name if actor else None),
+            reason=b.reason,
+            created_at=b.created_at,
+        ))
+    return out
+
+
+@router.post("/{org_slug}/bans/{ban_id}/revoke", status_code=200)
+def revoke_org_ban(
+    org_slug: str,
+    ban_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    admin_membership: models.OrgMembership = Depends(require_org_admin),
+):
+    """Unban a user (revoke the ban; the row is kept as audit history).
+    Gated on ``member.remove``. After this the user may rejoin per the org's
+    join policy (an admin who wants them back may also re-invite)."""
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if not has_permission(db, current_user.id, org.id, "member.remove"):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to manage bans in this organization.",
+        )
+    ban = db.get(models.OrgBan, ban_id)
+    if ban is None or ban.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Ban not found")
+    if ban.revoked_at is not None:
+        # Idempotent — already revoked.
+        return {"message": "Ban already revoked"}
+    from org_bans import revoke_ban
+    revoke_ban(
+        db, ban=ban, revoked_by_id=current_user.id,
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    return {"message": "Ban revoked"}
 
 
 @router.post("/{org_slug}/members/{user_id}/suspend", status_code=200)
@@ -2437,6 +2536,11 @@ def create_join_request(
     check_membership_locality_for_join(current_user, org)
     ensure_can_join_real_org(current_user, org)
 
+    # Phase 85 (B-8) — rejoin ban gate. Blocks BOTH branches (open + approval)
+    # so a banned user obtains neither an active nor a pending membership.
+    from org_bans import raise_if_banned
+    raise_if_banned(db, org.id, current_user.id)
+
     # Resolve the Member role (defensive seed for legacy orgs).
     member_role_id = _resolve_role_id_by_system_key(db, org.id, "member")
     if member_role_id is None:
@@ -2721,6 +2825,11 @@ def request_join(
     check_membership_locality_for_join(current_user, org)
     ensure_can_join_real_org(current_user, org)
 
+    # Phase 85 (B-8) — rejoin ban gate (legacy /join path; mirrors the
+    # /join-request gate). Blocks open + approval branches below.
+    from org_bans import raise_if_banned
+    raise_if_banned(db, org.id, current_user.id)
+
     # Phase 12 — defensively seed preset roles for the org if missing
     # (production orgs are seeded at create time and via the migration; this
     # is belt-and-suspenders for legacy data paths).
@@ -2839,6 +2948,11 @@ def approve_join_request(
     ).first()
     if not m:
         raise HTTPException(status_code=404, detail="Pending join request not found")
+    # Phase 85 (B-8) — defense-in-depth. A banned user is blocked at request
+    # creation so no pending row should exist, but if one somehow does (ban
+    # applied after a request was queued), do not approve it into active.
+    from org_bans import raise_if_banned
+    raise_if_banned(db, org.id, user_id)
     m.status = "active"
     m.joined_at = _now()
     db.commit()
@@ -3102,6 +3216,11 @@ def accept_invitation(
         check_membership_min_age_for_join(current_user, inv_org)
         check_membership_locality_for_join(current_user, inv_org)
         ensure_can_join_real_org(current_user, inv_org)
+        # Phase 85 (B-8) — a ban blocks invitation acceptance too. An admin
+        # who wants the user back must revoke the ban first (Members page),
+        # then invite; invitations do NOT auto-revoke a ban.
+        from org_bans import raise_if_banned
+        raise_if_banned(db, inv_org.id, current_user.id)
         inv_system_key_for_check = _INV_ROLE_TO_SYSTEM_KEY.get(inv.role, inv.role)
         if inv_system_key_for_check and inv_system_key_for_check != "member":
             check_role_grant_floor(
