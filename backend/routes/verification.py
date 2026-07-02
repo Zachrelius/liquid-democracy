@@ -53,11 +53,24 @@ limiter = Limiter(key_func=bypass_or_remote_address)
 # Disclosure copy returned to the FE before the redirect
 # ---------------------------------------------------------------------------
 
+# Phase 84 (A-1 blocker fix) — reworded to be strictly accurate. The
+# prior copy promised "we do not keep a copy of your documents or selfie",
+# which was true of OUR database but implied the documents ceased to exist
+# after verification. They do not: the Didit session purge is a known-open
+# item (delete_session returns 404), so the documents persist vendor-side
+# under Didit's own retention policy. This copy makes NO deletion/purge
+# promise; it states only what we store (result + hashes, no raw images)
+# and attributes document handling to Didit under its own policy. When the
+# purge is confirmed working end-to-end, a future micro-phase MAY
+# strengthen this again. No em dashes (platform copy voice rule).
 CONSENT_DISCLOSURE = (
-    "We send your ID to our identity-verification partner to confirm "
-    "who you are. We do not keep a copy of your documents or selfie — "
-    "only a record that the check happened and the result. You can "
-    "cancel the verification at any time before completing it."
+    "To confirm who you are, we send your ID and a selfie to our "
+    "identity-verification provider, Didit. Didit processes and stores "
+    "those documents under its own privacy policy. In our own systems we "
+    "store only the result of the check and privacy-preserving hashes "
+    "derived from it; we never store your ID images, your selfie, or your "
+    "raw document numbers. You can cancel the verification at any time "
+    "before completing it."
 )
 
 

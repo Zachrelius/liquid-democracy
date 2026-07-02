@@ -83,6 +83,21 @@ function VerificationSection({ user }) {
         {pendingDisclosure ? (
           <div className="mt-3 border-t border-gray-200 pt-3 space-y-3">
             <p className="text-sm text-gray-700">{pendingDisclosure}</p>
+            {/* Phase 84 — clickable link to the provider's privacy policy
+                (the backend disclosure string is plain text and cannot carry
+                a link). */}
+            <p className="text-xs text-gray-500">
+              Read{' '}
+              <a
+                href="https://didit.me/terms/privacy-policy/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[var(--brand-accent)] hover:underline"
+              >
+                Didit&apos;s privacy policy
+              </a>
+              .
+            </p>
             <div className="flex gap-2">
               <button
                 type="button"
