@@ -94,8 +94,8 @@ export default function ReportsQueue() {
       <div>
         <h1 className="text-2xl font-bold text-[var(--brand-primary)]">Reports</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Member reports of comments and proposals. Reports are a signal only —
-          use the moderation tools to act, then mark actioned or dismiss.
+          Member reports of comments and proposals. Reports are a signal only.
+          Use the moderation tools to act, then mark actioned or dismiss.
         </p>
       </div>
 
