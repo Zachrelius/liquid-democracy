@@ -31,6 +31,7 @@ from eligibility import eligible_viewers_for_proposal as _eligible_viewers_for_p
 from permissions import can_see_votes
 from polis_engine import eligible_viewers_for_polis
 from role_permissions import has_permission as _has_permission
+from rate_limit_utils import content_limiter, PROPOSAL_CREATE_LIMIT, WRITEIN_OPTION_LIMIT
 
 
 log = logging.getLogger(__name__)
@@ -1177,11 +1178,13 @@ def _proposal_list_ordering():
 
 
 @router.post("", response_model=schemas.ProposalOut, status_code=status.HTTP_201_CREATED)
+@content_limiter.limit(PROPOSAL_CREATE_LIMIT)
 def create_proposal(
     body: schemas.ProposalCreate,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth_utils.get_current_user),
+    # Phase 86 (B-9) — proposal creation requires a verified email.
+    current_user: models.User = Depends(auth_utils.require_verified_email),
 ):
     _validate_proposal_creation(body)
 
@@ -2233,12 +2236,15 @@ def get_proposal_revisions(
     response_model=schemas.OptionOut,
     status_code=status.HTTP_201_CREATED,
 )
+@content_limiter.limit(WRITEIN_OPTION_LIMIT)
 def add_write_in_option(
     proposal_id: str,
     body: schemas.WriteInOptionCreate,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth_utils.get_current_user),
+    # Phase 86 (B-9) — write-in creation requires a verified email.
+    current_user: models.User = Depends(auth_utils.require_verified_email),
 ):
     """Phase 32 W2 — add a write-in option to a multi-option proposal.
 

@@ -143,16 +143,11 @@ async def cast_vote(
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth_utils.get_current_user),
+    # Phase 86 (B-9) — shared verified-email gate (was an inline check).
+    current_user: models.User = Depends(auth_utils.require_verified_email),
 ):
     proposal = _proposal_or_404(proposal_id, db)
     _require_voting_open(proposal, db)
-
-    if not current_user.email_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Please verify your email before voting.",
-        )
 
     # Phase 52 Stage 1 — verification per-vote floor gate. If the
     # proposal carries ``verification_floor``, the caller must

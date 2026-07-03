@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
+import ReportModal from '../components/ReportModal';
 // Phase 12.5 F2 — per-control permission gating.
 // Phase 32.2 E4 — re-imported for the F2.3 Edit-author button gate.
 // Phase 32.2 M2 registers `org.edit_proposal` in the permission
@@ -1546,6 +1547,8 @@ export default function ProposalDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const { currentOrg, userOrgs, isMember } = useOrg();
+  // Phase 86 (B-4) — proposal report modal.
+  const [showReportProposal, setShowReportProposal] = useState(false);
   // Phase 80 — public read-only mode for non-members of an
   // activity_visibility='public' org. Read from /public endpoints and hide
   // all participation controls. Members keep the full experience.
@@ -2234,7 +2237,27 @@ export default function ProposalDetail() {
               {proposal.created_at && ` · ${new Date(proposal.created_at).toLocaleDateString()}`}
               {proposal.voting_end && isVoting && ` · Closes ${new Date(proposal.voting_end).toLocaleDateString()}`}
               {isClosed && proposal.voting_end && ` · Closed ${new Date(proposal.voting_end).toLocaleDateString()}`}
+              {/* Phase 86 (B-4) — subtle report affordance for non-author members. */}
+              {!!user && isMember && proposal.author_id !== user.id && (
+                <>
+                  {' · '}
+                  <button
+                    type="button"
+                    onClick={() => setShowReportProposal(true)}
+                    className="text-gray-400 hover:text-gray-600 hover:underline"
+                  >
+                    Report
+                  </button>
+                </>
+              )}
             </p>
+            {showReportProposal && (
+              <ReportModal
+                targetType="proposal"
+                targetId={proposal.id}
+                onClose={() => setShowReportProposal(false)}
+              />
+            )}
             {/* Phase 32.1 F2.3 — edit-author button. Author or admin
                 during deliberation, before lockout. Server-side
                 authoritative via E3; this is the pre-check render.

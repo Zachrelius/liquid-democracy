@@ -174,6 +174,17 @@ def _wipe_demo_orgs(db: Session, demo_orgs: list[models.Organization]) -> int:
 
     rows_wiped = 0
 
+    # Phase 86 (B-4) — content reports scoped to demo orgs. org_id FK has
+    # ON DELETE CASCADE, but the org row itself is NOT deleted on reset (only
+    # its content is wiped), so reports must be explicitly removed here or
+    # they'd dangle pointing at wiped comments/proposals.
+    n_reports = (
+        db.query(models.ContentReport)
+        .filter(models.ContentReport.org_id.in_(org_ids))
+        .delete(synchronize_session=False)
+    )
+    rows_wiped += n_reports or 0
+
     # Collect proposal IDs first (used for explicit notification cleanup).
     proposals = (
         db.query(models.Proposal)

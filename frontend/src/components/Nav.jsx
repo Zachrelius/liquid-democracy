@@ -7,6 +7,7 @@ import { ADMIN_NAV_SUBSECTION_PERMISSIONS } from '../constants/admin_nav_permiss
 import Avatar from './Avatar';
 import NotificationBadge from './NotificationBadge';
 import usePendingActionsCount from '../hooks/usePendingActionsCount';
+import useOpenReportsCount from '../hooks/useOpenReportsCount';
 import useUnreadMessageCount from '../hooks/useUnreadMessageCount';
 import useHasVisiblePolises from '../hooks/useHasVisiblePolises';
 import { useIsDemoUser } from '../hooks/useIsDemoUser';
@@ -302,6 +303,8 @@ export default function Nav() {
   // the cheap count endpoint; if approval is off (or user not eligible)
   // count=0 and eligible=false and the menu item is hidden.
   const showPendingActions = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.pendingActions);
+  // Phase 86 (B-4) — content-report queue visibility (comment.moderate).
+  const showReports = hasAny(ADMIN_NAV_SUBSECTION_PERMISSIONS.reports);
 
   // Sub-org admin shortcut still relies on role-tier (sub-org user_role
   // hasn't been fully ported to permission-driven gating; that's tracked
@@ -329,6 +332,12 @@ export default function Nav() {
     showPendingActions ? parentSlugForLinks : null,
   );
   const pendingCount = pendingActions.eligible ? pendingActions.count : 0;
+
+  // Phase 86 (B-4) — open-report count for the Reports nav badge.
+  const openReports = useOpenReportsCount(
+    showReports ? parentSlugForLinks : null,
+  );
+  const reportsCount = openReports.eligible ? openReports.count : 0;
 
   // Phase 77 — unread message count for the Messages nav badge. Messaging
   // is parent-org-scoped, so resolve against the parent slug.
@@ -496,6 +505,7 @@ export default function Nav() {
                         showSettings && { to: urlFor(parentSlugForLinks, 'admin-settings'), label: 'Org Settings' },
                         showPermissions && { to: urlFor(parentSlugForLinks, 'admin-permissions'), label: 'Permissions' },
                         showMembers && { to: urlFor(parentSlugForLinks, 'admin-members'), label: 'Members' },
+                        showReports && { to: urlFor(parentSlugForLinks, 'admin-reports'), label: 'Reports', badge: reportsCount },
                         showProposals && { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
                         showTopics && { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
                         showPolises && { to: urlFor(parentSlugForLinks, 'admin-polises'), label: 'Polises' },
@@ -764,6 +774,7 @@ export default function Nav() {
                 showSettings && { to: urlFor(parentSlugForLinks, 'admin-settings'), label: 'Org Settings' },
                 showPermissions && { to: urlFor(parentSlugForLinks, 'admin-permissions'), label: 'Permissions' },
                 showMembers && { to: urlFor(parentSlugForLinks, 'admin-members'), label: 'Members' },
+                showReports && { to: urlFor(parentSlugForLinks, 'admin-reports'), label: 'Reports', badge: reportsCount },
                 showProposals && { to: urlFor(parentSlugForLinks, 'admin-proposals'), label: 'Proposals' },
                 showTopics && { to: urlFor(parentSlugForLinks, 'admin-topics'), label: 'Topics' },
                 showPolises && { to: urlFor(parentSlugForLinks, 'admin-polises'), label: 'Polises' },

@@ -50,7 +50,12 @@ Audit events
     Body diff NOT logged.
   * ``comment.deleted`` — details ``{comment_id, proposal_id}``.
 """
-from __future__ import annotations
+# NOTE: no ``from __future__ import annotations`` here — the Phase 86 slowapi
+# rate-limit decorator (@content_limiter.limit) wraps the endpoint via
+# functools.wraps, and FastAPI would resolve PEP-563 STRING annotations
+# against slowapi's module globals (where schemas / BackgroundTasks don't
+# exist), misclassifying the body as a query param. Real (eager) annotations
+# sidestep that. All annotations in this module are runtime-valid on 3.10+.
 
 import logging
 from datetime import datetime, timedelta, timezone
@@ -65,6 +70,7 @@ import schemas
 from audit_utils import log_audit_event
 from database import get_db
 from notification_emit import emit_notification
+from rate_limit_utils import content_limiter, COMMENT_CREATE_LIMIT
 from role_permissions import has_permission
 
 
@@ -208,21 +214,17 @@ def list_comments(
     response_model=schemas.CommentOut,
     status_code=status.HTTP_201_CREATED,
 )
+@content_limiter.limit(COMMENT_CREATE_LIMIT)
 def create_comment(
     proposal_id: str,
     body: schemas.CommentCreate,
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth_utils.get_current_user),
+    # Phase 86 (B-9) — shared verified-email gate (was an inline check).
+    current_user: models.User = Depends(auth_utils.require_verified_email),
 ):
     proposal = _proposal_or_404(proposal_id, db)
-
-    if not current_user.email_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Please verify your email before commenting.",
-        )
 
     # Caller must satisfy proposal visibility (covers both org and sub-org
     # scopes — the route mirrors the Polis viewer rules so commenting is

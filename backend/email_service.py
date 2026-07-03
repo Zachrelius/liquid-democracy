@@ -69,6 +69,8 @@ _SUBJECTS: dict[str, str] = {
     "proposal.closed": "Proposal '{proposal_title}' has closed",
     "sustained_majority.floor_approached": "Vote support nearing floor: '{proposal_title}'",
     "member.join_request": "New member request to join {org_name}",
+    # Phase 86 (B-4) — content report, to moderators.
+    "report_created": "New content report in {org_name}",
     "invitation.accepted": "{actor_display_name} joined {org_name}",
     "delegate.applied": "New delegate application in {org_name}",
     "delegate.application_decided": "Your delegate application was {decision}",
@@ -593,6 +595,11 @@ def _build_cta_url(
         if not org_slug:
             return fallback
         return f"{base_url}/{org_slug}/members"
+    # Phase 86 (B-4) — content report links to the moderator reports queue.
+    if event_type == "report_created":
+        if not org_slug:
+            return fallback
+        return f"{base_url}/{org_slug}/admin/reports"
     # Phase 30.1 B4 — legacy delegate.applied / delegate.application_decided
     # link-destination block removed alongside the legacy
     # DelegateApplication surface.

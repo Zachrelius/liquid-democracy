@@ -2596,6 +2596,89 @@ class CommentOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Phase 86 (B-4) — content reports
+# ---------------------------------------------------------------------------
+
+_REPORT_TARGET_TYPES = {"comment", "proposal"}
+_REPORT_REASONS = {"spam", "harassment", "misleading", "other"}
+_REPORT_RESOLUTIONS = {"dismissed", "actioned"}
+_REPORT_NOTE_MAX = 500
+
+
+class ReportCreate(BaseModel):
+    """Submit a content report. ``org_id`` is NEVER accepted from the client;
+    it is resolved server-side from the target."""
+    target_type: str
+    target_id: str
+    reason: str
+    note: Optional[str] = None
+
+    @field_validator("target_type")
+    @classmethod
+    def _v_target_type(cls, v: str) -> str:
+        if v not in _REPORT_TARGET_TYPES:
+            raise ValueError(f"target_type must be one of {sorted(_REPORT_TARGET_TYPES)}")
+        return v
+
+    @field_validator("reason")
+    @classmethod
+    def _v_reason(cls, v: str) -> str:
+        if v not in _REPORT_REASONS:
+            raise ValueError(f"reason must be one of {sorted(_REPORT_REASONS)}")
+        return v
+
+    @field_validator("note")
+    @classmethod
+    def _v_note(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = _sanitize_markdown(v).strip()
+        if not cleaned:
+            return None
+        # Length enforced here (post-sanitize) so tag-stripping can't smuggle
+        # a longer payload through a pre-sanitize check.
+        return cleaned[:_REPORT_NOTE_MAX]
+
+
+class ReportResolveIn(BaseModel):
+    status: str
+
+    @field_validator("status")
+    @classmethod
+    def _v_status(cls, v: str) -> str:
+        if v not in _REPORT_RESOLUTIONS:
+            raise ValueError(f"status must be one of {sorted(_REPORT_RESOLUTIONS)}")
+        return v
+
+
+class ReportItemOut(BaseModel):
+    """One report within a target group — moderator-only. Carries the
+    reporter's identity (accountability); this schema is NEVER returned to
+    non-moderators."""
+    id: str
+    reporter_id: str
+    reporter_display_name: str
+    reason: str
+    note: Optional[str] = None
+    status: str
+    created_at: datetime
+
+
+class ReportGroupOut(BaseModel):
+    """Open reports grouped by target, with enough context for a moderator to
+    act (excerpt, author, link) plus the per-target open count."""
+    target_type: str
+    target_id: str
+    org_slug: str
+    proposal_id: Optional[str] = None
+    target_excerpt: str
+    target_author_id: Optional[str] = None
+    target_author_display: Optional[str] = None
+    open_count: int
+    reports: list[ReportItemOut]
+
+
+# ---------------------------------------------------------------------------
 # Phase 19 — Public delegate pages
 # ---------------------------------------------------------------------------
 

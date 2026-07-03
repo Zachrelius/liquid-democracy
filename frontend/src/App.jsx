@@ -43,6 +43,8 @@ import LeaveOrg from './pages/LeaveOrg';
 // Phase 12 Stage 2 — role-permissions matrix page (Cluster F).
 import RolePermissionsPage from './pages/admin/RolePermissionsPage';
 import Members from './pages/admin/Members';
+// Phase 86 (B-4) — moderator content-report queue.
+import ReportsQueue from './pages/admin/ReportsQueue';
 import ProposalManagement from './pages/admin/ProposalManagement';
 // Phase 44 — multi-admin approval pending-actions queue.
 import PendingActions from './pages/admin/PendingActions';
@@ -639,6 +641,19 @@ export default function App() {
               <OrgProvider>
                 <AdminRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.members}>
                   <OrgScopedLayout><Members /></OrgScopedLayout>
+                </AdminRoute>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 86 (B-4) — moderator content-report queue. */}
+        <Route
+          path="/:org_slug/admin/reports"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <AdminRoute permissions={ADMIN_NAV_SUBSECTION_PERMISSIONS.reports}>
+                  <OrgScopedLayout><ReportsQueue /></OrgScopedLayout>
                 </AdminRoute>
               </OrgProvider>
             </ProtectedRoute>

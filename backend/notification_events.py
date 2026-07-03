@@ -309,6 +309,14 @@ EVENT_REGISTRY: list[EventDefinition] = [
         signal_level="ambient",
     ),
     # ---- Admin actions (Phase 44 — multi-admin approval) ----------------
+    # Phase 86 (B-4) — a member reported content; surfaced to moderators only.
+    EventDefinition(
+        key="report_created",
+        label="Content was reported",
+        description="A member reported a comment or proposal in your organization for moderator review.",
+        category="Admin actions",
+        signal_level="standard",
+    ),
     EventDefinition(
         key="pending_action.submitted",
         label="New action awaiting your approval",

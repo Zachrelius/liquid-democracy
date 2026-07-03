@@ -30,6 +30,10 @@ from permission_registry import PERMISSION_REGISTRY
 from reserved_slugs import RESERVED_SLUGS
 from org_titles import seed_system_titles_for_org
 from role_permissions import has_permission
+from rate_limit_utils import (
+    content_limiter, JOIN_REQUEST_LIMIT, ORG_CREATE_LIMIT, PROPOSAL_CREATE_LIMIT,
+    INVITATION_CREATE_LIMIT,
+)
 from role_seed import seed_default_roles_for_org
 from settings import settings as app_settings
 from org_middleware import (
@@ -291,6 +295,7 @@ PLATFORM_HOURLY_ORG_RATE_LIMIT = 20
 
 
 @router.post("", response_model=schemas.OrgOut, status_code=status.HTTP_201_CREATED)
+@content_limiter.limit(ORG_CREATE_LIMIT)
 def create_organization(
     body: schemas.OrgCreate,
     request: Request,
@@ -2450,12 +2455,14 @@ def list_public_org_proposal_comments(
 # ============================================================================
 
 @router.post("/{org_slug}/join-request", status_code=200, response_model=schemas.JoinRequestOut)
+@content_limiter.limit(JOIN_REQUEST_LIMIT)
 def create_join_request(
     org_slug: str,
     background_tasks: BackgroundTasks,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth_utils.get_current_user),
+    # Phase 86 (B-9) — join now requires a verified email (was ungated).
+    current_user: models.User = Depends(auth_utils.require_verified_email),
 ):
     """Phase 14 B3 — single entry point for prospective members joining
     an org from its public landing page.
@@ -2769,12 +2776,14 @@ def cancel_join_request(
 # ============================================================================
 
 @router.post("/{org_slug}/join", status_code=200)
+@content_limiter.limit(JOIN_REQUEST_LIMIT)
 def request_join(
     org_slug: str,
     background_tasks: BackgroundTasks,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth_utils.get_current_user),
+    # Phase 86 (B-9) — join now requires a verified email (was ungated).
+    current_user: models.User = Depends(auth_utils.require_verified_email),
 ):
     """Request to join (for approval_required/open orgs)."""
     org = db.query(models.Organization).filter(
@@ -2988,9 +2997,11 @@ def deny_join_request(
 # ============================================================================
 
 @router.post("/{org_slug}/invitations", response_model=list[schemas.InvitationOut], status_code=201)
+@content_limiter.limit(INVITATION_CREATE_LIMIT)
 def create_invitations(
     org_slug: str,
     body: schemas.InvitationCreate,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
@@ -3166,6 +3177,7 @@ def resend_invitation(
 
 # Accept invitation (public, auth not required — creates account or adds to org)
 @router.post("/join/{token}", status_code=200)
+@content_limiter.limit(JOIN_REQUEST_LIMIT)
 def accept_invitation(
     token: str,
     request: Request,
@@ -3195,6 +3207,15 @@ def accept_invitation(
         raise HTTPException(
             status_code=401,
             detail="Please register or log in first, then use this invitation link"
+        )
+
+    # Phase 86 (B-9) — invitation acceptance requires a verified email, uniform
+    # with the other join paths. (The register-time invite-consume path in
+    # auth._consume_invitation is intentionally exempt: the account was just
+    # created and verification happens right after.)
+    if not current_user.email_verified:
+        raise HTTPException(
+            status_code=403, detail=auth_utils.VERIFY_EMAIL_DETAIL,
         )
 
     # Phase 52 Stage 1 — verification membership floor gate. Even an
@@ -3654,13 +3675,15 @@ def list_org_proposals(
 
 
 @router.post("/{org_slug}/proposals", response_model=schemas.ProposalOut, status_code=201)
+@content_limiter.limit(PROPOSAL_CREATE_LIMIT)
 def create_org_proposal(
     org_slug: str,
     body: schemas.ProposalCreate,
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth_utils.get_current_user),
+    # Phase 86 (B-9) — proposal creation requires a verified email.
+    current_user: models.User = Depends(auth_utils.require_verified_email),
     membership: models.OrgMembership = Depends(require_org_membership),
 ):
     """Create proposal within org.
