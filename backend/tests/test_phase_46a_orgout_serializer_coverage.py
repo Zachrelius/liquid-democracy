@@ -82,6 +82,9 @@ _MUST_SURFACE_FIELDS: list[str] = [
     # renders and the Phase 79 demo session fence trusts currentOrg.is_demo
     # (its absence logged demo personas out of their own demo org).
     "is_demo",
+    # Phase 87 (B-10) — platform-moderation state so an org's own admins see
+    # the delist notice in settings.
+    "platform_restriction",
 ]
 
 # The Phase 45a hotfix surfaces OWNER_ONLY_KEYS via user_permissions

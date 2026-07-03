@@ -629,6 +629,19 @@ def verify_email(
         models.EmailVerification.token == body.token,
     ).first()
 
+    # Phase 87 (Cluster 0) — idempotent benign case. If the token's user is
+    # already verified, return 200 "already verified" rather than an error.
+    # The token row is retained (verified_at is stamped, never hard-deleted)
+    # and keeps its user linkage, so a second POST of the same token — from a
+    # double-clicked link, an email-scanner pre-click, or a FE effect that
+    # re-fired — no longer flips a verified user's success into a red error.
+    if record is not None:
+        existing_user = db.get(models.User, record.user_id)
+        if existing_user is not None and existing_user.email_verified:
+            return {"message": "Email already verified", "already_verified": True}
+
+    # Genuinely invalid / expired / consumed token for a still-unverified
+    # user is a real error.
     if not record or record.verified_at is not None or record.expires_at < now:
         raise HTTPException(
             status_code=400,
@@ -653,7 +666,7 @@ def verify_email(
     )
 
     db.commit()
-    return {"message": "Email verified successfully"}
+    return {"message": "Email verified successfully", "already_verified": False}
 
 
 @router.post("/resend-verification", status_code=200)

@@ -857,3 +857,150 @@ def rebootstrap_org(
     }
 
     return schemas.AuditLogOut.model_validate(entry, from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# Phase 87 (B-10) — platform-admin org takedown
+# ---------------------------------------------------------------------------
+
+@router.get("/orgs", response_model=list[schemas.AdminOrgOut])
+def list_all_orgs(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_admin),
+):
+    """Platform-admin org list for the takedown toolbench. All orgs
+    (including restricted + demo), top-level and sub-orgs."""
+    from sqlalchemy import func as _func
+    counts = dict(
+        db.query(
+            models.OrgMembership.org_id,
+            _func.count(models.OrgMembership.id),
+        )
+        .filter(models.OrgMembership.status == "active")
+        .group_by(models.OrgMembership.org_id)
+        .all()
+    )
+    orgs = db.query(models.Organization).order_by(models.Organization.name).all()
+    return [
+        schemas.AdminOrgOut(
+            id=o.id,
+            name=o.name,
+            slug=o.slug,
+            member_count=int(counts.get(o.id, 0)),
+            discoverability=o.discoverability or "listed",
+            activity_visibility=o.activity_visibility or "members_only",
+            platform_restriction=o.platform_restriction,
+            restriction_reason=o.restriction_reason,
+            is_demo=bool(o.is_demo),
+            parent_org_id=o.parent_org_id,
+            created_at=o.created_at,
+        )
+        for o in orgs
+    ]
+
+
+@router.patch("/orgs/{org_id}/restriction", response_model=schemas.AdminOrgOut)
+def set_org_restriction(
+    org_id: str,
+    body: schemas.AdminOrgRestrictionIn,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_admin),
+):
+    """Set or clear an org's platform restriction (delisted / suspended /
+    none). ``reason`` is REQUIRED when restricting. Demo orgs cannot be
+    restricted (422). Enforcement is read-time (org settings untouched);
+    reverting restores the prior public posture. Audited."""
+    from org_restriction import VALID_RESTRICTIONS
+    from datetime import timezone
+
+    org = db.get(models.Organization, org_id)
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    # Normalize: 'none'/'' → clear.
+    new_restriction = body.restriction
+    if new_restriction in (None, "", "none"):
+        new_restriction = None
+    elif new_restriction not in VALID_RESTRICTIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"restriction must be one of {sorted(VALID_RESTRICTIONS)}, 'none', or null",
+        )
+
+    # Demo orgs are never restrictable — the nightly reset + demo login paths
+    # aren't built to handle it.
+    if bool(org.is_demo):
+        raise HTTPException(
+            status_code=422,
+            detail="Demo organizations cannot be restricted.",
+        )
+
+    reason = (body.reason or "").strip() or None
+    if new_restriction is not None and not reason:
+        raise HTTPException(
+            status_code=422,
+            detail="A reason is required when restricting an organization.",
+        )
+
+    prior = org.platform_restriction
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    if new_restriction is None:
+        # Revert — clear all restriction fields; audit trail is the history.
+        org.platform_restriction = None
+        org.restricted_at = None
+        org.restricted_by_id = None
+        org.restriction_reason = None
+        log_audit_event(
+            db,
+            action="org.restriction_reverted",
+            target_type="organization",
+            target_id=org.id,
+            actor_id=current_user.id,
+            details={"prior_restriction": prior, "reason": reason},
+            ip_address=request.client.host if request.client else None,
+        )
+    else:
+        org.platform_restriction = new_restriction
+        org.restricted_at = now
+        org.restricted_by_id = current_user.id
+        org.restriction_reason = reason
+        log_audit_event(
+            db,
+            action="org.restriction_set",
+            target_type="organization",
+            target_id=org.id,
+            actor_id=current_user.id,
+            details={
+                "restriction": new_restriction,
+                "prior_restriction": prior,
+                "reason": reason,
+            },
+            ip_address=request.client.host if request.client else None,
+        )
+
+    db.commit()
+    db.refresh(org)
+
+    member_count = (
+        db.query(models.OrgMembership)
+        .filter(
+            models.OrgMembership.org_id == org.id,
+            models.OrgMembership.status == "active",
+        )
+        .count()
+    )
+    return schemas.AdminOrgOut(
+        id=org.id,
+        name=org.name,
+        slug=org.slug,
+        member_count=member_count,
+        discoverability=org.discoverability or "listed",
+        activity_visibility=org.activity_visibility or "members_only",
+        platform_restriction=org.platform_restriction,
+        restriction_reason=org.restriction_reason,
+        is_demo=bool(org.is_demo),
+        parent_org_id=org.parent_org_id,
+        created_at=org.created_at,
+    )

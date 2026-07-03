@@ -74,6 +74,27 @@ class Organization(Base):
         default="members_only", server_default="members_only",
     )
     settings: Mapped[Optional[dict]] = mapped_column(JSON, default=dict)  # org-specific defaults
+    # Phase 87 (B-10) — platform-moderation takedown state. Single-field
+    # state machine, platform-admin controlled:
+    #   NULL       — no restriction (normal).
+    #   'delisted' — org keeps working for members but is forced out of every
+    #                public surface (excluded from /explore, public landing
+    #                404s to non-members, logo not served publicly). Org
+    #                admins cannot counteract it via settings.
+    #   'suspended'— org inaccessible to everyone except platform admins; all
+    #                rows remain intact (nothing deleted); reverting fully
+    #                restores access.
+    # Enforced at read/serve time via ``org_restriction`` helpers so the org's
+    # own stored discoverability/settings are never overwritten — reverting
+    # restores the prior configuration untouched.
+    platform_restriction: Mapped[Optional[str]] = mapped_column(
+        String(length=16), nullable=True, index=True,
+    )
+    restricted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    restricted_by_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    restriction_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Phase 8.5: nullable self-referential FK. NULL = parent org (top-level);
     # non-NULL = sub-org whose parent has parent_org_id IS NULL. Two-level
     # enforcement is at the API layer, not the schema (Decision 1).

@@ -2151,6 +2151,11 @@ class OrgOut(BaseModel):
     # `proposal.create` get 403; when True, they can initiate via
     # cosign-gathering instead.
     allow_cosign_petition: bool = False
+    # Phase 87 (B-10) — platform-moderation state. NULL for normal orgs;
+    # 'delisted' / 'suspended' otherwise. Surfaced so an org's own admins see
+    # the delist notice in settings; members of a suspended org never receive
+    # an OrgOut (the org 404s for them). Read-only from the org's perspective.
+    platform_restriction: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -2192,6 +2197,29 @@ class OrgBanOut(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AdminOrgOut(BaseModel):
+    """Phase 87 (B-10) — one org row for the platform-admin org table."""
+    id: str
+    name: str
+    slug: str
+    member_count: int
+    discoverability: str
+    activity_visibility: str
+    platform_restriction: Optional[str] = None
+    restriction_reason: Optional[str] = None
+    is_demo: bool = False
+    parent_org_id: Optional[str] = None
+    created_at: datetime
+
+
+class AdminOrgRestrictionIn(BaseModel):
+    """Set/clear an org's platform restriction. ``restriction`` is one of
+    'delisted' | 'suspended' | 'none' (or null to clear). ``reason`` is
+    REQUIRED when restricting, optional when reverting."""
+    restriction: Optional[str] = None
+    reason: Optional[str] = None
 
 
 class InvitationCreate(BaseModel):

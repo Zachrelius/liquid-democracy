@@ -1133,6 +1133,16 @@ export default function OrgSettings() {
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-10">
       <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">Organization Settings</h1>
 
+      {/* Phase 87 (B-10) — platform-moderation delist notice. Discoverability
+          edits below do not restore public visibility while delisted. */}
+      {currentOrg?.platform_restriction === 'delisted' && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          This organization has been restricted from public listing by platform
+          moderation. Members keep full access, but the organization will not
+          appear in public discovery until the restriction is lifted.
+        </div>
+      )}
+
       {/* Phase 43 Cluster C — post-creation orientation pointer (dismissible). */}
       <NewStewardPointer />
 

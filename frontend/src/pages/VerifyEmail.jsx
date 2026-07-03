@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../AuthContext';
@@ -16,6 +16,14 @@ export default function VerifyEmail() {
   // Same-browser case auto-navigates them to /orgs/create after success;
   // cross-browser falls through to the standard "Go to Login" button.
   const [persistedNext, setPersistedNext] = useState(null);
+  // Phase 87 (Cluster 0) — the POST must fire EXACTLY ONCE per mount. The
+  // pre-87 effect depended on [token, persistedNext, user, refreshUser,
+  // navigate]; when persistedNext resolved or refreshUser mutated `user`,
+  // the effect re-fired and POSTed the (now-consumed) token again, and the
+  // .catch flipped a verified user's green success into a red error. These
+  // refs decouple the one-shot POST from the navigation logic below.
+  const postedRef = useRef(false);
+  const navigatedRef = useRef(false);
 
   useEffect(() => {
     try {
@@ -26,7 +34,11 @@ export default function VerifyEmail() {
     }
   }, []);
 
+  // POST the token exactly once per mount. No churning dependencies.
   useEffect(() => {
+    if (postedRef.current) return;
+    postedRef.current = true;
+
     if (!token) {
       setStatus('error');
       setMessage('No verification token provided.');
@@ -34,33 +46,43 @@ export default function VerifyEmail() {
     }
 
     api.post('/api/auth/verify-email', { token })
-      .then(async () => {
+      .then(() => {
         setStatus('success');
         setMessage('Your email has been verified successfully!');
-        // Phase 43 Cluster F — if the same browser already has a session
-        // (the user registered in this tab/browser), refresh the user so
-        // email_verified becomes True, then auto-navigate to the
-        // persisted intent. Clear the storage in either case so it can't
-        // leak into an unrelated future flow.
-        if (persistedNext) {
-          try { sessionStorage.removeItem('postVerifyNext'); } catch {
-            // ignore
-          }
-          if (user) {
-            try { await refreshUser(); } catch {
-              // best-effort; navigate anyway
-            }
-            navigate(persistedNext);
-          }
-          // If no session (cross-browser case), the success branch's
-          // "Continue" button below threads persistedNext to /login.
-        }
       })
       .catch(err => {
-        setStatus('error');
-        setMessage(err.message || 'Verification failed. The token may be invalid or expired.');
+        // Forward-only state machine: never overwrite a success with an
+        // error (belt-and-suspenders alongside the one-shot guard).
+        setStatus(prev => {
+          if (prev === 'success') return prev;
+          setMessage(err.message || 'Verification failed. The token may be invalid or expired.');
+          return 'error';
+        });
       });
-  }, [token, persistedNext, user, refreshUser, navigate]);
+  }, [token]);
+
+  // Post-success navigation — separated from the POST so it can safely react
+  // to persistedNext / user resolving without re-triggering verification.
+  useEffect(() => {
+    if (status !== 'success' || navigatedRef.current) return;
+    if (!persistedNext) return;
+    // Clear the persisted intent either way so it can't leak into a later flow.
+    try { sessionStorage.removeItem('postVerifyNext'); } catch {
+      // ignore
+    }
+    if (user) {
+      // Same-browser session: refresh so email_verified flips, then navigate.
+      navigatedRef.current = true;
+      (async () => {
+        try { await refreshUser(); } catch {
+          // best-effort; navigate anyway
+        }
+        navigate(persistedNext);
+      })();
+    }
+    // Cross-browser (no session): the success "Continue" button threads
+    // persistedNext to /login.
+  }, [status, persistedNext, user, refreshUser, navigate]);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#F8F9FA] px-4">

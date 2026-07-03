@@ -651,6 +651,17 @@ export default function Nav() {
                       Create Organization
                     </Link>
                   )}
+                  {/* Phase 87 (B-10) — platform-admin toolbench entry, only
+                      for platform admins. No affordance for anyone else. */}
+                  {user?.is_admin && (
+                    <Link
+                      to="/platform-admin"
+                      onClick={() => setMenuOpen(false)}
+                      className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100"
+                    >
+                      Platform
+                    </Link>
+                  )}
                   <button
                     onClick={() => { setMenuOpen(false); logout(); }}
                     className="block w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100"
@@ -844,6 +855,16 @@ export default function Nav() {
               >
                 Account Settings
               </Link>
+              {/* Phase 87 (B-10) — platform-admin entry (admins only). */}
+              {user?.is_admin && (
+                <Link
+                  to="/platform-admin"
+                  onClick={() => setMobileOpen(false)}
+                  className="block py-2 text-sm text-blue-200 hover:text-white"
+                >
+                  Platform
+                </Link>
+              )}
               {userOrgs.length > 1 && (
                 <Link
                   to="/orgs"
