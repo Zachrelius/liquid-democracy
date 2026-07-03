@@ -34,6 +34,9 @@ from rate_limit_utils import (
     content_limiter, JOIN_REQUEST_LIMIT, ORG_CREATE_LIMIT, PROPOSAL_CREATE_LIMIT,
     INVITATION_CREATE_LIMIT,
 )
+from org_restriction import (
+    effective_discoverability, assert_org_accessible, is_suspended,
+)
 from role_seed import seed_default_roles_for_org
 from settings import settings as app_settings
 from org_middleware import (
@@ -261,6 +264,9 @@ def _org_to_out(
         allow_cosign_petition=bool(
             (org.settings or {}).get("allow_cosign_petition", False)
         ) if org.settings else False,
+        # Phase 87 (B-10) — surface platform-moderation state so an org's own
+        # admins see the delist notice in settings.
+        platform_restriction=org.platform_restriction,
     )
 
 
@@ -1737,7 +1743,10 @@ def get_public_org(
     # the discoverability axis so an org whose access posture is
     # (any join_policy, hidden) 404s the public landing exactly as the
     # legacy secret check did.
-    if org is None or org.discoverability == "hidden":
+    # Phase 87 (B-10) — effective_discoverability forces 'hidden' for a
+    # delisted OR suspended org, so both 404 the public landing (delisted to
+    # non-members; suspended to everyone) without touching stored settings.
+    if org is None or effective_discoverability(org) == "hidden":
         raise HTTPException(status_code=404, detail="Organization not found")
 
     branding_dict = (org.settings or {}).get("branding") or {}
@@ -2107,6 +2116,9 @@ def get_explore_orgs(
         .filter(models.Organization.discoverability == "listed")
         .filter(models.Organization.is_demo.is_(False))
         .filter(models.Organization.parent_org_id.is_(None))
+        # Phase 87 (B-10) — platform-restricted orgs (delisted or suspended)
+        # never appear in discovery, regardless of their stored discoverability.
+        .filter(models.Organization.platform_restriction.is_(None))
     )
 
     if q:
@@ -2195,7 +2207,7 @@ def _public_activity_org_or_404(
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug,
     ).first()
-    if org is None or org.discoverability == "hidden":
+    if org is None or effective_discoverability(org) == "hidden":
         raise HTTPException(status_code=404, detail="Organization not found")
     if org.activity_visibility != "public":
         raise HTTPException(status_code=404, detail="Organization not found")
@@ -2492,7 +2504,7 @@ def create_join_request(
     ).first()
     # Phase 57 — keys on discoverability axis (was `invite_only_secret`
     # check on join_policy). Hidden orgs 404 anonymously.
-    if org is None or org.discoverability == "hidden":
+    if org is None or effective_discoverability(org) == "hidden":
         # Same 404 shape for non-existent and hidden orgs.
         raise HTTPException(status_code=404, detail="Organization not found")
 
@@ -2744,7 +2756,7 @@ def cancel_join_request(
         models.Organization.slug == org_slug
     ).first()
     # Phase 57 — was secret-policy check; now keys on discoverability.
-    if org is None or org.discoverability == "hidden":
+    if org is None or effective_discoverability(org) == "hidden":
         raise HTTPException(status_code=404, detail="Organization not found")
 
     membership = db.query(models.OrgMembership).filter(
@@ -2801,7 +2813,7 @@ def request_join(
     # Phase 57 — hidden discoverability 404s anonymously regardless of
     # join_policy (the legacy invite_only_secret semantic). Invite join
     # policy 403s with the invitation-required message.
-    if org.discoverability == "hidden":
+    if effective_discoverability(org) == "hidden":
         raise HTTPException(status_code=404, detail="Organization not found")
     if org.join_policy == "invite":
         raise HTTPException(status_code=403, detail="This organization is invite-only")
@@ -3233,6 +3245,9 @@ def accept_invitation(
             check_membership_locality_for_join,
             check_role_residency_for_grant,
         )
+        # Phase 87 (B-10) — a suspended org rejects invitation acceptance
+        # (clean 404) for everyone except platform admins.
+        assert_org_accessible(inv_org, current_user)
         check_membership_floor_for_join(current_user, inv_org)
         check_membership_min_age_for_join(current_user, inv_org)
         check_membership_locality_for_join(current_user, inv_org)

@@ -28,6 +28,8 @@ import ProposalDetail from './pages/ProposalDetail';
 import Delegations from './pages/Delegations';
 import UserProfile from './pages/UserProfile';
 import Settings from './pages/Settings';
+// Phase 87 (B-10) — platform-admin toolbench (is_admin gated).
+import PlatformAdmin from './pages/PlatformAdmin';
 // Phase 13 F2/F3 — account-scoped notifications surfaces.
 import NotificationsPage from './pages/NotificationsPage';
 import NotificationsPreferences from './pages/NotificationsPreferences';
@@ -346,6 +348,18 @@ export default function App() {
             <ProtectedRoute>
               <OrgProvider>
                 <Layout><OrgSelector /></Layout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 87 (B-10) — platform-admin toolbench. Not org-scoped; the
+            page itself silently redirects non-admins. */}
+        <Route
+          path="/platform-admin"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <Layout><PlatformAdmin /></Layout>
               </OrgProvider>
             </ProtectedRoute>
           }

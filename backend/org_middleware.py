@@ -15,8 +15,9 @@ from fastapi import Request, HTTPException, Depends
 from sqlalchemy.orm import Session
 from database import get_db
 from models import Organization, OrgMembership, Role
-from auth import get_current_user
+from auth import get_current_user, get_optional_user
 import models
+from org_restriction import assert_org_accessible
 
 
 # Role.system_key sets used by the legacy "tier" dependencies.
@@ -43,14 +44,27 @@ def membership_role_system_key(
     return membership.role.system_key
 
 
-async def get_org_context(request: Request, db: Session = Depends(get_db)):
-    """Extract org_slug from path and resolve to Organization."""
+async def get_org_context(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(get_optional_user),
+):
+    """Extract org_slug from path and resolve to Organization.
+
+    Phase 87 (B-10) — a SUSPENDED org 404s here for everyone except platform
+    admins. Because every tier dependency (require_org_membership /
+    _moderator_or_admin / _admin / _owner) resolves the org through this
+    function, this is the primary chokepoint that makes a suspended org
+    indistinguishable from a non-existent one across the org-scoped API.
+    Rows are untouched; a revert restores access.
+    """
     org_slug = request.path_params.get("org_slug")
     if not org_slug:
         return None
     org = db.query(Organization).filter(Organization.slug == org_slug).first()
     if not org:
         raise HTTPException(status_code=404, detail="Organization not found")
+    assert_org_accessible(org, current_user)
     return org
 
 
