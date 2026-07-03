@@ -2,6 +2,7 @@ import { useState } from 'react';
 import api from '../api';
 import { useToast } from './Toast';
 import { useConfirm } from './ConfirmDialog';
+import ReportModal from './ReportModal';
 import Avatar from './Avatar';
 import UserLink from './UserLink';
 import CommentComposer from './CommentComposer';
@@ -56,6 +57,7 @@ export default function Comment({
   const [saving, setSaving] = useState(false);
   const [showReplyComposer, setShowReplyComposer] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showReport, setShowReport] = useState(false);
 
   const isDeleted = !!comment.deleted_at;
   const isAuthor = !!currentUser && comment.author_id === currentUser.id;
@@ -72,6 +74,9 @@ export default function Comment({
   // Phase 85 (B-1) — moderators can remove OTHERS' comments (never their own
   // via this control; authors use Delete). Distinct affordance + copy.
   const showModerate = !isDeleted && !isAuthor && canModerate;
+  // Phase 86 (B-4) — any signed-in non-author can report a live comment. The
+  // backend enforces membership + verified email; kept subtle, not loud.
+  const canReport = !isDeleted && !isAuthor && !!currentUser;
 
   // Indent replies with a left-border. Top-level rows have no indent.
   const wrapperClass = isReply
@@ -210,7 +215,7 @@ export default function Comment({
             />
           )}
 
-          {!editing && (showReply || showEdit || showDelete || showModerate) && (
+          {!editing && (showReply || showEdit || showDelete || showModerate || canReport) && (
             <div className="flex gap-3 mt-1 text-xs text-gray-500">
               {showReply && (
                 <button
@@ -253,6 +258,15 @@ export default function Comment({
                   {deleting ? 'Removing…' : 'Remove'}
                 </button>
               )}
+              {canReport && (
+                <button
+                  type="button"
+                  onClick={() => setShowReport(true)}
+                  className="hover:text-gray-700 hover:underline"
+                >
+                  Report
+                </button>
+              )}
             </div>
           )}
 
@@ -270,6 +284,14 @@ export default function Comment({
                 onCancel={() => setShowReplyComposer(false)}
               />
             </div>
+          )}
+
+          {showReport && (
+            <ReportModal
+              targetType="comment"
+              targetId={comment.id}
+              onClose={() => setShowReport(false)}
+            />
           )}
         </div>
       </div>

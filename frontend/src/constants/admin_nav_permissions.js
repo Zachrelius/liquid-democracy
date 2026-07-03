@@ -41,4 +41,7 @@ export const ADMIN_NAV_SUBSECTION_PERMISSIONS = {
     'topic.delete',
     'role_permissions.edit',
   ],
+  // Phase 86 (B-4) — content-report queue is gated on comment.moderate (the
+  // same key the backend queue endpoint enforces; no new permission key).
+  reports: ['comment.moderate'],
 };

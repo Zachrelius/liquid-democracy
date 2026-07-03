@@ -69,6 +69,29 @@ def get_current_user(
     return _get_user_from_token(token, db)
 
 
+# Phase 86 (B-9) — uniform verified-email gate for org-scoped write actions.
+# One shared dependency replaces the N scattered inline
+# ``if not current_user.email_verified`` checks (comments, proposal create,
+# vote, join, follow, delegation, report, org create). Raises a 403 whose
+# copy points the user at the resend flow. Read actions never use this.
+VERIFY_EMAIL_DETAIL = (
+    "Please verify your email address before doing this. Check your inbox "
+    "for the verification link, or request a new one from your account "
+    "settings."
+)
+
+
+def require_verified_email(
+    current_user: models.User = Depends(get_current_user),
+) -> models.User:
+    if not current_user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=VERIFY_EMAIL_DETAIL,
+        )
+    return current_user
+
+
 def get_current_admin(
     current_user: models.User = Depends(get_current_user),
 ) -> models.User:

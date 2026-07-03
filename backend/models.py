@@ -409,6 +409,68 @@ class OrgBan(Base):
     revoked_by: Mapped[Optional["User"]] = relationship("User", foreign_keys=[revoked_by_id])
 
 
+class ContentReport(Base):
+    """Phase 86 (B-4 fix) — member content report / flag.
+
+    SIGNAL ONLY: a report never auto-hides or auto-actions anything at any
+    count. It surfaces content to the org's moderators, who act (or not)
+    through the real moderation tools (Phase 85 comment removal, proposal
+    archive/delete, member remove/ban). Threshold automation is deliberately
+    rejected as a brigading vector.
+
+    v1 reportable surfaces: comments and proposals only. ``org_id`` is
+    resolved server-side from the target (never trusted from the client).
+
+    Reporter identity is visible to moderators (accountability / anti-brigading
+    forensics) but is NEVER surfaced to the reported user or other members.
+
+    Partial-unique index: at most one OPEN report per
+    (reporter_id, target_type, target_id) — re-reporting the same content
+    while a report is still open is an idempotent no-op, not a duplicate row.
+    """
+    __tablename__ = "content_reports"
+    __table_args__ = (
+        Index(
+            "uq_content_report_open",
+            "reporter_id", "target_type", "target_id",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+            sqlite_where=text("status = 'open'"),
+        ),
+        Index("ix_content_reports_org_status", "org_id", "status"),
+        Index("ix_content_reports_target", "target_type", "target_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    reporter_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    # 'comment' | 'proposal'
+    target_type: Mapped[str] = mapped_column(String, nullable=False)
+    target_id: Mapped[str] = mapped_column(String, nullable=False)
+    # 'spam' | 'harassment' | 'misleading' | 'other'
+    reason: Mapped[str] = mapped_column(String, nullable=False)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 'open' | 'dismissed' | 'actioned'
+    status: Mapped[str] = mapped_column(
+        String, nullable=False, default="open", server_default="open",
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    resolved_by_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    organization: Mapped["Organization"] = relationship("Organization", foreign_keys=[org_id])
+    reporter: Mapped["User"] = relationship("User", foreign_keys=[reporter_id])
+    resolved_by: Mapped[Optional["User"]] = relationship("User", foreign_keys=[resolved_by_id])
+
+
 class Invitation(Base):
     __tablename__ = "invitations"
 

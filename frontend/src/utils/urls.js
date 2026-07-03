@@ -72,6 +72,9 @@ export function urlFor(org, kind, ...args) {
       return `/${slug}/admin/settings/permissions`;
     case 'admin-members':
       return `/${slug}/admin/members`;
+    // Phase 86 (B-4) — moderator content-report queue.
+    case 'admin-reports':
+      return `/${slug}/admin/reports`;
     case 'admin-proposals':
       return `/${slug}/admin/proposals`;
     case 'admin-topics':

@@ -234,6 +234,10 @@ app.include_router(org_titles_routes.router)
 app.include_router(elections_routes.router)
 # Phase 77 — org-scoped direct messaging.
 app.include_router(messages_routes.router)
+# Phase 86 (B-4) — member content report / flag queue.
+from routes import reports as reports_routes
+app.include_router(reports_routes.report_router)
+app.include_router(reports_routes.org_report_router)
 # Phase 12.7 B1+B2 — org branding endpoints (logo upload/delete, color PATCH).
 # Mounted on /api/orgs/{slug}/logo + /branding; gated by org.edit_branding.
 app.include_router(org_logos.router)

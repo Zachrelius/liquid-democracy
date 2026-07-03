@@ -18,6 +18,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
+from rate_limit_utils import content_limiter, FOLLOW_REQUEST_LIMIT
 import models
 import schemas
 from audit_utils import log_audit_event
@@ -105,13 +106,15 @@ def _revoke_dependent_delegations(
     response_model=schemas.FollowRequestOut,
     status_code=201,
 )
+@content_limiter.limit(FOLLOW_REQUEST_LIMIT)
 def send_follow_request(
     org_slug: str,
     body: schemas.FollowRequestCreate,
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth_utils.get_current_user),
+    # Phase 86 (B-9) — follow requests require a verified email.
+    current_user: models.User = Depends(auth_utils.require_verified_email),
     membership: models.OrgMembership = Depends(require_org_membership),
 ):
     org_id = membership.org_id

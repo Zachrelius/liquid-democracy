@@ -148,16 +148,11 @@ def upsert_delegation(
     body: schemas.DelegationUpsert,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth_utils.get_current_user),
+    # Phase 86 (B-9) — shared verified-email gate (was an inline check).
+    current_user: models.User = Depends(auth_utils.require_verified_email),
     membership: models.OrgMembership = Depends(require_org_membership),
 ):
     org_id = membership.org_id
-
-    if not current_user.email_verified:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Please verify your email before creating delegations.",
-        )
 
     if body.delegate_id == current_user.id:
         raise HTTPException(status_code=400, detail="Cannot delegate to yourself")
