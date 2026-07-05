@@ -483,12 +483,13 @@ def test_degenerate_passes_clean(client, test_db):
     assert sum(res["budget_amounts"].values()) == 0
 
 
-def test_delegation_inert_for_budget(client, test_db):
-    """A delegation row toward a voter does NOT carry the delegator's weight
-    into a budget tally — budget is direct-vote only."""
+def test_delegation_carries_for_budget(client, test_db):
+    """Phase 89 — a delegation row toward a voter now carries the delegator's
+    ballot (copied from the delegate) into a budget tally, same as approval/RCV.
+    (Reverses the Phase 73 §5 direct-vote-only restriction.)"""
     org, author, v1, v2, v3 = _setup(test_db)
     p, opts = _budget_proposal(test_db, author, org, quorum=0.4)
-    # v2 delegates globally to v1 (org-scoped). Budget tally must ignore it.
+    # v2 delegates globally to v1 (org-scoped). Budget tally now resolves it.
     deleg = models.Delegation(
         delegator_id=v2.id, delegate_id=v1.id, topic_id=None,
         chain_behavior="revert_direct", org_id=org.id,
@@ -496,13 +497,14 @@ def test_delegation_inert_for_budget(client, test_db):
     test_db.add(deleg)
     test_db.commit()
     a, b, c = opts[0].id, opts[1].id, opts[2].id
-    # Only v1 casts a direct ballot; v2's delegation must NOT count v2 in.
+    # v1 casts a direct ballot; v2's delegation resolves to v1's ballot, so
+    # the delegate's allocation enters the tally twice (once per resolved user).
     client.post(f"/api/proposals/{p.id}/vote", headers=_auth(v1),
                 json={"allocations": {a: 50000, b: 30000, c: 20000}})
     import delegation_engine
     tally = delegation_engine.engine.compute_tally(p, test_db)
-    # exactly one ballot counted (v1's direct), NOT two (no delegated carry)
-    assert tally.total_ballots_cast == 1
+    # two ballots counted (v1 direct + v2 delegated copy)
+    assert tally.total_ballots_cast == 2
     # delegation row untouched
     assert test_db.query(models.Delegation).count() == 1
 

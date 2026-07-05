@@ -1227,10 +1227,11 @@ class MyVoteStatus(BaseModel):
     vote_value: Optional[str] = None       # None if not cast (binary)
     approvals: Optional[list[str]] = None  # option IDs approved (approval)
     ranking: Optional[list[str]] = None    # option IDs ordered (ranked_choice)
-    # Phase 73 — budget_allocation: {option_id: amount}. Direct-vote only, so
-    # this is always the caller's own ballot (never a delegated one).
+    # Phase 73 — budget_allocation: {option_id: amount}. Phase 89: may be a
+    # delegated ballot (the caller's resolved delegate's allocation).
     allocations: Optional[dict[str, float]] = None
-    # Phase 74 — budget_project: ordered [{option_id, tier_id?}]. Direct-only.
+    # Phase 74 — budget_project: ordered [{option_id, tier_id?}]. Phase 89: may
+    # be a delegated ballot (the resolved delegate's ranking).
     ranked: Optional[list[dict]] = None
     is_direct: Optional[bool] = None
     delegate_chain: Optional[list[str]] = None

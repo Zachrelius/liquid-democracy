@@ -3769,45 +3769,9 @@ def my_vote_status(
 ):
     proposal = _proposal_or_404(proposal_id, db)
 
-    # Phase 73/74 — budget proposals are direct-vote only; never resolve
-    # through delegation. Return the caller's own direct ballot (or "not
-    # cast"). This keeps my-vote consistent with the direct-only tally.
-    if proposal.voting_method in ("budget_allocation", "budget_project"):
-        own = (
-            db.query(models.Vote)
-            .filter(
-                models.Vote.proposal_id == proposal.id,
-                models.Vote.user_id == current_user.id,
-                models.Vote.is_direct.is_(True),
-            )
-            .first()
-        )
-        if proposal.voting_method == "budget_allocation":
-            if own is None or not own.ballot:
-                return schemas.MyVoteStatus(
-                    allocations=None, is_direct=None, delegate_chain=None,
-                    cast_by=None,
-                    message="You have not allocated a budget on this proposal.",
-                )
-            allocations = (own.ballot or {}).get("allocations", {})
-            return schemas.MyVoteStatus(
-                allocations=allocations, is_direct=True, delegate_chain=None,
-                cast_by=db.get(models.User, current_user.id),
-                message=f"You allocated across {len(allocations)} bucket(s).",
-            )
-        # budget_project
-        if own is None or not own.ballot:
-            return schemas.MyVoteStatus(
-                ranked=None, is_direct=None, delegate_chain=None, cast_by=None,
-                message="You have not ranked this project budget.",
-            )
-        ranked = (own.ballot or {}).get("ranked", [])
-        return schemas.MyVoteStatus(
-            ranked=ranked, is_direct=True, delegate_chain=None,
-            cast_by=db.get(models.User, current_user.id),
-            message=f"You ranked {len(ranked)} item(s).",
-        )
-
+    # Phase 89 — budget proposals now compose with delegation, so my-vote
+    # resolves through the delegation engine like every other method (a
+    # delegator's status reflects their delegate's budget ballot).
     result = delegation_engine.resolve_vote(current_user.id, proposal.id, db)
 
     # Multi-option proposals only support strict_precedence delegation today.
@@ -3839,43 +3803,65 @@ def my_vote_status(
         )
 
     cast_by_user = db.get(models.User, result.cast_by_id)
+
+    def _chain_names() -> str:
+        names = []
+        for uid in result.delegate_chain:
+            u = db.get(models.User, uid)
+            names.append(u.display_name if u else uid)
+        return " -> ".join(names)
+
     approvals = None
     ranking = None
+    allocations = None
+    ranked = None
     if proposal.voting_method == "approval":
         approvals = result.ballot.approvals if result.ballot.approvals else []
         n_approved = len(approvals)
         if result.is_direct:
             msg = f"You approved {n_approved} option(s) directly."
         else:
-            chain_names = []
-            for uid in result.delegate_chain:
-                u = db.get(models.User, uid)
-                chain_names.append(u.display_name if u else uid)
-            msg = f"Your ballot ({n_approved} option(s) approved) via {' -> '.join(chain_names)}."
+            msg = f"Your ballot ({n_approved} option(s) approved) via {_chain_names()}."
     elif proposal.voting_method == "ranked_choice":
         ranking = result.ballot.ranking if result.ballot.ranking else []
         n_ranked = len(ranking)
         if result.is_direct:
             msg = f"You ranked {n_ranked} option(s) directly."
         else:
-            chain_names = []
-            for uid in result.delegate_chain:
-                u = db.get(models.User, uid)
-                chain_names.append(u.display_name if u else uid)
-            msg = f"Your ballot ({n_ranked} option(s) ranked) via {' -> '.join(chain_names)}."
+            msg = f"Your ballot ({n_ranked} option(s) ranked) via {_chain_names()}."
+    elif proposal.voting_method == "budget_allocation":
+        # Phase 89 — resolved allocation ballot (own if direct, delegate's if
+        # delegated). ballot.allocations is a {option_id: amount} dict.
+        allocations = result.ballot.allocations or {}
+        n_buckets = len(allocations)
+        if result.is_direct:
+            msg = f"You allocated across {n_buckets} bucket(s) directly."
+        else:
+            msg = f"Your allocation ({n_buckets} bucket(s)) via {_chain_names()}."
+    elif proposal.voting_method == "budget_project":
+        # Phase 89 — resolved project ranking. ballot.project_ranked is a list
+        # of (option_id, tier_id) tuples; re-shape to the FE's list-of-dicts.
+        pr = result.ballot.project_ranked or []
+        ranked = [
+            {"option_id": oid, "tier_id": tid}
+            for (oid, tid) in pr
+        ]
+        n_ranked = len(ranked)
+        if result.is_direct:
+            msg = f"You ranked {n_ranked} item(s) directly."
+        else:
+            msg = f"Your ranking ({n_ranked} item(s)) via {_chain_names()}."
     elif result.is_direct:
         msg = f"You voted {result.vote_value.upper()} directly."
     else:
-        chain_names = []
-        for uid in result.delegate_chain:
-            u = db.get(models.User, uid)
-            chain_names.append(u.display_name if u else uid)
-        msg = f"Your vote is {result.vote_value.upper()} via {' -> '.join(chain_names)}."
+        msg = f"Your vote is {result.vote_value.upper()} via {_chain_names()}."
 
     return schemas.MyVoteStatus(
         vote_value=result.vote_value,
         approvals=approvals,
         ranking=ranking,
+        allocations=allocations,
+        ranked=ranked,
         is_direct=result.is_direct,
         delegate_chain=result.delegate_chain,
         cast_by=cast_by_user,

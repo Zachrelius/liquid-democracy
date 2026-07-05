@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import api from '../api';
 import { useToast } from './Toast';
+import UserLink from './UserLink';
 import { optionDisplayLabel } from '../utils/optionDisplay';
 import { formatBudget as fmt, unitInputSymbol } from '../utils/budgetFormat';
 
@@ -11,7 +12,9 @@ import { formatBudget as fmt, unitInputSymbol } from '../utils/budgetFormat';
  * A live "remaining" readout tracks the unspent envelope; the submit button is
  * blocked while the total exceeds the envelope or any bucket exceeds its
  * ceiling. Under-allocation is allowed (the unspent remainder is explicit).
- * Budget proposals are direct-vote only, so there's no delegate path here.
+ * Phase 89 — budget composes with delegation: a delegated ballot resolves to
+ * the delegate's allocation (is_direct=false), which the voter can override by
+ * allocating directly.
  */
 
 export default function BudgetBallot({ proposal, myVote, proposalId, onVoteChange, emailVerified }) {
@@ -29,6 +32,7 @@ export default function BudgetBallot({ proposal, myVote, proposalId, onVoteChang
 
   const unverified = !emailVerified;
   const hasVote = myVote?.allocations != null;
+  const isDirect = myVote?.is_direct;
 
   function startBallot() {
     const initial = {};
@@ -74,7 +78,7 @@ export default function BudgetBallot({ proposal, myVote, proposalId, onVoteChang
     }
   }
 
-  // Already-cast summary
+  // Already-cast summary (direct or delegated)
   if (hasVote && !showBallot) {
     return (
       <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
@@ -82,6 +86,13 @@ export default function BudgetBallot({ proposal, myVote, proposalId, onVoteChang
         {unverified && (
           <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
             Verify your email to vote.
+          </p>
+        )}
+        {!isDirect && (
+          <p className="text-sm text-gray-500">
+            Via {myVote.cast_by ? <UserLink user={myVote.cast_by} className="text-sm" /> : 'delegate'}
+            {myVote.delegate_chain?.length > 1 ? ' (chain)' : ''}
+            {' — your vote follows your delegate unless you allocate directly.'}
           </p>
         )}
         <ul className="text-sm text-gray-700 space-y-1">
@@ -92,13 +103,12 @@ export default function BudgetBallot({ proposal, myVote, proposalId, onVoteChang
             </li>
           ))}
         </ul>
-        <p className="text-xs text-gray-500">Budget proposals are direct-vote only.</p>
         <button
           onClick={startBallot}
           disabled={unverified}
           className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors disabled:opacity-50"
         >
-          Change Allocation
+          {isDirect ? 'Change Allocation' : 'Override — Allocate Directly'}
         </button>
         {err && <p className="text-xs text-red-600">{err}</p>}
       </div>
@@ -114,9 +124,11 @@ export default function BudgetBallot({ proposal, myVote, proposalId, onVoteChang
             Verify your email to vote.
           </p>
         )}
+        {myVote?.message && (
+          <p className="text-xs text-gray-500">{myVote.message}</p>
+        )}
         <p className="text-sm text-gray-500">
           Distribute the {fmt(envelope, currency)} budget across the buckets below.
-          Budget proposals are direct-vote only.
         </p>
         <button
           onClick={startBallot}

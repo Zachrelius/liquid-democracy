@@ -460,7 +460,9 @@ def test_advance_records_no_tie_resolution(client, test_db):
     assert p.tie_resolution is None
 
 
-def test_delegation_inert(client, test_db):
+def test_delegation_carries(client, test_db):
+    """Phase 89 — project-budget delegation now carries the delegator's ballot
+    (copied from the delegate) into the tally (reverses Phase 73 §5)."""
     org, author, v1, v2, v3 = _setup(test_db)
     p, opts = _project_proposal(test_db, author, org, quorum=0.4)
     test_db.add(models.Delegation(delegator_id=v2.id, delegate_id=v1.id, topic_id=None,
@@ -469,7 +471,7 @@ def test_delegation_inert(client, test_db):
     client.post(f"/api/proposals/{p.id}/vote", headers=_auth(v1), json=_ranked(opts[0].id))
     import delegation_engine
     tally = delegation_engine.engine.compute_tally(p, test_db)
-    assert tally.total_ballots_cast == 1  # v2's delegation did NOT carry
+    assert tally.total_ballots_cast == 2  # v1 direct + v2 delegated copy
 
 
 def test_additive_parity_binary_unchanged(client, test_db):

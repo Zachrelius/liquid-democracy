@@ -297,6 +297,14 @@ def resolve_cosign_weight_for_signers(
             ctx.direct_ballots[sid] = Ballot(approvals=["__cosign__"])
         elif voting_method == "ranked_choice":
             ctx.direct_ballots[sid] = Ballot(ranking=["__cosign__"])
+        elif voting_method == "budget_allocation":
+            # Phase 89 — budget proposals compose with delegation, so a
+            # cosign-gated budget proposal resolves signer weight through the
+            # same graph. Synthetic allocation ballot so the resolver's
+            # dispatch finds a non-empty budget ballot.
+            ctx.direct_ballots[sid] = Ballot(allocations={"__cosign__": 1})
+        elif voting_method == "budget_project":
+            ctx.direct_ballots[sid] = Ballot(project_ranked=["__cosign__"])
         else:
             # Binary — use a non-null vote_value so the resolver
             # recognizes the direct ballot at step 1.

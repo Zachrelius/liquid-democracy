@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import api from '../api';
 import { useToast } from './Toast';
+import UserLink from './UserLink';
 import { optionDisplayLabel } from '../utils/optionDisplay';
 import { formatBudget as fmt } from '../utils/budgetFormat';
 
@@ -11,7 +12,9 @@ import { formatBudget as fmt } from '../utils/budgetFormat';
  * "Your ranking", reorder with up/down). For a tier-parent item, an inline tier
  * selector picks the variant. A live "implied total" shows the spend the
  * voter's ranking commits. Omitted items sit in a visible "Not funding" tray so
- * the omission-deprioritizes semantics are legible. Direct-vote only.
+ * the omission-deprioritizes semantics are legible. Phase 89 — budget composes
+ * with delegation: a delegated ballot resolves to the delegate's ranking
+ * (is_direct=false), overridable by ranking directly.
  */
 
 export default function BudgetProjectBallot({ proposal, myVote, proposalId, onVoteChange, emailVerified }) {
@@ -45,6 +48,7 @@ export default function BudgetProjectBallot({ proposal, myVote, proposalId, onVo
 
   const unverified = !emailVerified;
   const hasVote = myVote?.ranked != null;
+  const isDirect = myVote?.is_direct;
 
   function itemCost(oid) {
     const o = optById[oid];
@@ -148,6 +152,13 @@ export default function BudgetProjectBallot({ proposal, myVote, proposalId, onVo
         {unverified && (
           <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Verify your email to vote.</p>
         )}
+        {!isDirect && (
+          <p className="text-sm text-gray-500">
+            Via {myVote.cast_by ? <UserLink user={myVote.cast_by} className="text-sm" /> : 'delegate'}
+            {myVote.delegate_chain?.length > 1 ? ' (chain)' : ''}
+            {' — your vote follows your delegate unless you rank directly.'}
+          </p>
+        )}
         <ol className="text-sm text-gray-700 space-y-0.5">
           {myVote.ranked.map((e, i) => (
             <li key={e.option_id}>
@@ -159,10 +170,9 @@ export default function BudgetProjectBallot({ proposal, myVote, proposalId, onVo
             </li>
           ))}
         </ol>
-        <p className="text-xs text-gray-500">Budget proposals are direct-vote only.</p>
         <button onClick={startBallot} disabled={unverified}
           className="text-xs px-3 py-1.5 border border-[var(--brand-accent)] text-[var(--brand-accent)] rounded-lg hover:bg-[var(--brand-accent)] hover:text-white transition-colors disabled:opacity-50">
-          Change Ranking
+          {isDirect ? 'Change Ranking' : 'Override — Rank Directly'}
         </button>
         {err && <p className="text-xs text-red-600">{err}</p>}
       </div>
@@ -176,10 +186,13 @@ export default function BudgetProjectBallot({ proposal, myVote, proposalId, onVo
         {unverified && (
           <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Verify your email to vote.</p>
         )}
+        {myVote?.message && (
+          <p className="text-xs text-gray-500">{myVote.message}</p>
+        )}
         <p className="text-sm text-gray-500">
           Rank the projects you want funded, highest priority first. The group
           funds in priority order up to its chosen spend level. Items you don’t
-          rank are treated as lowest priority. Direct-vote only.
+          rank are treated as lowest priority.
         </p>
         <button onClick={startBallot} disabled={unverified}
           className="text-sm px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50">
