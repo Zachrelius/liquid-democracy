@@ -182,6 +182,36 @@ export default function VotingMethodsHelp() {
         </p>
       </section>
 
+      {/* Budget voting */}
+      <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Budget Voting</h2>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          Budget voting decides how to spend a fixed pot of money. In
+          allocation mode, each voter distributes the budget across
+          continuously-fundable buckets, and the group result is the per-bucket
+          median of what everyone allocated. In project mode, each voter ranks
+          the projects they want funded, and the group funds them in priority
+          order up to its chosen spend level.
+        </p>
+
+        <div className="bg-blue-50 rounded-lg p-4">
+          <p className="text-sm text-blue-800">
+            <strong>Delegation:</strong> Delegation works for budget votes the
+            same way it does for every other method. If you've delegated the
+            proposal's topic, your delegate's allocation or project ranking
+            becomes your ballot, counted once for you. If your delegate hasn't
+            voted, your chain behavior setting applies. You can always override
+            by allocating or ranking directly.
+          </p>
+        </div>
+
+        <p className="text-sm text-gray-500">
+          <strong>Best for:</strong> Participatory budgeting &mdash; dividing an
+          operating budget across programs, choosing which capital projects to
+          fund, prioritizing spending among competing needs.
+        </p>
+      </section>
+
       {/* Phase 17 F3 — Tie Resolution help section.
           Ties are auto-resolved at advance-to-passed time using the org's
           configured method. Each method has a different tradeoff; this

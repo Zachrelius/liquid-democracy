@@ -121,7 +121,10 @@ def _format_vote_value_for_payload(
     """Phase 21 — produce the payload's ``vote_value`` per D12.
 
     Binary: string ("yes"/"no"/"abstain"). Approval: list of option_ids.
-    RCV: ordered list of option_ids.
+    RCV: ordered list of option_ids. Phase 89 — budget_allocation: the
+    {option_id: amount} allocations dict; budget_project: the ordered list of
+    {option_id, tier_id} items. Delegators of a budget voter receive
+    delegate.voted / delegate.vote_changed like every other method.
     """
     if voting_method == "binary":
         return vote_value
@@ -132,6 +135,14 @@ def _format_vote_value_for_payload(
     if voting_method == "ranked_choice":
         if isinstance(ballot, dict):
             return list(ballot.get("ranking") or [])
+        return []
+    if voting_method == "budget_allocation":
+        if isinstance(ballot, dict):
+            return dict(ballot.get("allocations") or {})
+        return {}
+    if voting_method == "budget_project":
+        if isinstance(ballot, dict):
+            return list(ballot.get("ranked") or [])
         return []
     return vote_value
 
@@ -220,10 +231,11 @@ async def cast_vote(
         vote_value = None
         ballot = {"ranking": body.ranking}
     elif proposal.voting_method == "budget_allocation":
-        # Phase 73 — allocation ballot. Direct-vote only (budget proposals
-        # don't compose with delegation — §5). This endpoint always casts
-        # is_direct=True, so the direct-only restriction holds here; the tally
-        # additionally never resolves delegation for budget.
+        # Phase 73 — allocation ballot. This endpoint always casts
+        # is_direct=True (delegated votes are never materialized as Vote rows
+        # for ANY method). Phase 89: delegation now composes with budget — a
+        # delegator's ballot resolves to their delegate's allocation at tally
+        # time, same as approval/RCV.
         if body.vote_value is not None or body.approvals is not None or body.ranking is not None:
             raise HTTPException(
                 status_code=400,

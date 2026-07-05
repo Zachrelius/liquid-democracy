@@ -62,12 +62,12 @@ class Ballot:
     vote_value: Optional[str] = None       # "yes" | "no" | "abstain" (binary)
     approvals: Optional[list[str]] = None  # list of option_ids (approval)
     ranking: Optional[list[str]] = None    # ranked_choice — order matters
-    # Phase 73 — budget_allocation: {option_id: amount}. Only direct budget
-    # ballots populate this (budget is direct-vote only — see §5; delegation
-    # is never resolved into an allocation ballot).
+    # Phase 73 — budget_allocation: {option_id: amount}. Phase 89: delegation
+    # now resolves into an allocation ballot (a delegator resolves to their
+    # delegate's allocation ballot, copied whole), same as approval/RCV.
     allocations: Optional[dict] = None
     # Phase 74 — budget_project: ordered list of option_ids (highest priority
-    # first). Direct-vote only, same as allocation.
+    # first). Phase 89: delegation resolves normally, same as allocation.
     project_ranked: Optional[list] = None
 
     @property
@@ -672,19 +672,27 @@ def _compute_project_tally_pure(
     user_ids: list[str],
     ctx: ProposalContext,
 ):
-    """Phase 74 — project-budget tally (direct-vote only, like allocation).
+    """Phase 74/89 — project-budget tally.
 
-    Reads each eligible voter's DIRECT ranked ballot from ``ctx.direct_ballots``
-    (delegation never resolved for budget). Each ballot is an ordered list of
-    option_ids; ``budget_tally.tally_project`` handles omission-at-max-spend.
+    Phase 89 lifted the direct-vote-only restriction: we resolve each eligible
+    voter's ballot via ``resolve_vote_pure`` (mirroring the approval/RCV
+    tallies). A direct caster resolves to their own ranking; a delegator
+    resolves to their delegate's ranking, copied whole (including its tier
+    selections), contributing once per delegator. A resolution that yields no
+    project ranking (not_cast, or a non-budget-shaped resolved ballot —
+    impossible on a budget proposal since every direct ballot is
+    project-shaped, but defensive) contributes nothing.
+    ``budget_tally.tally_project`` handles omission-at-max-spend.
     """
     import budget_tally
 
     ballots: list[list[str]] = []
     for uid in user_ids:
-        b = ctx.direct_ballots.get(uid)
-        if b is not None and b.project_ranked is not None:
-            ballots.append(list(b.project_ranked))
+        result = resolve_vote_pure(uid, ctx)
+        if result is None:
+            continue
+        if result.ballot.project_ranked is not None:
+            ballots.append(list(result.ballot.project_ranked))
 
     cfg = ctx.budget_config or {}
     envelope = cfg.get("envelope", 0)
@@ -702,22 +710,29 @@ def _compute_allocation_tally_pure(
     user_ids: list[str],
     ctx: ProposalContext,
 ):
-    """Phase 73 — allocation-budget tally.
+    """Phase 73/89 — allocation-budget tally.
 
-    Budget proposals are DIRECT-VOTE ONLY (§5): we read each eligible voter's
-    DIRECT allocation ballot from ``ctx.direct_ballots`` and never resolve
-    delegation. A voter with only an (inert) delegation contributes no ballot;
-    a voter who cast a direct allocation contributes it. The per-bucket median
-    counts an omitted bucket as $0 for that voter (handled inside
-    ``budget_tally.tally_allocation``).
+    Phase 89 lifted the direct-vote-only restriction: we resolve each eligible
+    voter's ballot via ``resolve_vote_pure`` (mirroring the approval/RCV
+    tallies), so a delegator resolving to a delegate's allocation ballot
+    contributes that allocation once per delegator, and a direct caster
+    contributes their own. A resolution yielding no allocation ballot
+    (not_cast, or a non-budget-shaped resolved ballot — impossible on a budget
+    proposal since every direct ballot is allocation-shaped, but defensive)
+    contributes nothing. An empty-allocations dict (`{}`) from a resolved
+    ballot counts as a cast ballot allocating $0 everywhere, same as a direct
+    empty ballot. The per-bucket median counts an omitted bucket as $0 for that
+    voter (handled inside ``budget_tally.tally_allocation``).
     """
     import budget_tally
 
     ballots: list[dict] = []
     for uid in user_ids:
-        b = ctx.direct_ballots.get(uid)
-        if b is not None and b.allocations is not None:
-            ballots.append(b.allocations)
+        result = resolve_vote_pure(uid, ctx)
+        if result is None:
+            continue
+        if result.ballot.allocations is not None:
+            ballots.append(result.ballot.allocations)
 
     cfg = ctx.budget_config or {}
     return budget_tally.tally_allocation(
@@ -1636,7 +1651,9 @@ class DelegationService:
                 direct_ballots[row.user_id] = Ballot(ranking=ranking)
             elif voting_method == "budget_allocation":
                 # Phase 73 — direct allocation ballot. Delegated budget votes
-                # don't exist (rejected at cast time); only is_direct rows here.
+                # are never materialized as Vote rows (only is_direct rows
+                # here); Phase 89 resolves delegation at tally time from these
+                # direct ballots, same as approval/RCV.
                 ballot_data = row.ballot or {}
                 allocations = ballot_data.get("allocations", {})
                 direct_ballots[row.user_id] = Ballot(allocations=allocations)
