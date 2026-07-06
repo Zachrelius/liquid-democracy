@@ -269,7 +269,7 @@ def resolve_cosign_weight_for_signers(
     # we top-level import.
     from delegation_engine import (
         DelegationService, resolve_vote_pure, Ballot,
-        eligible_voter_ids_for_proposal,
+        eligible_voter_ids_for_proposal, _weight_of,
     )
 
     try:
@@ -317,7 +317,13 @@ def resolve_cosign_weight_for_signers(
         except Exception:
             continue
         if result is not None and result.cast_by_id in signer_ids:
-            weight += 1
+            # Phase 88 — share-denominated in weighted orgs: each voter whose
+            # resolution lands on a signer contributes their own shares (the
+            # ctx.user_weights map is empty in unweighted orgs, so _weight_of
+            # returns 1 and this reduces to headcount). signature_count stays
+            # headcount for the "Signed by N members" line; only the resolved
+            # threshold weight is share-denominated.
+            weight += _weight_of(uid, ctx)
     return weight
 
 

@@ -810,6 +810,27 @@ def _collect_proposal_creation_errors(
             "stable_result_required", 400,
             "Stable-result is not yet supported for budget proposals.",
         ))
+    # Phase 88 — weighted-voting orgs block ranked_choice + budget creation in
+    # Stage 1 (weighted RCV ships in 88a, weighted budget in 88b). Shares are a
+    # parent-org property, so resolve the weight-holding org through the parent
+    # for sub-org proposals (mirrors the tally's weight resolution). Only NEW
+    # creation is blocked; flipping the toggle ON never rejects existing RCV /
+    # budget proposals.
+    from org_config import get_weighted_voting_config as _get_wv
+    _weight_org = org
+    if _weight_org is not None and getattr(_weight_org, "parent_org", None) is not None:
+        _weight_org = _weight_org.parent_org
+    if _weight_org is not None and _get_wv(_weight_org)["enabled"]:
+        if body.voting_method == "ranked_choice":
+            errors.append((
+                "voting_method", 400,
+                "Ranked choice is not yet available in weighted-voting organizations",
+            ))
+        elif body.voting_method in _budget_methods:
+            errors.append((
+                "voting_method", 400,
+                "Budget voting is not yet available in weighted-voting organizations",
+            ))
     if body.voting_method == "binary":
         if body.options:
             errors.append((
@@ -3494,6 +3515,19 @@ def get_results(
         db.get(models.Organization, proposal.org_id)
         if proposal.org_id else None
     )
+    # Phase 88 — weighted-voting result labels. Resolve the weight-holding org
+    # (parent for sub-orgs) and surface {weighted, unit_label} so the FE labels
+    # counters in the org's unit; the counters themselves are already
+    # share-denominated upstream in the tally when enabled.
+    from org_config import get_weighted_voting_config as _get_wv_cfg
+    _weight_org = org
+    if _weight_org is not None and getattr(_weight_org, "parent_org_id", None):
+        _weight_org = db.get(
+            models.Organization, _weight_org.parent_org_id
+        ) or _weight_org
+    _wv = _get_wv_cfg(_weight_org)
+    _weighted_flag = _wv["enabled"]
+    _weighted_unit = _wv["unit_label"] if _wv["enabled"] else None
     from sustained_majority_service import build_status as _sm_build_status
     sm_status = _sm_build_status(db, proposal, org)
 
@@ -3521,6 +3555,8 @@ def get_results(
         return schemas.ProposalResults(
             proposal_id=proposal_id,
             voting_method="approval",
+            weighted=_weighted_flag,
+            unit_label=_weighted_unit,
             not_cast=tally.not_cast,
             total_eligible=tally.total_eligible,
             votes_cast=tally.total_ballots_cast,
@@ -3559,6 +3595,8 @@ def get_results(
         return schemas.ProposalResults(
             proposal_id=proposal_id,
             voting_method="ranked_choice",
+            weighted=_weighted_flag,
+            unit_label=_weighted_unit,
             not_cast=tally.not_cast,
             total_eligible=tally.total_eligible,
             votes_cast=tally.total_ballots_cast,
@@ -3586,6 +3624,8 @@ def get_results(
         return schemas.ProposalResults(
             proposal_id=proposal_id,
             voting_method="budget_allocation",
+            weighted=_weighted_flag,
+            unit_label=_weighted_unit,
             not_cast=tally.not_cast,
             total_eligible=tally.total_eligible,
             votes_cast=tally.total_ballots_cast,
@@ -3612,6 +3652,8 @@ def get_results(
         return schemas.ProposalResults(
             proposal_id=proposal_id,
             voting_method="budget_project",
+            weighted=_weighted_flag,
+            unit_label=_weighted_unit,
             not_cast=tally.not_cast,
             total_eligible=tally.total_eligible,
             votes_cast=tally.total_ballots_cast,
@@ -3636,6 +3678,8 @@ def get_results(
     return schemas.ProposalResults(
         proposal_id=proposal_id,
         voting_method="binary",
+        weighted=_weighted_flag,
+        unit_label=_weighted_unit,
         yes=tally.yes,
         no=tally.no,
         abstain=tally.abstain,
@@ -3769,6 +3813,22 @@ def my_vote_status(
 ):
     proposal = _proposal_or_404(proposal_id, db)
 
+    # Phase 88 — the caller's effective voting weight (shares) on this
+    # proposal, for the ballot "Your vote carries N shares" chip. None in
+    # unweighted orgs (uniform weight of 1). Weight is a parent-org property,
+    # so resolve through the parent for sub-org proposals.
+    _my_weight = None
+    _wo = db.get(models.Organization, proposal.org_id) if proposal.org_id else None
+    if _wo is not None and getattr(_wo, "parent_org_id", None):
+        _wo = db.get(models.Organization, _wo.parent_org_id) or _wo
+    from org_config import get_weighted_voting_config as _gwv
+    if _wo is not None and _gwv(_wo)["enabled"]:
+        _wm = db.query(models.OrgMembership).filter(
+            models.OrgMembership.org_id == _wo.id,
+            models.OrgMembership.user_id == current_user.id,
+        ).first()
+        _my_weight = int(getattr(_wm, "voting_weight", 1) or 1) if _wm else 1
+
     # Phase 89 — budget proposals now compose with delegation, so my-vote
     # resolves through the delegation engine like every other method (a
     # delegator's status reflects their delegate's budget ballot).
@@ -3798,6 +3858,7 @@ def my_vote_status(
             is_direct=None,
             delegate_chain=None,
             cast_by=None,
+            my_voting_weight=_my_weight,
             message=msg,
             delegation_strategy_fallback=fallback or None,
         )
@@ -3865,6 +3926,7 @@ def my_vote_status(
         is_direct=result.is_direct,
         delegate_chain=result.delegate_chain,
         cast_by=cast_by_user,
+        my_voting_weight=_my_weight,
         message=msg,
         delegation_strategy_fallback=fallback or None,
     )

@@ -183,6 +183,16 @@ PERMISSION_REGISTRY: list[PermissionDefinition] = [
         "Allow sending email invitations to join the organization.",
         "Members",
     ),
+    # Phase 88 — set a member's voting weight (shares) in a weighted-voting
+    # org. Editable whether or not weighted voting is enabled (so shares can
+    # be staged before the switch flips). Defaults steward + admin (via
+    # ALL_PERMISSION_KEYS); moderator + member disabled.
+    PermissionDefinition(
+        "member.set_voting_weight",
+        "Set member voting weight",
+        "Allow assigning each member's voting weight (shares) in a weighted-voting organization. Only meaningful when weighted voting is enabled, but shares can be staged beforehand.",
+        "Members",
+    ),
     # --- Sub-organizations (3) ---
     PermissionDefinition(
         "sub_org.create",
@@ -300,9 +310,9 @@ ALL_PERMISSION_KEYS: set[str] = {p.key for p in PERMISSION_REGISTRY}
 # backend/role_seed.py (Cluster D) imports DEFAULT_GRANTS to populate
 # role_permissions rows when an org is created.
 #
-# Counts (verified by test_permission_registry.py) — Phase 71a totals:
-#   steward   = 30  (every key; Phase 77 added org_inbox.view)
-#   admin     = 30  (every key; Phase 77 added org_inbox.view)
+# Counts (verified by test_permission_registry.py):
+#   steward   = 31  (every key; Phase 88 added member.set_voting_weight)
+#   admin     = 31  (every key; Phase 88 added member.set_voting_weight)
 #   moderator = 11  (+2 from Phase 71a: member.suspend, polis.manage —
 #                    NOT new powers; moderators could already suspend +
 #                    manage polises via the moderator+ tier. Phase 71

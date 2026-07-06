@@ -475,15 +475,24 @@ def _resolve_broader_approval_base(
     # Count co-approval breadth per tied option:
     #   for each ballot containing this option, count how many OTHER
     #   options on the same ballot. Sum across ballots.
+    #
+    # Phase 88 — weight each ballot's contribution by its shares
+    # (``tally.ballot_weights``, aligned index-for-index with ``ballots``).
+    # In a shares org a tie broken by raw headcount would be a wrong result,
+    # so the co-approval base must be share-denominated. A missing/short
+    # weights list defaults each ballot to weight 1, so unweighted behavior is
+    # byte-for-byte unchanged.
+    ballot_weights = getattr(tally, "ballot_weights", None) or []
     co_counts: dict[str, int] = {oid: 0 for oid in tied_set}
-    for ballot in ballots:
+    for i, ballot in enumerate(ballots):
         ballot_set = set(ballot or [])
         if not ballot_set:
             continue
+        w = ballot_weights[i] if i < len(ballot_weights) else 1
         for oid in tied_set:
             if oid in ballot_set:
-                # Number of OTHER options on this ballot.
-                co_counts[oid] += len(ballot_set) - 1
+                # Number of OTHER options on this ballot, weighted by shares.
+                co_counts[oid] += (len(ballot_set) - 1) * w
 
     metadata = {"co_approval_counts": dict(co_counts)}
 

@@ -152,6 +152,11 @@ class ApprovalTally:
     # is intentionally NOT carried — only the approval sets, which are
     # already aggregable from the existing approval ballots.
     ballots: list[list[str]] = field(default_factory=list)
+    # Phase 88 — parallel per-ballot weights (shares), aligned index-for-index
+    # with ``ballots``. Empty in unweighted orgs / when ``ballots`` is empty;
+    # the tie resolver treats a missing/short list as all-1 so unweighted
+    # behavior is byte-for-byte unchanged.
+    ballot_weights: list[int] = field(default_factory=list)
     # Phase 66 — multi-winner approval fields. All empty/zero when the
     # proposal carries no ``approval_winner_config`` (legacy path —
     # byte-for-byte unchanged).
@@ -233,11 +238,24 @@ class ProposalContext:
     budget_buckets: Optional[list] = None
     # Phase 74 — project-budget items (list of ``budget_tally.ProjectItemSpec``).
     budget_items: Optional[list] = None
+    # Phase 88 — per-user integer voting weight ("shares"). Populated by the
+    # service layer ONLY when the proposal's org has weighted voting enabled;
+    # otherwise this map stays EMPTY. An empty map ⇒ every weight resolves to 1
+    # (see ``_weight_of``) ⇒ all tally math reduces to today's headcount. This
+    # is the parity mechanism — protect it with tests.
+    user_weights: dict[str, int] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
 # Pure layer — no DB access, fully testable without fixtures
 # ---------------------------------------------------------------------------
+
+def _weight_of(uid: str, ctx: ProposalContext) -> int:
+    """Phase 88 — a user's voting weight. Defaults to 1 for any user absent
+    from ``ctx.user_weights`` (and the map is empty entirely in unweighted
+    orgs), so all weighted-counter math reduces to headcount when weighting
+    is off."""
+    return ctx.user_weights.get(uid, 1)
 
 def find_delegate_pure(
     user_id: str,
@@ -748,17 +766,25 @@ def _compute_binary_tally_pure(
     user_ids: list[str],
     ctx: ProposalContext,
 ) -> ProposalTally:
-    tally = ProposalTally(total_eligible=len(user_ids))
+    # Phase 88 — every counter is weight-denominated: each user contributes
+    # ``_weight_of(uid, ctx)`` (their shares) instead of a flat 1. With an
+    # empty ``user_weights`` map (unweighted orgs) every weight is 1 and this
+    # is byte-identical to headcount. A resolved not_cast user still adds their
+    # weight to not_cast + total_eligible (their shares exist, uncast).
+    tally = ProposalTally(
+        total_eligible=sum(_weight_of(uid, ctx) for uid in user_ids)
+    )
     for uid in user_ids:
+        w = _weight_of(uid, ctx)
         result = resolve_vote_pure(uid, ctx)
         if result is None:
-            tally.not_cast += 1
+            tally.not_cast += w
         elif result.vote_value == "yes":
-            tally.yes += 1
+            tally.yes += w
         elif result.vote_value == "no":
-            tally.no += 1
+            tally.no += w
         elif result.vote_value == "abstain":
-            tally.abstain += 1
+            tally.abstain += w
     return tally
 
 
@@ -892,21 +918,28 @@ def _compute_approval_tally_pure(
     # broader_approval_base tie resolution. Empty/abstain ballots are
     # excluded; only ballots that actually approved options contribute.
     ballots_seen: list[list[str]] = []
+    # Phase 88 — parallel per-ballot weights (shares), one per entry in
+    # ``ballots_seen``. In unweighted orgs every entry is 1 so the tie
+    # resolver's weight-sum reduces to a headcount and ``ballots_seen`` keeps
+    # its historical ``list[list[str]]`` shape byte-for-byte.
+    ballot_weights: list[int] = []
 
     for uid in user_ids:
+        w = _weight_of(uid, ctx)
         result = resolve_vote_pure(uid, ctx)
         if result is None:
-            not_cast += 1
+            not_cast += w
             continue
-        total_ballots_cast += 1
+        total_ballots_cast += w
         approvals = result.ballot.approvals
         if approvals is not None:
             if len(approvals) == 0:
-                total_abstain += 1
+                total_abstain += w
             else:
                 for oid in approvals:
-                    option_approvals[oid] = option_approvals.get(oid, 0) + 1
+                    option_approvals[oid] = option_approvals.get(oid, 0) + w
                 ballots_seen.append(list(approvals))
+                ballot_weights.append(w)
 
     # Phase 66 — multi-winner selection when the proposal carries an
     # ``approval_winner_config`` (threaded through ProposalContext to
@@ -925,10 +958,11 @@ def _compute_approval_tally_pure(
             total_ballots_cast=total_ballots_cast,
             total_abstain=total_abstain,
             not_cast=not_cast,
-            total_eligible=len(user_ids),
+            total_eligible=sum(_weight_of(uid, ctx) for uid in user_ids),
             winners=mw_winners,
             tied=mw_tied,
             ballots=ballots_seen,
+            ballot_weights=ballot_weights,
             winner_seats=winner_seats,
             boundary_tied=boundary_tied,
             seats_remaining=seats_remaining,
@@ -947,10 +981,11 @@ def _compute_approval_tally_pure(
         total_ballots_cast=total_ballots_cast,
         total_abstain=total_abstain,
         not_cast=not_cast,
-        total_eligible=len(user_ids),
+        total_eligible=sum(_weight_of(uid, ctx) for uid in user_ids),
         winners=winners,
         tied=tied,
         ballots=ballots_seen,
+        ballot_weights=ballot_weights,
     )
 
 
@@ -1016,6 +1051,13 @@ def _compute_rcv_tally_pure(
     routes/organizations.py) invokes `tie_resolution.resolve_tie` and
     mutates `tally.winners` to the resolved set. `tied` stays True after
     resolution for transparency (D9).
+
+    Phase 88 (Stage 1) note: this tally deliberately IGNORES ``ctx.user_weights``
+    — RCV creation is blocked in weighted orgs (§2.4), so weights never matter
+    for a fresh RCV proposal. The only way a weighted org tallies RCV is a
+    proposal that was already open when the weighted-voting toggle flipped ON;
+    Stage 1 tallies that case by headcount (defensive). Phase 88a lifts the
+    block and makes this tally weight-aware via ballot duplication.
     """
     # Local import — pyrankvote is heavy and only loaded when ranked-choice
     # tabulation actually runs.
@@ -1761,6 +1803,28 @@ class DelegationService:
                         kind=getattr(opt, "budget_kind", None) or "discrete",
                     ))
 
+        # Phase 88 — per-user voting weights (shares). Populated ONLY when the
+        # weight-holding org has weighted voting enabled; otherwise the map
+        # stays EMPTY and every weight reduces to 1 (headcount parity). Shares
+        # are a parent-org property, so a sub-org proposal resolves weights
+        # from the PARENT org's OrgMembership rows.
+        from org_config import get_weighted_voting_config
+
+        user_weights: dict[str, int] = {}
+        weight_org = _gate_org
+        if weight_org is not None and getattr(weight_org, "parent_org_id", None):
+            _parent = db.get(models.Organization, weight_org.parent_org_id)
+            if _parent is not None:
+                weight_org = _parent
+        if weight_org is not None and get_weighted_voting_config(weight_org)["enabled"]:
+            wq = db.query(
+                models.OrgMembership.user_id, models.OrgMembership.voting_weight,
+            ).filter(models.OrgMembership.org_id == weight_org.id)
+            if eligible_ids is not None:
+                wq = wq.filter(models.OrgMembership.user_id.in_(eligible_ids))
+            for uid, w in wq.all():
+                user_weights[uid] = int(w) if w is not None else 1
+
         return ProposalContext(
             proposal_topics=proposal_topics,
             all_delegations=all_delegations,
@@ -1774,6 +1838,7 @@ class DelegationService:
             budget_config=budget_config,
             budget_buckets=budget_buckets,
             budget_items=budget_items,
+            user_weights=user_weights,
         )
 
     # ------------------------------------------------------------------

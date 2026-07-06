@@ -305,3 +305,86 @@ def get_org_config(
         current = getattr(current, "parent_org", None)
         depth += 1
     return default
+
+
+# ---------------------------------------------------------------------------
+# Phase 88 — weighted voting (share-weighted governance)
+# ---------------------------------------------------------------------------
+
+WEIGHTED_VOTING_DEFAULT_UNIT_LABEL = "shares"
+_WEIGHTED_VOTING_UNIT_LABEL_MAX = 24
+# Route-layer validation bound for a member's integer voting weight.
+VOTING_WEIGHT_MIN = 0
+VOTING_WEIGHT_MAX = 10_000_000
+
+
+def get_weighted_voting_config(org: Optional[models.Organization]) -> dict:
+    """Return ``{enabled, unit_label}`` for the org, applying defaults +
+    clamping invalid values. Mirrors ``cosign.get_cosign_config``.
+
+    Absent / malformed section ⇒ ``{enabled: False, unit_label: "shares"}``.
+    Does NOT walk the parent chain — weighted voting is a per-org property
+    (shares live on the org's own memberships). ``org=None`` ⇒ defaults.
+    """
+    raw = {}
+    if org is not None:
+        section = (getattr(org, "settings", None) or {}).get("weighted_voting")
+        if isinstance(section, dict):
+            raw = section
+    enabled = raw.get("enabled", False)
+    if not isinstance(enabled, bool):
+        enabled = False
+    unit_label = raw.get("unit_label", WEIGHTED_VOTING_DEFAULT_UNIT_LABEL)
+    if not isinstance(unit_label, str) or not unit_label.strip():
+        unit_label = WEIGHTED_VOTING_DEFAULT_UNIT_LABEL
+    unit_label = unit_label.strip()[:_WEIGHTED_VOTING_UNIT_LABEL_MAX]
+    return {"enabled": enabled, "unit_label": unit_label}
+
+
+def weighted_voting_enabled(org: Optional[models.Organization]) -> bool:
+    """Convenience predicate — True when the org has weighted voting on."""
+    return get_weighted_voting_config(org)["enabled"]
+
+
+def normalize_weighted_voting_input(raw: object) -> dict:
+    """Validate a ``weighted_voting`` config dict submitted via
+    PATCH /api/orgs/{slug}. Returns the normalized shape; raises
+    HTTPException(400) on bad values. Import HTTPException lazily to keep
+    org_config free of FastAPI at import time.
+    """
+    from fastapi import HTTPException
+
+    if not isinstance(raw, dict):
+        raise HTTPException(
+            status_code=400,
+            detail="weighted_voting config must be an object",
+        )
+    out: dict = {}
+    if "enabled" in raw:
+        e = raw["enabled"]
+        if not isinstance(e, bool):
+            raise HTTPException(
+                status_code=400,
+                detail="weighted_voting.enabled must be a boolean",
+            )
+        out["enabled"] = e
+    if "unit_label" in raw:
+        label = raw["unit_label"]
+        if not isinstance(label, str):
+            raise HTTPException(
+                status_code=400,
+                detail="weighted_voting.unit_label must be a string",
+            )
+        label = label.strip()
+        if not label:
+            label = WEIGHTED_VOTING_DEFAULT_UNIT_LABEL
+        if len(label) > _WEIGHTED_VOTING_UNIT_LABEL_MAX:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"weighted_voting.unit_label must be "
+                    f"<= {_WEIGHTED_VOTING_UNIT_LABEL_MAX} characters"
+                ),
+            )
+        out["unit_label"] = label
+    return out

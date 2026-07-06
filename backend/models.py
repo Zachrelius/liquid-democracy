@@ -332,6 +332,16 @@ class OrgMembership(Base):
     display_name: Mapped[Optional[str]] = mapped_column(
         String(length=80), nullable=True,
     )
+    # Phase 88 — per-member integer voting weight ("shares"). Load-bearing
+    # only when the org has ``settings.weighted_voting.enabled``; otherwise
+    # every tally reads a uniform weight of 1 (the empty-map parity path in
+    # delegation_engine). Minimum 0 (a zero-share member can vote but
+    # contributes 0 to counts and 0 to the quorum denominator). server_default
+    # "1" backfills existing rows so no data migration is needed for the
+    # column itself. Sub-org proposals resolve weight from the PARENT-org row.
+    voting_weight: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1",
+    )
 
     user: Mapped["User"] = relationship("User", back_populates="org_memberships")
     organization: Mapped["Organization"] = relationship("Organization", back_populates="memberships")
