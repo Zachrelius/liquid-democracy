@@ -523,7 +523,9 @@ def test_rcv_creation_allowed_in_weighted_org(client, test_db):
     assert r.status_code in (200, 201), r.text
 
 
-def test_budget_creation_blocked_in_weighted_org(client, test_db):
+def test_budget_creation_allowed_in_weighted_org(client, test_db):
+    """Phase 88b lifted the Stage-1 budget block — budget_allocation creation is
+    now allowed in a weighted org (weighted median aggregation)."""
     org = _org(test_db, weighted=ON)
     author, _ = _member(test_db, org, "auth", role="steward", weight=1)
     test_db.commit()
@@ -532,8 +534,7 @@ def test_budget_creation_blocked_in_weighted_org(client, test_db):
         "budget_config": {"mode": "allocation", "envelope": 1000},
         "options": [{"label": "A"}, {"label": "B"}],
     })
-    assert r.status_code == 400, r.text
-    assert "weighted" in r.json()["detail"].lower()
+    assert r.status_code in (200, 201), r.text
 
 
 def test_rcv_allowed_in_unweighted_org(client, test_db):

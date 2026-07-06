@@ -115,6 +115,98 @@ def _trimmed_mean(values: list[float], trim_frac: float = 0.10) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Weighted central-tendency helpers (Phase 88b)
+# ---------------------------------------------------------------------------
+#
+# Parity property (tested): with all weights equal to 1,
+# ``_weighted_median(v, [1]*n) == _median(v)`` and the trimmed-mean helper's
+# structure matches the unweighted path closely enough that the unweighted
+# code path is preserved verbatim (weights=None routes to _median/_trimmed_mean,
+# never through these helpers). A weighted median cannot be pulled past where
+# half the total weight sits, so honest allocation stays strategyproof.
+
+def _weighted_median(values: list[float], weights: list[float]) -> float:
+    """Weighted median. Walk cumulative weight over value-sorted pairs and
+    return the first value where cumulative weight passes half the total; if a
+    prefix lands exactly on W/2, return the mean of that value and the next
+    distinct value (mirrors ``_median``'s even-count midpoint). Zero-weight
+    entries are skipped; all-zero (or empty) → 0.0.
+    """
+    pairs = [(float(v), float(w)) for v, w in zip(values, weights) if w > 0]
+    if not pairs:
+        return 0.0
+    pairs.sort(key=lambda p: p[0])
+    total = sum(w for _v, w in pairs)
+    half = total / 2.0
+    cum = 0.0
+    for i, (v, w) in enumerate(pairs):
+        cum += w
+        if abs(cum - half) <= _EPS:
+            # Exactly half at this boundary → midpoint with the immediate next
+            # entry, mirroring _median's even-count mean of the two middle
+            # values (equal-value neighbors collapse to v, so this matches
+            # _median byte-for-byte at equal weights, including duplicates).
+            if i + 1 < len(pairs):
+                return (v + pairs[i + 1][0]) / 2.0
+            return v
+        if cum > half:
+            return v
+    return pairs[-1][0]
+
+
+def _weighted_trimmed_mean(
+    values: list[float], weights: list[float], trim_frac: float = 0.10,
+) -> float:
+    """Weighted trimmed mean: trim ``trim_frac`` of the TOTAL weight from each
+    tail (discounting the boundary entry fractionally — an entry straddling the
+    trim line keeps its residual weight), then take the weighted mean of what
+    remains. If trimming would remove everything, fall back to the plain
+    weighted mean. Zero-weight entries skipped; empty → 0.0.
+
+    Intentionally does not reproduce ``_trimmed_mean``'s count-based
+    round-half-up behavior at equal weights — parity for unweighted orgs is
+    structural (weights=None never routes here), not numerical.
+    """
+    pairs = [(float(v), float(w)) for v, w in zip(values, weights) if w > 0]
+    if not pairs:
+        return 0.0
+    pairs.sort(key=lambda p: p[0])
+    total = sum(w for _v, w in pairs)
+    trim = trim_frac * total
+
+    def _mean(seq):
+        wsum = sum(w for _v, w in seq)
+        if wsum <= _EPS:
+            return 0.0
+        return sum(v * w for v, w in seq) / wsum
+
+    if trim * 2 >= total - _EPS:
+        return _mean(pairs)
+
+    def _drop_front(seq, amount):
+        # Remove ``amount`` weight from the front, keeping the fractional
+        # residual of the straddling entry.
+        out = []
+        removed = 0.0
+        for v, w in seq:
+            if removed >= amount - _EPS:
+                out.append((v, w))
+            elif removed + w <= amount + _EPS:
+                removed += w  # fully trimmed
+            else:
+                out.append((v, removed + w - amount))  # residual kept
+                removed = amount
+        return out
+
+    low = _drop_front(pairs, trim)
+    high = _drop_front(list(reversed(low)), trim)
+    remaining = list(reversed(high))
+    if not remaining:
+        return _mean(pairs)
+    return _mean(remaining)
+
+
+# ---------------------------------------------------------------------------
 # Rounding
 # ---------------------------------------------------------------------------
 
@@ -152,12 +244,23 @@ def tally_allocation(
     ballots: list[dict],
     aggregation: str = "median",
     total_eligible: Optional[int] = None,
+    weights: Optional[list] = None,
 ) -> AllocationTally:
     """Tally an allocation-budget proposal.
 
     ``ballots`` is one ``{option_id: amount}`` dict per cast voter (an omitted
     bucket is a $0 allocation for that voter and counts as 0 in the central
     tendency). ``buckets`` defines the bucket set + per-bucket ceilings.
+
+    Phase 88b — ``weights`` is an optional list parallel to ``ballots`` (one
+    weight per cast voter, same order). ``None`` ⇒ the existing code path runs
+    byte-for-byte (this is the parity mechanism; unweighted calls are never
+    routed through the weighted helpers). When provided, per-bucket central
+    tendency uses the weighted median / weighted trimmed mean, and the
+    counters are weight-denominated (``total_ballots_cast = sum(weights)``,
+    ``total_eligible`` is passed as TOTAL ELIGIBLE WEIGHT by the caller). Steps
+    2-4 (degenerate check, cap-aware reflow, largest-remainder rounding) are
+    count-free and unchanged.
 
     The output always sums to exactly ``envelope`` UNLESS the bucket ceilings
     collectively sum below the envelope, in which case the shortfall is
@@ -168,10 +271,13 @@ def tally_allocation(
         b.option_id: (b.max_amount if b.max_amount is not None else envelope)
         for b in buckets
     }
-    n_cast = len(ballots)
+    weighted = weights is not None
+    # total_ballots_cast: headcount in the legacy path, summed weight when
+    # weighted. Integer weights keep this an int.
+    cast_count = sum(weights) if weighted else len(ballots)
     if total_eligible is None:
-        total_eligible = n_cast
-    not_cast = max(0, total_eligible - n_cast)
+        total_eligible = cast_count
+    not_cast = max(0, total_eligible - cast_count)
 
     def _empty(degenerate: bool) -> AllocationTally:
         return AllocationTally(
@@ -179,7 +285,7 @@ def tally_allocation(
             total_allocated=0.0,
             unallocated_remainder=0.0,
             degenerate_no_support=degenerate,
-            total_ballots_cast=n_cast,
+            total_ballots_cast=cast_count,
             total_eligible=total_eligible,
             not_cast=not_cast,
             aggregation=aggregation,
@@ -193,7 +299,12 @@ def tally_allocation(
     per_bucket: dict = {}
     for bid in bucket_ids:
         vals = [float(b.get(bid, 0) or 0) for b in ballots]
-        if aggregation == "trimmed_mean":
+        if weighted:
+            if aggregation == "trimmed_mean":
+                v = _weighted_trimmed_mean(vals, weights)
+            else:
+                v = _weighted_median(vals, weights)
+        elif aggregation == "trimmed_mean":
             v = _trimmed_mean(vals)
         else:
             v = _median(vals)
@@ -247,7 +358,7 @@ def tally_allocation(
         total_allocated=float(total_allocated),
         unallocated_remainder=float(unallocated_remainder),
         degenerate_no_support=False,
-        total_ballots_cast=n_cast,
+        total_ballots_cast=cast_count,
         total_eligible=total_eligible,
         not_cast=not_cast,
         aggregation=aggregation,
@@ -365,6 +476,7 @@ def tally_project(
     items: list[ProjectItemSpec],
     ballots: list,   # per voter: ordered list of option_id str | (option_id, tier_id) | {option_id, tier_id}
     total_eligible: Optional[int] = None,
+    weights: Optional[list] = None,
 ) -> ProjectTally:
     """Tally a project-budget proposal (discrete + Mode C + cost tiers).
 
@@ -372,6 +484,13 @@ def tally_project(
     Each entry is a bare option_id (non-tiered item) or carries a ``tier_id``
     naming the voter's chosen variant of a tier-parent item. An omitted item is
     ranked at ``max_spend``.
+
+    Phase 88b — ``weights`` is an optional list parallel to ``ballots``.
+    ``None`` ⇒ the existing code path runs byte-for-byte (parity mechanism).
+    When provided: group positions + desired-total use the weighted median,
+    breadth becomes the summed weight of voters who ranked an item, tier
+    plurality counts voter weight, and counters are weight-denominated. The
+    sort key and the funding walk (cost arithmetic only) are unchanged.
 
     Tiers (Phase 74b): a tier parent carries no cost itself; the voter's
     "chosen cost" for it is the cost of the tier they selected. When the walk
@@ -405,9 +524,15 @@ def tally_project(
         tmap = {oid: tid for oid, tid in norm if tid is not None}
         voters.append((ordered, tmap))
     n_cast = len(voters)
+    # Phase 88b — parallel per-voter weights (default 1 each in the unweighted
+    # path so the weighted branches below reduce to the legacy behavior when a
+    # test passes weights=[1]*n; the None path skips them entirely).
+    weighted = weights is not None
+    voter_weights = [float(w) for w in weights] if weighted else [1.0] * n_cast
+    cast_count = sum(weights) if weighted else n_cast
     if total_eligible is None:
-        total_eligible = n_cast
-    not_cast = max(0, total_eligible - n_cast)
+        total_eligible = cast_count
+    not_cast = max(0, total_eligible - cast_count)
 
     def chosen_cost(iid: str, tmap: dict) -> float:
         """A voter's all-or-nothing cost for one item — for a tier parent, the
@@ -421,30 +546,47 @@ def tally_project(
             return min(tcosts.values()) if tcosts else 0.0
         return fixed_cost.get(iid, 0.0)
 
-    # Step 1 — per-item group priority position + breadth.
+    # Step 1 — per-item group priority position + breadth. Phase 88b: position
+    # is the weighted median over per-voter cumulative positions (omitters at
+    # max_spend, at their weight), and breadth is the summed weight of the
+    # voters who ranked the item.
     positions: dict = {}
     breadth: dict = {}
     for iid in item_ids:
         per_voter_pos: list[float] = []
         ranked_count = 0
-        for ordered, tmap in voters:
+        ranked_weight = 0.0
+        for (ordered, tmap), vw in zip(voters, voter_weights):
             if iid in ordered:
                 ranked_count += 1
+                ranked_weight += vw
                 idx = ordered.index(iid)
                 # cumulative position = sum of THIS voter's chosen costs of the
                 # items before iid (tier parents contribute their chosen tier).
                 per_voter_pos.append(sum(chosen_cost(o, tmap) for o in ordered[:idx]))
             else:
                 per_voter_pos.append(max_spend)  # omission = max_spend
-        positions[iid] = _median(per_voter_pos) if per_voter_pos else max_spend
-        breadth[iid] = ranked_count
+        if not per_voter_pos:
+            positions[iid] = max_spend
+        elif weighted:
+            positions[iid] = _weighted_median(per_voter_pos, voter_weights)
+        else:
+            positions[iid] = _median(per_voter_pos)
+        # Unweighted path keeps the int headcount breadth (byte-for-byte);
+        # weighted path uses the summed voter weight.
+        breadth[iid] = ranked_weight if weighted else ranked_count
 
     # Step 2 — total order: group position asc, breadth desc, option_id asc.
     order = sorted(item_ids, key=lambda i: (positions[i], -breadth[i], i))
 
-    # Step 3 — group desired-total = median of per-voter implied spends.
+    # Step 3 — group desired-total = (weighted) median of per-voter implied spends.
     desired = [sum(chosen_cost(o, tmap) for o in ordered) for ordered, tmap in voters]
-    group_desired = _median(desired) if desired else 0.0
+    if not desired:
+        group_desired = 0.0
+    elif weighted:
+        group_desired = _weighted_median(desired, voter_weights)
+    else:
+        group_desired = _median(desired)
     stop_point = max(min_spend, min(group_desired, max_spend))
 
     # Step 4 — the funding walk (HARD-STOP on the top unfunded item).
@@ -459,13 +601,15 @@ def tally_project(
         if is_parent.get(iid):
             tcosts = tier_cost.get(iid, {})
             # Group-preferred order: plurality among voters who ranked the
-            # parent; tiebreak lower cost, then deterministic id.
+            # parent; tiebreak lower cost, then deterministic id. Phase 88b:
+            # plurality counts voter weight (each voter contributes their
+            # shares, not a flat 1).
             counts: dict = {}
-            for ordered, tmap in voters:
+            for (ordered, tmap), vw in zip(voters, voter_weights):
                 if iid in ordered:
                     tid = tmap.get(iid)
                     if tid is not None and tid in tcosts:
-                        counts[tid] = counts.get(tid, 0) + 1
+                        counts[tid] = counts.get(tid, 0) + vw
             pref_order = sorted(
                 tcosts.keys(), key=lambda t: (-counts.get(t, 0), tcosts[t], t)
             )

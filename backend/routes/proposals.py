@@ -810,26 +810,12 @@ def _collect_proposal_creation_errors(
             "stable_result_required", 400,
             "Stable-result is not yet supported for budget proposals.",
         ))
-    # Phase 88 — weighted-voting orgs block budget creation (weighted budget
-    # ships in 88b). Shares are a parent-org property, so resolve the
-    # weight-holding org through the parent for sub-org proposals (mirrors the
-    # tally's weight resolution). Only NEW creation is blocked; flipping the
-    # toggle ON never rejects existing budget proposals.
-    #
-    # Phase 88a lifted the ranked_choice block — weighted RCV is now supported
-    # via ballot duplication. The weighted-ballot cap for RCV is enforced by
-    # the route handlers, which have db to sum the org's total weight (see
-    # ``_enforce_rcv_weight_cap``).
-    from org_config import get_weighted_voting_config as _get_wv
-    _weight_org = org
-    if _weight_org is not None and getattr(_weight_org, "parent_org", None) is not None:
-        _weight_org = _weight_org.parent_org
-    if _weight_org is not None and _get_wv(_weight_org)["enabled"]:
-        if body.voting_method in _budget_methods:
-            errors.append((
-                "voting_method", 400,
-                "Budget voting is not yet available in weighted-voting organizations",
-            ))
+    # Phase 88a lifted the ranked_choice block (weighted RCV via ballot
+    # duplication; cap enforced by _enforce_rcv_weight_cap in the route
+    # handlers). Phase 88b lifted the budget block — budget_allocation /
+    # budget_project are now weight-aware (weighted median / weighted tier
+    # plurality in budget_tally.py), so weighted orgs can run participatory
+    # budgeting. No creation-method block remains for weighted orgs.
     if body.voting_method == "binary":
         if body.options:
             errors.append((

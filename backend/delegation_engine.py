@@ -704,23 +704,35 @@ def _compute_project_tally_pure(
     """
     import budget_tally
 
+    # Phase 88b — in a weighted org, build a weights list parallel to the
+    # ballots (one weight per resolved ballot, keyed to the DELEGATOR's uid so a
+    # delegator's shares ride their delegate's copied ranking). Empty
+    # user_weights ⇒ weights=None ⇒ tally_project runs its legacy path.
+    weighted = bool(ctx.user_weights)
     ballots: list[list[str]] = []
+    weights: Optional[list[int]] = [] if weighted else None
     for uid in user_ids:
         result = resolve_vote_pure(uid, ctx)
         if result is None:
             continue
         if result.ballot.project_ranked is not None:
             ballots.append(list(result.ballot.project_ranked))
+            if weighted:
+                weights.append(_weight_of(uid, ctx))
 
     cfg = ctx.budget_config or {}
     envelope = cfg.get("envelope", 0)
+    total_eligible = (
+        sum(_weight_of(uid, ctx) for uid in user_ids) if weighted else len(user_ids)
+    )
     return budget_tally.tally_project(
         envelope=envelope,
         min_spend=cfg.get("min_spend", 0),
         max_spend=cfg.get("max_spend", envelope),
         items=ctx.budget_items or [],
         ballots=ballots,
-        total_eligible=len(user_ids),
+        total_eligible=total_eligible,
+        weights=weights,
     )
 
 
@@ -744,21 +756,32 @@ def _compute_allocation_tally_pure(
     """
     import budget_tally
 
+    # Phase 88b — build a weights list parallel to the ballots in a weighted
+    # org (one weight per resolved ballot, keyed to the DELEGATOR's uid).
+    # Empty user_weights ⇒ weights=None ⇒ tally_allocation runs its legacy path.
+    weighted = bool(ctx.user_weights)
     ballots: list[dict] = []
+    weights: Optional[list[int]] = [] if weighted else None
     for uid in user_ids:
         result = resolve_vote_pure(uid, ctx)
         if result is None:
             continue
         if result.ballot.allocations is not None:
             ballots.append(result.ballot.allocations)
+            if weighted:
+                weights.append(_weight_of(uid, ctx))
 
     cfg = ctx.budget_config or {}
+    total_eligible = (
+        sum(_weight_of(uid, ctx) for uid in user_ids) if weighted else len(user_ids)
+    )
     return budget_tally.tally_allocation(
         envelope=cfg.get("envelope", 0),
         buckets=ctx.budget_buckets or [],
         ballots=ballots,
         aggregation=cfg.get("aggregation", "median"),
-        total_eligible=len(user_ids),
+        total_eligible=total_eligible,
+        weights=weights,
     )
 
 

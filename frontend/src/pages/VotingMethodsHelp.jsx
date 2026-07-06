@@ -205,6 +205,15 @@ export default function VotingMethodsHelp() {
           </p>
         </div>
 
+        <p className="text-sm text-gray-700 leading-relaxed">
+          In a weighted-voting organization, budget votes aggregate by weighted
+          median instead of a plain one: each voter's allocation or ranking
+          counts for their number of shares, so the result sits where half the
+          shares fall rather than half the voters. Delegation carries shares into
+          budget votes just as it does for other methods &mdash; a delegate's
+          budget influence is their own shares plus their delegators'.
+        </p>
+
         <p className="text-sm text-gray-500">
           <strong>Best for:</strong> Participatory budgeting &mdash; dividing an
           operating budget across programs, choosing which capital projects to
