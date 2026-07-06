@@ -59,7 +59,11 @@ export default function BudgetResultsPanel({ tally, proposal }) {
           </div>
         )}
         <div>
-          {tally.total_ballots_cast || 0} ballot(s) · {tally.budget_aggregation === 'trimmed_mean' ? 'trimmed mean' : 'median'} aggregation
+          {/* Phase 88b — weighted orgs count in shares, not ballots. */}
+          {tally.weighted
+            ? `${tally.total_ballots_cast || 0} ${tally.unit_label || 'shares'} cast`
+            : `${tally.total_ballots_cast || 0} ballot(s)`}
+          {' · '}{tally.budget_aggregation === 'trimmed_mean' ? 'trimmed mean' : 'median'} aggregation
         </div>
       </div>
     </div>

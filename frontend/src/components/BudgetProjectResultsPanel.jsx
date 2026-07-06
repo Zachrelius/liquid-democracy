@@ -82,7 +82,10 @@ export default function BudgetProjectResultsPanel({ tally, proposal }) {
 
       <div className="text-xs text-gray-400 pt-1 border-t border-gray-100">
         {HALT_COPY[tally.project_halt_reason] || ''}{' '}
-        {tally.total_ballots_cast || 0} ballot(s).
+        {/* Phase 88b — weighted orgs count in shares, not ballots. */}
+        {tally.weighted
+          ? `${tally.total_ballots_cast || 0} ${tally.unit_label || 'shares'} cast.`
+          : `${tally.total_ballots_cast || 0} ballot(s).`}
       </div>
     </div>
   );
