@@ -331,6 +331,19 @@ function ApprovalBallot({ proposal, myVote, proposalId, onVoteChange, emailVerif
   );
 }
 
+// Phase 88a — small note clarifying that a weighted proposal's counters are
+// share-denominated. tally.weighted is False (note hidden) in unweighted orgs.
+function WeightedResultsNote({ tally }) {
+  if (!tally?.weighted) return null;
+  const unit = tally.unit_label || 'shares';
+  return (
+    <p className="mt-3 text-xs text-gray-500 border-t border-gray-100 pt-2">
+      Results are counted in {unit}: every total above is a sum of {unit}, not a
+      headcount, and quorum and pass thresholds are measured in {unit}.
+    </p>
+  );
+}
+
 function ApprovalResultsPanel({ tally, proposal }) {
   // Phase 17 F2 + B6 frontend cleanup — the manual admin "resolve tie" UI
   // (handler + button row) was removed in this pass. Ties now auto-resolve
@@ -1553,6 +1566,12 @@ export default function ProposalDetail() {
   // activity_visibility='public' org. Read from /public endpoints and hide
   // all participation controls. Members keep the full experience.
   const readOnly = currentOrg ? !isMember : false;
+  // Phase 88a — cosign progress noun. In a weighted org the cosign threshold
+  // is share-denominated, so label it in the org's unit; otherwise keep the
+  // generic "weight" (delegation-resolved headcount).
+  const cosignUnit = currentOrg?.weighted_voting?.enabled
+    ? (currentOrg.weighted_voting.unit_label || 'shares')
+    : 'weight';
   // Phase 62 A3 — used by the draft-edit delete handler. Lifted to the
   // top of the component so the handler isn't a hook-violating closure.
   const navigate = useNavigate();
@@ -2357,17 +2376,20 @@ export default function ProposalDetail() {
                     <strong>
                       Signed by {proposal.cosign_signature_count} member{proposal.cosign_signature_count === 1 ? '' : 's'}
                       {' · '}
-                      {proposal.cosign_weight} of {proposal.cosign_threshold_snapshot} weight
+                      {proposal.cosign_weight} of {proposal.cosign_threshold_snapshot} {cosignUnit}
                     </strong>
                     {(() => {
                       const need = (proposal.cosign_threshold_snapshot || 0) - (proposal.cosign_weight || 0);
                       return need > 0
-                        ? ` — ${need} more weight needed at window-end`
+                        ? ` — ${need} more ${cosignUnit} needed at window-end`
                         : ' — threshold met (the advance happens at window-end)';
                     })()}
                   </p>
                   <p className="text-xs text-amber-800 mt-1">
-                    Weight counts each signer plus everyone whose vote on this proposal would resolve to them through delegation. The proposal advances to voting at window-end if weight meets the threshold; otherwise it closes as expired.
+                    {cosignUnit === 'weight'
+                      ? 'Weight counts each signer plus everyone whose vote on this proposal would resolve to them through delegation.'
+                      : `Counted in ${cosignUnit}: each signer's own ${cosignUnit} plus the ${cosignUnit} of everyone whose vote on this proposal would resolve to them through delegation.`}
+                    {' '}The proposal advances to voting at window-end if the threshold is met; otherwise it closes as expired.
                   </p>
                   {proposal.cosign_expires_at && (
                     <p className="text-xs text-amber-700 mt-1">
@@ -2550,6 +2572,7 @@ export default function ProposalDetail() {
               ) : (
                 <ResultsPanel tally={tally} proposal={proposal} />
               )}
+              <WeightedResultsNote tally={tally} />
             </div>
           )}
 
@@ -2714,6 +2737,13 @@ export default function ProposalDetail() {
                   Pre-vote — you can change this anytime before voting closes.
                 </div>
               )}
+              {/* Phase 88a — weighted voting chip. my_voting_weight is null in
+                  unweighted orgs (chip hidden). */}
+              {myVote?.my_voting_weight != null && (
+                <div className="mb-3 inline-block px-3 py-1 bg-blue-50 border border-blue-200 rounded-full text-xs text-blue-800">
+                  Your vote carries {myVote.my_voting_weight} {currentOrg?.weighted_voting?.unit_label || 'shares'}
+                </div>
+              )}
               {proposal.voting_method === 'approval' ? (
                 <ApprovalBallot
                   proposal={proposal}
@@ -2791,6 +2821,7 @@ export default function ProposalDetail() {
               ) : (
                 <ResultsPanel tally={tally} proposal={proposal} />
               )}
+              <WeightedResultsNote tally={tally} />
             </div>
           )}
 

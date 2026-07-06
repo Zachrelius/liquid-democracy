@@ -510,7 +510,9 @@ def test_weight_edit_allowed_when_weighting_off(client, test_db):
 # RCV + budget creation blocked in weighted orgs
 # ===========================================================================
 
-def test_rcv_creation_blocked_in_weighted_org(client, test_db):
+def test_rcv_creation_allowed_in_weighted_org(client, test_db):
+    """Phase 88a lifted the Stage-1 RCV block — ranked_choice creation is now
+    allowed in a weighted org (under the weighted-ballot cap)."""
     org = _org(test_db, weighted=ON)
     author, _ = _member(test_db, org, "auth", role="steward", weight=1)
     test_db.commit()
@@ -518,8 +520,7 @@ def test_rcv_creation_blocked_in_weighted_org(client, test_db):
         "title": "rcv", "voting_method": "ranked_choice",
         "options": [{"label": "A"}, {"label": "B"}],
     })
-    assert r.status_code == 400, r.text
-    assert "weighted" in r.json()["detail"].lower()
+    assert r.status_code in (200, 201), r.text
 
 
 def test_budget_creation_blocked_in_weighted_org(client, test_db):

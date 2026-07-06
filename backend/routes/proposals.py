@@ -810,23 +810,22 @@ def _collect_proposal_creation_errors(
             "stable_result_required", 400,
             "Stable-result is not yet supported for budget proposals.",
         ))
-    # Phase 88 — weighted-voting orgs block ranked_choice + budget creation in
-    # Stage 1 (weighted RCV ships in 88a, weighted budget in 88b). Shares are a
-    # parent-org property, so resolve the weight-holding org through the parent
-    # for sub-org proposals (mirrors the tally's weight resolution). Only NEW
-    # creation is blocked; flipping the toggle ON never rejects existing RCV /
-    # budget proposals.
+    # Phase 88 — weighted-voting orgs block budget creation (weighted budget
+    # ships in 88b). Shares are a parent-org property, so resolve the
+    # weight-holding org through the parent for sub-org proposals (mirrors the
+    # tally's weight resolution). Only NEW creation is blocked; flipping the
+    # toggle ON never rejects existing budget proposals.
+    #
+    # Phase 88a lifted the ranked_choice block — weighted RCV is now supported
+    # via ballot duplication. The weighted-ballot cap for RCV is enforced by
+    # the route handlers, which have db to sum the org's total weight (see
+    # ``_enforce_rcv_weight_cap``).
     from org_config import get_weighted_voting_config as _get_wv
     _weight_org = org
     if _weight_org is not None and getattr(_weight_org, "parent_org", None) is not None:
         _weight_org = _weight_org.parent_org
     if _weight_org is not None and _get_wv(_weight_org)["enabled"]:
-        if body.voting_method == "ranked_choice":
-            errors.append((
-                "voting_method", 400,
-                "Ranked choice is not yet available in weighted-voting organizations",
-            ))
-        elif body.voting_method in _budget_methods:
+        if body.voting_method in _budget_methods:
             errors.append((
                 "voting_method", 400,
                 "Budget voting is not yet available in weighted-voting organizations",
@@ -1025,6 +1024,48 @@ def _validate_proposal_creation(body: schemas.ProposalCreate, org: Optional[mode
     """
     for _field, status_code, message in _collect_proposal_creation_errors(body, org):
         raise HTTPException(status_code=status_code, detail=message)
+
+
+def _enforce_rcv_weight_cap(
+    db: Session,
+    org: Optional[models.Organization],
+    voting_method: str,
+) -> None:
+    """Phase 88a — block ranked_choice creation in a weighted org whose current
+    total voting weight exceeds ``RCV_WEIGHTED_BALLOT_CAP``.
+
+    Weighted RCV duplicates each ranking into ``weight`` pyrankvote ballots;
+    an org above the cap would risk OOM at tabulation. Shares are a parent-org
+    property, so the cap is measured against the weight-holding org's active
+    memberships. No-op for non-RCV methods, unweighted orgs, and global
+    (org-less) proposals. Needs db, so it lives outside the DB-free
+    ``_collect_proposal_creation_errors``.
+    """
+    if voting_method != "ranked_choice" or org is None:
+        return
+    from org_config import get_weighted_voting_config
+    from delegation_engine import RCV_WEIGHTED_BALLOT_CAP
+    from sqlalchemy import func
+    weight_org = org
+    if getattr(weight_org, "parent_org_id", None):
+        weight_org = db.get(models.Organization, weight_org.parent_org_id) or weight_org
+    if not get_weighted_voting_config(weight_org)["enabled"]:
+        return
+    total = db.query(
+        func.coalesce(func.sum(models.OrgMembership.voting_weight), 0)
+    ).filter(
+        models.OrgMembership.org_id == weight_org.id,
+        models.OrgMembership.status == "active",
+    ).scalar() or 0
+    if total > RCV_WEIGHTED_BALLOT_CAP:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Ranked choice is unavailable here: this organization's total "
+                f"voting weight ({total}) exceeds the weighted-ballot cap "
+                f"({RCV_WEIGHTED_BALLOT_CAP})."
+            ),
+        )
 
 
 def _create_proposal_options(db: Session, proposal_id: str, options: list[schemas.OptionCreate]):
@@ -3127,8 +3168,28 @@ def advance_proposal(
             else:
                 next_status = "failed"
         elif proposal.voting_method == "ranked_choice":
+            # Phase 88a — weighted-ballot cap: the tally skipped tabulation to
+            # avoid an OOM. Route to ``unresolved`` for admin escalation rather
+            # than silently failing, and audit it.
+            if isinstance(tally, RCVTally) and getattr(
+                tally, "weighted_ballot_cap_exceeded", False
+            ):
+                from delegation_engine import RCV_WEIGHTED_BALLOT_CAP as _cap
+                next_status = "unresolved"
+                log_audit_event(
+                    db,
+                    action="rcv.weighted_ballot_cap_exceeded",
+                    target_type="proposal",
+                    target_id=proposal.id,
+                    actor_id=current_user.id,
+                    details={
+                        "total_ballots_cast": tally.total_ballots_cast,
+                        "cap": _cap,
+                    },
+                    ip_address=request.client.host if request.client else None,
+                )
             # RCV/STV passes if quorum met and at least one winner emerged
-            if isinstance(tally, RCVTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
+            elif isinstance(tally, RCVTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
                 _maybe_resolve_tie(
                     proposal, tally, "ranked_choice", db,
                     current_user_id=current_user.id,

@@ -14,11 +14,14 @@ import {
   ctaCopyForVerificationRequired,
 } from '../../verificationLabels';
 
-function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, perms, confirm }) {
-  const { canChangeRole, canSuspend, canRemove } = perms;
+function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, onSetWeight, perms, weightedEnabled, unitLabel, confirm }) {
+  const { canChangeRole, canSuspend, canRemove, canSetWeight } = perms;
   const [expanded, setExpanded] = useState(false);
   const [role, setRole] = useState(member.role);
   const [saving, setSaving] = useState(false);
+  // Phase 88a — inline voting-weight editor state.
+  const [weight, setWeight] = useState(String(member.voting_weight ?? 1));
+  const [savingWeight, setSavingWeight] = useState(false);
 
   // Phase 12 Stage 1: 'owner' renamed to 'steward'. Legacy 'owner' kept
   // for cached-response safety during the deploy cutover.
@@ -71,6 +74,11 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, pe
             'bg-yellow-50 text-yellow-700'
           }`}>{member.status}</span>
         </span>
+        {weightedEnabled && (
+          <span className="w-20 text-sm text-gray-700 tabular-nums">
+            {member.voting_weight ?? 1}
+          </span>
+        )}
         <span className="w-28 text-xs text-gray-400">
           {new Date(member.joined_at).toLocaleDateString()}
         </span>
@@ -107,6 +115,35 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, pe
                 {saving ? 'Saving...' : 'Update Role'}
               </button>
             </>
+          )}
+          {/* Phase 88a — inline voting-weight editor (only when weighted voting
+              is on and the caller holds member.set_voting_weight). */}
+          {weightedEnabled && canSetWeight && (
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-600 capitalize">{unitLabel}</label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={weight}
+                onChange={e => setWeight(e.target.value)}
+                className="w-24 text-sm border border-gray-300 rounded-lg px-2 py-1 tabular-nums focus:outline-none focus:ring-1 focus:ring-[var(--brand-accent)]"
+              />
+              <button
+                onClick={async () => {
+                  const n = parseInt(weight, 10);
+                  if (Number.isNaN(n) || n < 0) return;
+                  setSavingWeight(true);
+                  await onSetWeight(member.user_id, n);
+                  setSavingWeight(false);
+                  setExpanded(false);
+                }}
+                disabled={savingWeight || String(member.voting_weight ?? 1) === String(parseInt(weight, 10))}
+                className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50"
+              >
+                {savingWeight ? 'Saving...' : 'Set'}
+              </button>
+            </div>
           )}
           <div className="flex-1" />
           {/* Phase 12.5 F2 — Suspend/Reactivate gated on `member.suspend`. */}
@@ -167,6 +204,11 @@ export default function Members() {
   const canRemove = useHasPermission('member.remove');
   const canSuspend = useHasPermission('member.suspend');
   const canInvite = useHasPermission('member.invite');
+  // Phase 88a — weighted voting: gate the inline weight editor + show the
+  // shares column only when the org has weighted voting enabled.
+  const canSetWeight = useHasPermission('member.set_voting_weight');
+  const weightedEnabled = currentOrg?.weighted_voting?.enabled === true;
+  const unitLabel = currentOrg?.weighted_voting?.unit_label || 'shares';
   const [members, setMembers] = useState([]);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [invitations, setInvitations] = useState([]);
@@ -235,6 +277,19 @@ export default function Members() {
       const vDetail = extractVerificationRequiredDetail(e);
       const cta = vDetail ? ctaCopyForVerificationRequired(vDetail) : null;
       toast.error(cta || e.message);
+    }
+  }
+
+  // Phase 88a — set a member's voting weight (shares).
+  async function handleSetWeight(userId, weight) {
+    try {
+      await api.patch(`/api/orgs/${slug}/members/${userId}/voting-weight`, {
+        voting_weight: weight,
+      });
+      toast.success('Voting weight updated');
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Failed to update voting weight');
     }
   }
 
@@ -436,6 +491,7 @@ export default function Members() {
             <span className="w-32">Username</span>
             <span className="w-24">Role</span>
             <span className="w-24">Status</span>
+            {weightedEnabled && <span className="w-20 capitalize">{unitLabel}</span>}
             <span className="w-28">Joined</span>
             <span className="w-4" />
           </div>
@@ -450,7 +506,10 @@ export default function Members() {
                 onSuspend={handleSuspend}
                 onReactivate={handleReactivate}
                 onRemove={handleRemove}
-                perms={{ canChangeRole, canSuspend, canRemove }}
+                onSetWeight={handleSetWeight}
+                perms={{ canChangeRole, canSuspend, canRemove, canSetWeight }}
+                weightedEnabled={weightedEnabled}
+                unitLabel={unitLabel}
                 confirm={confirm}
               />
             ))

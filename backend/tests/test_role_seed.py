@@ -131,8 +131,8 @@ def test_default_grants_counts_match_spec():
     literal counts are the "no accidental seed bump" signal. Update both
     when adding a permission that goes to steward/admin.
     """
-    assert len(DEFAULT_GRANTS["steward"]) == 30
-    assert len(DEFAULT_GRANTS["admin"]) == 30
+    assert len(DEFAULT_GRANTS["steward"]) == 31
+    assert len(DEFAULT_GRANTS["admin"]) == 31
     # Phase 71a — moderator bumped 9 → 11 (member.suspend + polis.manage
     # added so the config-authoritative starter values match the pre-71
     # moderator+ tier behavior).

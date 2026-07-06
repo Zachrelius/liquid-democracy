@@ -104,10 +104,11 @@ def test_steward_sees_all_25_permission_keys(client, test_db):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert "user_permissions" in body
-    # 29 matrix-routed (Phase 68b added proposal.archive) + 2
-    # OWNER_ONLY_KEYS (org.delete + org.transfer_stewardship) surfaced via
-    # the Phase 45a hotfix #1 enrichment loop = 31.
-    assert len(body["user_permissions"]) == 32
+    # 31 matrix-routed (Phase 77 org_inbox.view + Phase 88
+    # member.set_voting_weight) + 2 OWNER_ONLY_KEYS (org.delete +
+    # org.transfer_stewardship) surfaced via the Phase 45a hotfix #1
+    # enrichment loop = 33.
+    assert len(body["user_permissions"]) == 33
     # Spot-check one key from each category.
     expected_subset = {
         "proposal.create",
@@ -136,7 +137,7 @@ def test_admin_sees_all_25_permission_keys(client, test_db):
 
     resp = client.get(f"/api/orgs/{org.slug}", headers=_auth(user))
     assert resp.status_code == 200, resp.text
-    assert len(resp.json()["user_permissions"]) == 30
+    assert len(resp.json()["user_permissions"]) == 31
 
 
 def test_moderator_sees_exactly_eleven_default_grants(client, test_db):
@@ -284,11 +285,11 @@ def test_repeated_has_permission_calls_via_endpoint_use_cache(client, test_db):
         event.remove(test_db.bind, "before_cursor_execute", _count)
 
     assert resp.status_code == 200, resp.text
-    # Steward returns 31 keys (29 matrix incl. Phase 68b proposal.archive
+    # Steward returns 33 keys (31 matrix incl. Phase 88 member.set_voting_weight
     # + 2 OWNER_ONLY post-45a-hotfix); cache should have absorbed all
     # has_permission calls into ONE SELECT (the first call's load —
     # OWNER_ONLY_KEYS don't hit role_permissions).
-    assert len(resp.json()["user_permissions"]) == 32
+    assert len(resp.json()["user_permissions"]) == 33
     assert role_permission_query_count["n"] == 1, (
         f"expected exactly 1 SELECT FROM role_permissions across the "
         f"has_permission calls inside _org_to_out (Stage 1's per-request "
