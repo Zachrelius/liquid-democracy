@@ -998,6 +998,15 @@ def _compute_approval_tally_pure(
 # dataclasses so routes / frontend never touch the library types directly.
 # If we ever swap libraries, only _compute_rcv_tally_pure needs to change.
 
+# Phase 88a — weighted RCV duplicates each ranking into `weight` pyrankvote
+# ballots. This caps the total duplicated-ballot count so an adversarial or
+# very large weighted org can't OOM the container during tabulation. A small
+# corp is 3-4 orders of magnitude below this. Enforced at proposal creation
+# (route layer, on the org's current total weight) AND at tally time, where an
+# over-cap proposal returns an empty tally flagged
+# ``weighted_ballot_cap_exceeded`` rather than expanding the ballots.
+RCV_WEIGHTED_BALLOT_CAP = 200_000
+
 
 @dataclass
 class RCVRound:
@@ -1020,6 +1029,12 @@ class RCVTally:
     tied: bool = False
     method: str = "irv"                        # "irv" or "stv"
     num_winners: int = 1
+    # Phase 88a — True when weighted-ballot duplication would exceed
+    # RCV_WEIGHTED_BALLOT_CAP, so tabulation was skipped (rounds/winners empty)
+    # rather than risking an OOM. The close path routes such a proposal to
+    # ``unresolved`` + audits ``rcv.weighted_ballot_cap_exceeded``; other
+    # readers see an empty (but valid) tally. Always False in unweighted orgs.
+    weighted_ballot_cap_exceeded: bool = False
 
     @property
     def votes_cast(self) -> int:
@@ -1066,30 +1081,64 @@ def _compute_rcv_tally_pure(
 
     method = "irv" if num_winners <= 1 else "stv"
 
-    # Resolve every voter's ballot through delegation
-    rankings: list[list[str]] = []
+    # Phase 88a — weighted ranked choice via ballot duplication. When
+    # ``ctx.user_weights`` is populated (weighted org), each resolved ranking is
+    # expanded into ``w`` identical pyrankvote ballots — mathematically exact
+    # for IRV and STV — and all counters are weight-denominated. Empty map ⇒
+    # every weight is 1 ⇒ byte-identical to the historical headcount tally.
+    # A zero-weight voter's ranking is excluded from the pyrankvote ballots but
+    # their (zero) weight still flows through the counters, mirroring approval.
+    valid_option_set = set(option_ids)
+    ranked_pairs: list[tuple[list[str], int]] = []  # (clean_ranking, weight)
     total_abstain = 0
     not_cast = 0
     total_ballots_cast = 0
     for uid in user_ids:
+        w = _weight_of(uid, ctx)
         result = resolve_vote_pure(uid, ctx)
         if result is None:
-            not_cast += 1
+            not_cast += w
             continue
-        total_ballots_cast += 1
+        total_ballots_cast += w
         ranking = result.ballot.ranking
         if ranking is None or len(ranking) == 0:
-            total_abstain += 1
+            total_abstain += w
             continue
         # Filter out any option_ids no longer in the proposal (defensive)
-        clean = [oid for oid in ranking if oid in set(option_ids)]
+        clean = [oid for oid in ranking if oid in valid_option_set]
         if not clean:
-            total_abstain += 1
+            total_abstain += w
             continue
-        rankings.append(clean)
+        ranked_pairs.append((clean, w))
 
-    eligible = len(user_ids)
-    valid_option_set = set(option_ids)
+    eligible = sum(_weight_of(uid, ctx) for uid in user_ids)
+
+    # Cap guard: skip tabulation rather than OOM the container when the
+    # duplicated-ballot count would be enormous (adversarial / very large
+    # weighted org). Creation-time enforcement in the route layer prevents new
+    # RCV proposals above the cap; this is the tally-time backstop for an org
+    # whose weight grew past the cap mid-vote. Return an empty-but-valid tally
+    # flagged so the close path routes to ``unresolved`` + audits, and other
+    # readers degrade gracefully instead of crashing.
+    total_ranked_weight = sum(w for _r, w in ranked_pairs)
+    if total_ranked_weight > RCV_WEIGHTED_BALLOT_CAP:
+        return RCVTally(
+            rounds=[],
+            winners=[],
+            total_ballots_cast=total_ballots_cast,
+            total_abstain=total_abstain,
+            not_cast=not_cast,
+            total_eligible=eligible,
+            tied=False,
+            method=method,
+            num_winners=num_winners,
+            weighted_ballot_cap_exceeded=True,
+        )
+
+    # Expand to per-share ballots (weight 0 contributes no ballot).
+    rankings: list[list[str]] = []
+    for clean, w in ranked_pairs:
+        rankings.extend(clean for _ in range(w))
 
     # If there are no valid ballots at all, return an empty tally
     if not rankings:

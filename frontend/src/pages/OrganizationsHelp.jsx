@@ -126,6 +126,35 @@ export default function OrganizationsHelp() {
           <li><strong>Search engine indexing.</strong> No SEO meta tags or sitemaps in v1. Browsers default to indexing what they crawl, but the platform doesn't actively help discovery via Google.</li>
         </ul>
       </section>
+
+      <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Weighted voting</h2>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          Most organizations give every member one equal vote. Some &mdash; an
+          employee-owned corporation, a cooperative with member classes &mdash;
+          need votes weighted by shares instead. Turn on <strong>Weighted
+          voting</strong> in Organization Settings and each member's vote counts
+          for the number of shares you assign them on the Members page. You can
+          rename the unit (&ldquo;shares&rdquo;, &ldquo;units&rdquo;,
+          &ldquo;points&rdquo;) to match your charter.
+        </p>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          When it's on, quorum and pass thresholds are measured in shares (for
+          example, &ldquo;40% of the total shares must vote&rdquo;), and cosign
+          thresholds are share-denominated too. Delegation composes naturally: a
+          delegate casts their own shares plus every share delegated to them.
+          Assigning shares is limited to members with the &ldquo;Set member
+          voting weight&rdquo; permission, and every change is recorded in the
+          audit log.
+        </p>
+        <p className="text-sm text-gray-500 leading-relaxed">
+          A privacy tradeoff comes with it: because results move in proportion to
+          shares, a member holding a distinctive number of shares can sometimes
+          be identified from how the totals shift. Individual ballots stay
+          private, but aggregate movements are visible &mdash; a reasonable
+          tradeoff in corporate governance, worth knowing before you enable it.
+        </p>
+      </section>
     </div>
   );
 }

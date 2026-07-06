@@ -3871,10 +3871,15 @@ def create_org_proposal(
         # subtly-different answers depending on path.
         pass
 
-    from routes.proposals import _validate_proposal_creation, _create_proposal_options
+    from routes.proposals import (
+        _validate_proposal_creation, _create_proposal_options,
+        _enforce_rcv_weight_cap,
+    )
     # Pass the sub-org (when present) so the voting-method allowlist resolves
     # via get_org_config — sub-org overrides take precedence over parent.
     _validate_proposal_creation(body, target_sub_org or org)
+    # Phase 88a — weighted RCV ballot-cap creation guard (needs db).
+    _enforce_rcv_weight_cap(db, target_sub_org or org, body.voting_method)
 
     for t in body.topics:
         topic_obj = db.get(models.Topic, t.topic_id)
@@ -5037,7 +5042,27 @@ def advance_org_proposal(
             else:
                 next_status = "failed"
         elif proposal.voting_method == "ranked_choice":
-            if isinstance(tally, RCVTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
+            # Phase 88a — weighted-ballot cap (mirrors routes/proposals.py):
+            # tabulation was skipped to avoid OOM → route to ``unresolved`` for
+            # admin escalation + audit rather than silently failing.
+            if isinstance(tally, RCVTally) and getattr(
+                tally, "weighted_ballot_cap_exceeded", False
+            ):
+                from delegation_engine import RCV_WEIGHTED_BALLOT_CAP as _cap
+                next_status = "unresolved"
+                log_audit_event(
+                    db,
+                    action="rcv.weighted_ballot_cap_exceeded",
+                    target_type="proposal",
+                    target_id=proposal.id,
+                    actor_id=current_user.id,
+                    details={
+                        "total_ballots_cast": tally.total_ballots_cast,
+                        "cap": _cap,
+                    },
+                    ip_address=request.client.host if request.client else None,
+                )
+            elif isinstance(tally, RCVTally) and tally.quorum_met(proposal.quorum_threshold) and tally.winners:
                 _maybe_resolve_tie(
                     proposal, tally, "ranked_choice", db,
                     current_user_id=current_user.id,

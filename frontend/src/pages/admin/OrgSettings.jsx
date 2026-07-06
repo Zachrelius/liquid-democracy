@@ -255,6 +255,8 @@ export default function OrgSettings() {
   const [savingMultiAdminApproval, setSavingMultiAdminApproval] = useState(false);
   // Phase 65 — Delegation master-switch section saving state.
   const [savingDelegation, setSavingDelegation] = useState(false);
+  // Phase 88a — Weighted-voting section saving state.
+  const [savingWeightedVoting, setSavingWeightedVoting] = useState(false);
 
   // Phase 12.7 F4 — Branding section local state.
   //
@@ -1079,6 +1081,28 @@ export default function OrgSettings() {
       toast.error(err.message || 'Failed to save delegation settings');
     } finally {
       setSavingDelegation(false);
+    }
+  }
+
+  // Phase 88a — persist the weighted-voting config (enabled + unit_label).
+  async function handleSaveWeightedVoting() {
+    setSavingWeightedVoting(true);
+    try {
+      const wv = settings.weighted_voting || {};
+      await api.patch(`/api/orgs/${currentOrg.slug}`, {
+        settings: {
+          weighted_voting: {
+            enabled: wv.enabled === true,
+            unit_label: (wv.unit_label || 'shares').trim() || 'shares',
+          },
+        },
+      });
+      await refreshOrgs();
+      toast.success('Weighted voting settings saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save weighted voting settings');
+    } finally {
+      setSavingWeightedVoting(false);
     }
   }
 
@@ -2611,6 +2635,66 @@ export default function OrgSettings() {
               className="px-4 py-1.5 bg-[var(--brand-primary)] text-white text-xs rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
             >
               {savingDelegation ? 'Saving…' : 'Save delegation settings'}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* Phase 88a — Weighted voting. When enabled, votes are weighted by each
+          member's share count (settings.weighted_voting.enabled +
+          .unit_label). Defaults off; unweighted orgs are unaffected. */}
+      {canEditOrgSettings && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
+            Weighted voting
+          </h2>
+          <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.weighted_voting?.enabled === true}
+                onChange={e => updateSetting('weighted_voting', {
+                  ...(settings.weighted_voting || {}),
+                  enabled: e.target.checked,
+                })}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <div className="text-sm text-gray-700">Weight votes by member shares</div>
+                <div className="text-xs text-gray-500">
+                  When on, each member's vote counts for their assigned number of shares instead of one. Quorum and pass thresholds are measured in shares, and cosign thresholds are share-denominated. Delegates carry their own shares plus their delegators'. Set each member's shares on the Members page.
+                </div>
+              </div>
+            </label>
+
+            <label className="text-sm space-y-1 block">
+              <span className="block text-xs text-gray-600">What to call a unit</span>
+              <input
+                type="text"
+                maxLength={24}
+                value={settings.weighted_voting?.unit_label ?? 'shares'}
+                onChange={e => updateSetting('weighted_voting', {
+                  ...(settings.weighted_voting || {}),
+                  unit_label: e.target.value,
+                })}
+                placeholder="shares"
+                className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+              <span className="block text-xs text-gray-400">
+                Shown on ballots and results, e.g. "shares", "units", "points".
+              </span>
+            </label>
+
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              Privacy note: with weighted results, a member holding a distinctive number of shares can sometimes be identified from how the totals move. Corporate voting carries a lower expectation of ballot privacy; individual ballots stay private, but aggregate shifts are visible.
+            </p>
+
+            <button
+              onClick={handleSaveWeightedVoting}
+              disabled={savingWeightedVoting}
+              className="px-4 py-1.5 bg-[var(--brand-primary)] text-white text-xs rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
+            >
+              {savingWeightedVoting ? 'Saving…' : 'Save weighted voting settings'}
             </button>
           </div>
         </section>
