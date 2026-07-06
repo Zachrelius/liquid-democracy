@@ -484,6 +484,9 @@ def test_response_card_omits_internal_fields(client, db_session):
     expected = {
         "slug", "name", "description", "governance_type",
         "join_policy", "member_count", "logo_url", "branding",
+        # Phase 88c — public-safe voting-model declaration (no per-member
+        # weights); drives the /explore anti-stealth badge.
+        "weighted_voting",
     }
     assert set(card.keys()) == expected
 

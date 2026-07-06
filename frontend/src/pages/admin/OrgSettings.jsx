@@ -2689,6 +2689,13 @@ export default function OrgSettings() {
               Privacy note: with weighted results, a member holding a distinctive number of shares can sometimes be identified from how the totals move. Corporate voting carries a lower expectation of ballot privacy; individual ballots stay private, but aggregate shifts are visible.
             </p>
 
+            <p className="text-xs text-gray-500">
+              Changing the voting model notifies every member and names you as
+              the person who changed it. To keep results fair, the model cannot
+              change while any vote is open. Wait for open votes to close.
+              Renaming the unit is allowed at any time.
+            </p>
+
             <button
               onClick={handleSaveWeightedVoting}
               disabled={savingWeightedVoting}

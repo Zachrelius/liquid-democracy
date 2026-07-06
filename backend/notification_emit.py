@@ -244,6 +244,7 @@ def emit_notification(
     target_type: Optional[str] = None,
     target_id: Optional[str] = None,
     payload: Optional[dict[str, Any]] = None,
+    force_in_app: bool = False,
 ) -> Optional[models.Notification]:
     """Emit a single notification to ``user_id`` for ``event_type``.
 
@@ -284,7 +285,14 @@ def emit_notification(
         )
         return None
 
-    in_app_enabled = _is_channel_enabled(db, user_id, event_type, "in_app")
+    # Phase 88c — ``force_in_app`` guarantees the in-app row regardless of the
+    # recipient's preference (opt-in default). Used ONLY by anti-stealth
+    # transparency events (org.voting_model_changed) where a member must not be
+    # able to have silently opted out of learning a governance-model change.
+    # Email still respects the per-user email_immediate preference.
+    in_app_enabled = force_in_app or _is_channel_enabled(
+        db, user_id, event_type, "in_app",
+    )
     email_immediate = _is_channel_enabled(db, user_id, event_type, "email_immediate")
 
     notification: Optional[models.Notification] = None

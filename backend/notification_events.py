@@ -352,6 +352,16 @@ EVENT_REGISTRY: list[EventDefinition] = [
         category="Admin actions",
         signal_level="critical",
     ),
+    # Phase 88c — the org's voting model was flipped (weighted <-> one member
+    # one vote). Fans out to every active member so a stealth switch is
+    # impossible; critical so it lands regardless of quiet-hours digesting.
+    EventDefinition(
+        key="org.voting_model_changed",
+        label="Your organization's voting model changed",
+        description="An admin changed how votes are counted in your organization (between one member one vote and weighted voting).",
+        category="Admin actions",
+        signal_level="critical",
+    ),
     # ---- Messages (Phase 77) --------------------------------------------
     EventDefinition(
         key="message.received",

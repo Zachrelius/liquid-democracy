@@ -88,6 +88,8 @@ _MUST_SURFACE_FIELDS: list[str] = [
     # Phase 88 — resolved weighted-voting config the FE reads to render the
     # shares column + ballot chips conditionally.
     "weighted_voting",
+    # Phase 88c — org total outstanding weight (member-visible; None when off).
+    "total_voting_weight",
 ]
 
 # The Phase 45a hotfix surfaces OWNER_ONLY_KEYS via user_permissions

@@ -157,6 +157,21 @@ def _org_to_out(
         models.OrgMembership.status == "active",
     ).count()
 
+    # Phase 88c — total outstanding voting weight (sum over active members),
+    # only when weighted voting is on. Every member may see this number.
+    _wv_cfg = get_weighted_voting_config(org)
+    total_voting_weight = None
+    if _wv_cfg["enabled"]:
+        from sqlalchemy import func as _sqlfunc
+        total_voting_weight = int(
+            db.query(
+                _sqlfunc.coalesce(_sqlfunc.sum(models.OrgMembership.voting_weight), 0)
+            ).filter(
+                models.OrgMembership.org_id == org.id,
+                models.OrgMembership.status == "active",
+            ).scalar() or 0
+        )
+
     user_role = None
     membership = None
     if user_id:
@@ -270,7 +285,9 @@ def _org_to_out(
         platform_restriction=org.platform_restriction,
         # Phase 88 — resolved weighted-voting config so the FE renders the
         # shares column + ballot chips conditionally.
-        weighted_voting=get_weighted_voting_config(org),
+        weighted_voting=_wv_cfg,
+        # Phase 88c — org total outstanding weight (member-visible).
+        total_voting_weight=total_voting_weight,
     )
 
 
@@ -548,6 +565,7 @@ def update_organization(
     org_slug: str,
     body: schemas.OrgUpdate,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_admin),
@@ -714,7 +732,9 @@ def update_organization(
         # Toggling is allowed at any time (audited below); live tallies
         # recompute on next read.
         if "weighted_voting" in body.settings:
-            from org_config import normalize_weighted_voting_input
+            from org_config import (
+                normalize_weighted_voting_input, get_weighted_voting_config,
+            )
             _wv_new = normalize_weighted_voting_input(
                 body.settings["weighted_voting"]
             )
@@ -722,6 +742,32 @@ def update_organization(
             _wv_base = dict(_wv_old) if isinstance(_wv_old, dict) else {}
             _wv_base.update(_wv_new)
             body.settings["weighted_voting"] = _wv_base
+            # Phase 88c — integrity guard: the voting MODEL cannot flip while
+            # any vote is in flight (org-level proposal, sub-org proposal, or
+            # election — all carry status 'voting'). A unit_label-only change
+            # is allowed. Compare the resolved enabled flag before vs after so
+            # an idempotent re-save of the same value never trips the guard.
+            _old_enabled = get_weighted_voting_config(org)["enabled"]
+            _new_enabled = bool(_wv_base.get("enabled", False))
+            if _new_enabled != _old_enabled:
+                _sub_ids = [
+                    r[0] for r in db.query(models.Organization.id).filter(
+                        models.Organization.parent_org_id == org.id,
+                    ).all()
+                ]
+                _scope_ids = [org.id] + _sub_ids
+                _open = db.query(models.Proposal.id).filter(
+                    models.Proposal.org_id.in_(_scope_ids),
+                    models.Proposal.status == "voting",
+                ).first()
+                if _open is not None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Voting model cannot change while votes are open. "
+                            "Wait for open votes to close."
+                        ),
+                    )
 
         # Phase 17 B5 — tie_resolution validation. Same pre-merge shape:
         # invalid method on either voting_method fails the whole PATCH
@@ -866,6 +912,46 @@ def update_organization(
                 details={"old": _wv_before, "new": _wv_after},
                 ip_address=request.client.host if request.client else None,
             )
+            # Phase 88c — a MODEL flip (enabled changed) notifies EVERY active
+            # member so a stealth switch is impossible; force_in_app makes the
+            # in-app row unconditional (members can't have silently opted out).
+            # A unit_label-only change is audited above but does NOT fan out.
+            if _wv_before["enabled"] != _wv_after["enabled"]:
+                from notification_emit import emit_notification
+                try:
+                    _actor_display = (
+                        current_user.display_name or current_user.username
+                    )
+                    _member_rows = db.query(models.OrgMembership.user_id).filter(
+                        models.OrgMembership.org_id == org.id,
+                        models.OrgMembership.status == "active",
+                    ).all()
+                    for (_uid,) in _member_rows:
+                        emit_notification(
+                            db,
+                            background_tasks,
+                            event_type="org.voting_model_changed",
+                            user_id=_uid,
+                            org_id=org.id,
+                            actor_id=current_user.id,
+                            target_type="organization",
+                            target_id=org.id,
+                            payload={
+                                "org_id": org.id,
+                                "org_slug": org.slug,
+                                "org_name": org.name,
+                                "enabled": _wv_after["enabled"],
+                                "unit_label": _wv_after["unit_label"],
+                                "actor_id": current_user.id,
+                                "actor_display_name": _actor_display,
+                            },
+                            force_in_app=True,
+                        )
+                except Exception as _e:  # noqa: BLE001
+                    log.warning(
+                        "org.voting_model_changed fan-out failed: %s: %s",
+                        type(_e).__name__, _e,
+                    )
         if sm_diff:
             log_audit_event(
                 db,
@@ -1267,6 +1353,13 @@ def list_members(
     # predicate is evaluated per-member; it's a read against the org
     # settings + user.verification_state + the OrgDuplicateFlag table.
     import verification_flags
+    # Phase 88c — other members' weights are visible ONLY to holders of
+    # member.set_voting_weight (the admin view). Plain members get None so a
+    # public per-member register can't be cross-referenced with the support-
+    # trajectory time series to deanonymize ballots.
+    _can_see_weights = has_permission(
+        db, current_user.id, org.id, "member.set_voting_weight",
+    )
     result = []
     for m in memberships:
         user = db.get(models.User, m.user_id)
@@ -1292,7 +1385,10 @@ def list_members(
                 joined_at=m.joined_at,
                 held_titles=held_titles_for_member(db, org.id, m.user_id, role_key),
                 is_org_verified=verification_flags.is_org_verified(user, org, db),
-                voting_weight=getattr(m, "voting_weight", 1) or 1,
+                voting_weight=(
+                    (getattr(m, "voting_weight", 1) or 1)
+                    if _can_see_weights else None
+                ),
             ))
     return result
 
@@ -1460,7 +1556,12 @@ def change_member_role(
         role=membership_role_system_key(m) or "member",
         status=m.status,
         joined_at=m.joined_at,
-        voting_weight=getattr(m, "voting_weight", 1) or 1,
+        # Phase 88c — gated on member.set_voting_weight (admin view only).
+        voting_weight=(
+            (getattr(m, "voting_weight", 1) or 1)
+            if has_permission(db, current_user.id, org.id, "member.set_voting_weight")
+            else None
+        ),
     )
 
 
@@ -1874,6 +1975,9 @@ def get_public_org(
         # Phase 57 — included so the FE can decide whether to render
         # the public proposal-list panel without a second API call.
         activity_visibility=org.activity_visibility or "members_only",
+        # Phase 88c — declare the voting model publicly (anti-stealth). No
+        # per-member weights (anonymous endpoint).
+        weighted_voting=get_weighted_voting_config(org),
     )
 
 
@@ -2283,6 +2387,8 @@ def get_explore_orgs(
                 primary_color=branding_dict.get("primary_color"),
                 accent_color=branding_dict.get("accent_color"),
             ),
+            # Phase 88c — voting model on each discovery card (anti-stealth).
+            weighted_voting=get_weighted_voting_config(org),
         ))
 
     response.headers["Cache-Control"] = "max-age=60"

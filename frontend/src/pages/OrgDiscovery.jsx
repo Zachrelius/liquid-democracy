@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import PublicLayout from '../components/PublicLayout';
+import VotingModelBadge from '../components/VotingModelBadge';
 import api from '../api';
 
 /**
@@ -295,6 +296,8 @@ function ExploreOrgCard({ org }) {
               {org.governance_type}
             </span>
           )}
+          {/* Phase 88c — voting-model badge on the discovery card. */}
+          <VotingModelBadge weightedVoting={org.weighted_voting} className="mt-1 ml-1" />
         </div>
       </div>
 
