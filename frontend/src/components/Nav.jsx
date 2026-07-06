@@ -6,6 +6,7 @@ import { urlFor } from '../utils/urls';
 import { ADMIN_NAV_SUBSECTION_PERMISSIONS } from '../constants/admin_nav_permissions';
 import Avatar from './Avatar';
 import NotificationBadge from './NotificationBadge';
+import VotingModelBadge from './VotingModelBadge';
 import usePendingActionsCount from '../hooks/usePendingActionsCount';
 import useOpenReportsCount from '../hooks/useOpenReportsCount';
 import useUnreadMessageCount from '../hooks/useUnreadMessageCount';
@@ -60,15 +61,25 @@ function OrgSwitcher() {
   if (currentOrg.parent_org_id) {
     const parent = userOrgs.find(o => o.id === currentOrg.parent_org_id);
     parentSlug = parent?.slug || currentOrg.slug;
+    // Phase 88c — weighted voting is a parent-org property; a sub-org inherits
+    // its parent's model, so fall back to the parent's config for the badge.
+    const subWv = currentOrg.weighted_voting?.enabled
+      ? currentOrg.weighted_voting : parent?.weighted_voting;
     labelNode = (
       <span className="flex items-center gap-1">
         {parent ? <span className="text-blue-300">{parent.name}</span> : null}
         <span className="text-blue-400">/</span>
         <span>{currentOrg.name}</span>
+        <VotingModelBadge weightedVoting={subWv} className="ml-1" />
       </span>
     );
   } else {
-    labelNode = <span>{currentOrg.name}</span>;
+    labelNode = (
+      <span className="flex items-center gap-1">
+        <span>{currentOrg.name}</span>
+        <VotingModelBadge weightedVoting={currentOrg.weighted_voting} className="ml-1" />
+      </span>
+    );
   }
 
   // Phase 11 — picking an org now navigates rather than mutating localStorage.

@@ -69,6 +69,8 @@ _SUBJECTS: dict[str, str] = {
     "proposal.closed": "Proposal '{proposal_title}' has closed",
     "sustained_majority.floor_approached": "Vote support nearing floor: '{proposal_title}'",
     "member.join_request": "New member request to join {org_name}",
+    # Phase 88c — voting-model change (weighted <-> one member one vote).
+    "org.voting_model_changed": "{org_name}'s voting model changed",
     # Phase 86 (B-4) — content report, to moderators.
     "report_created": "New content report in {org_name}",
     "invitation.accepted": "{actor_display_name} joined {org_name}",
@@ -516,6 +518,21 @@ def _build_event_template_vars(
         # Phase 77 — messaging event payload keys.
         "sender_display_name": payload.get("sender_display_name") or "Someone",
         "preview": payload.get("preview") or "",
+        # Phase 88c — voting-model-change event. ``voting_model_message`` is the
+        # enabled/disabled-specific body sentence (kept consistent with the
+        # weight-visibility model: members see their OWN weight + the org total,
+        # not other members' weights).
+        "unit_label": payload.get("unit_label") or "shares",
+        "voting_model_message": (
+            (
+                f"Your vote is now weighted by your "
+                f"{payload.get('unit_label') or 'shares'}. You can see your "
+                f"{payload.get('unit_label') or 'shares'} and the "
+                f"organization's total on the Members page."
+            )
+            if payload.get("enabled")
+            else "Votes are now counted as one member, one vote."
+        ),
         # CTA label is per-event but we don't currently use it as a
         # substitution slot in the templates (button text is hardcoded
         # per template). Kept here for future templates that want it.
@@ -531,6 +548,7 @@ _DEFAULT_CTA_LABELS: dict[str, str] = {
     "sustained_majority.floor_approached": "Open proposal",
     "member.join_request": "Review request",
     "invitation.accepted": "View members",
+    "org.voting_model_changed": "View members",
     "delegate.applied": "Review application",
     "delegate.application_decided": "Open organization",
     # Phase 19 — public-delegate-page workflow CTAs.
@@ -591,7 +609,13 @@ def _build_cta_url(
         if not org_slug or not polis_id:
             return fallback
         return f"{base_url}/{org_slug}/polises/{polis_id}"
-    if event_type in ("member.join_request", "invitation.accepted"):
+    if event_type in (
+        "member.join_request",
+        "invitation.accepted",
+        # Phase 88c — voting-model change links members to the Members page
+        # where their weight + the org total are shown.
+        "org.voting_model_changed",
+    ):
         if not org_slug:
             return fallback
         return f"{base_url}/{org_slug}/members"

@@ -2082,6 +2082,11 @@ class OrgPublicOut(BaseModel):
     # sees, so including this here keeps the FE from doing a second
     # API call to learn the access posture.
     activity_visibility: str = "members_only"
+    # Phase 88c — the org's voting model, declared publicly so a prospective
+    # joiner sees weighted-voting orgs up front (anti-stealth). {enabled,
+    # unit_label}; absent/unweighted ⇒ enabled False. Individual member weights
+    # are NEVER surfaced here (anonymous access).
+    weighted_voting: dict = {"enabled": False, "unit_label": "shares"}
 
 
 class ExploreOrgCard(BaseModel):
@@ -2103,6 +2108,9 @@ class ExploreOrgCard(BaseModel):
     member_count: int
     logo_url: Optional[str] = None
     branding: OrgPublicBrandingOut = OrgPublicBrandingOut()
+    # Phase 88c — voting model on each discovery card so the badge renders in
+    # the /explore listing. {enabled, unit_label}; no per-member weights.
+    weighted_voting: dict = {"enabled": False, "unit_label": "shares"}
 
 
 class ExploreResponse(BaseModel):
@@ -2173,6 +2181,10 @@ class OrgOut(BaseModel):
     # _org_to_out via org_config.get_weighted_voting_config so the FE renders
     # the shares column + ballot chips without re-parsing raw settings.
     weighted_voting: dict = {"enabled": False, "unit_label": "shares"}
+    # Phase 88c — total outstanding voting weight (sum over active members).
+    # Every member may see this (it's already implicit in tally denominators);
+    # the FE renders "N of M total <unit>". None when weighted voting is off.
+    total_voting_weight: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -2197,11 +2209,13 @@ class OrgMemberOut(BaseModel):
     # value reflects the live derived state at list-render time. The
     # member-list "Verified" badge reads this boolean.
     is_org_verified: bool = False
-    # Phase 88 — per-member voting weight (shares). Always surfaced (it's
-    # org-directory-grade data in a corporate org); the FE only shows the
-    # column when weighted voting is enabled. Defaults 1 for pre-Phase-88
-    # rows (server_default backfill).
-    voting_weight: int = 1
+    # Phase 88 / 88c — per-member voting weight (shares). AMENDED in 88c:
+    # surfaced ONLY in the admin-gated view (holders of
+    # member.set_voting_weight); None for plain members, because a public
+    # per-member register plus the support-trajectory time series would let
+    # anyone deanonymize ballots by arithmetic. Members see their OWN weight
+    # via the ballot chip + the org total, not other members' weights.
+    voting_weight: Optional[int] = None
     model_config = ConfigDict(from_attributes=True)
 
 

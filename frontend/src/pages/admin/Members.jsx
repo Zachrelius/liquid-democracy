@@ -485,6 +485,15 @@ export default function Members() {
             className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-[var(--brand-accent)] w-56"
           />
         </div>
+        {/* Phase 88c — org total outstanding weight, visible to every member.
+            Individual weights (the column) remain admin-gated. */}
+        {weightedEnabled && currentOrg?.total_voting_weight != null && (
+          <p className="text-xs text-gray-500">
+            Total outstanding:{' '}
+            <span className="font-medium text-gray-700">{currentOrg.total_voting_weight}</span>{' '}
+            {unitLabel}. Your own {unitLabel} appear on any proposal you can vote on.
+          </p>
+        )}
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           <div className="flex items-center gap-4 px-4 py-2 bg-gray-50 text-xs font-medium text-gray-500 uppercase">
             <span className="flex-1">Name</span>

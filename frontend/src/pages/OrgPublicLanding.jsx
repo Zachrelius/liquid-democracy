@@ -7,6 +7,7 @@ import { useToast } from '../components/Toast';
 import BrandingThemeApplier from '../components/BrandingThemeApplier';
 import PublicLayout from '../components/PublicLayout';
 import Nav from '../components/Nav';
+import VotingModelBadge from '../components/VotingModelBadge';
 import EmailVerificationBanner from '../components/EmailVerificationBanner';
 import MessageButton from '../components/MessageButton';
 import renderMarkdown from '../utils/renderMarkdown';
@@ -238,6 +239,16 @@ export default function OrgPublicLanding() {
           <h1 className="text-3xl sm:text-4xl font-semibold tracking-tight text-[var(--brand-primary)]">
             {orgData.name}
           </h1>
+          {/* Phase 88c — declare the voting model to prospective joiners either
+              way: the badge when weighted, an explicit affirmative line when
+              one-member-one-vote. */}
+          <div className="mt-2 flex justify-center">
+            {orgData.weighted_voting?.enabled ? (
+              <VotingModelBadge weightedVoting={orgData.weighted_voting} />
+            ) : (
+              <span className="text-xs text-gray-500">One member, one vote</span>
+            )}
+          </div>
           {orgData.description && (
             <p className="mt-3 text-base text-[#2C3E50] max-w-xl mx-auto">
               {orgData.description}

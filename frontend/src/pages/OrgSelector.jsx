@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useOrg } from '../OrgContext';
 import { urlFor } from '../utils/urls';
 import { useIsDemoUser } from '../hooks/useIsDemoUser';
+import VotingModelBadge from '../components/VotingModelBadge';
 
 export default function OrgSelector() {
   const { userOrgs, setCurrentOrg, loading } = useOrg();
@@ -135,6 +136,8 @@ export default function OrgSelector() {
               )}
               <div className="flex items-center gap-4 text-xs text-gray-400">
                 {org.member_count != null && <span>{org.member_count} members</span>}
+                {/* Phase 88c — voting-model badge in the org switcher. */}
+                <VotingModelBadge weightedVoting={org.weighted_voting} />
                 {org.user_role && (
                   <span className={`px-2 py-0.5 rounded font-medium ${
                     (org.user_role === 'steward' || org.user_role === 'owner') ? 'bg-purple-50 text-purple-700' :
