@@ -1236,6 +1236,10 @@ class MyVoteStatus(BaseModel):
     is_direct: Optional[bool] = None
     delegate_chain: Optional[list[str]] = None
     cast_by: Optional[UserOut] = None
+    # Phase 88 — the caller's own effective voting weight (shares) on this
+    # proposal, so the ballot UI can show "Your vote carries N shares". None in
+    # unweighted orgs (weight is a uniform 1 and the chip is hidden).
+    my_voting_weight: Optional[int] = None
     message: str                      # Human-readable explanation
     # True when the user's delegation_strategy is not strict_precedence on a
     # multi-option proposal — strategy fell back since approval/ranked_choice
@@ -1283,6 +1287,13 @@ class ProposalResults(BaseModel):
     abstain_pct: float = 0.0
     quorum_met: bool = False
     threshold_met: bool = False
+    # Phase 88 — weighted-voting labels. ``weighted`` is True when the org has
+    # weighted voting enabled (so every counter above is share-denominated,
+    # not headcount); ``unit_label`` is the org's unit noun ("shares" /
+    # "units" / …) so the FE can render "1,240 shares yes" without a second
+    # fetch. False / None in unweighted orgs (counters mean headcount).
+    weighted: bool = False
+    unit_label: Optional[str] = None
     time_series: list[SnapshotPoint] = []
     # Approval-voting fields (populated only when voting_method == "approval")
     option_approvals: Optional[dict[str, int]] = None
@@ -2157,6 +2168,11 @@ class OrgOut(BaseModel):
     # the delist notice in settings; members of a suspended org never receive
     # an OrgOut (the org 404s for them). Read-only from the org's perspective.
     platform_restriction: Optional[str] = None
+    # Phase 88 — resolved weighted-voting config {enabled, unit_label}. Always
+    # present (defaults {enabled: False, unit_label: "shares"}); populated by
+    # _org_to_out via org_config.get_weighted_voting_config so the FE renders
+    # the shares column + ballot chips without re-parsing raw settings.
+    weighted_voting: dict = {"enabled": False, "unit_label": "shares"}
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -2181,6 +2197,11 @@ class OrgMemberOut(BaseModel):
     # value reflects the live derived state at list-render time. The
     # member-list "Verified" badge reads this boolean.
     is_org_verified: bool = False
+    # Phase 88 — per-member voting weight (shares). Always surfaced (it's
+    # org-directory-grade data in a corporate org); the FE only shows the
+    # column when weighted voting is enabled. Defaults 1 for pre-Phase-88
+    # rows (server_default backfill).
+    voting_weight: int = 1
     model_config = ConfigDict(from_attributes=True)
 
 

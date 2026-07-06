@@ -25,6 +25,7 @@ from org_config import (
     get_default_proposal_durations,
     get_default_proposal_thresholds,
     get_org_config,
+    get_weighted_voting_config,
 )
 from permission_registry import PERMISSION_REGISTRY
 from reserved_slugs import RESERVED_SLUGS
@@ -267,6 +268,9 @@ def _org_to_out(
         # Phase 87 (B-10) — surface platform-moderation state so an org's own
         # admins see the delist notice in settings.
         platform_restriction=org.platform_restriction,
+        # Phase 88 — resolved weighted-voting config so the FE renders the
+        # shares column + ballot chips conditionally.
+        weighted_voting=get_weighted_voting_config(org),
     )
 
 
@@ -703,6 +707,22 @@ def update_organization(
                     detail="delegation.enabled must be a boolean",
                 )
 
+        # Phase 88 — weighted_voting config validation. Same pre-merge
+        # fail-cleanly shape: `enabled` (bool) + `unit_label` (str, ≤24).
+        # Merge the normalized partial onto any existing block so a PATCH
+        # touching only `enabled` doesn't drop a previously-set unit_label.
+        # Toggling is allowed at any time (audited below); live tallies
+        # recompute on next read.
+        if "weighted_voting" in body.settings:
+            from org_config import normalize_weighted_voting_input
+            _wv_new = normalize_weighted_voting_input(
+                body.settings["weighted_voting"]
+            )
+            _wv_old = (org.settings or {}).get("weighted_voting")
+            _wv_base = dict(_wv_old) if isinstance(_wv_old, dict) else {}
+            _wv_base.update(_wv_new)
+            body.settings["weighted_voting"] = _wv_base
+
         # Phase 17 B5 — tie_resolution validation. Same pre-merge shape:
         # invalid method on either voting_method fails the whole PATCH
         # cleanly with HTTP 400. Unknown keys (e.g., a future
@@ -827,7 +847,25 @@ def update_organization(
             if old_val != new_val:
                 threshold_diff[tkey] = {"old": old_val, "new": new_val}
 
+        # Phase 88 — capture the resolved weighted_voting config before the
+        # merge so we can audit an actual transition (enabled flip or
+        # unit_label change).
+        from org_config import get_weighted_voting_config as _get_wv_cfg
+        _wv_before = _get_wv_cfg(org)
+
         org.settings = {**(org.settings or {}), **body.settings}
+
+        _wv_after = _get_wv_cfg(org)
+        if _wv_before != _wv_after:
+            log_audit_event(
+                db,
+                action="org.weighted_voting_changed",
+                target_type="organization",
+                target_id=org.id,
+                actor_id=current_user.id,
+                details={"old": _wv_before, "new": _wv_after},
+                ip_address=request.client.host if request.client else None,
+            )
         if sm_diff:
             log_audit_event(
                 db,
@@ -1254,6 +1292,7 @@ def list_members(
                 joined_at=m.joined_at,
                 held_titles=held_titles_for_member(db, org.id, m.user_id, role_key),
                 is_org_verified=verification_flags.is_org_verified(user, org, db),
+                voting_weight=getattr(m, "voting_weight", 1) or 1,
             ))
     return result
 
@@ -1421,6 +1460,7 @@ def change_member_role(
         role=membership_role_system_key(m) or "member",
         status=m.status,
         joined_at=m.joined_at,
+        voting_weight=getattr(m, "voting_weight", 1) or 1,
     )
 
 
@@ -1695,6 +1735,76 @@ def reactivate_member(
     m.status = "active"
     db.commit()
     return {"message": "Member reactivated"}
+
+
+class _VotingWeightBody(BaseModel):
+    """Phase 88 — body for PATCH /members/{user_id}/voting-weight."""
+    voting_weight: int
+
+
+@router.patch("/{org_slug}/members/{user_id}/voting-weight", status_code=200)
+def set_member_voting_weight(
+    org_slug: str,
+    user_id: str,
+    body: _VotingWeightBody,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
+):
+    """Phase 88 — set a member's integer voting weight (shares).
+
+    Gated by ``member.set_voting_weight`` (config-authoritative on top of the
+    moderator+ tier floor — a plain member can never reach this). Editable
+    whether or not weighted voting is enabled, so shares can be staged before
+    the switch flips. Audited with old/new/target_user_id.
+    """
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if not has_permission(
+        db, current_user.id, org.id, "member.set_voting_weight"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to set voting weight in this organization.",
+        )
+    from org_config import VOTING_WEIGHT_MIN, VOTING_WEIGHT_MAX
+    w = body.voting_weight
+    if (
+        not isinstance(w, int) or isinstance(w, bool)
+        or w < VOTING_WEIGHT_MIN or w > VOTING_WEIGHT_MAX
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"voting_weight must be an integer between "
+                f"{VOTING_WEIGHT_MIN} and {VOTING_WEIGHT_MAX}."
+            ),
+        )
+    m = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == org.id,
+        models.OrgMembership.user_id == user_id,
+    ).first()
+    if not m:
+        raise HTTPException(status_code=404, detail="Member not found")
+    old = m.voting_weight
+    if old == w:
+        return {"message": "Voting weight unchanged", "voting_weight": w}
+    m.voting_weight = w
+    log_audit_event(
+        db,
+        action="member.voting_weight_changed",
+        target_type="org_membership",
+        target_id=m.id,
+        actor_id=current_user.id,
+        details={"old": old, "new": w, "target_user_id": user_id},
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    return {"message": "Voting weight updated", "voting_weight": w}
 
 
 # ============================================================================

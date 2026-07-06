@@ -85,6 +85,9 @@ _MUST_SURFACE_FIELDS: list[str] = [
     # Phase 87 (B-10) — platform-moderation state so an org's own admins see
     # the delist notice in settings.
     "platform_restriction",
+    # Phase 88 — resolved weighted-voting config the FE reads to render the
+    # shares column + ballot chips conditionally.
+    "weighted_voting",
 ]
 
 # The Phase 45a hotfix surfaces OWNER_ONLY_KEYS via user_permissions
