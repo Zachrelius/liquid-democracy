@@ -104,6 +104,7 @@ import DelegatePublic from './pages/DelegatePublic';
 import DelegateApplicationsReview from './pages/DelegateApplicationsReview';
 // Phase 77 — org-scoped messaging.
 import Messages from './pages/Messages';
+import ShareActivity from './pages/ShareActivity';
 import ConversationDetail from './pages/ConversationDetail';
 // Phase 79 — demo session fencing: app-level guard + shared fence message.
 import DemoUserGuard, { DEMO_FENCE_MESSAGE } from './components/DemoUserGuard';
@@ -445,6 +446,18 @@ export default function App() {
             <ProtectedRoute>
               <OrgProvider>
                 <OrgScopedLayout><Delegations /></OrgScopedLayout>
+              </OrgProvider>
+            </ProtectedRoute>
+          }
+        />
+        {/* Phase 90 — org-scoped share activity ledger (weighted orgs only;
+            the page redirects out for unweighted orgs / non-members). */}
+        <Route
+          path="/:org_slug/shares"
+          element={
+            <ProtectedRoute>
+              <OrgProvider>
+                <OrgScopedLayout><ShareActivity /></OrgScopedLayout>
               </OrgProvider>
             </ProtectedRoute>
           }

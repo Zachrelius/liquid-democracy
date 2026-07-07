@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_ as sa_or
 
 import auth as auth_utils
 import models
@@ -1872,19 +1872,7 @@ def set_member_voting_weight(
             status_code=403,
             detail="You do not have permission to set voting weight in this organization.",
         )
-    from org_config import VOTING_WEIGHT_MIN, VOTING_WEIGHT_MAX
     w = body.voting_weight
-    if (
-        not isinstance(w, int) or isinstance(w, bool)
-        or w < VOTING_WEIGHT_MIN or w > VOTING_WEIGHT_MAX
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"voting_weight must be an integer between "
-                f"{VOTING_WEIGHT_MIN} and {VOTING_WEIGHT_MAX}."
-            ),
-        )
     m = db.query(models.OrgMembership).filter(
         models.OrgMembership.org_id == org.id,
         models.OrgMembership.user_id == user_id,
@@ -1892,9 +1880,18 @@ def set_member_voting_weight(
     if not m:
         raise HTTPException(status_code=404, detail="Member not found")
     old = m.voting_weight
-    if old == w:
-        return {"message": "Voting weight unchanged", "voting_weight": w}
-    m.voting_weight = w
+    # Phase 90 — route through the shared service so the weight update AND an
+    # admin_set ShareEvent land in ONE transaction (ledger transparency). A
+    # zero delta is now a 400 (nothing to record) rather than a silent no-op.
+    import share_service
+    try:
+        share_service.set_member_weight(
+            db, membership=m, new_weight=w, actor_id=current_user.id,
+        )
+    except share_service.ShareServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+    # The platform/admin audit event stays (different audience than the
+    # org-member-facing ledger).
     log_audit_event(
         db,
         action="member.voting_weight_changed",
@@ -1906,6 +1903,158 @@ def set_member_voting_weight(
     )
     db.commit()
     return {"message": "Voting weight updated", "voting_weight": w}
+
+
+# ============================================================================
+# Phase 90 — Share event ledger (feed)
+# ============================================================================
+
+def _share_event_to_out(
+    db: Session,
+    ev: models.ShareEvent,
+    org: models.Organization,
+    *,
+    requester_id: str,
+    show_parties: bool,
+    _name_cache: dict,
+) -> schemas.ShareEventOut:
+    """Render one ShareEvent per the org's visibility rules for ``requester_id``.
+
+    Amounts + the admin_set authorizer are always present. Party ids/names
+    appear only when ``show_parties`` is on OR the requester is a party.
+    ``resulting_balance`` appears only on the requester's own events.
+    """
+    import verification as _verification
+
+    def _dn(uid: Optional[str]) -> Optional[str]:
+        if not uid:
+            return None
+        if uid in _name_cache:
+            return _name_cache[uid]
+        u = db.get(models.User, uid)
+        name = _verification.display_name_for(u, org) if u else uid
+        _name_cache[uid] = name
+        return name
+
+    is_party = requester_id in (ev.user_id, ev.from_user_id, ev.to_user_id)
+    out = schemas.ShareEventOut(
+        id=ev.id, event_type=ev.event_type, created_at=ev.created_at,
+        delta=ev.delta, rule_id=ev.rule_id,
+    )
+    # admin_set authorizer is ALWAYS named (accountability-critical). For
+    # transfer the actor IS the sender (a party), so it follows the party rule.
+    if ev.event_type == "admin_set" and ev.actor_id:
+        out.actor_id = ev.actor_id
+        out.actor_display_name = _dn(ev.actor_id)
+    if show_parties or is_party:
+        out.user_id = ev.user_id
+        out.user_display_name = _dn(ev.user_id)
+        out.from_user_id = ev.from_user_id
+        out.from_display_name = _dn(ev.from_user_id)
+        out.to_user_id = ev.to_user_id
+        out.to_display_name = _dn(ev.to_user_id)
+        if ev.event_type != "admin_set" and ev.actor_id:
+            out.actor_id = ev.actor_id
+            out.actor_display_name = _dn(ev.actor_id)
+    if is_party:
+        out.resulting_balance = ev.resulting_balance
+    return out
+
+
+def _share_ledger_epoch(db: Session, org: models.Organization) -> Optional[datetime]:
+    """The oldest share-event timestamp for the org — the ledger's epoch (no
+    genesis backfill of pre-ledger balances)."""
+    row = db.query(models.ShareEvent.created_at).filter(
+        models.ShareEvent.org_id == org.id,
+    ).order_by(models.ShareEvent.created_at.asc()).first()
+    return row[0] if row else None
+
+
+@router.get("/{org_slug}/share-events", response_model=schemas.ShareEventFeedOut)
+def list_share_events(
+    org_slug: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Phase 90 — org-visible share-event feed (newest first, paginated).
+
+    Member-gated. Party names appear only when ``show_event_parties`` is on or
+    the requester is a party; the resulting balance only on the requester's own
+    events. Anonymous/non-members never reach here (require_org_membership).
+    """
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug,
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    wv = get_weighted_voting_config(org)
+    q = db.query(models.ShareEvent).filter(
+        models.ShareEvent.org_id == org.id,
+    ).order_by(models.ShareEvent.created_at.desc(), models.ShareEvent.id.desc())
+    rows = q.offset(offset).limit(limit + 1).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    name_cache: dict = {}
+    events = [
+        _share_event_to_out(
+            db, ev, org, requester_id=current_user.id,
+            show_parties=bool(wv["show_event_parties"]), _name_cache=name_cache,
+        )
+        for ev in rows
+    ]
+    return schemas.ShareEventFeedOut(
+        events=events, has_more=has_more,
+        show_parties=bool(wv["show_event_parties"]),
+        unit_label=wv["unit_label"],
+        epoch=_share_ledger_epoch(db, org),
+    )
+
+
+@router.get("/{org_slug}/share-events/mine", response_model=schemas.ShareEventFeedOut)
+def list_my_share_events(
+    org_slug: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Phase 90 — the requesting member's own full share history (all fields,
+    including balances). Every event where they are a party."""
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug,
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    wv = get_weighted_voting_config(org)
+    uid = current_user.id
+    q = db.query(models.ShareEvent).filter(
+        models.ShareEvent.org_id == org.id,
+        sa_or(
+            models.ShareEvent.user_id == uid,
+            models.ShareEvent.from_user_id == uid,
+            models.ShareEvent.to_user_id == uid,
+        ),
+    ).order_by(models.ShareEvent.created_at.desc(), models.ShareEvent.id.desc())
+    rows = q.offset(offset).limit(limit + 1).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    name_cache: dict = {}
+    # The requester is a party to every row here, so all fields are visible.
+    events = [
+        _share_event_to_out(
+            db, ev, org, requester_id=uid, show_parties=True,
+            _name_cache=name_cache,
+        )
+        for ev in rows
+    ]
+    return schemas.ShareEventFeedOut(
+        events=events, has_more=has_more, show_parties=True,
+        unit_label=wv["unit_label"], epoch=_share_ledger_epoch(db, org),
+    )
 
 
 # ============================================================================

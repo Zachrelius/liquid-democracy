@@ -480,6 +480,18 @@ export default function Nav() {
                 </NavLink>
               )}
 
+              {/* Phase 90 — Share activity link, weighted orgs only. */}
+              {currentOrg?.weighted_voting?.enabled && (
+                <NavLink
+                  to={urlFor(currentOrg.slug, 'shares')}
+                  className={({ isActive }) =>
+                    `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                  }
+                >
+                  Share activity
+                </NavLink>
+              )}
+
               {/* Phase 43 Cluster H — Help link in the authenticated nav.
                   Public route so always reachable; sits between Delegates
                   and the Admin dropdown. */}

@@ -338,7 +338,17 @@ def get_weighted_voting_config(org: Optional[models.Organization]) -> dict:
     if not isinstance(unit_label, str) or not unit_label.strip():
         unit_label = WEIGHTED_VOTING_DEFAULT_UNIT_LABEL
     unit_label = unit_label.strip()[:_WEIGHTED_VOTING_UNIT_LABEL_MAX]
-    return {"enabled": enabled, "unit_label": unit_label}
+    # Phase 90 — whether the share-event feed names the parties to each event
+    # (default off: naming parties + trajectory charts can expose how
+    # identifiable shareholders voted). Members always see their OWN events.
+    show_event_parties = raw.get("show_event_parties", False)
+    if not isinstance(show_event_parties, bool):
+        show_event_parties = False
+    return {
+        "enabled": enabled,
+        "unit_label": unit_label,
+        "show_event_parties": show_event_parties,
+    }
 
 
 def weighted_voting_enabled(org: Optional[models.Organization]) -> bool:
@@ -387,4 +397,13 @@ def normalize_weighted_voting_input(raw: object) -> dict:
                 ),
             )
         out["unit_label"] = label
+    # Phase 90 — show_event_parties toggle.
+    if "show_event_parties" in raw:
+        sep = raw["show_event_parties"]
+        if not isinstance(sep, bool):
+            raise HTTPException(
+                status_code=400,
+                detail="weighted_voting.show_event_parties must be a boolean",
+            )
+        out["show_event_parties"] = sep
     return out
