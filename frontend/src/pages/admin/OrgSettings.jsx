@@ -1094,6 +1094,8 @@ export default function OrgSettings() {
           weighted_voting: {
             enabled: wv.enabled === true,
             unit_label: (wv.unit_label || 'shares').trim() || 'shares',
+            // Phase 90 — share-activity party visibility.
+            show_event_parties: wv.show_event_parties === true,
           },
         },
       });
@@ -2683,6 +2685,25 @@ export default function OrgSettings() {
               <span className="block text-xs text-gray-400">
                 Shown on ballots and results, e.g. "shares", "units", "points".
               </span>
+            </label>
+
+            {/* Phase 90 — show_event_parties toggle for the share activity feed. */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.weighted_voting?.show_event_parties === true}
+                onChange={e => updateSetting('weighted_voting', {
+                  ...(settings.weighted_voting || {}),
+                  show_event_parties: e.target.checked,
+                })}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <div className="text-sm text-gray-700">Show member names on the share activity feed</div>
+                <div className="text-xs text-gray-500">
+                  When on, the feed names who received, sent, or was granted shares in each event. When off, others see only amounts and the authorizing admin; each member always sees their own events with names and balances. Naming parties, combined with the support trajectory charts, can make it easier to infer how an identifiable shareholder voted.
+                </div>
+              </div>
             </label>
 
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">

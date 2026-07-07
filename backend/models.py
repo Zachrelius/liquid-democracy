@@ -1394,6 +1394,56 @@ class AuditLog(Base):
     ip_address: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
 
+class ShareEvent(Base):
+    """Phase 90 — append-only ledger of every voting-weight ("share") movement.
+
+    One row per movement: an admin weight set, an auto-distribution grant, or a
+    member-to-member transfer. Distinct from AuditLog (platform/admin forensics)
+    — this ledger is the org-member-facing transparency surface. Amounts +
+    authorization are always org-visible; party names are org-configurable
+    (``weighted_voting.show_event_parties``, default off); a member always sees
+    their own events fully.
+    """
+    __tablename__ = "share_events"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_now, nullable=False, index=True,
+    )
+    # admin_set | auto_distribution | transfer
+    event_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    # Recipient/affected member for admin_set + auto_distribution; NULL for
+    # transfer (which uses from_user_id / to_user_id).
+    user_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id"), nullable=True, index=True,
+    )
+    from_user_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id"), nullable=True,
+    )
+    to_user_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id"), nullable=True,
+    )
+    # Signed change. admin_set: new - old. auto_distribution: granted amount.
+    # transfer: positive amount moved from -> to.
+    delta: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Recipient's balance after the event (register-grade; only serialized to
+    # the affected member, never to third parties).
+    resulting_balance: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Who caused it: admin for admin_set, sender for transfer, NULL/system for
+    # auto_distribution (which carries rule_id instead).
+    actor_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id"), nullable=True,
+    )
+    # Phase 90a — nullable FK to share_distribution_rules (constraint added in
+    # 90a's migration; this stage ships the bare column so 90 is independent).
+    rule_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Phase 90a — idempotency key for auto-distribution grants; NULL here.
+    period_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+
 class DelegateProfile(Base):
     """
     A user registered as a public delegate for a specific topic.

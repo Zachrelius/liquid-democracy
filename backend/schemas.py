@@ -2219,6 +2219,43 @@ class OrgMemberOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ShareEventOut(BaseModel):
+    """Phase 90 — one share-ledger event, rendered per the org's visibility
+    rules. Amounts + authorizer are always present; party ids/names appear only
+    when ``show_event_parties`` is on OR the requester is a party; the
+    resulting balance appears only on the requester's own events."""
+    id: str
+    event_type: str            # admin_set | auto_distribution | transfer
+    created_at: datetime
+    delta: int
+    # The authorizer of an admin_set (accountability-critical, ALWAYS named).
+    actor_id: Optional[str] = None
+    actor_display_name: Optional[str] = None
+    # Party fields — populated only when visible to the requester (toggle on,
+    # or requester is a party). Otherwise omitted (None).
+    user_id: Optional[str] = None
+    user_display_name: Optional[str] = None
+    from_user_id: Optional[str] = None
+    from_display_name: Optional[str] = None
+    to_user_id: Optional[str] = None
+    to_display_name: Optional[str] = None
+    # Only present on the requester's own events (register-grade).
+    resulting_balance: Optional[int] = None
+    # Reference to the auto-distribution rule (90a); None for admin_set /
+    # transfer.
+    rule_id: Optional[str] = None
+
+
+class ShareEventFeedOut(BaseModel):
+    """Paginated share-event feed. ``epoch`` states when the ledger began (no
+    genesis backfill of pre-ledger balances)."""
+    events: list[ShareEventOut]
+    has_more: bool = False
+    show_parties: bool = False
+    unit_label: str = "shares"
+    epoch: Optional[datetime] = None
+
+
 class OrgBanOut(BaseModel):
     """Phase 85 (B-8) — one active org rejoin ban, for the admin Members
     "Banned" section. Surfaces the banned user, who banned them, when, and

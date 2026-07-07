@@ -56,6 +56,9 @@ export function urlFor(org, kind, ...args) {
     // the existing voter view via the 'polis-voter' case.
     case 'deliberations':
       return `/${slug}/deliberations`;
+    // Phase 90 — org-scoped share activity ledger (weighted orgs).
+    case 'shares':
+      return `/${slug}/shares`;
     // Phase 77 — org-scoped messaging.
     case 'messages':
       return `/${slug}/messages`;
