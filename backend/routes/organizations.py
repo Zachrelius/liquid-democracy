@@ -1389,6 +1389,9 @@ def list_members(
                     (getattr(m, "voting_weight", 1) or 1)
                     if _can_see_weights else None
                 ),
+                share_start_date=(
+                    getattr(m, "share_start_date", None) if _can_see_weights else None
+                ),
             ))
     return result
 
@@ -2055,6 +2058,242 @@ def list_my_share_events(
         events=events, has_more=has_more, show_parties=True,
         unit_label=wv["unit_label"], epoch=_share_ledger_epoch(db, org),
     )
+
+
+# ============================================================================
+# Phase 90a — Share distribution rules (CRUD + member read) + share start date
+# ============================================================================
+
+def _require_set_weight(db, org, user_id):
+    if not has_permission(db, user_id, org.id, "member.set_voting_weight"):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to manage share distribution in this organization.",
+        )
+
+
+@router.get("/{org_slug}/share-distribution-rules",
+            response_model=list[schemas.ShareDistributionRuleOut])
+def list_distribution_rules(
+    org_slug: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Phase 90a — distribution rules, readable by ALL members (a standing rule
+    that grants shares is exactly the thing members should inspect)."""
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return db.query(models.ShareDistributionRule).filter(
+        models.ShareDistributionRule.org_id == org.id,
+    ).order_by(models.ShareDistributionRule.created_at.desc()).all()
+
+
+@router.post("/{org_slug}/share-distribution-rules",
+             response_model=schemas.ShareDistributionRuleOut, status_code=201)
+def create_distribution_rule(
+    org_slug: str,
+    body: schemas.ShareDistributionRuleCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
+):
+    """Phase 90a — create a distribution rule (gated on member.set_voting_weight)."""
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    _require_set_weight(db, org, current_user.id)
+    import share_distribution
+    from share_service import ShareServiceError
+    try:
+        rule = share_distribution.create_rule(
+            db, org=org, created_by_id=current_user.id,
+            amount=body.amount, interval_months=body.interval_months,
+            schedule_mode=body.schedule_mode, targeting_mode=body.targeting_mode,
+            title_ids=body.title_ids, anchor_date=body.anchor_date,
+        )
+    except ShareServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+    log_audit_event(
+        db, action="share.rule_created", target_type="share_distribution_rule",
+        target_id=rule.id, actor_id=current_user.id,
+        details={"amount": rule.amount, "interval_months": rule.interval_months,
+                 "schedule_mode": rule.schedule_mode,
+                 "targeting_mode": rule.targeting_mode},
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+def _get_rule_or_404(db, org, rule_id):
+    rule = db.get(models.ShareDistributionRule, rule_id)
+    if rule is None or rule.org_id != org.id:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return rule
+
+
+@router.patch("/{org_slug}/share-distribution-rules/{rule_id}",
+              response_model=schemas.ShareDistributionRuleOut)
+def update_distribution_rule(
+    org_slug: str, rule_id: str,
+    body: schemas.ShareDistributionRuleUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
+):
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    _require_set_weight(db, org, current_user.id)
+    rule = _get_rule_or_404(db, org, rule_id)
+    import share_distribution
+    from share_service import ShareServiceError
+    new = {
+        "amount": body.amount if body.amount is not None else rule.amount,
+        "interval_months": (body.interval_months if body.interval_months is not None
+                            else rule.interval_months),
+        "schedule_mode": body.schedule_mode or rule.schedule_mode,
+        "targeting_mode": body.targeting_mode or rule.targeting_mode,
+        "title_ids": (body.title_ids if body.title_ids is not None
+                     else (rule.title_ids or [])),
+    }
+    try:
+        share_distribution.validate_rule_config(**new)
+    except ShareServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+    for tid in new["title_ids"]:
+        t = db.get(models.OrgTitle, tid)
+        if t is None or t.org_id != org.id:
+            raise HTTPException(status_code=400,
+                                detail=f"title {tid} does not belong to this organization.")
+    rule.amount = new["amount"]
+    rule.interval_months = new["interval_months"]
+    rule.schedule_mode = new["schedule_mode"]
+    rule.targeting_mode = new["targeting_mode"]
+    rule.title_ids = new["title_ids"] if new["targeting_mode"] != "all_members" else []
+    if body.anchor_date is not None:
+        rule.anchor_date = body.anchor_date if rule.schedule_mode == "fixed_cadence" else None
+    log_audit_event(
+        db, action="share.rule_edited", target_type="share_distribution_rule",
+        target_id=rule.id, actor_id=current_user.id,
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.post("/{org_slug}/share-distribution-rules/{rule_id}/pause",
+             response_model=schemas.ShareDistributionRuleOut)
+def pause_distribution_rule(
+    org_slug: str, rule_id: str, request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
+):
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    _require_set_weight(db, org, current_user.id)
+    rule = _get_rule_or_404(db, org, rule_id)
+    rule.status = "paused"
+    log_audit_event(db, action="share.rule_paused",
+                    target_type="share_distribution_rule", target_id=rule.id,
+                    actor_id=current_user.id,
+                    ip_address=request.client.host if request.client else None)
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.post("/{org_slug}/share-distribution-rules/{rule_id}/resume",
+             response_model=schemas.ShareDistributionRuleOut)
+def resume_distribution_rule(
+    org_slug: str, rule_id: str, request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
+):
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    _require_set_weight(db, org, current_user.id)
+    rule = _get_rule_or_404(db, org, rule_id)
+    rule.status = "active"
+    log_audit_event(db, action="share.rule_resumed",
+                    target_type="share_distribution_rule", target_id=rule.id,
+                    actor_id=current_user.id,
+                    ip_address=request.client.host if request.client else None)
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.delete("/{org_slug}/share-distribution-rules/{rule_id}", status_code=200)
+def delete_distribution_rule(
+    org_slug: str, rule_id: str, request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
+):
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    _require_set_weight(db, org, current_user.id)
+    rule = _get_rule_or_404(db, org, rule_id)
+    # Real DELETE; existing ledger rows keep the orphaned rule_id by design.
+    log_audit_event(db, action="share.rule_deleted",
+                    target_type="share_distribution_rule", target_id=rule.id,
+                    actor_id=current_user.id,
+                    ip_address=request.client.host if request.client else None)
+    db.delete(rule)
+    db.commit()
+    return {"message": "Rule deleted"}
+
+
+@router.patch("/{org_slug}/members/{user_id}/share-start-date", status_code=200)
+def set_member_share_start_date(
+    org_slug: str, user_id: str,
+    body: schemas._ShareStartDateBody, request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
+):
+    """Phase 90a — set a member's share anniversary date (gated on
+    member.set_voting_weight). NULL resets to the join-date fallback."""
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    _require_set_weight(db, org, current_user.id)
+    m = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == org.id,
+        models.OrgMembership.user_id == user_id).first()
+    if m is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+    m.share_start_date = body.share_start_date
+    log_audit_event(db, action="member.share_start_date_changed",
+                    target_type="org_membership", target_id=m.id,
+                    actor_id=current_user.id,
+                    details={"target_user_id": user_id,
+                             "new": body.share_start_date.isoformat()
+                             if body.share_start_date else None},
+                    ip_address=request.client.host if request.client else None)
+    db.commit()
+    return {"message": "Share start date updated",
+            "share_start_date": body.share_start_date.isoformat()
+            if body.share_start_date else None}
 
 
 # ============================================================================

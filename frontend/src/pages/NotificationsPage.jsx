@@ -51,6 +51,7 @@ const EVENT_TYPE_CATEGORY = {
   'proposal.extended_by_stability': 'Proposals',
   'member.join_request': 'Membership',
   'invitation.accepted': 'Membership',
+  'shares.received': 'Membership',
   'delegate.applied': 'Delegation',
   'delegate.application_decided': 'Delegation',
   'follow.requested': 'Delegation',

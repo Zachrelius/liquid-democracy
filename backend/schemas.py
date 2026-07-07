@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict, field_validator, Field, model_validator
 import re
@@ -2216,6 +2216,9 @@ class OrgMemberOut(BaseModel):
     # anyone deanonymize ballots by arithmetic. Members see their OWN weight
     # via the ballot chip + the org total, not other members' weights.
     voting_weight: Optional[int] = None
+    # Phase 90a — the member's share anniversary date, admin-gated like
+    # voting_weight (None for plain members). Drives anniversary distribution.
+    share_start_date: Optional[date] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -2254,6 +2257,43 @@ class ShareEventFeedOut(BaseModel):
     show_parties: bool = False
     unit_label: str = "shares"
     epoch: Optional[datetime] = None
+
+
+class ShareDistributionRuleOut(BaseModel):
+    """Phase 90a — a standing auto-distribution rule (readable by all members)."""
+    id: str
+    status: str
+    amount: int
+    interval_months: int
+    schedule_mode: str
+    anchor_date: Optional[date] = None
+    targeting_mode: str
+    title_ids: list[str] = []
+    created_at: datetime
+    last_run_at: Optional[datetime] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ShareDistributionRuleCreate(BaseModel):
+    amount: int
+    interval_months: int
+    schedule_mode: str  # fixed_cadence | anniversary
+    targeting_mode: str = "all_members"
+    title_ids: list[str] = []
+    anchor_date: Optional[date] = None
+
+
+class ShareDistributionRuleUpdate(BaseModel):
+    amount: Optional[int] = None
+    interval_months: Optional[int] = None
+    schedule_mode: Optional[str] = None
+    targeting_mode: Optional[str] = None
+    title_ids: Optional[list[str]] = None
+    anchor_date: Optional[date] = None
+
+
+class _ShareStartDateBody(BaseModel):
+    share_start_date: Optional[date] = None
 
 
 class OrgBanOut(BaseModel):

@@ -62,6 +62,11 @@ export function formatNotification(notif) {
     // ---- Polis --------------------------------------------------------
     case 'polis.created':
       return `New deliberation: ${quoted(p.polis_title) || 'a new Polis was created'}`;
+    // ---- Weighted governance (Phase 88c / 90a) ------------------------
+    case 'org.voting_model_changed':
+      return `${actor(notif)} changed how votes are counted in ${p.org_name || 'your organization'}`;
+    case 'shares.received':
+      return `You received ${p.amount || 'additional'} ${p.unit_label || 'shares'} in ${p.org_name || 'your organization'}`;
     default:
       // Unknown event type — render the key so QA can spot the gap.
       return notif.event_type;
@@ -115,6 +120,15 @@ export function notificationHref(notif) {
   // Polis events: voter-facing Polis page.
   if (targetType === 'polis' && targetId) {
     return `/${slug}/polises/${targetId}`;
+  }
+
+  // Phase 90a — a shares grant lands on the share activity feed.
+  if (eventType === 'shares.received') {
+    return `/${slug}/shares`;
+  }
+  // Phase 88c — a voting-model change lands on the members page.
+  if (eventType === 'org.voting_model_changed') {
+    return `/${slug}/members`;
   }
 
   // Comments: deep-link to the comment via #comment-{id} so the user lands

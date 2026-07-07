@@ -147,6 +147,19 @@ export default function OrganizationsHelp() {
           voting weight&rdquo; permission, and every change is recorded in the
           audit log.
         </p>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          Every change to a member's shares appears in the Share activity feed,
+          so movements are transparent even though individual balances are not
+          shown to other members by default. You can also set up distribution
+          rules that grant shares automatically on a cadence, such as a fixed
+          number every year on each member's own anniversary, or on a shared
+          schedule for everyone. Rules can target all members or only members
+          with certain titles. If the platform is offline when a grant is due,
+          the missed grants catch up on the next run. Month lengths are handled
+          for you: a rule anchored on the 31st simply falls on the last day of
+          shorter months. Delegation and how votes are weighted are unchanged by
+          distribution rules; they only move shares.
+        </p>
         <p className="text-sm text-gray-500 leading-relaxed">
           A privacy tradeoff comes with it: because results move in proportion to
           shares, a member holding a distinctive number of shares can sometimes

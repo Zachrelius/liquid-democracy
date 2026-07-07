@@ -362,6 +362,14 @@ EVENT_REGISTRY: list[EventDefinition] = [
         category="Admin actions",
         signal_level="critical",
     ),
+    # Phase 90a — an auto-distribution rule granted you shares.
+    EventDefinition(
+        key="shares.received",
+        label="You received shares",
+        description="An automatic distribution rule in your organization granted you additional shares.",
+        category="Membership",
+        signal_level="standard",
+    ),
     # ---- Messages (Phase 77) --------------------------------------------
     EventDefinition(
         key="message.received",

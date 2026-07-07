@@ -1,9 +1,10 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import date as date_cls, datetime, timezone
 from typing import Optional
 
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Enum,
     Float,
@@ -342,6 +343,10 @@ class OrgMembership(Base):
     voting_weight: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default="1",
     )
+    # Phase 90a — the member's share "anniversary" date, driving anniversary-mode
+    # auto-distribution. Resolver, not backfill: ``share_start_date_for`` returns
+    # this column when set, else the membership join date.
+    share_start_date: Mapped[Optional[date_cls]] = mapped_column(Date, nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="org_memberships")
     organization: Mapped["Organization"] = relationship("Organization", back_populates="memberships")
@@ -1437,11 +1442,49 @@ class ShareEvent(Base):
     actor_id: Mapped[Optional[str]] = mapped_column(
         String, ForeignKey("users.id"), nullable=True,
     )
-    # Phase 90a — nullable FK to share_distribution_rules (constraint added in
-    # 90a's migration; this stage ships the bare column so 90 is independent).
-    rule_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    # Phase 90a — idempotency key for auto-distribution grants; NULL here.
+    # Phase 90a — reference to the share_distribution_rule that produced an
+    # auto_distribution event. Deliberately NOT a hard FK: rule deletion is a
+    # real DELETE and leaves the orphaned rule_id here (events are
+    # self-describing; spec 90a 2.1). NULL for admin_set / transfer.
+    rule_id: Mapped[Optional[str]] = mapped_column(String, nullable=True, index=True)
+    # Phase 90a — idempotency key for auto-distribution grants (NULL for
+    # admin_set / transfer). Partial-unique on (org_id, period_key).
     period_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+
+class ShareDistributionRule(Base):
+    """Phase 90a — a standing rule that grants shares on a cadence.
+
+    Org-visible (a rule that grants shares is exactly the thing members should
+    inspect). Fires inside the digest-scheduler sweep; idempotent via the
+    ShareEvent.period_key partial-unique index.
+    """
+    __tablename__ = "share_distribution_rules"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    org_id: Mapped[str] = mapped_column(
+        String, ForeignKey("organizations.id"), nullable=False, index=True,
+    )
+    created_by_id: Mapped[Optional[str]] = mapped_column(
+        String, ForeignKey("users.id"), nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)
+    # active | paused (soft states; delete is a real DELETE, audited)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+    # Shares granted per member per occurrence (>= 1, validated at the route).
+    amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Cadence in months (>= 1); UI offers months/years and stores months.
+    interval_months: Mapped[int] = mapped_column(Integer, nullable=False)
+    # fixed_cadence | anniversary
+    schedule_mode: Mapped[str] = mapped_column(String, nullable=False)
+    # For fixed_cadence: the date the cadence counts from. Unused for anniversary.
+    anchor_date: Mapped[Optional[date_cls]] = mapped_column(Date, nullable=True)
+    # all_members | titles_include | titles_exclude
+    targeting_mode: Mapped[str] = mapped_column(String, nullable=False, default="all_members")
+    # JSON list of OrgTitle ids (empty for all_members).
+    title_ids: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # Bookkeeping for the fixed-cadence tick.
+    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
 
 class DelegateProfile(Base):
