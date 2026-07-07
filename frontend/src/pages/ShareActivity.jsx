@@ -5,6 +5,7 @@ import { useOrg } from '../OrgContext';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
 import DistributionRules from '../components/DistributionRules';
+import TransferShares from '../components/TransferShares';
 
 /**
  * ShareActivity — Phase 90 member-facing share-event ledger.
@@ -89,6 +90,10 @@ export default function ShareActivity() {
       </div>
 
       <DistributionRules slug={slug} unit={unit} />
+
+      {currentOrg?.weighted_voting?.transfers_enabled && (
+        <TransferShares slug={slug} unit={unit} onDone={load} />
+      )}
 
       <p className="text-xs text-gray-500 mb-4">
         Every change to a member's {unit} is recorded here. Amounts and who

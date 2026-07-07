@@ -370,6 +370,14 @@ EVENT_REGISTRY: list[EventDefinition] = [
         category="Membership",
         signal_level="standard",
     ),
+    # Phase 90b — another member transferred shares to you.
+    EventDefinition(
+        key="shares.transfer_received",
+        label="A member transferred shares to you",
+        description="Another member sent you some of their shares.",
+        category="Membership",
+        signal_level="standard",
+    ),
     # ---- Messages (Phase 77) --------------------------------------------
     EventDefinition(
         key="message.received",

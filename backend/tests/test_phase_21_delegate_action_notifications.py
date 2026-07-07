@@ -153,6 +153,8 @@ _EXPECTED_SIGNAL_LEVEL: dict[str, str] = {
     "org.voting_model_changed": "critical",
     # Phase 90a — auto-distribution grant.
     "shares.received": "standard",
+    # Phase 90b — member-to-member transfer.
+    "shares.transfer_received": "standard",
     # Phase 77 — messaging.
     "message.received": "standard",
     "message.org_inbox": "standard",

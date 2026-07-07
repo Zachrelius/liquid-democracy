@@ -67,6 +67,8 @@ export function formatNotification(notif) {
       return `${actor(notif)} changed how votes are counted in ${p.org_name || 'your organization'}`;
     case 'shares.received':
       return `You received ${p.amount || 'additional'} ${p.unit_label || 'shares'} in ${p.org_name || 'your organization'}`;
+    case 'shares.transfer_received':
+      return `${p.sender_display_name || 'A member'} transferred ${p.amount || ''} ${p.unit_label || 'shares'} to you`;
     default:
       // Unknown event type — render the key so QA can spot the gap.
       return notif.event_type;
@@ -122,8 +124,8 @@ export function notificationHref(notif) {
     return `/${slug}/polises/${targetId}`;
   }
 
-  // Phase 90a — a shares grant lands on the share activity feed.
-  if (eventType === 'shares.received') {
+  // Phase 90a/90b — a shares grant or transfer lands on the share activity feed.
+  if (eventType === 'shares.received' || eventType === 'shares.transfer_received') {
     return `/${slug}/shares`;
   }
   // Phase 88c — a voting-model change lands on the members page.

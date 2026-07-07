@@ -73,6 +73,8 @@ _SUBJECTS: dict[str, str] = {
     "org.voting_model_changed": "{org_name}'s voting model changed",
     # Phase 90a — auto-distribution grant.
     "shares.received": "You received shares in {org_name}",
+    # Phase 90b — a member transferred shares to you.
+    "shares.transfer_received": "{sender_display_name} transferred shares to you",
     # Phase 86 (B-4) — content report, to moderators.
     "report_created": "New content report in {org_name}",
     "invitation.accepted": "{actor_display_name} joined {org_name}",
@@ -554,6 +556,7 @@ _DEFAULT_CTA_LABELS: dict[str, str] = {
     "invitation.accepted": "View members",
     "org.voting_model_changed": "View members",
     "shares.received": "View share activity",
+    "shares.transfer_received": "View share activity",
     "delegate.applied": "Review application",
     "delegate.application_decided": "Open organization",
     # Phase 19 — public-delegate-page workflow CTAs.
@@ -624,8 +627,8 @@ def _build_cta_url(
         if not org_slug:
             return fallback
         return f"{base_url}/{org_slug}/members"
-    # Phase 90a — a shares grant links to the share activity feed.
-    if event_type == "shares.received":
+    # Phase 90a/90b — a shares grant/transfer links to the share activity feed.
+    if event_type in ("shares.received", "shares.transfer_received"):
         if not org_slug:
             return fallback
         return f"{base_url}/{org_slug}/shares"

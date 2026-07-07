@@ -33,7 +33,7 @@ from org_titles import seed_system_titles_for_org
 from role_permissions import has_permission
 from rate_limit_utils import (
     content_limiter, JOIN_REQUEST_LIMIT, ORG_CREATE_LIMIT, PROPOSAL_CREATE_LIMIT,
-    INVITATION_CREATE_LIMIT,
+    INVITATION_CREATE_LIMIT, SHARE_TRANSFER_LIMIT,
 )
 from org_restriction import (
     effective_discoverability, assert_org_accessible, is_suspended,
@@ -1960,7 +1960,13 @@ def _share_event_to_out(
             out.actor_id = ev.actor_id
             out.actor_display_name = _dn(ev.actor_id)
     if is_party:
-        out.resulting_balance = ev.resulting_balance
+        # Recipient's balance goes to the recipient (or the affected member for
+        # admin_set / auto_distribution).
+        if requester_id == ev.user_id or requester_id == ev.to_user_id:
+            out.resulting_balance = ev.resulting_balance
+        # Phase 90b — the sender's post-transfer balance only to the sender.
+        if requester_id == ev.from_user_id:
+            out.from_resulting_balance = ev.from_resulting_balance
     return out
 
 
@@ -2294,6 +2300,83 @@ def set_member_share_start_date(
     return {"message": "Share start date updated",
             "share_start_date": body.share_start_date.isoformat()
             if body.share_start_date else None}
+
+
+# ============================================================================
+# Phase 90b — Member-to-member share transfers
+# ============================================================================
+
+@router.post("/{org_slug}/shares/transfer", status_code=200)
+@content_limiter.limit(SHARE_TRANSFER_LIMIT)
+def transfer_shares_endpoint(
+    org_slug: str,
+    body: schemas._ShareTransferBody,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Phase 90b — transfer shares to another member. Requires weighted voting
+    AND transfers enabled; both parties active members; amount >= 1; sender
+    balance >= amount; recipient != sender. Atomic; conserves the org total.
+    """
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    wv = get_weighted_voting_config(org)
+    if not wv["enabled"] or not wv["transfers_enabled"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Share transfers are not enabled in this organization.",
+        )
+    if body.to_user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="You cannot transfer shares to yourself.")
+    # Lock the sender row (SELECT ... FOR UPDATE on Postgres; no-op on SQLite)
+    # so two simultaneous transfers can't overdraw.
+    sender_m = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == org.id,
+        models.OrgMembership.user_id == current_user.id,
+        models.OrgMembership.status == "active",
+    ).with_for_update().first()
+    if sender_m is None:
+        raise HTTPException(status_code=403, detail="You are not an active member.")
+    recipient_m = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == org.id,
+        models.OrgMembership.user_id == body.to_user_id,
+        models.OrgMembership.status == "active",
+    ).with_for_update().first()
+    if recipient_m is None:
+        raise HTTPException(status_code=404, detail="Recipient is not an active member.")
+    import share_service
+    try:
+        ev = share_service.transfer_shares(
+            db, org=org, sender_membership=sender_m,
+            recipient_membership=recipient_m, amount=body.amount,
+            actor_id=current_user.id,
+        )
+    except share_service.ShareServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message)
+    from_bal = ev.from_resulting_balance
+    to_bal = ev.resulting_balance
+    db.commit()
+    # Notify the recipient (parties always see each other on a transfer).
+    from notification_emit import emit_notification
+    try:
+        emit_notification(
+            db, background_tasks, event_type="shares.transfer_received",
+            user_id=body.to_user_id, org_id=org.id, actor_id=current_user.id,
+            target_type="organization", target_id=org.id,
+            payload={"org_id": org.id, "org_slug": org.slug, "org_name": org.name,
+                     "amount": body.amount, "unit_label": wv["unit_label"],
+                     "sender_display_name": current_user.display_name or current_user.username},
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+    return {"message": "Transfer complete", "amount": body.amount,
+            "sender_balance": from_bal, "recipient_balance": to_bal}
 
 
 # ============================================================================

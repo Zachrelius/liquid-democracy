@@ -2244,6 +2244,9 @@ class ShareEventOut(BaseModel):
     to_display_name: Optional[str] = None
     # Only present on the requester's own events (register-grade).
     resulting_balance: Optional[int] = None
+    # Phase 90b — the SENDER's balance after a transfer, only present when the
+    # requester is the sender.
+    from_resulting_balance: Optional[int] = None
     # Reference to the auto-distribution rule (90a); None for admin_set /
     # transfer.
     rule_id: Optional[str] = None
@@ -2294,6 +2297,11 @@ class ShareDistributionRuleUpdate(BaseModel):
 
 class _ShareStartDateBody(BaseModel):
     share_start_date: Optional[date] = None
+
+
+class _ShareTransferBody(BaseModel):
+    to_user_id: str
+    amount: int
 
 
 class OrgBanOut(BaseModel):

@@ -64,3 +64,46 @@ def set_member_weight(
     db.add(event)
     db.flush()
     return event
+
+
+def transfer_shares(
+    db: Session,
+    *,
+    org: models.Organization,
+    sender_membership: models.OrgMembership,
+    recipient_membership: models.OrgMembership,
+    amount: int,
+    actor_id: Optional[str],
+) -> models.ShareEvent:
+    """Move ``amount`` shares from sender to recipient AND write a single
+    ``transfer`` ShareEvent, in the caller's transaction. Conserves the org
+    total. Balances can reach 0, never negative. Returns the ShareEvent.
+
+    The caller is responsible for locking the sender row (SELECT ... FOR UPDATE
+    on Postgres) before calling, so two simultaneous transfers can't overdraw.
+    """
+    if not isinstance(amount, int) or isinstance(amount, bool) or amount < 1:
+        raise ShareServiceError("amount must be an integer >= 1.")
+    if sender_membership.user_id == recipient_membership.user_id:
+        raise ShareServiceError("You cannot transfer shares to yourself.")
+    sender_bal = sender_membership.voting_weight or 0
+    if sender_bal < amount:
+        raise ShareServiceError("Insufficient balance for this transfer.")
+    new_sender = sender_bal - amount
+    new_recipient = (recipient_membership.voting_weight or 0) + amount
+    sender_membership.voting_weight = new_sender
+    recipient_membership.voting_weight = new_recipient
+    event = models.ShareEvent(
+        org_id=org.id,
+        event_type="transfer",
+        user_id=None,
+        from_user_id=sender_membership.user_id,
+        to_user_id=recipient_membership.user_id,
+        delta=amount,
+        resulting_balance=new_recipient,
+        from_resulting_balance=new_sender,
+        actor_id=actor_id,
+    )
+    db.add(event)
+    db.flush()
+    return event

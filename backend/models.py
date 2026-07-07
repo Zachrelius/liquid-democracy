@@ -1437,6 +1437,9 @@ class ShareEvent(Base):
     # Recipient's balance after the event (register-grade; only serialized to
     # the affected member, never to third parties).
     resulting_balance: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Phase 90b — the SENDER's balance after a transfer (only serialized to the
+    # sender). NULL for admin_set / auto_distribution.
+    from_resulting_balance: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # Who caused it: admin for admin_set, sender for transfer, NULL/system for
     # auto_distribution (which carries rule_id instead).
     actor_id: Mapped[Optional[str]] = mapped_column(

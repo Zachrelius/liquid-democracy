@@ -344,10 +344,16 @@ def get_weighted_voting_config(org: Optional[models.Organization]) -> dict:
     show_event_parties = raw.get("show_event_parties", False)
     if not isinstance(show_event_parties, bool):
         show_event_parties = False
+    # Phase 90b — whether members can transfer shares to each other (default
+    # off). Requires enabled too.
+    transfers_enabled = raw.get("transfers_enabled", False)
+    if not isinstance(transfers_enabled, bool):
+        transfers_enabled = False
     return {
         "enabled": enabled,
         "unit_label": unit_label,
         "show_event_parties": show_event_parties,
+        "transfers_enabled": transfers_enabled,
     }
 
 
@@ -406,4 +412,13 @@ def normalize_weighted_voting_input(raw: object) -> dict:
                 detail="weighted_voting.show_event_parties must be a boolean",
             )
         out["show_event_parties"] = sep
+    # Phase 90b — transfers_enabled toggle.
+    if "transfers_enabled" in raw:
+        te = raw["transfers_enabled"]
+        if not isinstance(te, bool):
+            raise HTTPException(
+                status_code=400,
+                detail="weighted_voting.transfers_enabled must be a boolean",
+            )
+        out["transfers_enabled"] = te
     return out

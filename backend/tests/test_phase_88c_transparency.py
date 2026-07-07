@@ -300,7 +300,7 @@ def test_public_landing_surfaces_weighted_voting_no_weights(client, test_db):
     r = client.get(f"/api/orgs/{org.slug}/public")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["weighted_voting"] == {"enabled": True, "unit_label": "units", "show_event_parties": False}
+    assert body["weighted_voting"] == {"enabled": True, "unit_label": "units", "show_event_parties": False, "transfers_enabled": False}
     # No per-member weight data anywhere in the anonymous payload.
     assert "voting_weight" not in body
     assert "5" not in str(body.get("members", ""))

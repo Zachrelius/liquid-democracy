@@ -160,6 +160,14 @@ export default function OrganizationsHelp() {
           shorter months. Delegation and how votes are weighted are unchanged by
           distribution rules; they only move shares.
         </p>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          You can also allow members to transfer shares directly to one another,
+          so a member who sells or gifts some of their stake can handle it
+          without an admin. Transfers move existing shares between members; they
+          never change the organization total. Both the sender and the recipient
+          always see a transfer in the share activity feed, even when member
+          names are otherwise hidden there.
+        </p>
         <p className="text-sm text-gray-500 leading-relaxed">
           A privacy tradeoff comes with it: because results move in proportion to
           shares, a member holding a distinctive number of shares can sometimes
