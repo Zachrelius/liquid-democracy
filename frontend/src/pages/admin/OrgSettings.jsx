@@ -1096,6 +1096,8 @@ export default function OrgSettings() {
             unit_label: (wv.unit_label || 'shares').trim() || 'shares',
             // Phase 90 — share-activity party visibility.
             show_event_parties: wv.show_event_parties === true,
+            // Phase 90b — member-to-member transfers.
+            transfers_enabled: wv.transfers_enabled === true,
           },
         },
       });
@@ -2702,6 +2704,25 @@ export default function OrgSettings() {
                 <div className="text-sm text-gray-700">Show member names on the share activity feed</div>
                 <div className="text-xs text-gray-500">
                   When on, the feed names who received, sent, or was granted shares in each event. When off, others see only amounts and the authorizing admin; each member always sees their own events with names and balances. Naming parties, combined with the support trajectory charts, can make it easier to infer how an identifiable shareholder voted.
+                </div>
+              </div>
+            </label>
+
+            {/* Phase 90b — member-to-member transfers toggle. */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.weighted_voting?.transfers_enabled === true}
+                onChange={e => updateSetting('weighted_voting', {
+                  ...(settings.weighted_voting || {}),
+                  transfers_enabled: e.target.checked,
+                })}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <div className="text-sm text-gray-700">Allow members to transfer shares to each other</div>
+                <div className="text-xs text-gray-500">
+                  When on, members can send some of their own shares to another member without an admin. Transfers move existing shares and never change the organization total. Both parties always see the transfer in the share activity feed.
                 </div>
               </div>
             </label>

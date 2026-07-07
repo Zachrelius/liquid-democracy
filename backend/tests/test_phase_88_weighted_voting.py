@@ -561,7 +561,7 @@ def test_settings_patch_enables_weighted_voting_and_audits(client, test_db):
     })
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["weighted_voting"] == {"enabled": True, "unit_label": "units", "show_event_parties": False}
+    assert body["weighted_voting"] == {"enabled": True, "unit_label": "units", "show_event_parties": False, "transfers_enabled": False}
     audit = test_db.query(models.AuditLog).filter(
         models.AuditLog.action == "org.weighted_voting_changed",
     ).all()
@@ -589,7 +589,7 @@ def test_settings_patch_partial_preserves_unit_label(client, test_db):
         "settings": {"weighted_voting": {"enabled": False}},
     })
     assert r.status_code == 200, r.text
-    assert r.json()["weighted_voting"] == {"enabled": False, "unit_label": "votes", "show_event_parties": False}
+    assert r.json()["weighted_voting"] == {"enabled": False, "unit_label": "votes", "show_event_parties": False, "transfers_enabled": False}
 
 
 # ===========================================================================
@@ -614,7 +614,7 @@ def test_org_out_surfaces_weighted_voting(client, test_db):
     test_db.commit()
     r = client.get(f"/api/orgs/{org.slug}", headers=_auth(author))
     assert r.status_code == 200, r.text
-    assert r.json()["weighted_voting"] == {"enabled": True, "unit_label": "units", "show_event_parties": False}
+    assert r.json()["weighted_voting"] == {"enabled": True, "unit_label": "units", "show_event_parties": False, "transfers_enabled": False}
 
 
 def test_results_payload_weighted_labels(client, test_db):

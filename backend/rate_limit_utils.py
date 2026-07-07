@@ -96,6 +96,9 @@ ORG_CREATE_LIMIT = "5/day"             # org creation (3-org cap is the real gat
 # is a per-request (not per-email) ceiling so batch onboarding still works. The
 # key change vs. pre-86 is user-keying instead of the pre-auth meta GET's IP key.
 INVITATION_CREATE_LIMIT = "30/day"
+# Phase 90b — member-to-member share transfers. Modest per-user ceiling; the
+# balance check is the real gate.
+SHARE_TRANSFER_LIMIT = "10/hour"
 
 
 __all__ = [
@@ -110,4 +113,5 @@ __all__ = [
     "REPORT_CREATE_LIMIT",
     "ORG_CREATE_LIMIT",
     "INVITATION_CREATE_LIMIT",
+    "SHARE_TRANSFER_LIMIT",
 ]

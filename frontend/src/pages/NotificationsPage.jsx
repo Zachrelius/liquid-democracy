@@ -52,6 +52,7 @@ const EVENT_TYPE_CATEGORY = {
   'member.join_request': 'Membership',
   'invitation.accepted': 'Membership',
   'shares.received': 'Membership',
+  'shares.transfer_received': 'Membership',
   'delegate.applied': 'Delegation',
   'delegate.application_decided': 'Delegation',
   'follow.requested': 'Delegation',
