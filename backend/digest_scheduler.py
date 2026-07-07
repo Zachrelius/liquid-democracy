@@ -967,6 +967,28 @@ async def run_one_tick(
         except Exception:
             pass
 
+    # Phase 90a — share auto-distribution sweep. Grants shares on the rule
+    # cadences (fixed / anniversary), idempotent via period_key, dormant for
+    # orgs with weighted voting off. One transaction per rule inside the sweep.
+    counts["share_distribution"] = "not_attempted"
+    try:
+        from share_distribution import run_distribution_sweep
+        sweep = run_distribution_sweep(db)
+        counts["share_distribution"] = (
+            f"grants={sweep['grants']} rules_fired={sweep['rules_fired']} "
+            f"considered={sweep['rules_considered']}"
+        )
+        if sweep["grants"]:
+            log.info("digest tick: share distribution granted %d shares across "
+                     "%d rules", sweep["grants"], sweep["rules_fired"])
+    except Exception:  # noqa: BLE001
+        counts["share_distribution"] = "exception"
+        log.exception("digest tick: share distribution sweep failed")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
     # Tail step: 90-day cleanup.
     try:
         counts["cleaned"] = cleanup_expired_notifications(db)

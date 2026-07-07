@@ -71,6 +71,8 @@ _SUBJECTS: dict[str, str] = {
     "member.join_request": "New member request to join {org_name}",
     # Phase 88c — voting-model change (weighted <-> one member one vote).
     "org.voting_model_changed": "{org_name}'s voting model changed",
+    # Phase 90a — auto-distribution grant.
+    "shares.received": "You received shares in {org_name}",
     # Phase 86 (B-4) — content report, to moderators.
     "report_created": "New content report in {org_name}",
     "invitation.accepted": "{actor_display_name} joined {org_name}",
@@ -523,6 +525,8 @@ def _build_event_template_vars(
         # weight-visibility model: members see their OWN weight + the org total,
         # not other members' weights).
         "unit_label": payload.get("unit_label") or "shares",
+        # Phase 90a — shares.received grant amount.
+        "amount": payload.get("amount") or "",
         "voting_model_message": (
             (
                 f"Your vote is now weighted by your "
@@ -549,6 +553,7 @@ _DEFAULT_CTA_LABELS: dict[str, str] = {
     "member.join_request": "Review request",
     "invitation.accepted": "View members",
     "org.voting_model_changed": "View members",
+    "shares.received": "View share activity",
     "delegate.applied": "Review application",
     "delegate.application_decided": "Open organization",
     # Phase 19 — public-delegate-page workflow CTAs.
@@ -619,6 +624,11 @@ def _build_cta_url(
         if not org_slug:
             return fallback
         return f"{base_url}/{org_slug}/members"
+    # Phase 90a — a shares grant links to the share activity feed.
+    if event_type == "shares.received":
+        if not org_slug:
+            return fallback
+        return f"{base_url}/{org_slug}/shares"
     # Phase 86 (B-4) — content report links to the moderator reports queue.
     if event_type == "report_created":
         if not org_slug:

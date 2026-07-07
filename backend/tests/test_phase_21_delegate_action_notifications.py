@@ -151,6 +151,8 @@ _EXPECTED_SIGNAL_LEVEL: dict[str, str] = {
     "pending_action.failed": "critical",
     # Phase 88c — voting-model flip (anti-stealth), critical so it always lands.
     "org.voting_model_changed": "critical",
+    # Phase 90a — auto-distribution grant.
+    "shares.received": "standard",
     # Phase 77 — messaging.
     "message.received": "standard",
     "message.org_inbox": "standard",

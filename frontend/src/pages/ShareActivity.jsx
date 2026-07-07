@@ -4,6 +4,7 @@ import api from '../api';
 import { useOrg } from '../OrgContext';
 import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
+import DistributionRules from '../components/DistributionRules';
 
 /**
  * ShareActivity — Phase 90 member-facing share-event ledger.
@@ -86,6 +87,8 @@ export default function ShareActivity() {
           </button>
         </div>
       </div>
+
+      <DistributionRules slug={slug} unit={unit} />
 
       <p className="text-xs text-gray-500 mb-4">
         Every change to a member's {unit} is recorded here. Amounts and who

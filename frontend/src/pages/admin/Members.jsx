@@ -14,7 +14,7 @@ import {
   ctaCopyForVerificationRequired,
 } from '../../verificationLabels';
 
-function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, onSetWeight, perms, weightedEnabled, unitLabel, confirm }) {
+function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, onSetWeight, onSetStartDate, perms, weightedEnabled, unitLabel, confirm }) {
   const { canChangeRole, canSuspend, canRemove, canSetWeight } = perms;
   const [expanded, setExpanded] = useState(false);
   const [role, setRole] = useState(member.role);
@@ -22,6 +22,9 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, on
   // Phase 88a — inline voting-weight editor state.
   const [weight, setWeight] = useState(String(member.voting_weight ?? 1));
   const [savingWeight, setSavingWeight] = useState(false);
+  // Phase 90a — inline share anniversary date editor state.
+  const [startDate, setStartDate] = useState(member.share_start_date || '');
+  const [savingDate, setSavingDate] = useState(false);
 
   // Phase 12 Stage 1: 'owner' renamed to 'steward'. Legacy 'owner' kept
   // for cached-response safety during the deploy cutover.
@@ -142,6 +145,30 @@ function MemberRow({ member, onChangeRole, onSuspend, onReactivate, onRemove, on
                 className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50"
               >
                 {savingWeight ? 'Saving...' : 'Set'}
+              </button>
+            </div>
+          )}
+          {/* Phase 90a — share anniversary date editor. */}
+          {weightedEnabled && canSetWeight && (
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-600">Anniversary</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={e => setStartDate(e.target.value)}
+                className="text-sm border border-gray-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--brand-accent)]"
+              />
+              <button
+                onClick={async () => {
+                  setSavingDate(true);
+                  await onSetStartDate(member.user_id, startDate);
+                  setSavingDate(false);
+                  setExpanded(false);
+                }}
+                disabled={savingDate || (member.share_start_date || '') === startDate}
+                className="text-xs px-3 py-1.5 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50"
+              >
+                {savingDate ? 'Saving...' : 'Set'}
               </button>
             </div>
           )}
@@ -290,6 +317,19 @@ export default function Members() {
       load();
     } catch (e) {
       toast.error(e.message || 'Failed to update voting weight');
+    }
+  }
+
+  // Phase 90a — set a member's share anniversary (start) date.
+  async function handleSetStartDate(userId, startDate) {
+    try {
+      await api.patch(`/api/orgs/${slug}/members/${userId}/share-start-date`, {
+        share_start_date: startDate || null,
+      });
+      toast.success('Share anniversary date updated');
+      load();
+    } catch (e) {
+      toast.error(e.message || 'Failed to update share anniversary date');
     }
   }
 
@@ -516,6 +556,7 @@ export default function Members() {
                 onReactivate={handleReactivate}
                 onRemove={handleRemove}
                 onSetWeight={handleSetWeight}
+                onSetStartDate={handleSetStartDate}
                 perms={{ canChangeRole, canSuspend, canRemove, canSetWeight }}
                 weightedEnabled={weightedEnabled}
                 unitLabel={unitLabel}
