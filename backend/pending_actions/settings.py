@@ -39,6 +39,15 @@ DEFAULT_THRESHOLDS: dict[str, int] = {
     # disarm-then-act escape hatch is closed by gating the disarm under
     # the very approval the admin is trying to disable.
     "org.approval_config_change": 2,
+    # Phase 90d — issuance-class actions under the multi_admin issuance mode.
+    # Default 2 (the ladder's whole point is >1 sign-off); orgs can raise per
+    # type via the same thresholds config.
+    "share.set_weight": 2,
+    "share.rule_create": 2,
+    "share.rule_edit": 2,
+    "share.rule_resume": 2,
+    "share.cap_raise": 2,
+    "share.issuance_mode_weaken": 2,
 }
 
 DEFAULT_WINDOW_HOURS: int = 72

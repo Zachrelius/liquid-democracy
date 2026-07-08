@@ -32,12 +32,20 @@ def set_member_weight(
     membership: models.OrgMembership,
     new_weight: int,
     actor_id: Optional[str],
+    authorization_ref: Optional[str] = None,
+    authorized_total: Optional[int] = None,
 ) -> models.ShareEvent:
     """Set ``membership.voting_weight`` to ``new_weight`` AND record an
     ``admin_set`` ShareEvent, in the caller's transaction. A zero delta is
     rejected (nothing changes, nothing is logged). Returns the ShareEvent.
+
+    Phase 90d — ``authorization_ref`` stamps the ledger row with what authorized
+    the change (``pending_action:<id>`` / ``proposal:<id>``); NULL for the direct
+    key-holder path. ``authorized_total`` (when not None) enforces the issuance
+    cap: a change that would push the org's outstanding total above the cap is
+    rejected. Only INCREASES are checked (confiscation/decrease never breaches).
     """
-    from org_config import VOTING_WEIGHT_MIN, VOTING_WEIGHT_MAX
+    from org_config import VOTING_WEIGHT_MIN, VOTING_WEIGHT_MAX, outstanding_total
 
     if not isinstance(new_weight, int) or isinstance(new_weight, bool):
         raise ShareServiceError("voting_weight must be an integer.")
@@ -52,6 +60,15 @@ def set_member_weight(
         raise ShareServiceError(
             "voting_weight is unchanged; no share event recorded."
         )
+    if authorized_total is not None and delta > 0:
+        org = db.get(models.Organization, membership.org_id)
+        projected = outstanding_total(db, org) + delta
+        if projected > authorized_total:
+            raise ShareServiceError(
+                f"This change would raise the outstanding total to {projected}, "
+                f"above the authorized cap of {authorized_total}.",
+                status_code=400,
+            )
     membership.voting_weight = new_weight
     event = models.ShareEvent(
         org_id=membership.org_id,
@@ -60,6 +77,7 @@ def set_member_weight(
         delta=delta,
         resulting_balance=new_weight,
         actor_id=actor_id,
+        authorization_ref=authorization_ref,
     )
     db.add(event)
     db.flush()

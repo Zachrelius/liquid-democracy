@@ -155,6 +155,8 @@ _EXPECTED_SIGNAL_LEVEL: dict[str, str] = {
     "shares.received": "standard",
     # Phase 90b — member-to-member transfer.
     "shares.transfer_received": "standard",
+    # Phase 90d — distribution rule skipped by the authorized cap.
+    "shares.cap_blocked": "standard",
     # Phase 77 — messaging.
     "message.received": "standard",
     "message.org_inbox": "standard",

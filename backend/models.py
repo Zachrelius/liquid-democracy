@@ -1460,6 +1460,12 @@ class ShareEvent(Base):
     # Phase 90a — idempotency key for auto-distribution grants (NULL for
     # admin_set / transfer). Partial-unique on (org_id, period_key).
     period_key: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Phase 90d — what authorized this event beyond the direct key-holder path:
+    # 'pending_action:<id>' (multi-admin ratified issuance) or 'proposal:<id>'
+    # (vote-authorized issuance, 90e). NULL for direct / auto_distribution /
+    # transfer. Self-describing string, deliberately NOT a hard FK (mirrors
+    # rule_id: the referenced action/proposal may be pruned; the event stands).
+    authorization_ref: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
 
 class ShareDistributionRule(Base):

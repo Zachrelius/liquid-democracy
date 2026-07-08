@@ -1100,6 +1100,13 @@ export default function OrgSettings() {
             transfers_enabled: wv.transfers_enabled === true,
             // Phase 90c — per-proposal one-member-one-vote override (default on).
             allow_per_member_proposals: wv.allow_per_member_proposals !== false,
+            // Phase 90d — issuance authorization ladder + authorized cap. The
+            // backend rejects a weakening mode change / cap raise under
+            // multi_admin with a 400 (route through ratification); the toast
+            // surfaces that guidance.
+            issuance_mode: wv.issuance_mode || 'direct',
+            authorized_total: (wv.authorized_total === '' || wv.authorized_total == null)
+              ? null : Number(wv.authorized_total),
           },
         },
       });
@@ -2752,6 +2759,65 @@ export default function OrgSettings() {
                   When on, a proposal's author can set that individual proposal to count by headcount instead of shares (for example, a procedural vote). When off, every proposal counts by shares. This does not change any existing proposal.
                 </div>
               </div>
+            </label>
+
+            {/* Phase 90d — issuance authorization ladder. */}
+            <div className="border-t border-gray-100 pt-3">
+              <label className="block text-xs text-gray-600 mb-2 font-medium">
+                How is share issuance authorized?
+              </label>
+              <div className="flex flex-col gap-2">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="radio" name="issuanceMode" value="direct"
+                    checked={(settings.weighted_voting?.issuance_mode || 'direct') === 'direct'}
+                    onChange={() => updateSetting('weighted_voting', {
+                      ...(settings.weighted_voting || {}), issuance_mode: 'direct',
+                    })}
+                    className="mt-0.5 accent-[var(--brand-accent)]"
+                  />
+                  <span className="text-sm text-gray-700">
+                    Direct
+                    <span className="block text-xs text-gray-500">
+                      Anyone who can set voting weight issues shares immediately.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="radio" name="issuanceMode" value="multi_admin"
+                    checked={settings.weighted_voting?.issuance_mode === 'multi_admin'}
+                    onChange={() => updateSetting('weighted_voting', {
+                      ...(settings.weighted_voting || {}), issuance_mode: 'multi_admin',
+                    })}
+                    className="mt-0.5 accent-[var(--brand-accent)]"
+                  />
+                  <span className="text-sm text-gray-700">
+                    Multi-admin approval
+                    <span className="block text-xs text-gray-500">
+                      Every issuance (weight set, distribution rule, cap raise) needs a second approver. Requires at least two members who can set voting weight. Switching back to Direct later requires approval.
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {/* Phase 90d — authorized-total cap. */}
+            <label className="text-sm space-y-1 block border-t border-gray-100 pt-3">
+              <span className="block text-xs text-gray-600 font-medium">Authorized total (cap)</span>
+              <input
+                type="number" min="0" step="1"
+                value={settings.weighted_voting?.authorized_total ?? ''}
+                onChange={e => updateSetting('weighted_voting', {
+                  ...(settings.weighted_voting || {}),
+                  authorized_total: e.target.value === '' ? null : e.target.value,
+                })}
+                placeholder="No cap"
+                className="w-40 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+              <span className="block text-xs text-gray-400">
+                The maximum total shares that can be outstanding. Leave blank for no cap. Lowering it can&apos;t go below what&apos;s already issued; raising it under multi-admin approval needs a second approver.
+              </span>
             </label>
 
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">

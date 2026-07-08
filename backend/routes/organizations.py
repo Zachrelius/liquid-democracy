@@ -769,6 +769,69 @@ def update_organization(
                         ),
                     )
 
+            # Phase 90d — issuance ladder + cap guards on the direct settings
+            # PATCH. Weakening the issuance mode, or raising the cap under
+            # multi_admin, are issuance-class changes that must route through
+            # the ratification queue (submit share.issuance_mode_weaken /
+            # share.cap_raise via POST /admin/pending-actions) — reject here
+            # with guidance, mirroring the 49a is_weakening_change contract.
+            # Strengthening the mode + tightening the cap stay unilateral, but
+            # a cap can never be set below the current outstanding total.
+            from org_config import (
+                issuance_mode_is_weakening, outstanding_total as _outstanding,
+            )
+            _old_cfg = get_weighted_voting_config(org)
+            _old_mode = _old_cfg["issuance_mode"]
+            _new_mode = _wv_base.get("issuance_mode", _old_mode)
+            if _new_mode != _old_mode and issuance_mode_is_weakening(_old_mode, _new_mode):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Weakening the issuance mode requires ratification. "
+                        "Submit a 'share.issuance_mode_weaken' pending action."
+                    ),
+                )
+            # Degenerate approver guard at mode-SELECT: choosing multi_admin
+            # needs >= 2 active holders of member.set_voting_weight.
+            if _new_mode == "multi_admin" and _old_mode != "multi_admin":
+                _holders = _users_with_permission_count(db, org, "member.set_voting_weight")
+                if _holders < 2:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "Multi-admin issuance requires at least two members "
+                            "who can set voting weight. Grant the permission to "
+                            "another member first."
+                        ),
+                    )
+            if "authorized_total" in _wv_base or _old_cfg["authorized_total"] is not None:
+                _old_cap = _old_cfg["authorized_total"]
+                _new_cap = _wv_base.get("authorized_total", _old_cap)
+                if _new_cap != _old_cap:
+                    _cap_is_raise = _old_cap is not None and (
+                        _new_cap is None or _new_cap > _old_cap
+                    )
+                    if _cap_is_raise and _old_mode == "multi_admin":
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                "Raising the authorized cap requires ratification "
+                                "under multi-admin issuance. Submit a "
+                                "'share.cap_raise' pending action."
+                            ),
+                        )
+                    # Tightening floor: a numeric cap can't sit below outstanding.
+                    if _new_cap is not None:
+                        _out = _outstanding(db, org)
+                        if _new_cap < _out:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=(
+                                    f"authorized_total ({_new_cap}) cannot be below "
+                                    f"the current outstanding total ({_out})."
+                                ),
+                            )
+
         # Phase 17 B5 — tie_resolution validation. Same pre-merge shape:
         # invalid method on either voting_method fails the whole PATCH
         # cleanly with HTTP 400. Unknown keys (e.g., a future
@@ -1885,30 +1948,41 @@ def set_member_voting_weight(
     ).first()
     if not m:
         raise HTTPException(status_code=404, detail="Member not found")
-    old = m.voting_weight
-    # Phase 90 — route through the shared service so the weight update AND an
-    # admin_set ShareEvent land in ONE transaction (ledger transparency). A
-    # zero delta is now a 400 (nothing to record) rather than a silent no-op.
-    import share_service
-    try:
-        share_service.set_member_weight(
-            db, membership=m, new_weight=w, actor_id=current_user.id,
+
+    def _direct():
+        old = m.voting_weight
+        # Phase 90 — route through the shared service so the weight update AND an
+        # admin_set ShareEvent land in ONE transaction (ledger transparency). A
+        # zero delta is now a 400 (nothing to record) rather than a silent no-op.
+        # Phase 90d — the direct path also enforces the authorized cap.
+        import share_service
+        cfg = get_weighted_voting_config(org)
+        try:
+            share_service.set_member_weight(
+                db, membership=m, new_weight=w, actor_id=current_user.id,
+                authorized_total=cfg["authorized_total"],
+            )
+        except share_service.ShareServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message)
+        # The platform/admin audit event stays (different audience than the
+        # org-member-facing ledger).
+        log_audit_event(
+            db,
+            action="member.voting_weight_changed",
+            target_type="org_membership",
+            target_id=m.id,
+            actor_id=current_user.id,
+            details={"old": old, "new": w, "target_user_id": user_id},
+            ip_address=request.client.host if request.client else None,
         )
-    except share_service.ShareServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message)
-    # The platform/admin audit event stays (different audience than the
-    # org-member-facing ledger).
-    log_audit_event(
-        db,
-        action="member.voting_weight_changed",
-        target_type="org_membership",
-        target_id=m.id,
-        actor_id=current_user.id,
-        details={"old": old, "new": w, "target_user_id": user_id},
-        ip_address=request.client.host if request.client else None,
+        db.commit()
+        return {"message": "Voting weight updated", "voting_weight": w}
+
+    # Phase 90d — issuance ladder: multi_admin routes to ratification queue.
+    return _route_issuance_action(
+        db, org, current_user, "share.set_weight",
+        {"target_user_id": user_id, "new_weight": w}, request, _direct,
     )
-    db.commit()
-    return {"message": "Voting weight updated", "voting_weight": w}
 
 
 # ============================================================================
@@ -2200,6 +2274,61 @@ def _require_set_weight(db, org, user_id):
         )
 
 
+def _issuance_mode_of(db, org):
+    """Phase 90d — resolve the weight-holding org's issuance_mode."""
+    from org_config import get_weighted_voting_config, weight_holding_org
+    return get_weighted_voting_config(weight_holding_org(db, org))["issuance_mode"]
+
+
+def _users_with_permission_count(db, org, permission_key) -> int:
+    """Phase 90d — count active members of ``org`` who hold ``permission_key``.
+    Used for the degenerate-approver-set guard at issuance-mode select time."""
+    from pending_actions.registry import _users_with_permission
+    return len(_users_with_permission(db, org, permission_key))
+
+
+def _route_issuance_action(db, org, initiator, action_type, payload, request, direct_fn):
+    """Phase 90d — issuance-ladder routing. When the org's issuance_mode is
+    'multi_admin', submit ``action_type`` to the Phase 44 ratification queue
+    (the initiator's submission counts as their approval); otherwise invoke
+    ``direct_fn()`` to execute immediately (the 'direct' status quo).
+
+    Degenerate-approver guard (§2.4): multi_admin needs >= 2 active holders of
+    the action's approver key; fewer → 409 with guidance (rather than the
+    engine's execute-directly deadlock fallback, which would defeat the ladder).
+    """
+    mode = _issuance_mode_of(db, org)
+    if mode != "multi_admin":
+        return direct_fn()
+    from pending_actions import engine as _pa_engine, registry as _pa_registry
+    defn = _pa_registry.get_action_definition(action_type)
+    approvers = defn.approver_set_resolver(db, org)
+    if len(approvers) < 2:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Multi-admin issuance requires at least two members who can "
+                "authorize share issuance. Grant the permission to another "
+                "member, or weaken the issuance mode."
+            ),
+        )
+    ip = request.client.host if request.client else None
+    result = _pa_engine.submit_pending_action(
+        db, org, initiator, action_type, payload, ip_address=ip,
+    )
+    db.commit()
+    if result.executed_directly:
+        return {"status": "executed_directly", "reason": "insufficient_approvers"}
+    pending = result.pending_action
+    db.refresh(pending)
+    return {
+        "status": "pending" if pending.status == "pending" else pending.status,
+        "pending_action": _pa_engine.serialize_pending(
+            db, pending, viewer_id=initiator.id,
+        ),
+    }
+
+
 def _require_weighted_enabled(org):
     """Phase 90c (weighted-UI sweep) — a weighted-only surface must not be
     reachable in an unweighted org. Resolve against the weight-holding org
@@ -2241,8 +2370,7 @@ def list_distribution_rules(
     ).order_by(models.ShareDistributionRule.created_at.desc()).all()
 
 
-@router.post("/{org_slug}/share-distribution-rules",
-             response_model=schemas.ShareDistributionRuleOut, status_code=201)
+@router.post("/{org_slug}/share-distribution-rules", status_code=201)
 def create_distribution_rule(
     org_slug: str,
     body: schemas.ShareDistributionRuleCreate,
@@ -2251,35 +2379,50 @@ def create_distribution_rule(
     current_user: models.User = Depends(auth_utils.get_current_user),
     admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
 ):
-    """Phase 90a — create a distribution rule (gated on member.set_voting_weight)."""
+    """Phase 90a — create a distribution rule (gated on member.set_voting_weight).
+
+    Phase 90d — under issuance_mode 'multi_admin' this submits a
+    ``share.rule_create`` pending action instead of creating the rule directly;
+    the response is then the serialized pending action rather than the rule.
+    """
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug).first()
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
     _require_weighted_enabled(org)
     _require_set_weight(db, org, current_user.id)
-    import share_distribution
-    from share_service import ShareServiceError
-    try:
-        rule = share_distribution.create_rule(
-            db, org=org, created_by_id=current_user.id,
-            amount=body.amount, interval_months=body.interval_months,
-            schedule_mode=body.schedule_mode, targeting_mode=body.targeting_mode,
-            title_ids=body.title_ids, anchor_date=body.anchor_date,
+
+    def _direct():
+        import share_distribution
+        from share_service import ShareServiceError
+        try:
+            rule = share_distribution.create_rule(
+                db, org=org, created_by_id=current_user.id,
+                amount=body.amount, interval_months=body.interval_months,
+                schedule_mode=body.schedule_mode, targeting_mode=body.targeting_mode,
+                title_ids=body.title_ids, anchor_date=body.anchor_date,
+            )
+        except ShareServiceError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=exc.message)
+        log_audit_event(
+            db, action="share.rule_created", target_type="share_distribution_rule",
+            target_id=rule.id, actor_id=current_user.id,
+            details={"amount": rule.amount, "interval_months": rule.interval_months,
+                     "schedule_mode": rule.schedule_mode,
+                     "targeting_mode": rule.targeting_mode},
+            ip_address=request.client.host if request.client else None,
         )
-    except ShareServiceError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.message)
-    log_audit_event(
-        db, action="share.rule_created", target_type="share_distribution_rule",
-        target_id=rule.id, actor_id=current_user.id,
-        details={"amount": rule.amount, "interval_months": rule.interval_months,
-                 "schedule_mode": rule.schedule_mode,
-                 "targeting_mode": rule.targeting_mode},
-        ip_address=request.client.host if request.client else None,
+        db.commit()
+        db.refresh(rule)
+        return schemas.ShareDistributionRuleOut.model_validate(rule)
+
+    return _route_issuance_action(
+        db, org, current_user, "share.rule_create",
+        {"amount": body.amount, "interval_months": body.interval_months,
+         "schedule_mode": body.schedule_mode, "targeting_mode": body.targeting_mode,
+         "title_ids": body.title_ids or []},
+        request, _direct,
     )
-    db.commit()
-    db.refresh(rule)
-    return rule
 
 
 def _get_rule_or_404(db, org, rule_id):
@@ -2289,8 +2432,7 @@ def _get_rule_or_404(db, org, rule_id):
     return rule
 
 
-@router.patch("/{org_slug}/share-distribution-rules/{rule_id}",
-              response_model=schemas.ShareDistributionRuleOut)
+@router.patch("/{org_slug}/share-distribution-rules/{rule_id}")
 def update_distribution_rule(
     org_slug: str, rule_id: str,
     body: schemas.ShareDistributionRuleUpdate,
@@ -2299,6 +2441,8 @@ def update_distribution_rule(
     current_user: models.User = Depends(auth_utils.get_current_user),
     admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
 ):
+    """Phase 90a edit; Phase 90d — issuance-class, so multi_admin routes it to
+    the ratification queue (returns the pending action instead of the rule)."""
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug).first()
     if org is None:
@@ -2326,21 +2470,33 @@ def update_distribution_rule(
         if t is None or t.org_id != org.id:
             raise HTTPException(status_code=400,
                                 detail=f"title {tid} does not belong to this organization.")
-    rule.amount = new["amount"]
-    rule.interval_months = new["interval_months"]
-    rule.schedule_mode = new["schedule_mode"]
-    rule.targeting_mode = new["targeting_mode"]
-    rule.title_ids = new["title_ids"] if new["targeting_mode"] != "all_members" else []
-    if body.anchor_date is not None:
-        rule.anchor_date = body.anchor_date if rule.schedule_mode == "fixed_cadence" else None
-    log_audit_event(
-        db, action="share.rule_edited", target_type="share_distribution_rule",
-        target_id=rule.id, actor_id=current_user.id,
-        ip_address=request.client.host if request.client else None,
+
+    def _direct():
+        rule.amount = new["amount"]
+        rule.interval_months = new["interval_months"]
+        rule.schedule_mode = new["schedule_mode"]
+        rule.targeting_mode = new["targeting_mode"]
+        rule.title_ids = new["title_ids"] if new["targeting_mode"] != "all_members" else []
+        if body.anchor_date is not None:
+            rule.anchor_date = body.anchor_date if rule.schedule_mode == "fixed_cadence" else None
+        log_audit_event(
+            db, action="share.rule_edited", target_type="share_distribution_rule",
+            target_id=rule.id, actor_id=current_user.id,
+            ip_address=request.client.host if request.client else None,
+        )
+        db.commit()
+        db.refresh(rule)
+        return schemas.ShareDistributionRuleOut.model_validate(rule)
+
+    return _route_issuance_action(
+        db, org, current_user, "share.rule_edit",
+        {"rule_id": rule_id, "amount": new["amount"],
+         "interval_months": new["interval_months"],
+         "schedule_mode": new["schedule_mode"],
+         "targeting_mode": new["targeting_mode"],
+         "title_ids": new["title_ids"]},
+        request, _direct,
     )
-    db.commit()
-    db.refresh(rule)
-    return rule
 
 
 @router.post("/{org_slug}/share-distribution-rules/{rule_id}/pause",
@@ -2368,14 +2524,16 @@ def pause_distribution_rule(
     return rule
 
 
-@router.post("/{org_slug}/share-distribution-rules/{rule_id}/resume",
-             response_model=schemas.ShareDistributionRuleOut)
+@router.post("/{org_slug}/share-distribution-rules/{rule_id}/resume")
 def resume_distribution_rule(
     org_slug: str, rule_id: str, request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     admin_membership: models.OrgMembership = Depends(require_org_moderator_or_admin),
 ):
+    """Phase 90a resume; Phase 90d — resume RE-STARTS issuance, so it's
+    issuance-class: multi_admin routes it to the ratification queue. (Pause +
+    delete stop issuance and stay unilateral per §2.2.)"""
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug).first()
     if org is None:
@@ -2383,14 +2541,21 @@ def resume_distribution_rule(
     _require_weighted_enabled(org)
     _require_set_weight(db, org, current_user.id)
     rule = _get_rule_or_404(db, org, rule_id)
-    rule.status = "active"
-    log_audit_event(db, action="share.rule_resumed",
-                    target_type="share_distribution_rule", target_id=rule.id,
-                    actor_id=current_user.id,
-                    ip_address=request.client.host if request.client else None)
-    db.commit()
-    db.refresh(rule)
-    return rule
+
+    def _direct():
+        rule.status = "active"
+        log_audit_event(db, action="share.rule_resumed",
+                        target_type="share_distribution_rule", target_id=rule.id,
+                        actor_id=current_user.id,
+                        ip_address=request.client.host if request.client else None)
+        db.commit()
+        db.refresh(rule)
+        return schemas.ShareDistributionRuleOut.model_validate(rule)
+
+    return _route_issuance_action(
+        db, org, current_user, "share.rule_resume",
+        {"rule_id": rule_id}, request, _direct,
+    )
 
 
 @router.delete("/{org_slug}/share-distribution-rules/{rule_id}", status_code=200)

@@ -378,6 +378,15 @@ EVENT_REGISTRY: list[EventDefinition] = [
         category="Membership",
         signal_level="standard",
     ),
+    # Phase 90d — an auto-distribution rule you created skipped grants because
+    # they would breach the organization's authorized share cap.
+    EventDefinition(
+        key="shares.cap_blocked",
+        label="A distribution rule was blocked by the share cap",
+        description="A distribution rule you created couldn't grant shares because it would exceed the authorized total. Raise the cap or lower the rule.",
+        category="Admin actions",
+        signal_level="standard",
+    ),
     # ---- Messages (Phase 77) --------------------------------------------
     EventDefinition(
         key="message.received",

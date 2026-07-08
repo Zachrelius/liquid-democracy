@@ -317,6 +317,12 @@ _WEIGHTED_VOTING_UNIT_LABEL_MAX = 24
 VOTING_WEIGHT_MIN = 0
 VOTING_WEIGHT_MAX = 10_000_000
 
+# Phase 90d — issuance authorization ladder. 'member_vote' becomes selectable
+# in 90e; the ladder logic is written mode-agnostic and the enum gains its third
+# value there. Order is the strictness ladder: direct < multi_admin < member_vote.
+WEIGHTED_ISSUANCE_MODES = ("direct", "multi_admin")
+_ISSUANCE_STRICTNESS = {"direct": 0, "multi_admin": 1, "member_vote": 2}
+
 
 def get_weighted_voting_config(org: Optional[models.Organization]) -> dict:
     """Return ``{enabled, unit_label}`` for the org, applying defaults +
@@ -354,12 +360,26 @@ def get_weighted_voting_config(org: Optional[models.Organization]) -> dict:
     allow_per_member_proposals = raw.get("allow_per_member_proposals", True)
     if not isinstance(allow_per_member_proposals, bool):
         allow_per_member_proposals = True
+    # Phase 90d — issuance authorization ladder. 'direct' (status quo: the
+    # member.set_voting_weight key alone authorizes issuance) | 'multi_admin'
+    # (issuance-class actions route through the Phase 44 ratification queue).
+    # 'member_vote' is added in 90e. Unknown values clamp to 'direct'.
+    issuance_mode = raw.get("issuance_mode", "direct")
+    if issuance_mode not in WEIGHTED_ISSUANCE_MODES:
+        issuance_mode = "direct"
+    # Phase 90d — authorized-total cap. NULL = uncapped (default). When set,
+    # every issuance path checks projected outstanding total <= this value.
+    authorized_total = raw.get("authorized_total", None)
+    if isinstance(authorized_total, bool) or not isinstance(authorized_total, int) or authorized_total < 0:
+        authorized_total = None
     return {
         "enabled": enabled,
         "unit_label": unit_label,
         "show_event_parties": show_event_parties,
         "transfers_enabled": transfers_enabled,
         "allow_per_member_proposals": allow_per_member_proposals,
+        "issuance_mode": issuance_mode,
+        "authorized_total": authorized_total,
     }
 
 
@@ -436,4 +456,75 @@ def normalize_weighted_voting_input(raw: object) -> dict:
                 detail="weighted_voting.allow_per_member_proposals must be a boolean",
             )
         out["allow_per_member_proposals"] = ap
+    # Phase 90d — issuance_mode. Value validated here; the ladder direction
+    # (weakening requires ratification) is enforced at the settings-PATCH route,
+    # not here (this normalizer has no org/db context to compare against).
+    if "issuance_mode" in raw:
+        im = raw["issuance_mode"]
+        if im not in WEIGHTED_ISSUANCE_MODES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "weighted_voting.issuance_mode must be one of "
+                    + ", ".join(WEIGHTED_ISSUANCE_MODES)
+                ),
+            )
+        out["issuance_mode"] = im
+    # Phase 90d — authorized_total cap (nullable int >= 0). The
+    # floor-at-current-outstanding check is enforced at the route (needs db).
+    if "authorized_total" in raw:
+        at = raw["authorized_total"]
+        if at is None:
+            out["authorized_total"] = None
+        elif isinstance(at, bool) or not isinstance(at, int) or at < 0:
+            raise HTTPException(
+                status_code=400,
+                detail="weighted_voting.authorized_total must be a non-negative integer or null",
+            )
+        else:
+            out["authorized_total"] = at
     return out
+
+
+def issuance_mode_is_weakening(current_mode: str, proposed_mode: str) -> bool:
+    """Phase 90d — True iff moving from ``current_mode`` to ``proposed_mode``
+    moves DOWN the strictness ladder (removing a self-constraint). Weakening
+    requires the current mode's ratification process; strengthening (or staying
+    put) is a unilateral org.edit_settings change (the 49a invariant)."""
+    return (
+        _ISSUANCE_STRICTNESS.get(proposed_mode, 0)
+        < _ISSUANCE_STRICTNESS.get(current_mode, 0)
+    )
+
+
+def weight_holding_org(db, org: Optional[models.Organization]) -> Optional[models.Organization]:
+    """Phase 90d — resolve the org whose memberships carry the shares (the
+    parent for a sub-org; the org itself otherwise). Shares are a parent-org
+    property, so caps + outstanding totals are computed against the parent."""
+    if org is None:
+        return None
+    parent_id = getattr(org, "parent_org_id", None)
+    if parent_id:
+        parent = db.get(models.Organization, parent_id)
+        if parent is not None:
+            return parent
+    return org
+
+
+def outstanding_total(db, org: Optional[models.Organization]) -> int:
+    """Phase 90d — sum of voting_weight over the weight-holding org's active
+    memberships. This is the 'shares outstanding' the authorized_total cap and
+    dilution previews measure against."""
+    from sqlalchemy import func
+    weight_org = weight_holding_org(db, org)
+    if weight_org is None:
+        return 0
+    total = (
+        db.query(func.coalesce(func.sum(models.OrgMembership.voting_weight), 0))
+        .filter(
+            models.OrgMembership.org_id == weight_org.id,
+            models.OrgMembership.status == "active",
+        )
+        .scalar()
+    )
+    return int(total or 0)

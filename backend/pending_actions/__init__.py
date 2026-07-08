@@ -11,3 +11,6 @@ settings, registry, engine``.
 """
 
 from . import engine, registry, settings  # noqa: F401
+# Phase 90d — importing this module registers the six share.* issuance action
+# types into the registry (side-effecting import, like registry.py's own tail).
+from . import share_actions  # noqa: F401,E402
