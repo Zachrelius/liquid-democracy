@@ -50,7 +50,11 @@ def _rule_in_org(db: Session, org: models.Organization, rule_id: str):
 
 
 def _authz_ref(action: "models.PendingAdminAction") -> str:
-    return f"pending_action:{action.id}"
+    # Phase 90e — a vote-authorized issuance passes a stub action carrying an
+    # explicit override so the ledger records 'proposal:<id>' rather than
+    # 'pending_action:<id>'. The ratification path leaves it None.
+    override = getattr(action, "_issuance_authz_ref", None)
+    return override or f"pending_action:{action.id}"
 
 
 def _pct(old: int, new: int) -> str:

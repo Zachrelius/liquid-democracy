@@ -1017,6 +1017,18 @@ class Proposal(Base):
     election_title_id: Mapped[Optional[str]] = mapped_column(
         String, ForeignKey("org_titles.id"), nullable=True, index=True,
     )
+    # Phase 90e — vote-gated share issuance. When ``is_issuance`` is True the
+    # proposal is a binary approve/reject of the action snapshotted in
+    # ``issuance_payload`` ({action, params}); on a passed close the payload
+    # executes via the shared 90d executors (authorization_ref='proposal:<id>').
+    # ``issuance_executed`` records the close-hook outcome: True = executed,
+    # False = passed-but-drifted (execution failed), NULL = not an issuance
+    # proposal or not yet closed. Only meaningful in issuance_mode='member_vote'.
+    is_issuance: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0",
+    )
+    issuance_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    issuance_executed: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     # Phase 48 Stage 2 — D10 slate behavior. ``refresh_slate`` removes
     # all current holders of the target title before installing the
     # winners (whole-slate refresh); ``fill_vacancies`` adds the winners

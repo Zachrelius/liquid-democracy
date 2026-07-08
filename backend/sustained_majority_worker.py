@@ -518,6 +518,14 @@ def _close_proposal_now(
             ip_address=None,
         )
 
+    # Phase 90e — vote-gated issuance close hook on the worker path (natural /
+    # SRR close). System actor; drift → passed but issuance_executed=False.
+    if getattr(proposal, "is_issuance", False) and new_status in ("passed", "failed"):
+        from issuance import run_issuance_close_hook
+        new_status = run_issuance_close_hook(
+            db, proposal, new_status, actor_id=None, ip_address=None,
+        )
+
     log_audit_event(
         db,
         action="proposal.status_changed",

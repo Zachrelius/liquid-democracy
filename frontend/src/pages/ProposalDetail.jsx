@@ -17,6 +17,7 @@ import { useConfirm } from '../components/ConfirmDialog';
 import VerifyEmailInlineNote from '../components/VerifyEmailInlineNote';
 import StatusBadge from '../components/StatusBadge';
 import CountModeBadge from '../components/CountModeBadge';
+import IssuancePreview from '../components/IssuancePreview';
 import ElectionBadge from '../components/ElectionBadge';
 import TopicBadge from '../components/TopicBadge';
 import VoteBar from '../components/VoteBar';
@@ -2731,6 +2732,17 @@ export default function ProposalDetail() {
               `effective_allow_pre_voting=True` covers both explicit
               proposal override AND the org-level `always_on` /
               `default_on` modes. */}
+          {/* Phase 90e — issuance dilution preview, rendered prominently for an
+              issuance proposal regardless of phase (before the ballot when open;
+              with the executed/failed outcome once closed). */}
+          {proposal.is_issuance && (
+            <IssuancePreview
+              preview={proposal.issuance_preview}
+              executed={proposal.issuance_executed}
+              status={proposal.status}
+            />
+          )}
+
           {!readOnly
             && (isVoting || (isDeliberation && proposal.effective_allow_pre_voting === true))
             && (!hasSubOrgScope || isSubOrgMember) && (

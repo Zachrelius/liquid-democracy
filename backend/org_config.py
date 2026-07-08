@@ -320,7 +320,7 @@ VOTING_WEIGHT_MAX = 10_000_000
 # Phase 90d — issuance authorization ladder. 'member_vote' becomes selectable
 # in 90e; the ladder logic is written mode-agnostic and the enum gains its third
 # value there. Order is the strictness ladder: direct < multi_admin < member_vote.
-WEIGHTED_ISSUANCE_MODES = ("direct", "multi_admin")
+WEIGHTED_ISSUANCE_MODES = ("direct", "multi_admin", "member_vote")
 _ISSUANCE_STRICTNESS = {"direct": 0, "multi_admin": 1, "member_vote": 2}
 
 
