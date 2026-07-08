@@ -47,6 +47,13 @@ class Member:
     # `role` (narrative/display string) — `platform_role` drives the
     # actual permissions assignment in the seed pipeline.
     platform_role: Literal['steward', 'admin', 'moderator', 'member'] = 'member'
+    # Phase 90f — weighted-voting share holdings for the Calder demo. Default 1
+    # keeps every existing (unweighted) bible member unchanged. share_tenure_years
+    # (when set) makes the pipeline derive share_start_date as reset_time minus
+    # the tenure, exercising the 90a anniversary column instead of the join-date
+    # fallback. None leaves share_start_date on the join-date fallback.
+    voting_weight: int = 1
+    share_tenure_years: Optional[float] = None
 
 
 @dataclass
@@ -148,6 +155,13 @@ class Proposal:
     allow_pre_voting: Optional[bool] = None
     show_votes_during_deliberation: Optional[bool] = None
     edit_lockout_fraction: Optional[float] = None
+    # Phase 90f — weighted-voting extensions. count_mode ('weighted' |
+    # 'one_per_member' | None) exercises the 90c per-proposal counting toggle;
+    # issuance_payload ({action, params}) marks the proposal as a 90e issuance
+    # proposal (is_issuance=True) seeded through the real validators. Both
+    # default None so existing bible proposals compile + seed unchanged.
+    count_mode: Optional[str] = None
+    issuance_payload: Optional[dict] = None
 
 
 @dataclass
@@ -260,6 +274,42 @@ class SubOrg:
 
 
 @dataclass
+class DistributionRuleSeed:
+    """Phase 90f — a bible-declared auto-distribution rule, seeded through the
+    real ``share_distribution.create_rule`` service callable. ``title_names``
+    are resolved to OrgTitle ids at seed time (strict, like the topic resolver).
+    ``anchor_offset_days`` positions a fixed_cadence rule's anchor; the pipeline
+    asserts the next occurrence is >= 30 days out so no rule fires mid-demo."""
+    amount: int
+    interval_months: int
+    schedule_mode: Literal['fixed_cadence', 'anniversary'] = 'anniversary'
+    targeting_mode: Literal['all_members', 'titles_include', 'titles_exclude'] = 'all_members'
+    title_names: list[str] = field(default_factory=list)
+    anchor_offset_days: Optional[int] = None
+
+
+@dataclass
+class ShareEventSeed:
+    """Phase 90f — a backdated ledger row for the Share activity feed. Written
+    directly (the ONE place raw ShareEvent insertion is acceptable — production
+    paths stay service-routed) so the feed shows plausible history at seed time.
+    Balances must reconcile: each member's voting_weight == baseline + seeded
+    events (pipeline asserts this, strict). ``authorization_ref_kind`` is
+    'rule' | 'pending_action' | 'proposal' | None → rendered as a ref string."""
+    event_type: Literal['admin_set', 'auto_distribution', 'transfer']
+    delta: int
+    days_ago: int
+    user_id: Optional[str] = None                   # recipient/affected (admin_set, auto_distribution)
+    from_user_id: Optional[str] = None              # transfer sender
+    to_user_id: Optional[str] = None                # transfer recipient
+    actor_user_id: Optional[str] = None             # admin_set authorizer / transfer sender
+    resulting_balance: Optional[int] = None
+    from_resulting_balance: Optional[int] = None
+    rule_index: Optional[int] = None                # 0-based index into bible.distribution_rules
+    authorization_ref_kind: Optional[str] = None
+
+
+@dataclass
 class OrgBible:
     slug: str
     display_name: str
@@ -332,6 +382,21 @@ class OrgBible:
     # ``settings.elections.enabled = True`` so the elections UI is live
     # for the demo. None leaves the setting untouched.
     elections_enabled: Optional[bool] = None
+    # Phase 90f — number of anonymous filler members to pad the org to. Default
+    # 55 (every existing bible's implicit behavior). Calder sets 0: its weighted
+    # register, ledger, and share totals are defined over exactly its 14 named
+    # owners, and filler members with weight 1 would clutter the register + skew
+    # the outstanding total.
+    filler_count: int = 55
+    # Phase 90f — weighted-governance config for the Calder demo. Dict shape
+    # {enabled, unit_label, show_event_parties, transfers_enabled, issuance_mode,
+    # authorized_total, allow_per_member_proposals}, seeded through the real
+    # normalize_weighted_voting_input validator (not raw JSON). None leaves the
+    # org unweighted (every other bible). distribution_rules + ledger_seed carry
+    # the 90a rules + 90-90b backdated ledger history.
+    weighted_config: Optional[dict] = None
+    distribution_rules: list[DistributionRuleSeed] = field(default_factory=list)
+    ledger_seed: list[ShareEventSeed] = field(default_factory=list)
 
 
 @dataclass
@@ -422,6 +487,8 @@ __all__ = [
     'PrivateDelegationSeed',
     'PersonaDelegationSpec',
     'SubOrg',
+    'DistributionRuleSeed',
+    'ShareEventSeed',
     'OrgBible',
     # Trajectory dataclasses
     'Waypoint',

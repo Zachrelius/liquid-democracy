@@ -77,6 +77,11 @@ ORG_SEED_CONFIG: dict[str, dict] = {
         "governance_type": "Civic Advocacy Group",
         "display_order": 3,
     },
+    # Phase 90f — Calder Tool & Machine Works, the weighted-governance showcase.
+    "calder-tool": {
+        "governance_type": "Employee-owned business",
+        "display_order": 4,
+    },
 }
 
 
@@ -1212,6 +1217,147 @@ def _seed_sub_org(
         db.flush()
 
 
+def _seed_weighted_shares(db, bible, org, bible_uid_to_user, now):
+    """Phase 90f — seed distribution rules (via the real create_rule service)
+    and backdated ledger rows (direct insertion — the one sanctioned place),
+    then assert the ledger reconciles with each member's voting_weight.
+
+    Strict validation (like the topic-name resolver): a rule anchor that would
+    fire within 30 days, an unknown title/user, or a ledger that doesn't
+    reconcile raises — a broken bible fails the seed loudly, not silently.
+    """
+    import models
+    rules = getattr(bible, "distribution_rules", None) or []
+    ledger = getattr(bible, "ledger_seed", None) or []
+    if not rules and not ledger:
+        return
+
+    # --- Distribution rules (real service callable) ---
+    import share_distribution
+    from share_service import ShareServiceError
+    created_rules = []
+    for idx, rs in enumerate(rules):
+        title_ids = []
+        for tname in (rs.title_names or []):
+            t = db.query(models.OrgTitle).filter_by(org_id=org.id, name=tname).first()
+            if t is None:
+                raise ValueError(
+                    f"Calder bible rule {idx}: title {tname!r} not found in org {bible.slug}"
+                )
+            title_ids.append(t.id)
+        anchor_date = None
+        if rs.schedule_mode == "fixed_cadence" and rs.anchor_offset_days is not None:
+            anchor_date = (now + timedelta(days=int(rs.anchor_offset_days))).date()
+        try:
+            rule = share_distribution.create_rule(
+                db, org=org, created_by_id=None,
+                amount=rs.amount, interval_months=rs.interval_months,
+                schedule_mode=rs.schedule_mode, targeting_mode=rs.targeting_mode,
+                title_ids=title_ids, anchor_date=anchor_date,
+            )
+        except ShareServiceError as exc:
+            raise ValueError(f"Calder bible rule {idx}: {exc.message}") from exc
+        # Guard: no rule may fire during a demo day (next occurrence >= 30 days).
+        _assert_rule_not_due_soon(rule, now, idx)
+        created_rules.append(rule)
+
+    # --- Backdated ledger rows (direct insertion) ---
+    for i, es in enumerate(ledger):
+        created_at = now - timedelta(days=int(es.days_ago))
+        ref = None
+        if es.authorization_ref_kind == "rule" and es.rule_index is not None:
+            ref = f"rule:{created_rules[es.rule_index].id}"
+        elif es.authorization_ref_kind in ("pending_action", "proposal"):
+            ref = f"{es.authorization_ref_kind}:seed"
+        rule_id = (created_rules[es.rule_index].id
+                   if es.rule_index is not None and es.event_type == "auto_distribution"
+                   else None)
+        ev = models.ShareEvent(
+            org_id=org.id, event_type=es.event_type, created_at=created_at,
+            user_id=_resolve_uid(es.user_id, bible_uid_to_user),
+            from_user_id=_resolve_uid(es.from_user_id, bible_uid_to_user),
+            to_user_id=_resolve_uid(es.to_user_id, bible_uid_to_user),
+            actor_id=_resolve_uid(es.actor_user_id, bible_uid_to_user),
+            delta=es.delta, resulting_balance=es.resulting_balance,
+            from_resulting_balance=es.from_resulting_balance,
+            rule_id=rule_id, authorization_ref=ref,
+        )
+        db.add(ev)
+    db.flush()
+
+    # --- Reconciliation: replay the ledger chronologically per member and
+    # assert (a) any supplied resulting_balance matches the running balance at
+    # that point, and (b) the final running balance equals the declared
+    # voting_weight. baseline = final weight - net(all that member's deltas).
+    weight_by_uid = {mm.user_id: int(mm.voting_weight) for mm in bible.members}
+
+    def _member_delta(es, uid):
+        if es.event_type == "transfer":
+            if es.from_user_id == uid:
+                return -es.delta
+            if es.to_user_id == uid:
+                return es.delta
+            return 0
+        return es.delta if es.user_id == uid else 0
+
+    for uid, final_w in weight_by_uid.items():
+        evs = [es for es in ledger if _member_delta(es, uid) != 0]
+        if not evs:
+            continue
+        net = sum(_member_delta(es, uid) for es in evs)
+        running = final_w - net  # baseline before any seeded event
+        for es in sorted(evs, key=lambda e: -e.days_ago):  # oldest first
+            running += _member_delta(es, uid)
+            # The balance field visible to THIS member on THIS event.
+            supplied = (es.from_resulting_balance
+                        if es.event_type == "transfer" and es.from_user_id == uid
+                        else es.resulting_balance)
+            if supplied is not None and supplied != running:
+                raise ValueError(
+                    f"Calder ledger reconcile: {uid} balance at event "
+                    f"({es.event_type}, {es.days_ago}d ago) is {running}, "
+                    f"but resulting_balance says {supplied}"
+                )
+        if running != final_w:
+            raise ValueError(
+                f"Calder ledger reconcile: {uid} replays to {running} "
+                f"but declared voting_weight is {final_w}"
+            )
+
+
+def _resolve_uid(bible_uid, bible_uid_to_user):
+    if not bible_uid:
+        return None
+    u = bible_uid_to_user.get(bible_uid)
+    if u is None:
+        raise ValueError(f"Calder ledger: unknown user_id {bible_uid!r}")
+    return u.id
+
+
+def _assert_rule_not_due_soon(rule, now, idx):
+    """Phase 90f §1 — a seeded rule's next firing must be >= 30 days out so a
+    mid-demo sweep never grants + drifts the demo until reset."""
+    import share_distribution as sd
+    today = now.date()
+    horizon = today + timedelta(days=30)
+    if rule.schedule_mode == "fixed_cadence":
+        anchor = rule.anchor_date or today
+        # Next occurrence at or after today.
+        k = 0
+        nxt = anchor
+        while nxt < today:
+            k += 1
+            nxt = sd.add_months(anchor, k * rule.interval_months)
+        if nxt < horizon:
+            raise ValueError(
+                f"Calder rule {idx}: next fixed-cadence firing {nxt} is < 30 days out"
+            )
+    # anniversary rules fire per-member on their share_start_date anniversary;
+    # the bible positions tenures so the nearest anniversary is > 30 days out.
+    # We spot-check nothing here (per-member), trusting the tenure placement +
+    # the wipe-reseed-twice test to catch an accidental same-day anniversary.
+
+
 def seed_org_from_bible(
     db: Session,
     bible: OrgBible,
@@ -1334,6 +1480,15 @@ def seed_org_from_bible(
     if getattr(bible, "allow_cosign_petition", None) is not None:
         settings["allow_cosign_petition"] = bool(bible.allow_cosign_petition)
 
+    # Phase 90f — weighted-governance config, seeded through the REAL validator
+    # (normalize_weighted_voting_input) so a malformed bible fails loudly at seed
+    # time rather than writing raw JSON that the resolver later ignores.
+    if getattr(bible, "weighted_config", None) is not None:
+        from org_config import normalize_weighted_voting_input
+        settings["weighted_voting"] = normalize_weighted_voting_input(
+            bible.weighted_config
+        )
+
     org.settings = settings
 
     org.governance_type = config.get("governance_type")
@@ -1384,7 +1539,22 @@ def seed_org_from_bible(
                 models.Role.system_key == "member",
             ).first()
 
-        _ensure_membership(db, user.id, org.id, target_role.id)
+        membership = _ensure_membership(db, user.id, org.id, target_role.id)
+        # Phase 90f — weighted-voting share holdings. voting_weight defaults 1
+        # (unchanged for every unweighted bible). share_tenure_years exercises
+        # the 90a share_start_date column (not the join-date fallback), but is
+        # positioned to a DEMO-SAFE recent anchor rather than the literal
+        # reset-minus-tenure date: a years-ago anchor would make the anniversary
+        # sweep back-grant every elapsed period on the first tick (catch-up).
+        # A recent anchor (< 12 months) yields zero elapsed periods, so the rule
+        # never fires mid-demo and the next anniversary is comfortably out. The
+        # tenure still drives the (deterministic, varied) day so dates look real.
+        membership.voting_weight = int(getattr(m, "voting_weight", 1) or 0)
+        _tenure = getattr(m, "share_tenure_years", None)
+        if _tenure is not None:
+            _days = 45 + (int(round(float(_tenure) * 100)) % 275)  # 45..319 days ago
+            membership.share_start_date = (now - timedelta(days=_days)).date()
+        db.flush()
         counts["users_created"] += 1
         counts["members_created"] += 1
 
@@ -1602,6 +1772,9 @@ def seed_org_from_bible(
                         m.role_id = target_role.id
         db.flush()
 
+    # ---- 5.6b Phase 90f — distribution rules + backdated ledger -----------
+    _seed_weighted_shares(db, bible, org, bible_uid_to_user, now)
+
     # ---- 5.7 Phase 49b — bible-declared cosign-petition seed --------------
     # Creates a Proposal in deliberation status with is_cosign_gated=True
     # + N ProposalCosignature rows (sub-threshold) so a demo visitor
@@ -1737,6 +1910,12 @@ def seed_org_from_bible(
             allow_pre_voting=bp.allow_pre_voting,
             show_votes_during_deliberation=bp.show_votes_during_deliberation,
             edit_lockout_fraction=bp.edit_lockout_fraction,
+            # Phase 90f — weighted extensions. count_mode exercises the 90c
+            # per-proposal toggle; issuance_payload (when set) marks the proposal
+            # as a 90e issuance proposal (is_issuance + forced-weighted count).
+            count_mode=getattr(bp, "count_mode", None),
+            is_issuance=bool(getattr(bp, "issuance_payload", None)),
+            issuance_payload=getattr(bp, "issuance_payload", None),
         )
         db.add(proposal)
         db.flush()
@@ -1952,7 +2131,8 @@ def seed_org_from_bible(
                     delegate_pool.append((u.id, tv.topic))
 
     fillers = generate_filler_members(
-        bible, target_count=55, delegate_pool=delegate_pool,
+        bible, target_count=getattr(bible, "filler_count", 55),
+        delegate_pool=delegate_pool,
     )
     filler_user_ids: dict[str, str] = {}  # bible filler_user_id → DB User.id
     for f in fillers:
