@@ -191,8 +191,48 @@ async function requestFormData(path, formData) {
   return data;
 }
 
+/**
+ * Download a file (e.g. a CSV export) with the JWT attached, triggering a
+ * browser save. Phase 90c — the share-register export returns text/csv, not
+ * JSON, so it can't go through request(); we fetch the blob and click a
+ * synthetic anchor. On 401 we surface the same auth event as request().
+ */
+async function downloadFile(path, fallbackName) {
+  let res;
+  try {
+    res = await fetch(path, { method: 'GET', headers: authHeaders() });
+  } catch {
+    throw { message: "Couldn't reach the server. Check your connection and try again.", status: 0 };
+  }
+  if (res.status === 401) {
+    window.dispatchEvent(new Event('auth:unauthorized'));
+    throw { message: 'Session expired. Please log in again.', status: 401 };
+  }
+  if (!res.ok) {
+    let message = `Server error ${res.status}`;
+    try {
+      const data = await res.json();
+      if (typeof data?.detail === 'string') message = data.detail;
+    } catch { /* non-JSON error body */ }
+    throw { message, status: res.status };
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get('Content-Disposition') || '';
+  const m = cd.match(/filename="?([^"]+)"?/);
+  const name = (m && m[1]) || fallbackName || 'download';
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+}
+
 const api = {
   get: (path) => request('GET', path),
+  download: (path, fallbackName) => downloadFile(path, fallbackName),
   post: (path, body) => request('POST', path, body),
   put: (path, body) => request('PUT', path, body),
   patch: (path, body) => request('PATCH', path, body),

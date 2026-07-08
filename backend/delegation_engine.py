@@ -1882,13 +1882,21 @@ class DelegationService:
         # from the PARENT org's OrgMembership rows.
         from org_config import get_weighted_voting_config
 
+        # Phase 90c — a proposal explicitly set to one_per_member counts by
+        # headcount even in a weighted org: leave user_weights empty (the 88
+        # parity mechanism reused as a feature — every tally reduces to
+        # headcount with zero tally-code changes). 'weighted' / NULL populate
+        # weights as usual (NULL = org default = weighted here).
         user_weights: dict[str, int] = {}
+        _count_mode = getattr(proposal, "count_mode", None)
         weight_org = _gate_org
         if weight_org is not None and getattr(weight_org, "parent_org_id", None):
             _parent = db.get(models.Organization, weight_org.parent_org_id)
             if _parent is not None:
                 weight_org = _parent
-        if weight_org is not None and get_weighted_voting_config(weight_org)["enabled"]:
+        if (_count_mode != "one_per_member"
+                and weight_org is not None
+                and get_weighted_voting_config(weight_org)["enabled"]):
             wq = db.query(
                 models.OrgMembership.user_id, models.OrgMembership.voting_weight,
             ).filter(models.OrgMembership.org_id == weight_org.id)

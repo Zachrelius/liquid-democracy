@@ -919,6 +919,13 @@ class Proposal(Base):
         String, nullable=False, default="binary",
     )
     num_winners: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # Phase 90c — per-proposal vote-counting mode: 'weighted' | 'one_per_member'
+    # | NULL (org default: weighted in weighted orgs, headcount otherwise).
+    # Only meaningful in weighted orgs; ignored elsewhere. Locked once the
+    # proposal leaves draft. When effective mode is one_per_member,
+    # DelegationService._build_context skips populating user_weights, so every
+    # tally reduces to headcount with zero tally-code changes.
+    count_mode: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     tie_resolution: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     pass_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.50)
     quorum_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.40)

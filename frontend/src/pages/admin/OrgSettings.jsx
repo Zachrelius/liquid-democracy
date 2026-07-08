@@ -1098,6 +1098,8 @@ export default function OrgSettings() {
             show_event_parties: wv.show_event_parties === true,
             // Phase 90b — member-to-member transfers.
             transfers_enabled: wv.transfers_enabled === true,
+            // Phase 90c — per-proposal one-member-one-vote override (default on).
+            allow_per_member_proposals: wv.allow_per_member_proposals !== false,
           },
         },
       });
@@ -2689,6 +2691,12 @@ export default function OrgSettings() {
               </span>
             </label>
 
+            {/* Phase 90c (weighted-UI sweep) — the sub-toggles below only make
+                sense once weighted voting is on. When it's off, the section
+                collapses to just the enable toggle + unit label above, so an
+                org that doesn't use shares never sees share-only controls. */}
+            {settings.weighted_voting?.enabled === true && (
+              <>
             {/* Phase 90 — show_event_parties toggle for the share activity feed. */}
             <label className="flex items-start gap-3 cursor-pointer">
               <input
@@ -2727,9 +2735,30 @@ export default function OrgSettings() {
               </div>
             </label>
 
+            {/* Phase 90c — per-proposal one-member-one-vote override toggle. */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={settings.weighted_voting?.allow_per_member_proposals !== false}
+                onChange={e => updateSetting('weighted_voting', {
+                  ...(settings.weighted_voting || {}),
+                  allow_per_member_proposals: e.target.checked,
+                })}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <div>
+                <div className="text-sm text-gray-700">Let proposal authors choose "one member, one vote" per proposal</div>
+                <div className="text-xs text-gray-500">
+                  When on, a proposal's author can set that individual proposal to count by headcount instead of shares (for example, a procedural vote). When off, every proposal counts by shares. This does not change any existing proposal.
+                </div>
+              </div>
+            </label>
+
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
               Privacy note: with weighted results, a member holding a distinctive number of shares can sometimes be identified from how the totals move. Corporate voting carries a lower expectation of ballot privacy; individual ballots stay private, but aggregate shifts are visible.
             </p>
+              </>
+            )}
 
             <p className="text-xs text-gray-500">
               Changing the voting model notifies every member and names you as

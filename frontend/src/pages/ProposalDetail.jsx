@@ -16,6 +16,7 @@ import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
 import VerifyEmailInlineNote from '../components/VerifyEmailInlineNote';
 import StatusBadge from '../components/StatusBadge';
+import CountModeBadge from '../components/CountModeBadge';
 import ElectionBadge from '../components/ElectionBadge';
 import TopicBadge from '../components/TopicBadge';
 import VoteBar from '../components/VoteBar';
@@ -2204,6 +2205,8 @@ export default function ProposalDetail() {
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-3">
               <StatusBadge status={proposal.status} />
+              {/* Phase 90c — headcount-counted proposal marker (weighted orgs). */}
+              <CountModeBadge countMode={proposal.count_mode} />
               {proposal.voting_method === 'approval' && (
                 <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Approval Vote</span>
               )}
@@ -2738,8 +2741,9 @@ export default function ProposalDetail() {
                 </div>
               )}
               {/* Phase 88a — weighted voting chip. my_voting_weight is null in
-                  unweighted orgs (chip hidden). */}
-              {myVote?.my_voting_weight != null && (
+                  unweighted orgs (chip hidden). Phase 90c — suppressed when the
+                  proposal is counted one member, one vote (shares don't apply). */}
+              {myVote?.my_voting_weight != null && proposal.count_mode !== 'one_per_member' && (
                 <div className="mb-3 inline-block px-3 py-1 bg-blue-50 border border-blue-200 rounded-full text-xs text-blue-800">
                   Your vote carries {myVote.my_voting_weight} {currentOrg?.weighted_voting?.unit_label || 'shares'}
                 </div>

@@ -581,6 +581,10 @@ class ProposalCreate(BaseModel):
     voting_method: str = "binary"
     options: list[OptionCreate] = Field(default=[])
     num_winners: int = Field(default=1, ge=1)
+    # Phase 90c — per-proposal vote-counting mode (weighted orgs only):
+    # 'weighted' | 'one_per_member' | None (org default). Ignored in unweighted
+    # orgs. Locked once the proposal leaves draft.
+    count_mode: Optional[str] = None
     # Phase 8 / Phase 20 — per-proposal "Stable Result Required" override.
     # null = inherit org default; True/False = explicit. Server rejects
     # non-null when org has `stable_result_per_proposal_override: false`.
@@ -679,6 +683,11 @@ class ProposalUpdate(BaseModel):
     # status these fields are rejected (400).
     voting_method: Optional[str] = Field(default=None)
     num_winners: Optional[int] = Field(default=None, ge=1)
+    # Phase 90c — per-proposal count_mode, editable WHILE STATUS == 'draft'
+    # ONLY (mirrors voting_method — it changes outcome semantics, so it's
+    # frozen once the proposal has left draft). The route rejects a change
+    # outside draft with 400.
+    count_mode: Optional[str] = Field(default=None)
     # Phase 8 / Phase 20 — per-proposal "Stable Result Required" override
     # (see ProposalCreate). Use Field with explicit default sentinel so
     # omitted vs. null differ: we only update the column when the field is
@@ -781,6 +790,10 @@ class ProposalOut(BaseModel):
     status: str
     voting_method: str = "binary"
     num_winners: int = 1
+    # Phase 90c — resolved counting mode: 'weighted' | 'one_per_member' | None.
+    # None means org default (weighted in weighted orgs, headcount otherwise).
+    # The FE renders a "one member, one vote" chip when one_per_member.
+    count_mode: Optional[str] = None
     tie_resolution: Optional[dict] = None
     deliberation_start: Optional[datetime]
     voting_start: Optional[datetime]

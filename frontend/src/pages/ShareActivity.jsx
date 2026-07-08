@@ -6,6 +6,7 @@ import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
 import DistributionRules from '../components/DistributionRules';
 import TransferShares from '../components/TransferShares';
+import { useHasPermission } from '../hooks/useHasPermission';
 
 /**
  * ShareActivity — Phase 90 member-facing share-event ledger.
@@ -46,6 +47,21 @@ export default function ShareActivity() {
   const weighted = currentOrg?.weighted_voting?.enabled === true;
   const unit = currentOrg?.weighted_voting?.unit_label || 'shares';
   const slug = currentOrg?.slug;
+  const canExport = useHasPermission('member.set_voting_weight');
+  const [exporting, setExporting] = useState(false);
+
+  const exportRegister = useCallback(async () => {
+    setExporting(true);
+    setError('');
+    try {
+      await api.download(`/api/orgs/${slug}/share-register/export`,
+                         `share-register-${slug}.csv`);
+    } catch (e) {
+      setError(e.message || 'Failed to export the share register');
+    } finally {
+      setExporting(false);
+    }
+  }, [slug]);
 
   const load = useCallback(async () => {
     if (!slug || !weighted) return;
@@ -88,6 +104,22 @@ export default function ShareActivity() {
           </button>
         </div>
       </div>
+
+      {canExport && (
+        <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-white border border-gray-200 rounded-xl p-3">
+          <p className="text-xs text-gray-500">
+            The platform is this organization&apos;s {unit} register. Export the
+            full register + ledger as a CSV for your accountant or counsel.
+          </p>
+          <button
+            onClick={exportRegister}
+            disabled={exporting}
+            className="whitespace-nowrap px-3 py-1.5 rounded-lg text-sm bg-[var(--brand-primary)] text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {exporting ? 'Preparing…' : 'Export register (CSV)'}
+          </button>
+        </div>
+      )}
 
       <DistributionRules slug={slug} unit={unit} />
 

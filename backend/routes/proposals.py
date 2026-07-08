@@ -406,6 +406,7 @@ def _build_proposal_out(
         status=proposal.status,
         voting_method=proposal.voting_method,
         num_winners=proposal.num_winners,
+        count_mode=getattr(proposal, "count_mode", None),
         tie_resolution=proposal.tie_resolution,
         deliberation_start=proposal.deliberation_start,
         voting_start=proposal.voting_start,
@@ -816,6 +817,29 @@ def _collect_proposal_creation_errors(
     # budget_project are now weight-aware (weighted median / weighted tier
     # plurality in budget_tally.py), so weighted orgs can run participatory
     # budgeting. No creation-method block remains for weighted orgs.
+    #
+    # Phase 90c — per-proposal count_mode. Valid values only; one_per_member is
+    # a weighted-org feature the org may disable. In unweighted orgs the field
+    # is ignored (normalized to None by the create handler), so no error there.
+    _cm = getattr(body, "count_mode", None)
+    if _cm is not None:
+        if _cm not in ("weighted", "one_per_member"):
+            errors.append((
+                "count_mode", 400,
+                "count_mode must be 'weighted' or 'one_per_member'.",
+            ))
+        else:
+            from org_config import get_weighted_voting_config as _cm_wv
+            _cm_org = org
+            if _cm_org is not None and getattr(_cm_org, "parent_org", None) is not None:
+                _cm_org = _cm_org.parent_org
+            _cm_cfg = _cm_wv(_cm_org)
+            if (_cm == "one_per_member" and _cm_cfg["enabled"]
+                    and not _cm_cfg["allow_per_member_proposals"]):
+                errors.append((
+                    "count_mode", 400,
+                    "This organization does not allow per-proposal one member, one vote.",
+                ))
     if body.voting_method == "binary":
         if body.options:
             errors.append((
@@ -1712,6 +1736,51 @@ def update_proposal(
                 ),
             )
         proposal.num_winners = body.num_winners
+
+    # Phase 90c — count_mode change (draft-only; changing it after draft is
+    # rejected because it flips outcome semantics on a proposal that already
+    # has an audience). Value + allow_per_member_proposals are re-validated
+    # here so a PATCH can't smuggle an invalid or disabled mode past create.
+    if "count_mode" in body.model_fields_set:
+        _new_cm = body.count_mode
+        if _new_cm != getattr(proposal, "count_mode", None):
+            if proposal.status != "draft":
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "count_mode can only be changed while the proposal "
+                        "is in draft status."
+                    ),
+                )
+            if _new_cm is not None:
+                if _new_cm not in ("weighted", "one_per_member"):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="count_mode must be 'weighted' or 'one_per_member'.",
+                    )
+                _cm_org = (
+                    db.get(models.Organization, proposal.org_id)
+                    if proposal.org_id else None
+                )
+                if _cm_org is not None and getattr(_cm_org, "parent_org_id", None):
+                    _cm_org = db.get(
+                        models.Organization, _cm_org.parent_org_id
+                    ) or _cm_org
+                from org_config import get_weighted_voting_config as _cm_wv
+                _cm_cfg = _cm_wv(_cm_org)
+                # Only meaningful in weighted orgs; ignored (→ NULL) otherwise.
+                if not _cm_cfg["enabled"]:
+                    _new_cm = None
+                elif (_new_cm == "one_per_member"
+                        and not _cm_cfg["allow_per_member_proposals"]):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "This organization does not allow per-proposal "
+                            "one member, one vote."
+                        ),
+                    )
+            proposal.count_mode = _new_cm
 
     # Phase 66 — approval_winner_config change (draft-only, approval
     # method only). Shape was validated at the Pydantic layer; explicit
@@ -3573,8 +3642,14 @@ def get_results(
             models.Organization, _weight_org.parent_org_id
         ) or _weight_org
     _wv = _get_wv_cfg(_weight_org)
-    _weighted_flag = _wv["enabled"]
-    _weighted_unit = _wv["unit_label"] if _wv["enabled"] else None
+    # Phase 90c — a proposal explicitly counted one-member-one-vote reports as
+    # unweighted regardless of the org's weighting, so the FE drops the unit
+    # label and share-denominated framing. The tally itself already reduced to
+    # headcount upstream (empty ctx.user_weights via _build_context).
+    _weighted_flag = (
+        _wv["enabled"] and getattr(proposal, "count_mode", None) != "one_per_member"
+    )
+    _weighted_unit = _wv["unit_label"] if _weighted_flag else None
     from sustained_majority_service import build_status as _sm_build_status
     sm_status = _sm_build_status(db, proposal, org)
 
