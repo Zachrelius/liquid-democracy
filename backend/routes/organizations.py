@@ -1859,15 +1859,18 @@ def set_member_voting_weight(
     """Phase 88 — set a member's integer voting weight (shares).
 
     Gated by ``member.set_voting_weight`` (config-authoritative on top of the
-    moderator+ tier floor — a plain member can never reach this). Editable
-    whether or not weighted voting is enabled, so shares can be staged before
-    the switch flips. Audited with old/new/target_user_id.
+    moderator+ tier floor — a plain member can never reach this). Phase 90c: the
+    endpoint now requires weighted voting to be ENABLED (weighted-UI sweep) —
+    the Phase 88 "stage weights before the switch" allowance is superseded by
+    the 88 parity mechanism (enable at all-weight-1 first, then set). Audited
+    with old/new/target_user_id.
     """
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
+    _require_weighted_enabled(org)
     if not has_permission(
         db, current_user.id, org.id, "member.set_voting_weight"
     ):
@@ -1999,6 +2002,7 @@ def list_share_events(
     ).first()
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
+    _require_weighted_enabled(org)
     wv = get_weighted_voting_config(org)
     q = db.query(models.ShareEvent).filter(
         models.ShareEvent.org_id == org.id,
@@ -2038,6 +2042,7 @@ def list_my_share_events(
     ).first()
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
+    _require_weighted_enabled(org)
     wv = get_weighted_voting_config(org)
     uid = current_user.id
     q = db.query(models.ShareEvent).filter(
@@ -2066,6 +2071,123 @@ def list_my_share_events(
     )
 
 
+@router.get("/{org_slug}/share-register/export")
+def export_share_register(
+    org_slug: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Phase 90c — CSV export of the org's full share register + ledger.
+
+    Gated on ``member.set_voting_weight`` (the key-holder's job — this is the
+    org's legal share register, exported for its accountant/counsel). The access
+    is logged as an audited elevated read (naming the exporter) per the
+    polis-deanonymize-export precedent; no reason field required.
+
+    Single CSV, two sections: the current register (one row per active member:
+    display name, user id, voting_weight, resolved share_start_date, joined) and
+    the full ShareEvent ledger (every field, party ids included — a key-holder
+    export is not subject to the member-facing party-name redaction).
+    """
+    import csv
+    import io
+    import verification as _verification
+    from share_distribution import share_start_date_for
+
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    # Weighted-only surface: an unweighted org has no register to export.
+    if not get_weighted_voting_config(org)["enabled"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Share register export is only available for weighted-voting organizations.",
+        )
+    _require_set_weight(db, org, current_user.id)
+
+    name_cache: dict = {}
+
+    def _dn(uid):
+        if not uid:
+            return ""
+        if uid in name_cache:
+            return name_cache[uid]
+        u = db.get(models.User, uid)
+        nm = _verification.display_name_for(u, org) if u else uid
+        name_cache[uid] = nm
+        return nm
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+
+    # --- Section 1: current register (active memberships) ---
+    writer.writerow(["# REGISTER"])
+    writer.writerow(
+        ["display_name", "user_id", "voting_weight", "share_start_date", "joined_at"]
+    )
+    memberships = db.query(models.OrgMembership).filter(
+        models.OrgMembership.org_id == org.id,
+    ).all()
+    for m in memberships:
+        ssd = share_start_date_for(m)
+        writer.writerow([
+            _dn(m.user_id),
+            m.user_id,
+            m.voting_weight if m.voting_weight is not None else 1,
+            ssd.isoformat() if ssd else "",
+            m.joined_at.isoformat() if getattr(m, "joined_at", None) else "",
+        ])
+
+    # --- Section 2: full ledger (newest-last, chronological for an audit read) ---
+    writer.writerow([])
+    writer.writerow(["# LEDGER"])
+    writer.writerow([
+        "event_id", "created_at", "event_type", "delta", "resulting_balance",
+        "from_resulting_balance", "user_id", "user_display_name",
+        "from_user_id", "from_display_name", "to_user_id", "to_display_name",
+        "actor_id", "actor_display_name", "rule_id", "period_key",
+    ])
+    events = db.query(models.ShareEvent).filter(
+        models.ShareEvent.org_id == org.id,
+    ).order_by(
+        models.ShareEvent.created_at.asc(), models.ShareEvent.id.asc(),
+    ).all()
+    for ev in events:
+        writer.writerow([
+            ev.id,
+            ev.created_at.isoformat() if ev.created_at else "",
+            ev.event_type,
+            ev.delta,
+            ev.resulting_balance if ev.resulting_balance is not None else "",
+            ev.from_resulting_balance if ev.from_resulting_balance is not None else "",
+            ev.user_id or "", _dn(ev.user_id),
+            ev.from_user_id or "", _dn(ev.from_user_id),
+            ev.to_user_id or "", _dn(ev.to_user_id),
+            ev.actor_id or "", _dn(ev.actor_id),
+            ev.rule_id or "",
+            ev.period_key or "",
+        ])
+
+    log_audit_event(
+        db, action="share.register_exported",
+        target_type="organization", target_id=org.id,
+        actor_id=current_user.id,
+        details={"members": len(memberships), "events": len(events)},
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+
+    filename = f"share-register-{org.slug}.csv"
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ============================================================================
 # Phase 90a — Share distribution rules (CRUD + member read) + share start date
 # ============================================================================
@@ -2075,6 +2197,27 @@ def _require_set_weight(db, org, user_id):
         raise HTTPException(
             status_code=403,
             detail="You do not have permission to manage share distribution in this organization.",
+        )
+
+
+def _require_weighted_enabled(org):
+    """Phase 90c (weighted-UI sweep) — a weighted-only surface must not be
+    reachable in an unweighted org. Resolve against the weight-holding org
+    (parent for sub-orgs) so a sub-org of a weighted parent still passes.
+
+    This supersedes the Phase 88 "editable whether or not weighted voting is
+    enabled (share staging)" allowance: with the 88 parity mechanism, an org can
+    enable weighted voting first (all weights default 1 → headcount-equivalent
+    tallies) and set weights after, so gating on `enabled` loses nothing while
+    keeping every share surface off in orgs that don't use shares.
+    """
+    weight_org = org
+    if weight_org is not None and getattr(weight_org, "parent_org", None) is not None:
+        weight_org = weight_org.parent_org
+    if not get_weighted_voting_config(weight_org)["enabled"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Weighted voting is not enabled for this organization.",
         )
 
 
@@ -2092,6 +2235,7 @@ def list_distribution_rules(
         models.Organization.slug == org_slug).first()
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
+    _require_weighted_enabled(org)
     return db.query(models.ShareDistributionRule).filter(
         models.ShareDistributionRule.org_id == org.id,
     ).order_by(models.ShareDistributionRule.created_at.desc()).all()
@@ -2112,6 +2256,7 @@ def create_distribution_rule(
         models.Organization.slug == org_slug).first()
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
+    _require_weighted_enabled(org)
     _require_set_weight(db, org, current_user.id)
     import share_distribution
     from share_service import ShareServiceError
@@ -2158,6 +2303,7 @@ def update_distribution_rule(
         models.Organization.slug == org_slug).first()
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
+    _require_weighted_enabled(org)
     _require_set_weight(db, org, current_user.id)
     rule = _get_rule_or_404(db, org, rule_id)
     import share_distribution
@@ -2209,6 +2355,7 @@ def pause_distribution_rule(
         models.Organization.slug == org_slug).first()
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
+    _require_weighted_enabled(org)
     _require_set_weight(db, org, current_user.id)
     rule = _get_rule_or_404(db, org, rule_id)
     rule.status = "paused"
@@ -2233,6 +2380,7 @@ def resume_distribution_rule(
         models.Organization.slug == org_slug).first()
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
+    _require_weighted_enabled(org)
     _require_set_weight(db, org, current_user.id)
     rule = _get_rule_or_404(db, org, rule_id)
     rule.status = "active"
@@ -2256,6 +2404,7 @@ def delete_distribution_rule(
         models.Organization.slug == org_slug).first()
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
+    _require_weighted_enabled(org)
     _require_set_weight(db, org, current_user.id)
     rule = _get_rule_or_404(db, org, rule_id)
     # Real DELETE; existing ledger rows keep the orphaned rule_id by design.
@@ -2282,6 +2431,7 @@ def set_member_share_start_date(
         models.Organization.slug == org_slug).first()
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
+    _require_weighted_enabled(org)
     _require_set_weight(db, org, current_user.id)
     m = db.query(models.OrgMembership).filter(
         models.OrgMembership.org_id == org.id,
@@ -4663,6 +4813,15 @@ def create_org_proposal(
             body.verification_floor = None
             body.verification_jurisdiction = None
 
+    # Phase 90c — per-proposal count_mode. Only meaningful in weighted orgs;
+    # normalized to None elsewhere so unweighted proposals never carry a stray
+    # mode. Validity + allow_per_member_proposals were already enforced by
+    # _collect_proposal_creation_errors; here we only gate on weighting.
+    _cm_org = org.parent_org if getattr(org, "parent_org", None) is not None else org
+    effective_count_mode = None
+    if get_weighted_voting_config(_cm_org)["enabled"]:
+        effective_count_mode = getattr(body, "count_mode", None)
+
     proposal = models.Proposal(
         title=body.title,
         body=body.body,
@@ -4671,6 +4830,7 @@ def create_org_proposal(
         sub_org_id=target_sub_org.id if target_sub_org else None,
         voting_method=body.voting_method,
         num_winners=body.num_winners,
+        count_mode=effective_count_mode,
         status=initial_status,
         deliberation_start=now_at_create,
         voting_start=now_at_create if skip_deliberation else None,

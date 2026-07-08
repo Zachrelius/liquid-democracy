@@ -4,6 +4,7 @@ import api from '../api';
 import { useOrg } from '../OrgContext';
 import { urlFor } from '../utils/urls';
 import StatusBadge from '../components/StatusBadge';
+import CountModeBadge from '../components/CountModeBadge';
 import TopicBadge from '../components/TopicBadge';
 import VoteBar from '../components/VoteBar';
 import MultiOptionResultBar from '../components/MultiOptionResultBar';
@@ -255,6 +256,8 @@ function ProposalCard({ proposal, myVote, tally, subOrgsById, isReadOnly, linkOr
           )}
         </span>
         <StatusBadge status={proposal.status} votingMethod={method} />
+        {/* Phase 90c — one-member-one-vote marker on the card. */}
+        <CountModeBadge countMode={proposal.count_mode} />
       </div>
 
       {/* Phase 8.5 — sub-org badge + Decision 7 read-only hint */}

@@ -491,8 +491,12 @@ def test_weight_edit_range_validation(client, test_db):
     assert r3.status_code == 200, r3.text
 
 
-def test_weight_edit_allowed_when_weighting_off(client, test_db):
-    """Shares can be staged before the switch flips."""
+def test_weight_edit_rejected_when_weighting_off(client, test_db):
+    """Phase 90c (weighted-UI sweep) SUPERSEDES the Phase 88 staging allowance:
+    the weight-set endpoint now 400s in an unweighted org. With the 88 parity
+    mechanism, an org enables weighted voting first (all weights default 1 →
+    headcount-equivalent tallies) then sets weights — nothing is lost, and no
+    share surface is reachable in orgs that don't use shares."""
     org = _org(test_db)  # weighted off
     author, _ = _member(test_db, org, "auth", role="steward", weight=1)
     (target, tm) = _member(test_db, org, "target", weight=1)
@@ -501,9 +505,9 @@ def test_weight_edit_allowed_when_weighting_off(client, test_db):
         f"/api/orgs/{org.slug}/members/{target.id}/voting-weight",
         headers=_auth(author), json={"voting_weight": 12},
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code == 400, r.text
     test_db.refresh(tm)
-    assert tm.voting_weight == 12
+    assert tm.voting_weight == 1  # unchanged
 
 
 # ===========================================================================
@@ -561,7 +565,7 @@ def test_settings_patch_enables_weighted_voting_and_audits(client, test_db):
     })
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["weighted_voting"] == {"enabled": True, "unit_label": "units", "show_event_parties": False, "transfers_enabled": False}
+    assert body["weighted_voting"] == {"enabled": True, "unit_label": "units", "show_event_parties": False, "transfers_enabled": False, "allow_per_member_proposals": True}
     audit = test_db.query(models.AuditLog).filter(
         models.AuditLog.action == "org.weighted_voting_changed",
     ).all()
@@ -589,7 +593,7 @@ def test_settings_patch_partial_preserves_unit_label(client, test_db):
         "settings": {"weighted_voting": {"enabled": False}},
     })
     assert r.status_code == 200, r.text
-    assert r.json()["weighted_voting"] == {"enabled": False, "unit_label": "votes", "show_event_parties": False, "transfers_enabled": False}
+    assert r.json()["weighted_voting"] == {"enabled": False, "unit_label": "votes", "show_event_parties": False, "transfers_enabled": False, "allow_per_member_proposals": True}
 
 
 # ===========================================================================
@@ -614,7 +618,7 @@ def test_org_out_surfaces_weighted_voting(client, test_db):
     test_db.commit()
     r = client.get(f"/api/orgs/{org.slug}", headers=_auth(author))
     assert r.status_code == 200, r.text
-    assert r.json()["weighted_voting"] == {"enabled": True, "unit_label": "units", "show_event_parties": False, "transfers_enabled": False}
+    assert r.json()["weighted_voting"] == {"enabled": True, "unit_label": "units", "show_event_parties": False, "transfers_enabled": False, "allow_per_member_proposals": True}
 
 
 def test_results_payload_weighted_labels(client, test_db):

@@ -349,11 +349,17 @@ def get_weighted_voting_config(org: Optional[models.Organization]) -> dict:
     transfers_enabled = raw.get("transfers_enabled", False)
     if not isinstance(transfers_enabled, bool):
         transfers_enabled = False
+    # Phase 90c — whether proposal authors may choose one_per_member counting on
+    # individual proposals (default TRUE). Orgs can disable the override.
+    allow_per_member_proposals = raw.get("allow_per_member_proposals", True)
+    if not isinstance(allow_per_member_proposals, bool):
+        allow_per_member_proposals = True
     return {
         "enabled": enabled,
         "unit_label": unit_label,
         "show_event_parties": show_event_parties,
         "transfers_enabled": transfers_enabled,
+        "allow_per_member_proposals": allow_per_member_proposals,
     }
 
 
@@ -421,4 +427,13 @@ def normalize_weighted_voting_input(raw: object) -> dict:
                 detail="weighted_voting.transfers_enabled must be a boolean",
             )
         out["transfers_enabled"] = te
+    # Phase 90c — allow_per_member_proposals toggle.
+    if "allow_per_member_proposals" in raw:
+        ap = raw["allow_per_member_proposals"]
+        if not isinstance(ap, bool):
+            raise HTTPException(
+                status_code=400,
+                detail="weighted_voting.allow_per_member_proposals must be a boolean",
+            )
+        out["allow_per_member_proposals"] = ap
     return out

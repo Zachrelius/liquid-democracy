@@ -482,6 +482,12 @@ function CreateProposalForm({
   const [votingMethod, setVotingMethod] = useState(() => (
     isEditMode ? (editingProposal.voting_method ?? 'binary') : 'binary'
   ));
+  // Phase 90c — per-proposal count mode. Only meaningful in weighted orgs that
+  // allow the per-proposal override. '' = org default (weighted); the toggle
+  // sets it to 'one_per_member' when the author wants headcount counting.
+  const [countMode, setCountMode] = useState(() => (
+    isEditMode ? (editingProposal.count_mode ?? '') : ''
+  ));
   const [options, setOptions] = useState(() => {
     if (isEditMode && Array.isArray(editingProposal.options) && editingProposal.options.length > 0) {
       return editingProposal.options.map(o => ({
@@ -734,6 +740,15 @@ function CreateProposalForm({
   // editor. Project budget uses its own ProjectItemsEditor (kind + tiers).
   const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || isBudget;
 
+  // Phase 90c — the per-proposal count-mode toggle is offered only in weighted
+  // orgs that allow the override (weighted_voting.allow_per_member_proposals,
+  // default true). Editable only while the proposal is in draft (backend locks
+  // it after); we hide the control in edit mode once the proposal has left draft.
+  const weightedVoting = currentOrg?.weighted_voting;
+  const countModeAvailable = !!weightedVoting?.enabled
+    && weightedVoting?.allow_per_member_proposals !== false
+    && (!isEditMode || editingProposal.status === 'draft');
+
   function toggleTopic(topicId) {
     setSelectedTopics(prev => {
       const existing = prev.find(t => t.topic_id === topicId);
@@ -894,6 +909,15 @@ function CreateProposalForm({
       }
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
+      }
+      // Phase 90c — per-proposal count mode (weighted orgs that allow it). Send
+      // 'one_per_member' when chosen; otherwise omit so the org default (weighted)
+      // applies. In edit mode the backend enforces the draft-only lock.
+      if (countModeAvailable && countMode === 'one_per_member') {
+        payload.count_mode = 'one_per_member';
+      } else if (isEditMode && editingProposal.count_mode && countMode !== 'one_per_member') {
+        // Author cleared the override while still in draft → back to weighted.
+        payload.count_mode = 'weighted';
       }
       // Phase 73 — allocation-budget config.
       if (isBudget) {
@@ -1515,6 +1539,45 @@ function CreateProposalForm({
           )}
         </div>
       </div>
+
+      {/* Phase 90c — per-proposal count mode (weighted orgs that allow it). */}
+      {countModeAvailable && (
+        <div className="border border-emerald-200 rounded-lg p-3 bg-emerald-50/40">
+          <label className="block text-xs text-gray-600 mb-2 font-medium">
+            How should votes count?
+          </label>
+          <div className="flex flex-col gap-2">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio" name="countMode" value="weighted"
+                checked={countMode !== 'one_per_member'}
+                onChange={() => setCountMode('weighted')}
+                className="mt-0.5 accent-[var(--brand-accent)]"
+              />
+              <span className="text-sm text-gray-700">
+                By member shares
+                <span className="block text-xs text-gray-500">
+                  Each member&apos;s vote carries their {weightedVoting?.unit_label || 'shares'} (this organization&apos;s default).
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio" name="countMode" value="one_per_member"
+                checked={countMode === 'one_per_member'}
+                onChange={() => setCountMode('one_per_member')}
+                className="mt-0.5 accent-emerald-600"
+              />
+              <span className="text-sm text-gray-700">
+                One member, one vote
+                <span className="block text-xs text-gray-500">
+                  Count by headcount for this proposal — shares don&apos;t apply. Locked once voting opens.
+                </span>
+              </span>
+            </label>
+          </div>
+        </div>
+      )}
 
       {/* Phase 73 — budget envelope + aggregation. */}
       {isBudget && (
