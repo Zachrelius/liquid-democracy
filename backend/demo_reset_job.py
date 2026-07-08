@@ -48,11 +48,13 @@ DEMO_RESET_LAST_COMPLETED_KEY = "demo_reset_last_completed_at"
 # keys exactly (Amendment E). Bibles iterated in display_order so seeding
 # is deterministic.
 def _load_demo_bibles() -> list:
-    """Lazy-load the three bibles. Returns ordered list of OrgBible instances."""
+    """Lazy-load the demo bibles. Returns ordered list of OrgBible instances."""
     from demo_content.hoa_bible import HOA_BIBLE
     from demo_content.union_bible import LOCAL_4021_BIBLE
     from demo_content.activist_bible_part3 import COALITION_BIBLE
-    return [HOA_BIBLE, LOCAL_4021_BIBLE, COALITION_BIBLE]
+    # Phase 90f — Calder Tool & Machine Works (weighted-governance showcase).
+    from demo_content.calder_bible import CALDER_BIBLE
+    return [HOA_BIBLE, LOCAL_4021_BIBLE, COALITION_BIBLE, CALDER_BIBLE]
 
 
 # =============================================================================
@@ -184,6 +186,45 @@ def _wipe_demo_orgs(db: Session, demo_orgs: list[models.Organization]) -> int:
         .delete(synchronize_session=False)
     )
     rows_wiped += n_reports or 0
+
+    # Phase 90f — weighted-governance rows scoped to demo orgs. These have no
+    # ON DELETE CASCADE from the org (the org row survives a reset), so a miss
+    # here means the second reseed collides on the (org_id, period_key) partial-
+    # unique index (share_events) or leaves dangling rules/pending actions. The
+    # wipe→reseed-twice test is the regression proof.
+    n_share_events = (
+        db.query(models.ShareEvent)
+        .filter(models.ShareEvent.org_id.in_(org_ids))
+        .delete(synchronize_session=False)
+    )
+    rows_wiped += n_share_events or 0
+    n_rules = (
+        db.query(models.ShareDistributionRule)
+        .filter(models.ShareDistributionRule.org_id.in_(org_ids))
+        .delete(synchronize_session=False)
+    )
+    rows_wiped += n_rules or 0
+    # Share-typed pending admin actions (approvals FK first, then the actions).
+    share_action_ids = [
+        pa.id for pa in db.query(models.PendingAdminAction)
+        .filter(
+            models.PendingAdminAction.org_id.in_(org_ids),
+            models.PendingAdminAction.action_type.like("share.%"),
+        ).all()
+    ]
+    if share_action_ids:
+        n_approvals = (
+            db.query(models.PendingActionApproval)
+            .filter(models.PendingActionApproval.pending_action_id.in_(share_action_ids))
+            .delete(synchronize_session=False)
+        )
+        rows_wiped += n_approvals or 0
+        n_actions = (
+            db.query(models.PendingAdminAction)
+            .filter(models.PendingAdminAction.id.in_(share_action_ids))
+            .delete(synchronize_session=False)
+        )
+        rows_wiped += n_actions or 0
 
     # Collect proposal IDs first (used for explicit notification cleanup).
     proposals = (

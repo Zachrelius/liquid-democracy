@@ -368,6 +368,8 @@ class TestResetJobReseedsFromBible:
         assert slugs == {
             "demo-cedar-hollow", "demo-local-4021", "demo-westgate-coalition",
             "cedar-court-condos",
+            # Phase 90f — Calder Tool & Machine Works, the weighted-governance org.
+            "calder-tool",
         }
 
         # Cross-org users
@@ -622,6 +624,7 @@ class TestResetEmitsAuditLog:
         # Three demo orgs got seeded
         assert set(details["orgs_reset"]) == {
             "demo-cedar-hollow", "demo-local-4021", "demo-westgate-coalition",
+            "calder-tool",
         }
 
 
@@ -1015,12 +1018,15 @@ class TestDemoDirectoryEndpoint:
         assert "orgs" in body
         assert "reset_time_pacific" in body
         assert "next_reset_at" in body
-        # Phase 29 C1: only Cedar Hollow is publicly listed; Local 4021
-        # and Coalition still seed (cross-org users keep both memberships)
-        # but are flagged hidden_from_demo_listing in their bibles.
-        assert len(body["orgs"]) == 1
+        # Phase 29 C1: Cedar Hollow is publicly listed; Local 4021 and Coalition
+        # still seed (cross-org users keep both memberships) but are flagged
+        # hidden_from_demo_listing. Phase 90f — Calder Tool joins the listing as
+        # the weighted-governance showcase (visitors browse it directly).
+        assert len(body["orgs"]) == 2
+        listed = {o["slug"] for o in body["orgs"]}
+        assert listed == {"demo-cedar-hollow", "calder-tool"}
         sample = body["orgs"][0]
-        assert sample["slug"] == "demo-cedar-hollow"
+        assert sample["slug"] == "demo-cedar-hollow"  # display_order 1 sorts first
         assert {
             "slug", "name", "governance_type", "charter_summary",
             "member_count", "active_proposal_count",
@@ -1053,8 +1059,9 @@ class TestDemoDirectoryExcludesNonDemo:
         assert "real-foo" not in slugs
         # Phase 29 C1: Local 4021 + Coalition hidden from public listing.
         # They still seed (verify via Organization table separately) but
-        # aren't part of the /demo directory response.
-        assert slugs == {"demo-cedar-hollow"}
+        # aren't part of the /demo directory response. Phase 90f — Calder Tool
+        # IS listed (weighted-governance showcase).
+        assert slugs == {"demo-cedar-hollow", "calder-tool"}
 
 
 class TestDemoDirectoryOrdering:
