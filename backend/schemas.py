@@ -794,6 +794,14 @@ class ProposalOut(BaseModel):
     # None means org default (weighted in weighted orgs, headcount otherwise).
     # The FE renders a "one member, one vote" chip when one_per_member.
     count_mode: Optional[str] = None
+    # Phase 90e — vote-gated share issuance. is_issuance flags the subtype;
+    # issuance_payload is the {action, params} snapshot; issuance_executed is the
+    # close-hook outcome (True/False/None); issuance_preview is the 90d preview
+    # builder output (dilution line) rendered before the ballot.
+    is_issuance: bool = False
+    issuance_payload: Optional[dict] = None
+    issuance_executed: Optional[bool] = None
+    issuance_preview: Optional[dict] = None
     tie_resolution: Optional[dict] = None
     deliberation_start: Optional[datetime]
     voting_start: Optional[datetime]
@@ -2315,6 +2323,18 @@ class _ShareStartDateBody(BaseModel):
 class _ShareTransferBody(BaseModel):
     to_user_id: str
     amount: int
+
+
+class IssuanceProposalCreate(BaseModel):
+    """Phase 90e — body for POST /orgs/{slug}/issuance-proposals. A binary
+    approve/reject proposal wrapping a share action. ``issuance_payload`` is
+    ``{"action": <key>, "params": {...}}``; validated with the shared 90d
+    validators. Voting method is forced binary and count_mode forced weighted."""
+    title: str = Field(min_length=1, max_length=500)
+    body: str = Field(default="", max_length=50000)
+    issuance_payload: dict
+    deliberation_days: Optional[float] = None
+    voting_days: Optional[float] = None
 
 
 class OrgBanOut(BaseModel):

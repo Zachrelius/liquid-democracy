@@ -2298,6 +2298,16 @@ def _route_issuance_action(db, org, initiator, action_type, payload, request, di
     engine's execute-directly deadlock fallback, which would defeat the ladder).
     """
     mode = _issuance_mode_of(db, org)
+    if mode == "member_vote":
+        # Phase 90e — one authorization channel at a time: under member_vote,
+        # issuance happens ONLY via a passed issuance proposal, never directly.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This organization issues shares by member vote. Create an "
+                "issuance proposal instead of changing shares directly."
+            ),
+        )
     if mode != "multi_admin":
         return direct_fn()
     from pending_actions import engine as _pa_engine, registry as _pa_registry
@@ -2692,6 +2702,80 @@ def transfer_shares_endpoint(
         db.rollback()
     return {"message": "Transfer complete", "amount": body.amount,
             "sender_balance": from_bal, "recipient_balance": to_bal}
+
+
+# ============================================================================
+# Phase 90e — vote-gated share issuance proposals
+# ============================================================================
+
+@router.post("/{org_slug}/issuance-proposals", response_model=schemas.ProposalOut,
+             status_code=201)
+def create_issuance_proposal(
+    org_slug: str,
+    body: schemas.IssuanceProposalCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.require_verified_email),
+):
+    """Phase 90e — create a binary issuance proposal (member-vote-authorized
+    share issuance). Requires weighted voting ON, issuance_mode 'member_vote',
+    and the member.set_voting_weight permission. voting_method is forced binary;
+    count_mode is forced 'weighted' (issuance is always share-counted). The
+    payload is validated up front with the shared 90d validators, including the
+    authorized-cap check, so the ballot never promises an unexecutable issuance.
+    """
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    _require_weighted_enabled(org)
+    if _issuance_mode_of(db, org) != "member_vote":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Issuance proposals can only be created when this organization "
+                "issues shares by member vote."
+            ),
+        )
+    if not has_permission(db, current_user.id, org.id, "member.set_voting_weight"):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to propose share issuance in this organization.",
+        )
+    # Validate the payload with the shared validators (drift-safe + cap-safe).
+    from issuance import validate_issuance_payload
+    validate_issuance_payload(db, org, body.issuance_payload, current_user)
+
+    default_delib, default_vote = get_default_proposal_durations(org)
+    eff_delib = body.deliberation_days if body.deliberation_days is not None else default_delib
+    eff_vote = body.voting_days if body.voting_days is not None else default_vote
+    skip_delib = eff_delib is not None and float(eff_delib) == 0.0
+    now_at = _now() if skip_delib else None
+
+    proposal = models.Proposal(
+        title=body.title, body=body.body, author_id=current_user.id, org_id=org.id,
+        voting_method="binary", num_winners=1,
+        # Phase 90e — issuance is always share-counted; the 90c count_mode lock.
+        count_mode="weighted",
+        is_issuance=True, issuance_payload=body.issuance_payload,
+        status="voting" if skip_delib else "draft",
+        deliberation_start=now_at, voting_start=now_at,
+        voting_end=(now_at + timedelta(days=float(eff_vote)) if skip_delib else None),
+        deliberation_days=eff_delib, voting_days=eff_vote,
+        pass_threshold=0.5, quorum_threshold=0.0,
+    )
+    db.add(proposal)
+    db.flush()
+    log_audit_event(
+        db, action="share.issuance_proposal_created", target_type="proposal",
+        target_id=proposal.id, actor_id=current_user.id,
+        details={"org_id": org.id, "action": body.issuance_payload.get("action")},
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    db.refresh(proposal)
+    from routes.proposals import _build_proposal_out
+    return _build_proposal_out(proposal, db, viewer_id=current_user.id)
 
 
 # ============================================================================
@@ -6005,6 +6089,15 @@ def advance_org_proposal(
     if getattr(proposal, "is_election", False) and next_status in ("passed", "failed"):
         from elections import run_election_close_hook
         next_status = run_election_close_hook(
+            db, proposal, next_status,
+            actor_id=current_user.id,
+            ip_address=request.client.host if request.client else None,
+        )
+
+    # Phase 90e — vote-gated issuance close hook (see routes/proposals.py).
+    if getattr(proposal, "is_issuance", False) and next_status in ("passed", "failed"):
+        from issuance import run_issuance_close_hook
+        next_status = run_issuance_close_hook(
             db, proposal, next_status,
             actor_id=current_user.id,
             ip_address=request.client.host if request.client else None,

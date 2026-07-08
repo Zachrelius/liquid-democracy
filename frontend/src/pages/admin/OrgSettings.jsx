@@ -2799,6 +2799,22 @@ export default function OrgSettings() {
                     </span>
                   </span>
                 </label>
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="radio" name="issuanceMode" value="member_vote"
+                    checked={settings.weighted_voting?.issuance_mode === 'member_vote'}
+                    onChange={() => updateSetting('weighted_voting', {
+                      ...(settings.weighted_voting || {}), issuance_mode: 'member_vote',
+                    })}
+                    className="mt-0.5 accent-[var(--brand-accent)]"
+                  />
+                  <span className="text-sm text-gray-700">
+                    Member vote
+                    <span className="block text-xs text-gray-500">
+                      Every issuance must pass a share-weighted vote of the members (an issuance proposal). Direct weight changes and distribution edits are disabled. Moving to a less strict mode later requires a passed vote.
+                    </span>
+                  </span>
+                </label>
               </div>
             </div>
 

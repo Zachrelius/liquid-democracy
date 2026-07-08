@@ -340,6 +340,17 @@ def _build_linked_polises(
     return out
 
 
+def _issuance_preview_safe(proposal, db):
+    """Phase 90e — the 90d preview builder output (dilution line) for an
+    issuance proposal; None on any error so a preview failure never sinks the
+    proposal response."""
+    try:
+        from issuance import issuance_preview
+        return issuance_preview(db, proposal)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _build_proposal_out(
     proposal: models.Proposal,
     db: Session,
@@ -407,6 +418,13 @@ def _build_proposal_out(
         voting_method=proposal.voting_method,
         num_winners=proposal.num_winners,
         count_mode=getattr(proposal, "count_mode", None),
+        is_issuance=bool(getattr(proposal, "is_issuance", False)),
+        issuance_payload=getattr(proposal, "issuance_payload", None),
+        issuance_executed=getattr(proposal, "issuance_executed", None),
+        issuance_preview=(
+            _issuance_preview_safe(proposal, db)
+            if getattr(proposal, "is_issuance", False) else None
+        ),
         tie_resolution=proposal.tie_resolution,
         deliberation_start=proposal.deliberation_start,
         voting_start=proposal.voting_start,
@@ -1743,6 +1761,13 @@ def update_proposal(
     # here so a PATCH can't smuggle an invalid or disabled mode past create.
     if "count_mode" in body.model_fields_set:
         _new_cm = body.count_mode
+        # Phase 90e — issuance proposals are always share-counted; block any
+        # attempt to move them off 'weighted' (the 90c lock, issuance-specific).
+        if getattr(proposal, "is_issuance", False) and _new_cm != "weighted":
+            raise HTTPException(
+                status_code=400,
+                detail="Issuance proposals must be counted by member shares.",
+            )
         if _new_cm != getattr(proposal, "count_mode", None):
             if proposal.status != "draft":
                 raise HTTPException(
@@ -3283,6 +3308,18 @@ def advance_proposal(
     if getattr(proposal, "is_election", False) and next_status in ("passed", "failed"):
         from elections import run_election_close_hook
         next_status = run_election_close_hook(
+            db, proposal, next_status,
+            actor_id=current_user.id,
+            ip_address=request.client.host if request.client else None,
+        )
+
+    # Phase 90e — vote-gated issuance close hook. On a passed close, execute the
+    # snapshotted share action via the shared executor; drift → passed but
+    # issuance_executed=False + audit + author notification. Contained like the
+    # election hook so a failure never rolls back the status transition.
+    if getattr(proposal, "is_issuance", False) and next_status in ("passed", "failed"):
+        from issuance import run_issuance_close_hook
+        next_status = run_issuance_close_hook(
             db, proposal, next_status,
             actor_id=current_user.id,
             ip_address=request.client.host if request.client else None,

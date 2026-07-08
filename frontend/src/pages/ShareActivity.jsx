@@ -6,6 +6,7 @@ import Spinner from '../components/Spinner';
 import ErrorMessage from '../components/ErrorMessage';
 import DistributionRules from '../components/DistributionRules';
 import TransferShares from '../components/TransferShares';
+import IssuanceProposeForm from '../components/IssuanceProposeForm';
 import { useHasPermission } from '../hooks/useHasPermission';
 
 /**
@@ -128,6 +129,11 @@ export default function ShareActivity() {
             {exporting ? 'Preparing…' : 'Export register (CSV)'}
           </button>
         </div>
+      )}
+
+      {/* Phase 90e — under member-vote issuance, issuance is proposed, not set. */}
+      {canExport && currentOrg?.weighted_voting?.issuance_mode === 'member_vote' && (
+        <IssuanceProposeForm slug={slug} unit={unit} />
       )}
 
       <DistributionRules slug={slug} unit={unit} />

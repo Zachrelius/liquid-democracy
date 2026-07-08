@@ -387,6 +387,15 @@ EVENT_REGISTRY: list[EventDefinition] = [
         category="Admin actions",
         signal_level="standard",
     ),
+    # Phase 90e — an issuance proposal you authored passed but could not execute
+    # (the described change no longer applied cleanly at close).
+    EventDefinition(
+        key="shares.issuance_failed",
+        label="An issuance proposal passed but couldn't be applied",
+        description="An issuance proposal you created passed its vote, but the change couldn't be applied at close (for example, the affected member had left). Nothing was issued.",
+        category="Admin actions",
+        signal_level="standard",
+    ),
     # ---- Messages (Phase 77) --------------------------------------------
     EventDefinition(
         key="message.received",

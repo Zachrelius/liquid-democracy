@@ -77,6 +77,8 @@ _SUBJECTS: dict[str, str] = {
     "shares.transfer_received": "{sender_display_name} transferred shares to you",
     # Phase 90d — a distribution rule was blocked by the authorized cap.
     "shares.cap_blocked": "A distribution rule in {org_name} was blocked by the share cap",
+    # Phase 90e — an issuance proposal passed but couldn't be applied.
+    "shares.issuance_failed": "An issuance proposal in {org_name} passed but couldn't be applied",
     # Phase 86 (B-4) — content report, to moderators.
     "report_created": "New content report in {org_name}",
     "invitation.accepted": "{actor_display_name} joined {org_name}",
@@ -560,6 +562,7 @@ _DEFAULT_CTA_LABELS: dict[str, str] = {
     "shares.received": "View share activity",
     "shares.transfer_received": "View share activity",
     "shares.cap_blocked": "View share activity",
+    "shares.issuance_failed": "View proposal",
     "delegate.applied": "Review application",
     "delegate.application_decided": "Open organization",
     # Phase 19 — public-delegate-page workflow CTAs.
@@ -612,6 +615,8 @@ def _build_cta_url(
         "delegate.posted_rationale",
         "voting.halfway_delegate_silent",
         "voting.halfway_you_havent_voted",
+        # Phase 90e — issuance-proposal execution failure links to the proposal.
+        "shares.issuance_failed",
     ):
         if not org_slug or not proposal_id:
             return fallback
