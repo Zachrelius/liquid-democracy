@@ -255,16 +255,75 @@ def _notify_recipient(db: Session, user_id: str, org: models.Organization,
         log.debug("shares.received notify failed for %s: %s", user_id, e)
 
 
+def _notify_cap_blocked(db: Session, org: models.Organization,
+                        rule: models.ShareDistributionRule, skipped: int) -> None:
+    """Phase 90d — best-effort in-app notification to the rule's creator that
+    the sweep skipped grants because they'd breach the authorized cap. Batched:
+    one per sweep-per-rule, not per member."""
+    if not rule.created_by_id:
+        return
+    try:
+        from notification_emit import _is_channel_enabled
+        if not _is_channel_enabled(db, rule.created_by_id, "shares.cap_blocked", "in_app"):
+            return
+        db.add(models.Notification(
+            user_id=rule.created_by_id,
+            event_type="shares.cap_blocked",
+            org_id=org.id,
+            actor_id=None,
+            target_type="organization",
+            target_id=org.id,
+            payload={
+                "org_id": org.id, "org_slug": org.slug, "org_name": org.name,
+                "rule_id": rule.id, "skipped_grants": skipped,
+            },
+        ))
+    except Exception as e:  # noqa: BLE001
+        log.debug("shares.cap_blocked notify failed for %s: %s", rule.created_by_id, e)
+
+
 def run_rule(db: Session, org: models.Organization,
              rule: models.ShareDistributionRule, *, today: Optional[date] = None) -> int:
     """Fire all due, not-yet-granted periods for one rule. Returns the number
     of grants made. Idempotent (period_key guard). Caller owns the transaction
-    per rule."""
+    per rule.
+
+    Phase 90d — respects the authorized cap: a grant that would push the org's
+    outstanding total above ``weighted_voting.authorized_total`` is SKIPPED (no
+    ShareEvent, period_key NOT consumed, so it retries next sweep if headroom
+    appears). One batched ``share.cap_blocked_distribution`` audit + creator
+    notification per affected sweep.
+    """
+    from org_config import get_weighted_voting_config, outstanding_total
+    from audit_utils import log_audit_event
+
     today = today or _today()
     if rule.status != "active":
         return 0
     targeted = resolve_targeted_members(db, org.id, rule)
     grants = 0
+
+    cap = get_weighted_voting_config(org)["authorized_total"]
+    # Track projected outstanding across grants in THIS sweep (weights mutate in
+    # the session as we go). None cap = uncapped fast path.
+    running = outstanding_total(db, org) if cap is not None else 0
+    skipped_for_cap = 0
+
+    def _try_grant(m, pk) -> bool:
+        nonlocal grants, running, skipped_for_cap
+        if _period_exists(db, org.id, pk):
+            return False
+        if cap is not None and running + rule.amount > cap:
+            # Skip WITHOUT consuming period_key so it retries when headroom opens.
+            skipped_for_cap += 1
+            return False
+        _grant(db, org_id=org.id, membership=m, amount=rule.amount,
+               rule_id=rule.id, period_key=pk)
+        _notify_recipient(db, m.user_id, org, rule, rule.amount)
+        if cap is not None:
+            running += rule.amount
+        grants += 1
+        return True
 
     if rule.schedule_mode == "fixed_cadence":
         anchor = rule.anchor_date or rule.created_at.date()
@@ -277,13 +336,7 @@ def run_rule(db: Session, org: models.Organization,
                         "(fixed)", rule.id, CATCHUP_CAP)
         for k in range(k_start, max_k + 1):
             for m in targeted:
-                pk = f"{rule.id}:{m.user_id}:{k}"
-                if _period_exists(db, org.id, pk):
-                    continue
-                _grant(db, org_id=org.id, membership=m, amount=rule.amount,
-                       rule_id=rule.id, period_key=pk)
-                _notify_recipient(db, m.user_id, org, rule, rule.amount)
-                grants += 1
+                _try_grant(m, f"{rule.id}:{m.user_id}:{k}")
     else:  # anniversary
         for m in targeted:
             anchor = share_start_date_for(m)
@@ -296,13 +349,17 @@ def run_rule(db: Session, org: models.Organization,
                             "cap (anniversary, member %s)", rule.id, CATCHUP_CAP,
                             m.user_id)
             for k in range(k_start, max_k + 1):
-                pk = f"{rule.id}:{m.user_id}:{k}"
-                if _period_exists(db, org.id, pk):
-                    continue
-                _grant(db, org_id=org.id, membership=m, amount=rule.amount,
-                       rule_id=rule.id, period_key=pk)
-                _notify_recipient(db, m.user_id, org, rule, rule.amount)
-                grants += 1
+                _try_grant(m, f"{rule.id}:{m.user_id}:{k}")
+
+    if skipped_for_cap:
+        log_audit_event(
+            db, action="share.cap_blocked_distribution",
+            target_type="share_distribution_rule", target_id=rule.id,
+            actor_id=None,
+            details={"org_id": org.id, "rule_id": rule.id,
+                     "skipped_grants": skipped_for_cap, "authorized_total": cap},
+        )
+        _notify_cap_blocked(db, org, rule, skipped_for_cap)
 
     rule.last_run_at = datetime.now(timezone.utc).replace(tzinfo=None)
     return grants

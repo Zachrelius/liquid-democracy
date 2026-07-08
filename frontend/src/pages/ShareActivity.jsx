@@ -105,6 +105,15 @@ export default function ShareActivity() {
         </div>
       </div>
 
+      {currentOrg?.total_voting_weight != null && (
+        <p className="text-sm text-gray-600 mb-3">
+          <span className="font-medium">{currentOrg.total_voting_weight.toLocaleString()}</span>
+          {currentOrg?.weighted_voting?.authorized_total != null
+            ? <> of {currentOrg.weighted_voting.authorized_total.toLocaleString()} authorized {unit}</>
+            : <> {unit} outstanding</>}
+        </p>
+      )}
+
       {canExport && (
         <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 bg-white border border-gray-200 rounded-xl p-3">
           <p className="text-xs text-gray-500">

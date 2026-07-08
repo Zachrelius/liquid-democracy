@@ -77,6 +77,17 @@ def _require_viewer_is_eligible(
         )
 
 
+def _queue_enabled(org: models.Organization) -> bool:
+    """Phase 90d — the pending-action queue is active for an org when EITHER
+    Phase 44 multi-admin approval is enabled OR the weighted issuance mode is
+    'multi_admin' (share issuance ratification reuses the same engine but is
+    gated by a different org signal)."""
+    if p44_settings.is_enabled(org):
+        return True
+    from org_config import get_weighted_voting_config
+    return get_weighted_voting_config(org)["issuance_mode"] == "multi_admin"
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -103,7 +114,10 @@ def submit_pending_action(
         when threshold ≤ 1 (degenerate but allowed).
     """
     org = _resolve_org(db, org_slug)
-    if not p44_settings.is_enabled(org):
+    # Phase 90d — the queue is active under Phase 44 approval OR the weighted
+    # multi_admin issuance mode. Share issuance actions submitted directly here
+    # (cap_raise / issuance_mode_weaken) rely on the latter.
+    if not _queue_enabled(org):
         raise HTTPException(
             status_code=400,
             detail="Multi-admin approval is not enabled for this organization",
@@ -168,7 +182,7 @@ def get_pending_count(
 ) -> dict[str, Any]:
     """Cheap count endpoint for the Admin-nav badge (F2b)."""
     org = _resolve_org(db, org_slug)
-    if not p44_settings.is_enabled(org):
+    if not _queue_enabled(org):
         return {"pending_count": 0, "pending_count_by_action_type": {}, "eligible": False}
     if not engine.can_view_pending_actions(db, org, current_user.id):
         return {"pending_count": 0, "pending_count_by_action_type": {}, "eligible": False}
