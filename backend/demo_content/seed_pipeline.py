@@ -1510,12 +1510,17 @@ def seed_org_from_bible(
         user = _ensure_user(db, underlying, m.display_name)
         bible_uid_to_user[m.user_id] = user
 
-        # Phase 29 C6 — wire portrait. Only HOA bible carries portraits;
-        # files live at ``frontend/public/demo_assets/portraits/<uid>.jpg``
-        # and serve from ``/demo_assets/portraits/<uid>.jpg`` at runtime.
-        # Other bibles (Local 4021, Coalition) leave avatar_url untouched
-        # so cross-org users keep the HOA portrait the HOA seed assigned.
+        # Phase 29 C6 — wire portrait. Files live at
+        # ``frontend/public/demo_assets/portraits/<uid>.jpg`` and serve from
+        # ``/demo_assets/portraits/<uid>.jpg`` at runtime. Local 4021 + Coalition
+        # leave avatar_url untouched so cross-org users keep the HOA portrait the
+        # HOA seed assigned.
         if bible.slug == "demo-cedar-hollow":
+            user.avatar_url = f"/demo_assets/portraits/{m.user_id}.jpg"
+        # Phase 90f — Calder carries portraits for its six quick-login owners
+        # only; the rest fall back to the initials avatar (no file → 404 →
+        # Avatar.jsx fallback), so we only stamp avatar_url for the six.
+        elif bible.slug == "calder-tool" and m.quick_login:
             user.avatar_url = f"/demo_assets/portraits/{m.user_id}.jpg"
 
         # Phase 23.2 B2.2 — look up the per-org Role that matches this
