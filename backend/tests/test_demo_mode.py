@@ -247,8 +247,9 @@ def test_demo_login_issues_tokens_for_allowlisted_user(client, test_db, public_d
     assert payload["sub"] == alice.id
 
     # Refresh token is persisted and unrevoked.
+    from routes.auth import _refresh_token_hash
     rt = test_db.query(models.RefreshToken).filter(
-        models.RefreshToken.token == body["refresh_token"],
+        models.RefreshToken.token_hash == _refresh_token_hash(body["refresh_token"]),
     ).first()
     assert rt is not None
     assert rt.user_id == alice.id

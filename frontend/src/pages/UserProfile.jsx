@@ -162,7 +162,7 @@ export default function UserProfile() {
 
   const { user, delegate_profiles: profiles, votes } = profile;
   const visibleVotes = votes?.filter(v => v.visible) || [];
-  const hiddenCount = (votes?.length || 0) - visibleVotes.length;
+  const hiddenCount = profile.hidden_vote_count || 0;
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-8">

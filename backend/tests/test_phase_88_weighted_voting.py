@@ -612,6 +612,30 @@ def test_member_list_surfaces_voting_weight(client, test_db):
     assert weights["auth"] == 1
 
 
+def test_member_list_preserves_zero_voting_weight(client, test_db):
+    org = _org(test_db, weighted=ON)
+    author, _ = _member(test_db, org, "zero_admin", role="steward", weight=1)
+    _member(test_db, org, "zero_member", weight=0)
+    test_db.commit()
+
+    r = client.get(f"/api/orgs/{org.slug}/members", headers=_auth(author))
+    assert r.status_code == 200, r.text
+    weights = {m["username"]: m["voting_weight"] for m in r.json()}
+    assert weights["zero_member"] == 0
+
+
+def test_my_vote_preserves_zero_voting_weight(client, test_db):
+    org = _org(test_db, weighted=ON)
+    author, _ = _member(test_db, org, "zero_author", role="steward", weight=1)
+    voter, _ = _member(test_db, org, "zero_ballot", weight=0)
+    proposal = _binary_proposal(test_db, author, org)
+    test_db.commit()
+
+    r = client.get(f"/api/proposals/{proposal.id}/my-vote", headers=_auth(voter))
+    assert r.status_code == 200, r.text
+    assert r.json()["my_voting_weight"] == 0
+
+
 def test_org_out_surfaces_weighted_voting(client, test_db):
     org = _org(test_db, weighted={"enabled": True, "unit_label": "units"})
     author, _ = _member(test_db, org, "auth", role="steward", weight=1)

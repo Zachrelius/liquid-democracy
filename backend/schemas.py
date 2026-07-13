@@ -216,6 +216,16 @@ class UserSearchResult(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PublicUserOut(BaseModel):
+    """Public-safe identity returned for an account other than self."""
+    id: str
+    username: str
+    display_name: str
+    avatar_url: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
 class UserSearchResultWithContext(BaseModel):
     """Search result enriched with follow/delegate context for the viewer."""
     id: str
@@ -1758,6 +1768,9 @@ class PublicProfileOut(BaseModel):
     user: UserSearchResult
     delegate_profiles: list["DelegateProfileOut"] = []
     votes: list[VoteVisibility] = []
+    # Hidden ballots are aggregate-only: placeholder rows would disclose
+    # private proposal identifiers, titles, and timestamps.
+    hidden_vote_count: int = 0
 
 
 # ---------------------------------------------------------------------------

@@ -60,13 +60,27 @@ def set_member_weight(
         raise ShareServiceError(
             "voting_weight is unchanged; no share event recorded."
         )
-    if authorized_total is not None and delta > 0:
-        org = db.get(models.Organization, membership.org_id)
+    if delta > 0:
+        # One organization row is the shared PostgreSQL mutex for every cap
+        # check/mutation. Different-member issuances therefore cannot both
+        # validate against the same stale outstanding total.
+        org = (
+            db.query(models.Organization)
+            .filter(models.Organization.id == membership.org_id)
+            .populate_existing()
+            .with_for_update()
+            .one()
+        )
+        # The caller's value may have been read before waiting for this lock.
+        # Settings on the locked row are authoritative (including a cap newly
+        # introduced while this transaction waited).
+        from org_config import get_weighted_voting_config
+        locked_cap = get_weighted_voting_config(org)["authorized_total"]
         projected = outstanding_total(db, org) + delta
-        if projected > authorized_total:
+        if locked_cap is not None and projected > locked_cap:
             raise ShareServiceError(
                 f"This change would raise the outstanding total to {projected}, "
-                f"above the authorized cap of {authorized_total}.",
+                f"above the authorized cap of {locked_cap}.",
                 status_code=400,
             )
     membership.voting_weight = new_weight

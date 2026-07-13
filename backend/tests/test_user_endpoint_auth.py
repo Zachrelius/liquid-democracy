@@ -2,9 +2,8 @@
 
 Covers the two BUG rows from ``docs/test_depth_audit_2026-05.md``:
 
-  * BUG: ``GET /api/users/{id}`` previously had no auth dependency and
-    returned the full ``UserOut`` schema (including ``email``) for any user
-    ID a caller could guess. Fix added ``Depends(get_current_user)``.
+  * ``GET /api/users/{id}`` requires auth and returns only a public-safe
+    identity schema; full ``UserOut`` is reserved for self endpoints.
   * BUG: ``GET /api/users/{id}/delegation-tree`` previously had no auth
     dependency and returned the full delegation neighborhood. Fix added
     ``Depends(get_current_user)`` plus identity-redaction for nodes the
@@ -12,6 +11,8 @@ Covers the two BUG rows from ``docs/test_depth_audit_2026-05.md``:
     public delegate).
 """
 from __future__ import annotations
+
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -136,8 +137,7 @@ def test_get_user_requires_auth_returns_401_unauthenticated(client, test_db):
 
 
 def test_get_user_authenticated_caller_returns_200(client, test_db):
-    """Phase 10.2 audit: Class B BUG, GET /api/users/{id} — authenticated
-    caller still gets 200 + UserOut after the auth gate is added."""
+    """An unrelated authenticated caller gets identity, never private data."""
     caller = _make_user(test_db, "caller")
     target = _make_user(test_db, "target")
     test_db.commit()
@@ -147,6 +147,27 @@ def test_get_user_authenticated_caller_returns_200(client, test_db):
     body = resp.json()
     assert body["id"] == target.id
     assert body["username"] == "target"
+    assert set(body) == {"id", "username", "display_name", "avatar_url"}
+    for private_field in (
+        "email", "email_verified", "is_admin", "user_type",
+        "delegation_strategy", "default_follow_policy",
+        "verification_state", "verification_jurisdiction",
+        "verification_provenance", "verification_updated_at", "dm_disabled",
+    ):
+        assert private_field not in body
+
+
+def test_get_me_still_returns_private_self_fields(client, test_db):
+    caller = _make_user(test_db, "self_fields")
+    caller.verification_jurisdiction = "US-CA"
+    test_db.commit()
+
+    resp = client.get("/api/users/me", headers=_auth(caller))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["email"] == caller.email
+    assert body["email_verified"] is True
+    assert body["verification_jurisdiction"] == "US-CA"
 
 
 def test_get_user_unknown_id_authenticated_returns_404(client, test_db):
@@ -160,6 +181,150 @@ def test_get_user_unknown_id_authenticated_returns_404(client, test_db):
         headers=_auth(caller),
     )
     assert resp.status_code == 404, resp.text
+
+
+def test_public_profile_aggregates_hidden_votes_without_metadata(client, test_db):
+    """Anonymous and unrelated viewers learn only the number of redacted
+    ballots, never the private proposal ID, title, vote ID, or timestamp."""
+    target = _make_user(test_db, "private_voter")
+    viewer = _make_user(test_db, "unrelated_viewer")
+    follower = _make_user(test_db, "approved_follower")
+    proposal = models.Proposal(
+        title="Secret contract negotiation",
+        body="private",
+        author_id=target.id,
+        status="voting",
+    )
+    test_db.add(proposal)
+    test_db.flush()
+    from tests.conftest import _default_test_org_id
+    org_id = _default_test_org_id(test_db)
+    topic = models.Topic(
+        name="Private bargaining", color="#123456", org_id=org_id,
+    )
+    followers_topic = models.Topic(
+        name="Follower briefing", color="#654321", org_id=org_id,
+    )
+    public_topic = models.Topic(
+        name="Public policy", color="#abcdef", org_id=org_id,
+    )
+    test_db.add_all([topic, followers_topic, public_topic])
+    test_db.flush()
+    test_db.add_all([
+        models.ProposalTopic(proposal_id=proposal.id, topic_id=topic.id),
+        models.DelegateProfile(
+            user_id=target.id,
+            topic_id=topic.id,
+            org_id=org_id,
+            visibility="private",
+            bio="private profile biography",
+        ),
+        models.DelegateProfile(
+            user_id=target.id,
+            topic_id=followers_topic.id,
+            org_id=org_id,
+            visibility="followers_only",
+            bio="followers profile biography",
+        ),
+        models.DelegateProfile(
+            user_id=target.id,
+            topic_id=public_topic.id,
+            org_id=org_id,
+            visibility="public",
+            bio="public profile biography",
+        ),
+        models.FollowRelationship(
+            follower_id=follower.id,
+            followed_id=target.id,
+            org_id=org_id,
+            permission_level="view_only",
+        ),
+    ])
+    from tests.conftest import make_org_membership
+    make_org_membership(
+        test_db, org_id=org_id, user_id=target.id, role="member",
+    )
+    members_only_proposal = models.Proposal(
+        title="Members-only public-delegate ballot",
+        body="private org activity",
+        author_id=target.id,
+        org_id=org_id,
+        status="voting",
+    )
+    test_db.add(members_only_proposal)
+    test_db.flush()
+    test_db.add(models.ProposalTopic(
+        proposal_id=members_only_proposal.id,
+        topic_id=public_topic.id,
+    ))
+    members_only_vote = models.Vote(
+        proposal_id=members_only_proposal.id,
+        user_id=target.id,
+        cast_by_id=target.id,
+        vote_value="no",
+        is_direct=True,
+        cast_at=datetime(2026, 7, 12, 13, 45, 0),
+    )
+    test_db.add(members_only_vote)
+    vote = models.Vote(
+        proposal_id=proposal.id,
+        user_id=target.id,
+        cast_by_id=target.id,
+        vote_value="yes",
+        is_direct=True,
+        cast_at=datetime(2026, 7, 12, 12, 34, 56),
+    )
+    test_db.add(vote)
+    test_db.commit()
+
+    for headers in (None, _auth(viewer)):
+        resp = client.get(f"/api/users/{target.id}/profile", headers=headers)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["votes"] == []
+        assert body["hidden_vote_count"] == 2
+        assert [p["topic_id"] for p in body["delegate_profiles"]] == [
+            public_topic.id,
+        ]
+        encoded = resp.text
+        assert proposal.id not in encoded
+        assert proposal.title not in encoded
+        assert members_only_proposal.id not in encoded
+        assert members_only_proposal.title not in encoded
+        assert members_only_vote.id not in encoded
+        assert vote.id not in encoded
+        assert "2026-07-12T12:34:56" not in encoded
+        assert "private profile biography" not in encoded
+        assert "followers profile biography" not in encoded
+
+        votes_resp = client.get(f"/api/users/{target.id}/votes", headers=headers)
+        assert votes_resp.status_code == 200, votes_resp.text
+        assert votes_resp.json() == []
+        assert proposal.id not in votes_resp.text
+        assert members_only_proposal.id not in votes_resp.text
+
+    followed = client.get(
+        f"/api/users/{target.id}/profile", headers=_auth(follower),
+    )
+    assert followed.status_code == 200, followed.text
+    followed_topic_ids = {
+        p["topic_id"] for p in followed.json()["delegate_profiles"]
+    }
+    assert followed_topic_ids == {followers_topic.id, public_topic.id}
+    assert "private profile biography" not in followed.text
+
+    # The owner retains the normal visible self history.
+    own = client.get(
+        f"/api/users/{target.id}/profile", headers=_auth(target),
+    )
+    assert own.status_code == 200, own.text
+    assert own.json()["hidden_vote_count"] == 0
+    assert {v["proposal_id"] for v in own.json()["votes"]} == {
+        proposal.id, members_only_proposal.id,
+    }
+    assert {p["topic_id"] for p in own.json()["delegate_profiles"]} == {
+        topic.id, followers_topic.id, public_topic.id,
+    }
 
 
 # ---------------------------------------------------------------------------

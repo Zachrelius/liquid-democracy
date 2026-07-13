@@ -4247,3 +4247,17 @@ No migration. Branch `phase-72d/methodswitch-and-72c-confirm`. Spec: `phase72d_m
 **Tests:** +1 in `test_phase_72c_topic_warn_and_drop.py` (Part C UUID-regression guard). Updated `test_phase_72_multi_proposal_import.py::test_array_per_item_topic_and_unknown` and `test_phase_68a_proposal_import.py::test_import_topic_name_resolves_with_warning` to assert topic name (not UUID) in resolution warning. Full suite: **2641** passed / 0 new failures (same net count as 72c baseline — the +1 new test offsets by the broken baseline count). (1 pre-existing timing-sensitive rate-limit test — `test_b3_login_rate_limit_triggers_after_10_in_a_minute` — fails in some environments; unrelated to 72d, was baseline-tracked.) No migration. Bundle `index-BMKhI2qP.js`. Merge `0c39a99`. Backend `/api/health` 200 confirmed.
 
 **Browser QA: PENDING** — Chrome extension not connected at QA time. Three items to verify: (1) draft approval proposal with 2–3 options → switch approval→RCV→approval, confirm no deletion warning and options survive each swap; (2) switch that proposal to binary, confirm destructive warning fires and options are dropped on confirm; (3) a multi-import with a matched `topic_name` shows a resolution warning containing the topic name, not a UUID (closes Part C).
+
+---
+
+## Phase 91 — External Review Remediation — Ready to deploy (2026-07-12)
+
+Spec: `phase91_external_review_remediation_spec.md`. Branch: `phase-91/external-review-remediation`.
+
+Closed the July outside-review findings across privacy, weighted-governance integrity, authentication, and dependency hygiene. Public user/profile endpoints now use public-safe identity shapes, apply proposal/org read eligibility before ballot visibility, visibility-filter delegate profiles, and expose hidden ballots only as an aggregate count with no proposal/vote/timestamp metadata. Zero-share memberships remain zero in member and ballot serializers.
+
+Refresh tokens are SHA-256 hashed at rest, existing plaintext rows are backfilled without invalidating active clients, and refresh rotation claims the row with `FOR UPDATE`. Authorized-share cap checks, scheduled distributions, and cap changes serialize on the Organization row and refresh locked state before mutation. Migration `c5d6e7f8a9b0` is reversible (downgrade invalidates sessions safely rather than restoring plaintext) and old-schema/idempotent SQLite paths are covered.
+
+Runtime dependencies were upgraded through current fixed versions (FastAPI/Starlette, Pillow, python-multipart, python-jose, aiosmtplib, requests/pdfplumber, React Router). CI now runs full backend tests, Python audit, npm production audit, and frontend build. Python audit is clean except documented no-fix `PYSEC-2026-1325`, unreachable because the application uses HS256 only; npm production audit is clean.
+
+Verification: 2,978 tests collected (+11). Full run reached 2,925 pass / 35 migration-chain failures / 18 skip; after the single migration root cause was fixed, the complete 119-test migration-cycle subset passed, yielding combined final coverage of 2,960 pass / 18 skip. PG smoke fresh + upgrade-from-`b4c5d6e7f8a9` PASS. Frontend build PASS. Lint unchanged at the pre-existing 108 errors / 9 warnings. Railway private-networking remains a separate infrastructure decision; `--forwarded-allow-ips '*'` is unchanged in this pass.

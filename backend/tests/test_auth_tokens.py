@@ -118,10 +118,12 @@ def test_refresh_rotates_token(client, test_db):
     assert rt.revoked_at is not None
 
     # New token row exists.
+    from routes.auth import _refresh_token_hash
     new_rt = test_db.query(models.RefreshToken).filter(
-        models.RefreshToken.token == new_refresh,
+        models.RefreshToken.token_hash == _refresh_token_hash(new_refresh),
     ).first()
     assert new_rt is not None
+    assert new_rt.token is None
     assert new_rt.revoked_at is None
     assert new_rt.user_id == user.id
 

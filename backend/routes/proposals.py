@@ -3986,7 +3986,11 @@ def my_vote_status(
             models.OrgMembership.org_id == _wo.id,
             models.OrgMembership.user_id == current_user.id,
         ).first()
-        _my_weight = int(getattr(_wm, "voting_weight", 1) or 1) if _wm else 1
+        if _wm is not None:
+            _stored_weight = getattr(_wm, "voting_weight", None)
+            _my_weight = int(1 if _stored_weight is None else _stored_weight)
+        else:
+            _my_weight = 1
 
     # Phase 89 — budget proposals now compose with delegation, so my-vote
     # resolves through the delegation engine like every other method (a
