@@ -4277,3 +4277,15 @@ The cutover was staged with the old backend hostname available until every gate 
 Verification: 40 targeted backend/config/security tests passed (6 new Phase 91a tests; collected-suite baseline 2,978 → 2,984), frontend build PASS, Docker/Nginx private + HTTPS rollback configs PASS, live container IP replacement PASS, production proxy smoke 5/5 PASS, unsigned Didit webhook 401 (routed, fail-closed), missing upload 404 (routed), and authenticated WebSocket handshake PASS. Browser QA confirmed landing → demo → Janet Reilly sign-in → Cedar Hollow org/proposals with images and no Liquid Democracy console issues. Bundle unchanged at `index-DxjkqN5I.js`. No migration; PG smoke not required.
 
 Residual debt: any future untrusted sibling service in the same Railway environment could still reach the private backend and supply proxy headers because Uvicorn trusts the private hop. Current sibling services are controlled; revisit service-authenticated internal ingress if the topology expands. Rollback is documented in `DEPLOYMENT.md`: generate a fresh backend Railway domain, use its actual hostname in `BACKEND_URL`, redeploy frontend, and smoke-test—do not assume the removed hostname can be restored.
+
+---
+
+## Phase 92 — Pilot Readiness Roadmap + Hobby Recovery Checkpoint ✅ Complete (2026-07-13)
+
+Spec: `phase92_pilot_readiness_and_operational_recovery_spec.md`. Branch `phase-92/operational-recovery`. Documentation/production-infrastructure pass; no application code or schema migration.
+
+Recorded the prioritized pre-pilot roadmap covering operational recovery, first-ten-minutes onboarding, moderation, accessibility, adversarial security verification, load testing, privacy/operating agreements, funnel telemetry, onboarding materials, and initial customer profile. Live Railway sizing found Postgres at 435.978 MB of 500 MB (87.2%) and uploads at 150.143 MB of 5 GB, with no pre-existing backups or schedules.
+
+Postgres was live-resized to 5 GB without restart (Railway offered 1 GB or 5 GB, not the planned 2 GB). Railway automatically created the pre-resize recovery point `Online resize to 5000MB`: 440 MB referenced, 8 MB backup-exclusive, `expiresAt: null`. Post-change production checks passed: homepage HTTP 200 and `/api/health/ready` HTTP 200 with database connected.
+
+Railway then exposed the plan constraint: ordinary backups, schedules, and PITR are Pro-only for this Hobby workspace. Pro would raise the subscription commitment from $5 to $20/month before incremental storage. Z chose to remain on Hobby until there are real users or a committed pilot. Recurring/upload coverage, restore rehearsal, and a possible Hobby-compatible encrypted offsite pipeline are explicitly deferred and must be reopened before accepting irreplaceable pilot data. The next no-cost P0 focus is the first-ten-minutes and empty-organization audit.
