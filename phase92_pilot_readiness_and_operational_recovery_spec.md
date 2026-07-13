@@ -1,6 +1,6 @@
 # Phase 92 — Pilot Readiness and Operational Recovery
 
-**Status:** Recovery execution in progress; database resized and protected by an initial snapshot, recurring/upload coverage blocked on a Pro-plan decision (2026-07-13)
+**Status:** Pre-pilot Hobby recovery checkpoint complete; database resized and snapshotted, recurring/upload coverage deliberately deferred until real-user or pilot demand (2026-07-13)
 
 ## Goal
 
@@ -141,6 +141,12 @@ Approved by Z on 2026-07-13. Railway's live controls changed two implementation 
 - Current remaining coverage gap: `user-uploads` has no snapshot, and neither volume has a recurring schedule.
 - Railway Pro is currently $20/month with $20 of included usage, versus Hobby at $5/month with $5 included. Enabling the original native schedule therefore requires approval for an additional $15/month subscription commitment before incremental backup storage. The alternative is a separately designed Hobby-compatible encrypted export pipeline.
 
+### Cost decision — 2026-07-13
+
+Z elected to remain on Hobby and avoid a higher recurring subscription before the platform has real users or a committed pilot. This is proportionate to the current data risk: the database now has a no-expiration recovery point, the checked-in demo bibles can reconstruct demo organizations, and there is not yet external pilot data whose loss would harm another organization.
+
+Recurring native backups, the upload-volume snapshot, the restore rehearsal, and any custom offsite pipeline are therefore **deferred, not waived**. Reopen this checkpoint before onboarding a pilot, accepting materially irreplaceable uploads, or making any public commitment about backup/recovery. At that trigger, compare the then-current Pro price against a Hobby-compatible encrypted offsite pipeline and select one before the pilot deposits important data.
+
 ## Phase 92 verification matrix
 
 | Check | Required | Notes |
@@ -149,10 +155,10 @@ Approved by Z on 2026-07-13. Railway's live controls changed two implementation 
 | Cost model | Yes | Complete using current official $0.15/GB-month pricing |
 | Z approval of resize/schedules | Yes | Complete for the original estimated-cost plan; Pro upgrade not included in that approval |
 | Postgres volume resized | Yes | Complete: 500 MB → 5 GB live resize |
-| Both backup schedules created | Yes | Blocked on Pro-plan decision; daily + weekly + monthly remain unset |
-| Initial manual backups visible | Yes | Postgres complete via automatic pre-resize snapshot; uploads pending |
+| Both backup schedules created | Yes | Deferred by cost decision until pilot/real-user trigger; daily + weekly + monthly remain unset |
+| Initial manual backups visible | Yes | Postgres complete via automatic pre-resize snapshot; uploads deferred with recurring coverage |
 | Main site/backend health after infra changes | Yes | Complete: homepage 200; readiness 200/database connected |
-| Restore rehearsal | Yes | Pending; source production DB must remain untouched |
+| Restore rehearsal | Yes | Deferred with recurring coverage; source production DB must remain untouched |
 | Seven-day observed backup-cost check | Yes | Follow-up evidence |
 | Monitoring/alerts spec | Yes | Next Phase 92 cluster after backups |
 | Migration / PG smoke | No | No application schema migration is planned for backup configuration |
