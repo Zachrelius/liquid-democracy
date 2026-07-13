@@ -1,6 +1,6 @@
 # Phase 91a — Private Backend Network
 
-**Status:** In progress (2026-07-13)
+**Status:** Complete and production-verified (2026-07-13)
 
 ## Goal
 
@@ -61,3 +61,18 @@ Close Phase 91's remaining trusted-proxy exposure by routing frontend-to-backend
 ## Closeout
 
 Report code/config status, targeted tests and frontend build, migration/PG-smoke exemption, Railway service-variable and domain changes, frontend bundle hash, public smoke, direct-backend negative check, browser QA, branch/merge commits, and any remaining trusted-proxy debt.
+
+## Production evidence
+
+- Branch commit `f5910d1`; no-ff merge to `master` at `ce427a0`.
+- Initial Railway deployments for merge `ce427a0`: backend `ef633139-44b8-45d1-afea-cc3df7e04f30` SUCCESS; frontend `ec42a2c5-5fdc-415b-b098-0d15aac77e39` SUCCESS.
+- Frontend `BACKEND_URL` now renders from the Railway reference variable as `http://backend.railway.internal:8000`. Cutover deployment `91183195-0f89-49f7-b8b1-9143c32211e5` SUCCESS.
+- Backend-only resilience redeploy `2eb59786-2844-4b39-be20-2afd2717a717` SUCCESS. The frontend stayed on deployment `91183195-0f89-49f7-b8b1-9143c32211e5`; health, uploads, and the Didit webhook route continued working after private DNS re-resolution.
+- Live forwarded-header proof PASS: a failed login sent forged XFF and X-Real-IP values; the stored `user.login_failed` audit IP matched the real caller and matched none of the spoofed values.
+- Backend Railway service domain `backend-production-8014c.up.railway.app` removed. Railway reports zero backend service/custom domains; the former hostname returns 404 while `https://www.liquiddemocracy.us/api/health/ready` returns 200.
+- Targeted backend/config/security tests: 40 passed. New Phase 91a tests: 6. Production proxy smoke: 5 passed. Frontend production build PASS; bundle remains `index-DxjkqN5I.js`.
+- Docker/Nginx verification PASS: private HTTP config, HTTPS rollback config, dynamic-DNS backend replacement without frontend restart, forwarded-header normalization, and `nginx -t` in both modes.
+- Browser QA PASS: landing page, demo listing, Janet Reilly passwordless sign-in, Cedar Hollow org page, populated proposal list, logo/avatar routes, and zero Liquid Democracy console warnings/errors. Authenticated production WebSocket handshake remained open after auth.
+- No migration; PostgreSQL smoke not required.
+- Residual debt: `--forwarded-allow-ips '*'` trusts any Railway sibling service able to reach the private backend. The public direct-ingress threat is closed; revisit a narrower service-authenticated hop if the project adds untrusted sibling services or multi-project networking.
+- Rollback: generate a new backend public domain, capture its actual generated hostname, set frontend `BACKEND_URL` to that HTTPS URL, redeploy the frontend, and re-run proxy smoke. The removed hostname must not be assumed reusable.
