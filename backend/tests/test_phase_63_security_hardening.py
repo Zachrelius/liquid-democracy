@@ -562,8 +562,9 @@ class TestRefreshTokenReuseDetection:
         # 3. The whole active family is revoked: the NEW token's row is
         #    revoked too.
         test_db.expire_all()
+        from routes.auth import _refresh_token_hash
         new_rt = test_db.query(models.RefreshToken).filter(
-            models.RefreshToken.token == new_refresh,
+            models.RefreshToken.token_hash == _refresh_token_hash(new_refresh),
         ).first()
         assert new_rt is not None
         assert new_rt.revoked_at is not None, (

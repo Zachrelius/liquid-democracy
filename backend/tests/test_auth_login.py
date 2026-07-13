@@ -98,5 +98,7 @@ def test_login_emits_user_login_audit_and_creates_refresh_token(
     ).first()
     assert rt is not None
     assert rt.revoked_at is None
-    # The token returned in the response body must match the persisted row.
-    assert rt.token == body["refresh_token"]
+    # Phase 91: only a one-way digest is persisted.
+    from routes.auth import _refresh_token_hash
+    assert rt.token is None
+    assert rt.token_hash == _refresh_token_hash(body["refresh_token"])

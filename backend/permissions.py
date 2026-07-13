@@ -166,9 +166,10 @@ def can_see_votes(
 
 
 def public_delegate_topic_ids(db: Session, user_id: str) -> set[str]:
-    """Return the set of topic_ids for which user_id has an active delegate profile."""
+    """Return topics whose delegate profile is actually public."""
     rows = db.query(models.DelegateProfile.topic_id).filter(
         models.DelegateProfile.user_id == user_id,
+        models.DelegateProfile.visibility.in_(("public", "public_accepting")),
     ).all()
     return {r.topic_id for r in rows}
 

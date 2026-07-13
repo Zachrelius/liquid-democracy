@@ -1,5 +1,6 @@
 import logging
 import secrets
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -8,6 +9,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from slowapi import Limiter
 from slowapi.util import get_remote_address  # noqa: F401
 from rate_limit_utils import bypass_or_remote_address
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -225,16 +227,41 @@ def _now() -> datetime:
 
 
 def _create_refresh_token(db: Session, user_id: str) -> str:
-    """Create and persist a new refresh token for the given user."""
+    """Create a refresh token while persisting only its one-way digest."""
     token = secrets.token_urlsafe(48)
     rt = models.RefreshToken(
         user_id=user_id,
-        token=token,
+        token=None,
+        token_hash=_refresh_token_hash(token),
         expires_at=_now() + timedelta(days=7),
     )
     db.add(rt)
     db.flush()
     return token
+
+
+def _refresh_token_hash(token: str) -> str:
+    """Stable lookup digest for high-entropy opaque refresh tokens."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _refresh_token_match(token: str):
+    """Match a hashed token, with a bounded legacy-plaintext fallback.
+
+    The migration backfills every current row. The fallback lets a rolling
+    deployment consume a row written by an older process; any such row is
+    upgraded in-place when it is successfully used.
+    """
+    return or_(
+        models.RefreshToken.token_hash == _refresh_token_hash(token),
+        models.RefreshToken.token == token,
+    )
+
+
+def _upgrade_legacy_refresh_token(rt: models.RefreshToken, raw_token: str) -> None:
+    if rt.token_hash is None:
+        rt.token_hash = _refresh_token_hash(raw_token)
+    rt.token = None
 
 
 def _revoke_all_refresh_tokens(db: Session, user_id: str) -> int:
@@ -496,9 +523,17 @@ def refresh_token(
     db: Session = Depends(get_db),
 ):
     now = _now()
-    rt = db.query(models.RefreshToken).filter(
-        models.RefreshToken.token == body.refresh_token,
-    ).first()
+    # PostgreSQL row lock is the single-use claim: a concurrent presenter
+    # waits, then observes revoked_at and follows the reuse-detection path.
+    # SQLite ignores FOR UPDATE, preserving lightweight unit-test support.
+    rt = (
+        db.query(models.RefreshToken)
+        .filter(_refresh_token_match(body.refresh_token))
+        .with_for_update()
+        .first()
+    )
+    if rt is not None:
+        _upgrade_legacy_refresh_token(rt, body.refresh_token)
 
     # Phase 63 (security) — reuse detection. A known-but-already-revoked
     # token presented again is the classic stolen-token-replay signal
@@ -574,10 +609,11 @@ def logout(
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
     rt = db.query(models.RefreshToken).filter(
-        models.RefreshToken.token == body.refresh_token,
+        _refresh_token_match(body.refresh_token),
         models.RefreshToken.user_id == current_user.id,
     ).first()
     if rt and rt.revoked_at is None:
+        _upgrade_legacy_refresh_token(rt, body.refresh_token)
         rt.revoked_at = _now()
 
     log_audit_event(

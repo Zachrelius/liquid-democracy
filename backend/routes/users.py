@@ -9,9 +9,44 @@ import models
 import schemas
 from database import get_db
 from delegation_engine import graph_store
-from permissions import can_see_votes, public_delegate_topic_ids
+from eligibility import eligible_viewers_for_proposal
+from org_restriction import effective_discoverability
+from permissions import can_see_votes
 
 router = APIRouter(prefix="/api/users", tags=["users"])
+
+
+def _viewer_can_read_proposal(
+    db: Session,
+    viewer: Optional[models.User],
+    proposal: Optional[models.Proposal],
+) -> bool:
+    """Apply proposal/org access before ballot-identity visibility.
+
+    A public delegate profile makes a ballot public only within an artifact
+    the viewer may read. It must not turn a members-only or hidden-org
+    proposal into a public proposal-title/value side channel.
+    """
+    if proposal is None:
+        return False
+    if proposal.org_id is None:
+        return True
+    if viewer is not None:
+        if viewer.is_admin:
+            return True
+        if viewer.id in eligible_viewers_for_proposal(db, proposal):
+            return True
+
+    # Match the anonymous public-activity surface. Public sub-org proposal
+    # exposure is intentionally unsupported by that surface.
+    if proposal.sub_org_id is not None:
+        return False
+    org = db.get(models.Organization, proposal.org_id)
+    return bool(
+        org is not None
+        and effective_discoverability(org) != "hidden"
+        and org.activity_visibility == "public"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -397,12 +432,20 @@ def get_user_profile(
         raise HTTPException(status_code=404, detail="User not found")
 
     viewer_id = current_user.id if current_user else None
-    # Phase 33 D1 — is_active column dropped; all rows behaved as active.
-    active_profiles = list(user.delegate_profiles)
-    pub_topic_ids = {p.topic_id for p in active_profiles}
-
+    # Phase 33 D1 — is_active column dropped; all rows behave as active.
+    # Phase 91: registration metadata follows the same visibility ladder as
+    # ballots. A profile marked private (or followers_only) must not leak its
+    # topic, bio, or position statement on this anonymous endpoint.
+    all_profiles = list(user.delegate_profiles)
+    visible_profiles = [
+        p for p in all_profiles
+        if can_see_votes(
+            db, viewer_id, user_id, [p.topic_id], org_id=p.org_id,
+        )
+    ]
     # Collect visible votes (only those on public delegate topics, unless viewer = self)
     votes_out: list[schemas.VoteVisibility] = []
+    hidden_vote_count = 0
     direct_votes = db.query(models.Vote).filter(
         models.Vote.user_id == user_id,
         models.Vote.is_direct.is_(True),
@@ -414,9 +457,12 @@ def get_user_profile(
         # Phase 30.3 B4 — pass org_id so the follower-relationship check
         # is org-scoped (Phase 18 D2 was missing here).
         proposal_org_id = proposal.org_id if proposal else None
-        visible = can_see_votes(
-            db, viewer_id, user_id, proposal_topics,
-            org_id=proposal_org_id,
+        visible = (
+            _viewer_can_read_proposal(db, current_user, proposal)
+            and can_see_votes(
+                db, viewer_id, user_id, proposal_topics,
+                org_id=proposal_org_id,
+            )
         )
         if visible:
             votes_out.append(schemas.VoteVisibility(
@@ -428,28 +474,10 @@ def get_user_profile(
                 cast_at=v.cast_at,
                 visible=True,
             ))
-        elif pub_topic_ids.intersection(proposal_topics):
-            # Public delegate topic — always show
-            votes_out.append(schemas.VoteVisibility(
-                id=v.id,
-                proposal_id=v.proposal_id,
-                proposal_title=proposal.title if proposal else None,
-                vote_value=v.vote_value,
-                is_direct=v.is_direct,
-                cast_at=v.cast_at,
-                visible=True,
-            ))
         else:
-            # Hidden vote — include with visible=False so frontend can show privacy message
-            votes_out.append(schemas.VoteVisibility(
-                id=v.id,
-                proposal_id=v.proposal_id,
-                proposal_title=proposal.title if proposal else None,
-                vote_value=None,
-                is_direct=v.is_direct,
-                cast_at=v.cast_at,
-                visible=False,
-            ))
+            # One placeholder per hidden ballot still disclosed the private
+            # proposal and cast time. Preserve only an aggregate count.
+            hidden_vote_count += 1
 
     return schemas.PublicProfileOut(
         user=schemas.UserSearchResult(
@@ -458,8 +486,12 @@ def get_user_profile(
             display_name=user.display_name,
             avatar_url=user.avatar_url,
         ),
-        delegate_profiles=[schemas.DelegateProfileOut.model_validate(p) for p in active_profiles],
+        delegate_profiles=[
+            schemas.DelegateProfileOut.model_validate(p)
+            for p in visible_profiles
+        ],
         votes=votes_out,
+        hidden_vote_count=hidden_vote_count,
     )
 
 
@@ -480,20 +512,17 @@ def get_me(
     return current_user
 
 
-@router.get("/{user_id}", response_model=schemas.UserOut)
+@router.get("/{user_id}", response_model=schemas.PublicUserOut)
 def get_user(
     user_id: str,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
-    """Phase 10.2 W-FIX-A BUG-1: gated behind ``Depends(get_current_user)``.
+    """Return public-safe identity data for another account.
 
-    Previously this endpoint was unauthenticated and returned the full
-    ``UserOut`` schema (including ``email`` and ``email_verified``) for any
-    user ID a caller could guess. UUID enumeration is impractical but the
-    leak was a latent PII exposure surfaced by the Phase 10.2 test-depth
-    audit (see ``docs/test_depth_audit_2026-05.md`` Class B BUG row for
-    ``GET /api/users/{id}``).
+    Full account details are reserved for ``/api/users/me`` and
+    ``/api/auth/me``; merely being authenticated does not grant access to
+    another user's email, verification metadata, or account preferences.
     """
     user = db.get(models.User, user_id)
     if not user:
@@ -629,16 +658,14 @@ def user_votes(
 ):
     """
     Voting record with permission-aware visibility.
-    Returns votes the requester can see; others are returned with visible=False
-    and vote_value=None.
+    Returns only votes the requester can see. Hidden votes are omitted rather
+    than represented by rows that disclose proposal IDs.
     """
     user = db.get(models.User, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     viewer_id = current_user.id if current_user else None
-    pub_topic_ids = public_delegate_topic_ids(db, user_id)
-
     direct_votes = db.query(models.Vote).filter(
         models.Vote.user_id == user_id,
         models.Vote.is_direct.is_(True),
@@ -651,20 +678,21 @@ def user_votes(
         # Phase 30.3 B4 — pass org_id for the org-scoped follower check.
         proposal_org_id = proposal.org_id if proposal else None
         visible = (
-            can_see_votes(
+            _viewer_can_read_proposal(db, current_user, proposal)
+            and can_see_votes(
                 db, viewer_id, user_id, proposal_topics,
                 org_id=proposal_org_id,
             )
-            or bool(pub_topic_ids.intersection(proposal_topics))
         )
-        result.append(schemas.VoteVisibility(
-            id=v.id,
-            proposal_id=v.proposal_id,
-            proposal_title=proposal.title if proposal else None,
-            vote_value=v.vote_value if visible else None,
-            is_direct=v.is_direct if visible else None,
-            cast_at=v.cast_at if visible else None,
-            visible=visible,
-        ))
+        if visible:
+            result.append(schemas.VoteVisibility(
+                id=v.id,
+                proposal_id=v.proposal_id,
+                proposal_title=proposal.title if proposal else None,
+                vote_value=v.vote_value,
+                is_direct=v.is_direct,
+                cast_at=v.cast_at,
+                visible=True,
+            ))
 
     return result

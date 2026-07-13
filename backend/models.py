@@ -1795,7 +1795,13 @@ class RefreshToken(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), nullable=False, index=True)
-    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    # Phase 91: new rows persist only a one-way SHA-256 digest. ``token`` stays
+    # nullable for one rolling-deploy transition and for downgrade support;
+    # the migration hashes and clears every existing plaintext value.
+    token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True, index=True)
+    token_hash: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, unique=True, index=True,
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, nullable=False)

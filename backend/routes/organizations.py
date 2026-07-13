@@ -735,6 +735,15 @@ def update_organization(
             from org_config import (
                 normalize_weighted_voting_input, get_weighted_voting_config,
             )
+            # Serialize cap reads/writes with every issuance path. Re-load the
+            # settings after acquiring the PostgreSQL organization-row lock.
+            org = (
+                db.query(models.Organization)
+                .filter(models.Organization.id == org.id)
+                .populate_existing()
+                .with_for_update()
+                .one()
+            )
             _wv_new = normalize_weighted_voting_input(
                 body.settings["weighted_voting"]
             )
@@ -1449,7 +1458,8 @@ def list_members(
                 held_titles=held_titles_for_member(db, org.id, m.user_id, role_key),
                 is_org_verified=verification_flags.is_org_verified(user, org, db),
                 voting_weight=(
-                    (getattr(m, "voting_weight", 1) or 1)
+                    (1 if getattr(m, "voting_weight", None) is None
+                     else m.voting_weight)
                     if _can_see_weights else None
                 ),
                 share_start_date=(
@@ -1624,7 +1634,8 @@ def change_member_role(
         joined_at=m.joined_at,
         # Phase 88c — gated on member.set_voting_weight (admin view only).
         voting_weight=(
-            (getattr(m, "voting_weight", 1) or 1)
+            (1 if getattr(m, "voting_weight", None) is None
+             else m.voting_weight)
             if has_permission(db, current_user.id, org.id, "member.set_voting_weight")
             else None
         ),

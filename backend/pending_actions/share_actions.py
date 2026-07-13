@@ -339,11 +339,26 @@ def _validate_cap_raise(payload, db, org, actor) -> None:
 
 def _exec_cap_raise(db, action, actor_user) -> None:
     from audit_utils import log_audit_event
-    org = db.get(models.Organization, action.org_id)
+    org = (
+        db.query(models.Organization)
+        .filter(models.Organization.id == action.org_id)
+        .populate_existing()
+        .with_for_update()
+        .one()
+    )
+    requested = action.payload.get("authorized_total")
+    if requested is not None:
+        current = outstanding_total(db, org)
+        if requested < current:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"authorized_total ({requested}) cannot be below the "
+                        f"current outstanding total ({current})."),
+            )
     settings = dict(org.settings or {})
     wv = dict(settings.get("weighted_voting") or {})
     old = wv.get("authorized_total")
-    wv["authorized_total"] = action.payload.get("authorized_total")
+    wv["authorized_total"] = requested
     settings["weighted_voting"] = wv
     org.settings = settings
     log_audit_event(

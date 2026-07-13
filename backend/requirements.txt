@@ -1,14 +1,17 @@
-fastapi==0.115.6
+fastapi==0.134.0
+# Explicit transitive pin: 1.3.1 closes Host/path confusion, form-limit,
+# FileResponse Range DoS, and StaticFiles/HTTPEndpoint advisories.
+starlette==1.3.1
 uvicorn[standard]==0.32.1
 sqlalchemy==2.0.36
 alembic==1.14.0
 pydantic==2.10.3
 pydantic-settings==2.7.0
-python-dotenv==1.0.1
-python-jose[cryptography]==3.3.0
+python-dotenv==1.2.2
+python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
-python-multipart==0.0.20
+python-multipart==0.0.31
 networkx==3.4.2
 # pyrankvote: IRV/STV tabulation (Phase 7). Pin 2.0.6 — algorithms are settled
 # math; pyrankvote was last released Oct 2022 but is the de-facto Python RCV/STV
@@ -18,12 +21,12 @@ pyrankvote==2.0.6
 nh3==0.2.18
 slowapi==0.1.9
 psycopg2-binary==2.9.9
-aiosmtplib==3.0.1
-# Pillow: avatar resize (Phase 9.8). 10.4.0 is the active LTS line; supports
+aiosmtplib==5.1.2
+# Pillow: avatar resize (Phase 9.8). Supports
 # JPEG/PNG/WebP decode + JPEG encode quality 85 used by /api/users/me/avatar.
-Pillow==10.4.0
-pytest==8.3.4
-pytest-asyncio==0.24.0
+Pillow==12.3.0
+pytest==9.0.3
+pytest-asyncio==1.4.0
 # pytest-xdist: Phase 61 O3 — parallel test execution. `pytest -n auto`
 # distributes tests across CPU workers; cuts full-suite wall-clock from
 # ~40min to ~19min (51% reduction) at 2266 tests. Each worker gets its
@@ -31,7 +34,7 @@ pytest-asyncio==0.24.0
 # DB isolation is automatic. Not required for correctness — the suite
 # still passes serially — but `-n auto` is the recommended local +
 # CI invocation. See docs/test_perf_profile_2026-06.md.
-pytest-xdist==3.6.1
+pytest-xdist==3.8.0
 httpx==0.28.1
 # tzdata: zoneinfo fallback for platforms without system tzdata (Windows
 # dev hosts especially). Phase 23 B6 uses ZoneInfo("America/Los_Angeles")
@@ -42,7 +45,7 @@ tzdata==2024.2
 # POST to /api/demo/trigger-reset. python-dotenv (already pinned above) loads
 # DEMO_RESET_TRIGGER_TOKEN from .env. Backend service itself doesn't import
 # requests; this is for the standalone CLI helper that ships in the same repo.
-requests==2.32.3
+requests==2.33.0
 # pdfplumber: PDF text extraction for smart-import (Phase 75b).
 # Deterministic text extraction — the AI step (Anthropic via httpx) is separate.
-pdfplumber==0.11.4
+pdfplumber==0.11.10

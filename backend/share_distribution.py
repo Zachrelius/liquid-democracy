@@ -63,7 +63,7 @@ def _active_members(db: Session, org_id: str) -> list[models.OrgMembership]:
     return db.query(models.OrgMembership).filter(
         models.OrgMembership.org_id == org_id,
         models.OrgMembership.status == "active",
-    ).all()
+    ).populate_existing().all()
 
 
 def _title_holder_ids(db: Session, org_id: str, title_ids: list) -> set:
@@ -300,9 +300,21 @@ def run_rule(db: Session, org: models.Organization,
     today = today or _today()
     if rule.status != "active":
         return 0
+
+    # Participate in the same per-org serialization protocol as direct and
+    # ratified issuance. Refresh the settings under the lock so a cap change
+    # committed while this sweep waited is honored. Resolve target membership
+    # rows only AFTER acquiring the lock: pre-lock ORM rows could retain stale
+    # balances and overwrite an issuance that committed while this sweep waited.
+    org = (
+        db.query(models.Organization)
+        .filter(models.Organization.id == org.id)
+        .populate_existing()
+        .with_for_update()
+        .one()
+    )
     targeted = resolve_targeted_members(db, org.id, rule)
     grants = 0
-
     cap = get_weighted_voting_config(org)["authorized_total"]
     # Track projected outstanding across grants in THIS sweep (weights mutate in
     # the session as we go). None cap = uncapped fast path.
