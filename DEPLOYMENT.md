@@ -77,7 +77,7 @@ This section is a start-to-finish walkthrough for deploying the public EA demo t
     | `FROM_EMAIL` | `Liquid Democracy <your-gmail-address>` | RFC-5322 From header |
 
 4. Click **Deploy**. The first build will take 3-5 minutes (pip install on a fresh image is the slow step).
-5. Once deployed, open the service → **Settings** → **Networking** → **Generate Domain** so Railway assigns a public `*.up.railway.app` URL. This is your temporary backend URL for testing before DNS is live. Note it down.
+5. For an initial deployment only, open the service → **Settings** → **Networking** → **Generate Domain** so Railway assigns a temporary public `*.up.railway.app` URL. Keep it only through the private-network cutover checks below, then remove it. The backend is not intended to remain publicly addressable.
 6. Check **Logs** for a successful startup. On a brand-new database you should see `Fresh database detected — bootstrapping via create_all + stamp head.` then `Starting application…`. On a redeploy of an existing DB you should see `Alembic-stamped DB detected — applying pending migrations…` instead. If you see a traceback, paste it into `docker compose logs backend` locally to compare — most startup errors are env-var-related.
 
 > **⚠ Container path convention (read before running `railway ssh` / `railway run`).** Because the backend service is configured with `Root directory: backend`, Railway treats `backend/` as the Docker build context root. The Dockerfile's `COPY . .` then copies `backend/*` (relative to that root) into `/app/`. Net effect: the in-repo path `backend/scripts/foo.py` becomes the container path `/app/scripts/foo.py` — the `backend/` prefix is **collapsed**. In `railway ssh` and `railway run` commands, use container paths (e.g., `python scripts/foo.py`), NOT in-repo paths (`python backend/scripts/foo.py` will fail with `No such file or directory`). Past closeouts that document `railway run python backend/scripts/...` are wrong — use `scripts/...` from `/app`.
@@ -88,11 +88,73 @@ This section is a start-to-finish walkthrough for deploying the public EA demo t
 2. Configure as the **frontend**:
    - **Root directory:** `frontend`
    - **Watch paths:** `frontend/**`
-3. Under **Variables**, set `BACKEND_URL` to the backend's internal Railway URL from Step 3. nginx's template mechanism substitutes this at container start into the `/api/` and `/ws/` proxy directives. Two valid forms:
-   - **Preferred (private networking):** `BACKEND_URL=http://backend.railway.internal:8000` — replace `backend` with the actual service name Railway assigned (shown in the Settings page). Private networking means free internal bandwidth and no public hop.
+3. Under **Variables**, set `BACKEND_URL` to the backend's internal Railway URL from Step 3. nginx's template mechanism substitutes this at container start into the `/api/`, `/ws/`, and `/uploads/` proxy directives. Valid forms:
+   - **Production (private networking):** `BACKEND_URL=http://${{backend.RAILWAY_PRIVATE_DOMAIN}}:8000` — replace `backend` with the exact Railway backend service name if it differs. Using a Railway reference variable keeps the private hostname authoritative. Internal HTTP is correct because Railway's private mesh is encrypted.
+   - **Equivalent resolved form:** `BACKEND_URL=http://backend.railway.internal:8000` — useful for diagnosis; prefer the reference-variable form in the service configuration.
    - **Fallback (public URL):** `BACKEND_URL=https://<backend-service>.up.railway.app` — works if private networking isn't configured. Slightly slower, traffic goes through Railway's edge.
 4. Click **Deploy**. Railway builds the frontend (nginx serves `/app/dist`).
 5. **Settings** → **Networking** → **Generate Domain** to get a `*.up.railway.app` URL for the frontend. Visit it — you should see the landing page. The `/api/*` calls should return real data (try visiting `<your-frontend-url>/api/health` — it should return JSON from the backend).
+
+#### Step 4a — Make the backend private (Phase 91a)
+
+The frontend is the sole public gateway. Browsers keep using same-origin
+`/api/`, `/ws/`, and `/uploads/`; only nginx's upstream changes.
+The nginx container enables the official image's local-resolver discovery and
+re-resolves the private backend hostname at request time with a 10-second
+validity window. Backend private-IP changes therefore do not require a
+frontend restart; brief in-flight failures may still retry on the next request.
+
+1. Deploy the dual-stack backend build while its temporary public domain still
+   exists. In backend logs, confirm the Railway-documented `--host ""` bind
+   reaches application startup and `GET /api/health` succeeds through the
+   temporary backend URL.
+2. On the frontend service, set
+   `BACKEND_URL=http://${{backend.RAILWAY_PRIVATE_DOMAIN}}:8000` and redeploy.
+   Do not remove the backend domain yet.
+3. Through the **frontend** public hostname, verify:
+   - `/api/health` returns the backend health JSON;
+   - an unauthenticated API route and login both behave normally;
+   - an authenticated organization/proposal page loads;
+   - `/uploads/<known-avatar-path>` serves the image;
+   - a `/ws/` connection upgrades successfully;
+   - `POST /api/webhooks/didit` remains routed to the backend (the provider URL
+     remains `https://www.liquiddemocracy.us/api/webhooks/didit`).
+4. Inspect frontend logs for upstream connection or DNS failures. Then
+   redeploy **only the backend**, leaving the frontend deployment untouched.
+   Wait at least 10 seconds for the resolver window and repeat the frontend
+   API, upload, and WebSocket checks. This proves nginx followed the backend's
+   new private IP without being restarted.
+5. Once those checks pass, remove the backend service's Railway public domain
+   under **Settings → Networking**. Confirm the backend has no custom domain
+   or TCP proxy exposure. Do not change registrar/Cloudflare DNS.
+6. Repeat the frontend health, login, application, upload, WebSocket, and clean
+   browser-console checks. Confirm the former backend `*.up.railway.app`
+   hostname is unreachable.
+
+The backend retains `--forwarded-allow-ips '*'` because public-domain removal
+eliminates direct Internet access and the frontend is the only intended
+caller. Other services in the same Railway environment remain able to reach
+the private backend, so this is residual lateral-trust debt: a compromised
+sibling service could forge proxy headers. If the backend is ever made public
+again, forwarded-header trust must be restricted before treating IP-based
+rate limits or audit addresses as authoritative. The frontend proxy extracts
+Railway's edge-controlled first `X-Forwarded-For` entry and replaces the chain
+with that single address (falling back to its direct peer for local Docker
+traffic). It deliberately does not rely on `X-Real-IP`, which Railway has
+documented can temporarily identify its CDN edge rather than the client.
+nginx sends the resolved upstream as
+the HTTP `Host` (required for Railway's public-edge rollback routing) while
+preserving the browser-facing public hostname separately in
+`X-Forwarded-Host`.
+
+**Rollback:** first regenerate a backend Railway public domain. Capture the
+actual newly-issued `https://…up.railway.app` URL (do not assume Railway reused
+the former hostname) and verify `<new-url>/api/health` directly. Only after that
+check passes, change the frontend's `BACKEND_URL` to the captured URL and
+redeploy the frontend. Re-run same-origin health/login/upload checks before
+treating rollback as complete. Keep the private-domain value recorded for the
+subsequent diagnosis; no database, registrar DNS, or secret rollback is
+involved.
 
 #### Step 5 — Custom domain (liquiddemocracy.us)
 
@@ -481,7 +543,7 @@ Do this before EA events if visitor content from previous demos has accumulated 
 | `SMTP_PASSWORD` | No | — | SMTP authentication password |
 | `FROM_EMAIL` | No | — | Sender email address for notifications |
 | `DATABASE_URL` | Auto | — | Set automatically by docker-compose or Railway; override for external DB |
-| `WORKERS` | No | `4` | Number of uvicorn worker processes |
+| `WORKERS` | No | `1` | Number of uvicorn worker processes |
 | `DEBUG` | No | `false` | Enable debug mode (never use in production) |
 | `LOG_LEVEL` | No | `INFO` | Logging level: DEBUG, INFO, WARNING, ERROR |
 | `POLIS_AUTH_TOKEN` | No | — | Bearer JWT for the hosted pol.is admin API (Phase 9). When unset, the platform uses the manual-creation fallback flow — admins create a Polis on pol.is manually and paste the conversation_id into the platform. See "pol.is API integration" below. |
@@ -988,7 +1050,7 @@ Top-to-bottom on the failing container's logs:
 
 4. **Did the worker side-process start?** Look for `Starting sustained-majority worker…` followed by `Sustained-majority worker PID: <N>`. The PID line prints even if the worker dies milliseconds later (because `&` backgrounds the process). Worker death does NOT take down uvicorn.
 
-5. **Did uvicorn reach the listening state?** Look for `INFO: Started server process` (one per worker) followed by `INFO: Application startup complete.` and `INFO: Uvicorn running on http://0.0.0.0:8000`. Without those lines per worker, the app never bound to the port.
+5. **Did uvicorn reach the listening state?** Look for `INFO: Started server process` (one per worker), then `INFO: Application startup complete.`, after the Railway-documented empty-host bind. Without those lines per worker, the app never bound to the dual-stack/private-network port.
 
 6. **Are health checks reaching workers?** Look for repeated `GET /api/health HTTP/1.1 200 OK`. Distributed across `100.64.0.X` source IPs (Railway's internal probe addresses).
 
@@ -1078,7 +1140,7 @@ Log line `digest_loop: tick complete {daily: N, weekly: N, quiet: N, cleaned: N}
 **Resolution (Phase 40a, 2026-05-28):** `backend/start.sh` no longer uses `exec uvicorn ...`. Instead the shell stays as PID 1, launches both the SM worker AND uvicorn as background children, and installs a `trap _cleanup SIGTERM SIGINT` that forwards SIGTERM to the worker first (brief sleep for the worker's signal handler to run + finish current tick), then to uvicorn, then waits for both to exit cleanly. The `wait -n` (bash 4.3+) blocks until any child exits — if one crashes for unrelated reasons (OOM, panic), the cleanup path also brings the other down so no orphans linger.
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS:-1} \
+uvicorn main:app --host "" --port 8000 --workers ${WORKERS:-1} \
     --proxy-headers --forwarded-allow-ips '*' &
 UVICORN_PID=$!
 

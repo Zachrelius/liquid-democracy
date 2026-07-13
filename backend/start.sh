@@ -113,6 +113,15 @@ echo "Starting application…"
 # the Railway-edge IP becomes request.client.host and every slowapi rate
 # limiter is effectively keyed per-edge-IP instead of per-client-IP. Also
 # fixes audit-log IP fidelity (Tier-2 tech debt from the Phase 37 closeout).
+# Phase 91a: wildcard forwarded-header trust is safe only after the backend
+# public domain is removed and this service is reachable solely through the
+# frontend proxy on Railway's private mesh. During the staged cutover, keep
+# the public route only long enough to prove the private upstream, then remove
+# it per DEPLOYMENT.md.
+#
+# Railway private networking is IPv6-first. Railway's documented empty-host
+# form asks Uvicorn/getaddrinfo for the runtime's all-interface dual-stack
+# listener, preserving IPv4 compatibility where the platform supplies it.
 #
 # Phase 40a B1 (2026-05-28) — start.sh stays as PID 1; uvicorn launches as
 # a background child instead of via `exec`. Pre-Phase-40a the SM worker
@@ -121,7 +130,7 @@ echo "Starting application…"
 # during force-stop. Post-fix the trap below forwards SIGTERM/SIGINT to
 # both children so each runs its graceful shutdown path. Confirmed
 # behavior is documented in DEPLOYMENT.md "Worker signal handling."
-uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS:-1} \
+uvicorn main:app --host "" --port 8000 --workers ${WORKERS:-1} \
     --proxy-headers --forwarded-allow-ips '*' &
 UVICORN_PID=$!
 echo "Uvicorn PID: ${UVICORN_PID}"
