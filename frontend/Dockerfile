@@ -22,6 +22,10 @@ RUN rm /etc/nginx/conf.d/default.conf
 # Set BACKEND_URL env var (default falls back to docker-compose service name).
 COPY nginx.conf /etc/nginx/templates/default.conf.template
 ENV BACKEND_URL=http://backend:8000
+# Ask the official nginx entrypoint to export the container's resolvers as
+# NGINX_LOCAL_RESOLVERS. nginx.conf uses them for request-time upstream DNS,
+# so a Railway backend redeploy/private-IP change needs no frontend restart.
+ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1
 
 # Copy built files from build stage
 COPY --from=build /app/dist /usr/share/nginx/html
