@@ -1,6 +1,6 @@
 # Phase 92 — Pilot Readiness and Operational Recovery
 
-**Status:** Planning and live sizing complete; infrastructure changes awaiting Z approval (2026-07-13)
+**Status:** Recovery execution in progress; database resized and protected by an initial snapshot, recurring/upload coverage blocked on a Pro-plan decision (2026-07-13)
 
 ## Goal
 
@@ -123,14 +123,23 @@ On the Hobby plan, the $5 monthly subscription includes the first $5 of total re
 
 ### Recommended immediate configuration
 
-Pending Z approval:
+Approved by Z on 2026-07-13. Railway's live controls changed two implementation details during execution:
 
-1. Increase `postgres-volume` from 500 MB to **2 GB**. This provides about 4.6× current headroom and raises the documented manual-backup ceiling to roughly 1 GB. Railway bills actual storage, although its filesystem metadata uses approximately 2–3% of configured capacity; the resize should add only about $0.01/month of storage at current data volume.
+1. Increase `postgres-volume` from 500 MB to **5 GB**. The approved target was 2 GB, but Railway only offered 1 GB or 5 GB as the next live-resize steps. Five GB was selected because 1 GB would leave the current 436 MB database too close to the 50% manual-backup ceiling. Railway bills actual storage; the extra filesystem metadata compared with 2 GB should add only about $0.01–$0.02/month.
 2. Enable daily + weekly + monthly schedules on **both** `postgres-volume` and `user-uploads`.
 3. Create one manual snapshot of each volume after the database resize and confirm the backups appear with expected sizes.
 4. Re-check snapshot-exclusive storage and invoice projection after 7 and 30 days; revise schedules only if observed churn is materially higher than the upper-bound model.
 5. Design the restore rehearsal before executing it. Preferred proof: restore entirely within Railway to a temporary isolated target, validate schema/head revision and representative row/file counts, and delete the temporary target only after evidence is recorded. Production must remain untouched.
 6. Select an independent encrypted offsite destination and retention policy as a separate decision; do not copy production data to a local workstation merely for sizing.
+
+### Execution result — 2026-07-13
+
+- `postgres-volume` was live-resized successfully from 500 MB to **5 GB** without a service restart.
+- Railway automatically created a pre-resize recovery point named `Online resize to 5000MB` (backup ID `9fe9f5ed-6cee-4545-b54c-281674075e9a`). The API reports 440 MB referenced, 8 MB backup-exclusive, and `expiresAt: null`.
+- The production homepage returned HTTP 200 after the resize. `/api/health/ready` returned HTTP 200 with `{"status":"ok","database":"connected"}`.
+- Railway's production UI reports that ordinary backups, recurring backup schedules, and PITR are **Pro-plan only**. The project-scoped API token can inspect volumes/backups but receives `Not Authorized` for schedule mutations. No schedule was partially created.
+- Current remaining coverage gap: `user-uploads` has no snapshot, and neither volume has a recurring schedule.
+- Railway Pro is currently $20/month with $20 of included usage, versus Hobby at $5/month with $5 included. Enabling the original native schedule therefore requires approval for an additional $15/month subscription commitment before incremental backup storage. The alternative is a separately designed Hobby-compatible encrypted export pipeline.
 
 ## Phase 92 verification matrix
 
@@ -138,11 +147,11 @@ Pending Z approval:
 |---|---:|---|
 | Railway live volume inventory | Yes | Complete: sizes, capacities, mounts, and backup counts observed |
 | Cost model | Yes | Complete using current official $0.15/GB-month pricing |
-| Z approval of resize/schedules | Yes | Pending |
-| Postgres volume resized | Yes | Pending; target 2 GB |
-| Both backup schedules created | Yes | Pending; daily + weekly + monthly |
-| Initial manual backups visible | Yes | Pending |
-| Main site/backend health after infra changes | Yes | Pending |
+| Z approval of resize/schedules | Yes | Complete for the original estimated-cost plan; Pro upgrade not included in that approval |
+| Postgres volume resized | Yes | Complete: 500 MB → 5 GB live resize |
+| Both backup schedules created | Yes | Blocked on Pro-plan decision; daily + weekly + monthly remain unset |
+| Initial manual backups visible | Yes | Postgres complete via automatic pre-resize snapshot; uploads pending |
+| Main site/backend health after infra changes | Yes | Complete: homepage 200; readiness 200/database connected |
 | Restore rehearsal | Yes | Pending; source production DB must remain untouched |
 | Seven-day observed backup-cost check | Yes | Follow-up evidence |
 | Monitoring/alerts spec | Yes | Next Phase 92 cluster after backups |
