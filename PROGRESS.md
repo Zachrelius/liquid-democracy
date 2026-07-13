@@ -4250,7 +4250,7 @@ No migration. Branch `phase-72d/methodswitch-and-72c-confirm`. Spec: `phase72d_m
 
 ---
 
-## Phase 91 — External Review Remediation — Ready to deploy (2026-07-12)
+## Phase 91 — External Review Remediation ✅ Complete (2026-07-12)
 
 Spec: `phase91_external_review_remediation_spec.md`. Branch: `phase-91/external-review-remediation`.
 
@@ -4261,3 +4261,5 @@ Refresh tokens are SHA-256 hashed at rest, existing plaintext rows are backfille
 Runtime dependencies were upgraded through current fixed versions (FastAPI/Starlette, Pillow, python-multipart, python-jose, aiosmtplib, requests/pdfplumber, React Router). CI now runs full backend tests, Python audit, npm production audit, and frontend build. Python audit is clean except documented no-fix `PYSEC-2026-1325`, unreachable because the application uses HS256 only; npm production audit is clean.
 
 Verification: 2,978 tests collected (+11). Full run reached 2,925 pass / 35 migration-chain failures / 18 skip; after the single migration root cause was fixed, the complete 119-test migration-cycle subset passed, yielding combined final coverage of 2,960 pass / 18 skip. PG smoke fresh + upgrade-from-`b4c5d6e7f8a9` PASS. Frontend build PASS. Lint unchanged at the pre-existing 108 errors / 9 warnings. Railway private-networking remains a separate infrastructure decision; `--forwarded-allow-ips '*'` is unchanged in this pass.
+
+Merge `d665861`; production bundle `index-DxjkqN5I.js`. Backend health recovered after deploy and remained stable. Production smoke 5/5 PASS; browser QA confirmed Calder's zero-share Dev Patel row renders `0`, public delegate pages render normally, and the browser console is clean. Railway CLI deployment-row lookup was unavailable because the local CLI is not authenticated; bundle flip + backend warmup/health + live smoke provide the deploy evidence for this pass.
