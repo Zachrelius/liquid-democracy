@@ -4303,3 +4303,19 @@ The genuine zero-history/mobile audit found and fixed two additional defects: a 
 Verification: 4 frontend tests PASS; 49 targeted backend org/invitation/proposal-permission tests PASS; frontend production build PASS. Isolated Chromium browser journey PASS for first bootstrap, later org creation, starter topics, invitation creation + invited registration/verification/join, first proposal/vote with no delegation, consumed invite, zero notifications/messages/delegates, zero-vote visualization, steward/member empty proposals, steward/member zero-topic delegations, and 380px layouts; console clean. Firefox/Safari remain an honestly named follow-up rather than claimed coverage. No migration; PG smoke not required.
 
 Railway frontend deployment `b6ed0266-c82a-490d-afb6-cc57f6feae91` SUCCESS; backend row `68f08c69-8458-4d53-8141-6825f7531d33` SKIPPED as expected (frontend/docs/CI-only watched changes). Production bundle `index-25BxjmrT.js`; homepage 200; readiness 200/database connected; production sanity clean.
+
+---
+
+## Phase 94 — Accessibility Audit and Remediation ✅ Complete (2026-07-14)
+
+Spec: `phase94_accessibility_audit_and_remediation_spec.md`. Branch `phase-94/accessibility-audit`; implementation `1914bbc`; no-ff merge `f9664a6`.
+
+Remediated pilot-critical accessibility barriers across registration/sign-in, initial setup, organization creation/settings, proposal creation/filters, voting, delegation, dialogs, notifications, errors, and topic/brand colors. Critical forms now use programmatic labels and associated help/error text. Shared dialogs provide initial focus, dynamic keyboard containment, Escape, and opener restoration without global Enter-to-confirm behavior. Ranked ballots, project-budget ballots, proposal-option editors, and delegation precedence have named non-drag ordering controls. Ranked drag semantics now live on dedicated handles rather than creating nested interactive controls. Dynamic feedback is announced; notification state and focus behavior are explicit; keyboard focus has a global visible fallback.
+
+Topic badges now choose the stronger black/white foreground (measured local ratios improved from as low as 2.15:1 to 4.70:1–9.78:1), and branded accent text uses a contrast-safe companion color. The audited ranked-results surface already supplies equivalent textual winner, ballot, and round data outside its charts. A 380px Chromium pass found no horizontal overflow on the exercised ballot, no unnamed controls, and no remaining nested-interactive defect on the ranked surface.
+
+Verification: frontend tests **8/8 PASS** (four new accessibility-contract tests); production build PASS; targeted new-file lint PASS. Repository-wide lint remains pre-existing debt at 107 errors / 8 warnings, slightly improved from Phase 93's 108 / 9. Isolated Chromium browser QA PASS for critical form naming, modal focus behavior, non-drag voting/delegation ordering, notifications, mobile layout, results equivalence, and contrast. Production browser sanity loaded bundle `index-0FdswWDo.js`, exposed named sign-in/registration controls, and rendered the keyboard-focus outline. No backend changes or migration; PG smoke not required.
+
+Railway frontend deployment `b3d627cb-a177-40de-a472-c3ebea5492ee` SUCCESS; backend row `7efd5f30-33d5-4429-ab55-da54df770ee8` SKIPPED as expected. Homepage 200; readiness 200/database connected.
+
+Residual work is explicit rather than claimed complete: NVDA/JAWS/VoiceOver and Firefox/Safari passes; contrast enforcement for custom primary/on-primary color pairs; incremental cleanup of low-traffic historical forms and bespoke popovers; and eventual independent/manual review with disabled users before any conformance claim. The guided-onboarding walkthrough with Z's new example organization is a separate exercise and remains **NOT STARTED / deliberately deferred** until Z has time for it.

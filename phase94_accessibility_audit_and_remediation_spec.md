@@ -72,7 +72,7 @@ Single full-stack Codex pass. The work is deliberately bounded and does not requ
 
 ## Status
 
-**IN PROGRESS — 2026-07-14**
+**COMPLETE — 2026-07-14**
 
 ## What this phase is
 
@@ -161,3 +161,16 @@ The audited ranked-vote page exposes the same decision information outside its D
 - Custom **primary** brand colors are still allowed without enforcing white-on-primary contrast. Accent text is now protected, but a later branding pass should preview or automatically select on-primary foreground colors before very light primary themes are used.
 - Continue converting low-traffic historical forms and bespoke popovers outside the pilot-critical route set as they are revisited.
 - A third-party/manual audit with disabled users remains the right gate before any formal conformance claim.
+
+## Verification and deployment
+
+- Frontend tests: **8/8 passed** (the four existing tests plus four accessibility-contract tests).
+- Frontend production build: **PASS**; deployed bundle `index-0FdswWDo.js`.
+- Frontend lint: **107 errors / 8 warnings**, all pre-existing baseline debt; this is a slight improvement from Phase 93's 108 / 9 and introduces no new lint regression. Targeted lint for the new hook and tests passed.
+- Local isolated Chromium QA: **PASS** for labelled registration/setup/organization/proposal/settings forms; modal initial focus, containment, Escape, and opener restoration; notification-panel state and focus return; non-drag ranked-ballot and delegation ordering; 380px ballot/layout behavior; equivalent ranked-result text; control-name and nested-interactive sweeps; and contrast checks.
+- Production Chromium sanity: **PASS** on the cache-busted production shell. The page loaded `index-0FdswWDo.js`; sign-in and registration controls exposed programmatic names, and keyboard focus rendered a solid approximately 3px outline. Production QA was read-only.
+- Railway frontend deployment `b3d627cb-a177-40de-a472-c3ebea5492ee`: **SUCCESS** and active for merge `f9664a6`.
+- Railway backend deployment row `7efd5f30-33d5-4429-ab55-da54df770ee8`: **SKIPPED as expected** because no watched backend files changed; the existing backend remained active.
+- Production shell: HTTP 200. `/api/health/ready`: HTTP 200 with database connected.
+- Implementation commit `1914bbc`; no-ff merge `f9664a6`.
+- No backend code or schema migration was added; PostgreSQL migration smoke was not required.
