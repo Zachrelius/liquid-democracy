@@ -6,9 +6,10 @@ import { useOrg } from '../OrgContext';
 /**
  * Phase 43 Cluster C — Post-creation orientation pointer.
  *
- * Mounted on `OrgSettings.jsx` (the admin-settings page that `CreateOrg`
- * redirects to). Shows a small dismissible banner linking to the steward
- * getting-started help page. Persists dismissal per (user, org_slug) via
+ * Mounted on `OrgSettings.jsx` as a continuing orientation fallback after
+ * the Phase 93 guided create/topics/invite path. Shows a small dismissible
+ * banner linking to the steward getting-started help page. Persists dismissal
+ * per (user, org_slug) via
  * sessionStorage — matches the existing pattern used by `DemoOrgBanner`
  * for per-org dismissable banners (do NOT switch to localStorage per
  * Phase 43 spec Cluster C).

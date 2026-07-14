@@ -1,7 +1,12 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useOrg } from '../OrgContext';
 import { urlFor } from '../utils/urls';
+import {
+  parseInvitationEmails,
+  pendingSelectedTopics,
+  slugifyOrganizationName,
+} from '../utils/setupWizard';
 import api from '../api';
 
 const SUGGESTED_TOPICS = [
@@ -10,14 +15,6 @@ const SUGGESTED_TOPICS = [
   { name: 'Policy', color: '#10b981', checked: true },
   { name: 'Operations', color: '#f59e0b', checked: true },
 ];
-
-function slugify(text) {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 50);
-}
 
 function StepIndicator({ current, total }) {
   return (
@@ -46,8 +43,12 @@ function StepIndicator({ current, total }) {
 
 export default function SetupWizard() {
   const navigate = useNavigate();
-  const { setCurrentOrg, refreshOrgs } = useOrg();
-  const [step, setStep] = useState(0);
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const { setCurrentOrg, refreshOrgs, userOrgs, loading: orgsLoading } = useOrg();
+  const onboardingSlug = searchParams.get('org');
+  const initialOrg = location.state?.onboardingOrg || null;
+  const [step, setStep] = useState(initialOrg ? 1 : 0);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -58,10 +59,11 @@ export default function SetupWizard() {
   const [orgDescription, setOrgDescription] = useState('');
   // Phase 57 — three-value vocabulary; was 'approval_required'.
   const [joinPolicy, setJoinPolicy] = useState('approval');
-  const [createdOrg, setCreatedOrg] = useState(null);
+  const [createdOrg, setCreatedOrg] = useState(initialOrg);
 
   // Step 2: Topics
   const [topics, setTopics] = useState(SUGGESTED_TOPICS.map(t => ({ ...t })));
+  const [createdTopicNames, setCreatedTopicNames] = useState([]);
   const [customTopic, setCustomTopic] = useState('');
   const [customColor, setCustomColor] = useState('#8b5cf6');
 
@@ -69,9 +71,23 @@ export default function SetupWizard() {
   const [emails, setEmails] = useState('');
   const [inviteMsg, setInviteMsg] = useState('');
 
+  const resumedOrg = useMemo(
+    () => (!createdOrg && onboardingSlug
+      ? userOrgs.find(org => org.slug === onboardingSlug) || null
+      : null),
+    [createdOrg, onboardingSlug, userOrgs],
+  );
+  const activeOrg = createdOrg || resumedOrg;
+  const currentStep = activeOrg && onboardingSlug && step === 0 ? 1 : step;
+
+  const completedTopicKeys = useMemo(
+    () => new Set(createdTopicNames.map(name => name.trim().toLowerCase())),
+    [createdTopicNames],
+  );
+
   function handleOrgNameChange(val) {
     setOrgName(val);
-    if (!slugEdited) setOrgSlug(slugify(val));
+    if (!slugEdited) setOrgSlug(slugifyOrganizationName(val));
   }
 
   async function handleCreateOrg() {
@@ -88,6 +104,10 @@ export default function SetupWizard() {
       await refreshOrgs();
       setCurrentOrg(org);
       setStep(1);
+      navigate(`/setup?org=${encodeURIComponent(org.slug)}`, {
+        replace: true,
+        state: { onboardingOrg: org },
+      });
     } catch (err) {
       setError(err.message || 'Failed to create organization');
     } finally {
@@ -101,52 +121,79 @@ export default function SetupWizard() {
 
   function addCustomTopic() {
     if (!customTopic.trim()) return;
+    if (topics.some(topic => topic.name.trim().toLowerCase() === customTopic.trim().toLowerCase())) {
+      setError('That topic is already in the list.');
+      return;
+    }
+    setError('');
     setTopics(prev => [...prev, { name: customTopic.trim(), color: customColor, checked: true }]);
     setCustomTopic('');
     setCustomColor('#8b5cf6');
   }
 
   async function handleCreateTopics() {
-    if (!createdOrg) return;
+    if (!activeOrg) return;
     setSaving(true);
     setError('');
+    let readyNames = [...createdTopicNames];
     try {
-      const selected = topics.filter(t => t.checked);
-      for (const t of selected) {
-        await api.post(`/api/orgs/${createdOrg.slug}/topics`, {
+      // Reconcile with the server before writing so a page refresh or a
+      // response lost after commit does not turn Retry into duplicate POSTs.
+      const existing = await api.get(`/api/orgs/${activeOrg.slug}/topics`);
+      const existingNames = existing.map(topic => topic.name);
+      const selectedAlreadyPresent = topics
+        .filter(topic => (
+          topic.checked
+          && existingNames.some(name => name.trim().toLowerCase() === topic.name.trim().toLowerCase())
+        ))
+        .map(topic => topic.name);
+      readyNames = [...new Set([...readyNames, ...selectedAlreadyPresent])];
+      setCreatedTopicNames(readyNames);
+
+      const pending = pendingSelectedTopics(topics, existingNames, readyNames);
+      for (const t of pending) {
+        await api.post(`/api/orgs/${activeOrg.slug}/topics`, {
           name: t.name,
           description: '',
           color: t.color,
         });
+        readyNames = [...readyNames, t.name];
+        setCreatedTopicNames([...new Set(readyNames)]);
       }
       setStep(2);
     } catch (err) {
-      setError(err.message || 'Failed to create topics');
+      const progress = readyNames.length > 0
+        ? ` ${readyNames.length} selected topic${readyNames.length === 1 ? ' is' : 's are'} already ready; retry to create only the remainder.`
+        : '';
+      const message = (err.message || 'Failed to create topics').replace(/[.!?]+$/, '');
+      setError(`${message}.${progress}`);
     } finally {
       setSaving(false);
     }
   }
 
   async function handleSendInvites() {
-    if (!createdOrg) return;
+    if (!activeOrg) return;
     setSaving(true);
     setError('');
     setInviteMsg('');
     try {
-      const emailList = emails
-        .split('\n')
-        .map(e => e.trim())
-        .filter(e => e.length > 0 && e.includes('@'));
+      const { valid: emailList, invalid } = parseInvitationEmails(emails);
+      if (invalid.length > 0) {
+        setError(`Fix or remove ${invalid.length} invalid email ${invalid.length === 1 ? 'address' : 'addresses'} before continuing.`);
+        return;
+      }
       if (emailList.length === 0) {
         setStep(3);
         return;
       }
-      await api.post(`/api/orgs/${createdOrg.slug}/invitations`, {
+      const createdInvitations = await api.post(`/api/orgs/${activeOrg.slug}/invitations`, {
         emails: emailList,
         role: 'member',
       });
-      setInviteMsg(`${emailList.length} invitation(s) created.`);
-      setTimeout(() => setStep(3), 1000);
+      const count = createdInvitations.length;
+      setInviteMsg(`${count} invitation${count === 1 ? '' : 's'} created and queued for email delivery.`);
+      setStep(3);
     } catch (err) {
       setError(err.message || 'Failed to send invitations');
     } finally {
@@ -154,21 +201,47 @@ export default function SetupWizard() {
     }
   }
 
+  if (onboardingSlug && !activeOrg) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-12">
+        <div className="bg-white border border-gray-200 rounded-xl p-6 text-center">
+          {orgsLoading ? (
+            <p className="text-sm text-gray-500">Loading organization setup…</p>
+          ) : (
+            <>
+              <h1 className="text-lg font-semibold text-[var(--brand-primary)] mb-2">Organization unavailable</h1>
+              <p className="text-sm text-gray-500 mb-4">
+                This organization is not available to your account.
+              </p>
+              <button
+                type="button"
+                onClick={() => navigate('/orgs')}
+                className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)]"
+              >
+                Return to your organizations
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-2xl mx-auto px-4 py-12">
       <div className="text-center mb-6">
         <h1 className="text-2xl font-semibold text-[var(--brand-primary)]">
-          {step === 3 ? "You're All Set!" : 'Set Up Your Platform'}
+          {currentStep === 3 ? "You're All Set!" : 'Set Up Your Organization'}
         </h1>
-        {step < 3 && (
+        {currentStep < 3 && (
           <p className="text-sm text-gray-500 mt-1">
-            Let's get your liquid democracy instance ready.
+            A few guided steps will get your first decision ready for members.
           </p>
         )}
       </div>
 
       <div className="flex justify-center">
-        <StepIndicator current={step} total={4} />
+        <StepIndicator current={currentStep} total={4} />
       </div>
 
       {error && (
@@ -178,7 +251,7 @@ export default function SetupWizard() {
       )}
 
       {/* Step 1: Create Organization */}
-      {step === 0 && (
+      {currentStep === 0 && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-5">
           <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Create Your Organization</h2>
           <p className="text-sm text-gray-500">
@@ -262,7 +335,7 @@ export default function SetupWizard() {
       )}
 
       {/* Step 2: Topics */}
-      {step === 1 && (
+      {currentStep === 1 && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-5">
           <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Create Topics</h2>
           <p className="text-sm text-gray-500">
@@ -270,11 +343,14 @@ export default function SetupWizard() {
           </p>
 
           <div className="space-y-2">
-            {topics.map((t, i) => (
-              <label key={i} className="flex items-center gap-3 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+            {topics.map((t, i) => {
+              const created = completedTopicKeys.has(t.name.trim().toLowerCase());
+              return (
+              <label key={`${t.name}-${i}`} className={`flex items-center gap-3 p-2 rounded-lg ${created ? 'bg-green-50' : 'cursor-pointer hover:bg-gray-50'}`}>
                 <input
                   type="checkbox"
                   checked={t.checked}
+                  disabled={created}
                   onChange={() => toggleTopic(i)}
                   className="accent-[var(--brand-accent)]"
                 />
@@ -283,8 +359,10 @@ export default function SetupWizard() {
                   style={{ backgroundColor: t.color }}
                 />
                 <span className="text-sm text-gray-700">{t.name}</span>
+                {created && <span className="ml-auto text-xs font-medium text-green-700">Ready</span>}
               </label>
-            ))}
+              );
+            })}
           </div>
 
           <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
@@ -313,10 +391,10 @@ export default function SetupWizard() {
 
           <div className="flex justify-between pt-2">
             <button
-              onClick={() => setStep(0)}
+              onClick={() => navigate(urlFor(activeOrg, 'proposals'))}
               className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50"
             >
-              Back
+              Finish later
             </button>
             <div className="flex gap-2">
               <button
@@ -338,7 +416,7 @@ export default function SetupWizard() {
       )}
 
       {/* Step 3: Invite Members */}
-      {step === 2 && (
+      {currentStep === 2 && (
         <div className="bg-white border border-gray-200 rounded-xl p-6 space-y-5">
           <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Invite Members</h2>
           <p className="text-sm text-gray-500">
@@ -386,34 +464,38 @@ export default function SetupWizard() {
       )}
 
       {/* Step 4: Done */}
-      {step === 3 && (
+      {currentStep === 3 && (
         <div className="bg-white border border-gray-200 rounded-xl p-8 text-center space-y-6">
           <div className="text-5xl">&#127881;</div>
           <h2 className="text-xl font-semibold text-[var(--brand-primary)]">Your platform is ready!</h2>
           <p className="text-sm text-gray-500 max-w-md mx-auto">
-            {createdOrg?.name || 'Your organization'} has been created. Here are some next steps:
+            {activeOrg?.name || 'Your organization'} has been created. Here are some next steps:
           </p>
+          {inviteMsg && (
+            <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2 max-w-md mx-auto">
+              {inviteMsg}
+            </p>
+          )}
 
           <div className="grid gap-3 max-w-sm mx-auto">
             <button
-              onClick={() => navigate(urlFor(createdOrg, 'admin-topics'))}
-              className="w-full text-sm px-4 py-3 border border-gray-200 rounded-lg hover:border-[var(--brand-accent)] hover:bg-blue-50/30 transition-all text-left"
+              onClick={() => navigate(`${urlFor(activeOrg, 'admin-proposals')}?create=1`)}
+              className="w-full text-sm px-4 py-3 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
             >
-              <span className="font-medium text-[var(--brand-primary)]">Manage Topics</span>
-              <span className="block text-xs text-gray-400 mt-0.5">Add or edit topic categories</span>
+              Create your first proposal
             </button>
             <button
-              onClick={() => navigate(urlFor(createdOrg, 'admin-settings'))}
+              onClick={() => navigate(urlFor(activeOrg, 'admin-settings'))}
               className="w-full text-sm px-4 py-3 border border-gray-200 rounded-lg hover:border-[var(--brand-accent)] hover:bg-blue-50/30 transition-all text-left"
             >
               <span className="font-medium text-[var(--brand-primary)]">Admin Settings</span>
               <span className="block text-xs text-gray-400 mt-0.5">Configure voting rules, thresholds, and more</span>
             </button>
             <button
-              onClick={() => navigate(urlFor(createdOrg, 'proposals'))}
-              className="w-full text-sm px-4 py-3 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
+              onClick={() => navigate(urlFor(activeOrg, 'proposals'))}
+              className="w-full text-sm px-4 py-3 border border-gray-200 rounded-lg hover:border-[var(--brand-accent)] hover:bg-blue-50/30 transition-all"
             >
-              Go to Proposals
+              View proposals
             </button>
           </div>
         </div>

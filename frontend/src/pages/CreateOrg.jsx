@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useOrg } from '../OrgContext';
 import { useAuth } from '../AuthContext';
-import { urlFor } from '../utils/urls';
 import api from '../api';
 
 const SUPPORT_EMAIL = 'support@liquiddemocracy.us';
@@ -113,8 +112,12 @@ export default function CreateOrg() {
       });
       await refreshOrgs();
       setCurrentOrg(org);
-      // Phase 11 — slug-prefixed admin settings path.
-      navigate(urlFor(org, 'admin-settings'));
+      // Phase 93 — continue into the guided first-use path. Passing both
+      // route state and a query slug makes the transition immediate while
+      // remaining refresh-safe once refreshOrgs has populated context.
+      navigate(`/setup?org=${encodeURIComponent(org.slug)}`, {
+        state: { onboardingOrg: org },
+      });
     } catch (err) {
       setErrorInfo(classifyError(err));
     } finally {

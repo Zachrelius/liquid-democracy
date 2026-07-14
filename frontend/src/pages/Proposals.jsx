@@ -514,13 +514,13 @@ export default function Proposals() {
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-6">
         {/* Status filter */}
-        <div className="flex bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div className="grid grid-cols-4 w-full sm:flex sm:w-auto bg-white border border-gray-200 rounded-lg overflow-hidden">
           {STATUS_FILTERS.filter(s => !(readOnly && s === 'unvoted')).map(s => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
               title={s === 'unvoted' ? "Voting proposals you haven't voted on yet" : undefined}
-              className={`px-3 py-1.5 text-sm capitalize transition-colors ${
+              className={`px-2 sm:px-3 py-1.5 text-sm capitalize transition-colors ${
                 statusFilter === s
                   ? 'bg-[var(--brand-primary)] text-white'
                   : 'text-gray-600 hover:bg-gray-50'
@@ -574,7 +574,19 @@ export default function Proposals() {
           ) : statusFilter === 'all' && !topicFilter ? (
             <>
               <p className="text-lg mb-2">No proposals yet</p>
-              <p className="text-sm">Create one from the admin panel to get started.</p>
+              {canCreateProposal && adminProposalsHref ? (
+                <>
+                  <p className="text-sm mb-4">Start with a real, low-stakes decision for your members.</p>
+                  <Link
+                    to={`${adminProposalsHref}?create=1`}
+                    className="inline-flex text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors"
+                  >
+                    Create your first proposal
+                  </Link>
+                </>
+              ) : (
+                <p className="text-sm">A steward hasn&apos;t opened the organization&apos;s first proposal yet.</p>
+              )}
             </>
           ) : (
             <>
