@@ -1,6 +1,6 @@
 # Phase 93 — First Ten Minutes and Empty-Organization Audit
 
-**Status:** Local implementation and browser QA complete; deploy pending (2026-07-14)
+**Status:** Complete and production-verified (2026-07-14)
 
 ## Goal
 
@@ -111,3 +111,11 @@ Make the first real pilot experience coherent for both a steward and an invited 
 - 380px browser checks reported document width at or below viewport and no overflowing main-content elements after the filter fix. Browser console errors: none.
 - Separate Firefox and Safari engine runs remain deferred; this session's browser evidence is Chromium-based and makes no cross-browser-completeness claim.
 - No schema migration; PostgreSQL smoke not required.
+
+## Production delivery — 2026-07-14
+
+- Implementation commit: `9b15ec3`; no-ff merge to `master`: `a6a5c1e`.
+- Railway frontend deployment `b6ed0266-c82a-490d-afb6-cc57f6feae91`: SUCCESS.
+- Railway backend deployment row `68f08c69-8458-4d53-8141-6825f7531d33`: SKIPPED as expected because no backend watched files changed. Existing backend remained Online.
+- Production bundle changed from `index-DxjkqN5I.js` to `index-25BxjmrT.js`; the served bundle contains the Phase 93 onboarding and permission-aware empty-state contracts.
+- `https://www.liquiddemocracy.us/`: HTTP 200 and normal landing render. `/api/health/ready`: HTTP 200 with database connected. No Liquid Democracy console errors were observed in the production sanity check.

@@ -4289,3 +4289,17 @@ Recorded the prioritized pre-pilot roadmap covering operational recovery, first-
 Postgres was live-resized to 5 GB without restart (Railway offered 1 GB or 5 GB, not the planned 2 GB). Railway automatically created the pre-resize recovery point `Online resize to 5000MB`: 440 MB referenced, 8 MB backup-exclusive, `expiresAt: null`. Post-change production checks passed: homepage HTTP 200 and `/api/health/ready` HTTP 200 with database connected.
 
 Railway then exposed the plan constraint: ordinary backups, schedules, and PITR are Pro-only for this Hobby workspace. Pro would raise the subscription commitment from $5 to $20/month before incremental storage. Z chose to remain on Hobby until there are real users or a committed pilot. Recurring/upload coverage, restore rehearsal, and a possible Hobby-compatible encrypted offsite pipeline are explicitly deferred and must be reopened before accepting irreplaceable pilot data. The next no-cost P0 focus is the first-ten-minutes and empty-organization audit.
+
+---
+
+## Phase 93 — First Ten Minutes + Empty Organization ✅ Complete (2026-07-14)
+
+Spec: `phase93_first_ten_minutes_and_empty_org_spec.md`. Branch `phase-93/first-ten-minutes-audit`; implementation `9b15ec3`; no-ff merge `a6a5c1e`.
+
+Closed the biggest first-use route gap: ordinary `/orgs/create` users now continue through the same resumable topics → invitations → first-proposal guidance that had previously been limited to the one-time empty-platform bootstrap. Once an org is created the wizard cannot navigate back into a second org submission. Starter-topic retry reconciles with server state and resubmits only unfinished names; invitation input normalizes/deduplicates, reports malformed lines, and shows the response-confirmed email-queue count. Completion and true-empty proposal states now provide a direct first-proposal action only to authorized stewards, with accurate waiting copy for ordinary members.
+
+The genuine zero-history/mobile audit found and fixed two additional defects: a zero-topic organization rendered a blank delegation section on mobile, and the proposal status control clipped `failed` / `archived` at 380px. Both now render without horizontal overflow and with permission-aware actions/copy. CI now runs the new dependency-free frontend test command before the build.
+
+Verification: 4 frontend tests PASS; 49 targeted backend org/invitation/proposal-permission tests PASS; frontend production build PASS. Isolated Chromium browser journey PASS for first bootstrap, later org creation, starter topics, invitation creation + invited registration/verification/join, first proposal/vote with no delegation, consumed invite, zero notifications/messages/delegates, zero-vote visualization, steward/member empty proposals, steward/member zero-topic delegations, and 380px layouts; console clean. Firefox/Safari remain an honestly named follow-up rather than claimed coverage. No migration; PG smoke not required.
+
+Railway frontend deployment `b6ed0266-c82a-490d-afb6-cc57f6feae91` SUCCESS; backend row `68f08c69-8458-4d53-8141-6825f7531d33` SKIPPED as expected (frontend/docs/CI-only watched changes). Production bundle `index-25BxjmrT.js`; homepage 200; readiness 200/database connected; production sanity clean.
