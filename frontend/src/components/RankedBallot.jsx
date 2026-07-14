@@ -103,6 +103,16 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
     setRanking(prev => [...prev, optionId]);
   }
 
+  function moveWithinRanking(fromIndex, toIndex) {
+    if (toIndex < 0 || toIndex >= ranking.length) return;
+    setRanking(prev => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  }
+
   function removeFromRanking(optionId) {
     setRanking(prev => prev.filter(id => id !== optionId));
     setUnranked(prev => [...prev, optionId]);
@@ -284,7 +294,7 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
       )}
 
       <p className="text-xs text-gray-500">
-        Drag options into your ranking. First place is your top choice. You can rank some, all, or none.
+        Add options with the Rank button, then use the arrow buttons or drag to reorder. First place is your top choice. You can rank some, all, or none.
       </p>
 
       <DragDropContext onDragEnd={handleDragEnd}>
@@ -314,7 +324,6 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
                         <li
                           ref={prov.innerRef}
                           {...prov.draggableProps}
-                          {...prov.dragHandleProps}
                           className={`bg-white border rounded-lg px-3 py-2 cursor-grab transition-shadow ${
                             snap.isDragging ? 'shadow-lg border-[var(--brand-accent)]' : 'border-gray-200'
                           }`}
@@ -323,13 +332,36 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
                               label + clamped description span full width below so a
                               long title isn't squeezed against a w-10 ordinal column. */}
                           <div className="flex items-center gap-2">
-                            <span className="text-gray-300 text-sm select-none">⠿</span>
+                            <span
+                              {...prov.dragHandleProps}
+                              aria-label={`Drag to reorder ${optionDisplayLabel(proposal, opt)}`}
+                              className="min-w-8 min-h-8 inline-flex items-center justify-center text-gray-500 text-sm select-none cursor-grab"
+                            >⠿</span>
                             <span className="text-sm font-bold text-[var(--brand-primary)]">{ordinal(index + 1)}</span>
                             <span className="flex-1" />
                             <button
                               type="button"
+                              onClick={() => moveWithinRanking(index, index - 1)}
+                              disabled={index === 0}
+                              aria-label={`Move ${optionDisplayLabel(proposal, opt)} up in your ranking`}
+                              className="min-w-8 min-h-8 text-gray-500 hover:text-gray-700 disabled:opacity-30 text-sm"
+                            >
+                              &#x25B2;
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => moveWithinRanking(index, index + 1)}
+                              disabled={index === ranking.length - 1}
+                              aria-label={`Move ${optionDisplayLabel(proposal, opt)} down in your ranking`}
+                              className="min-w-8 min-h-8 text-gray-500 hover:text-gray-700 disabled:opacity-30 text-sm"
+                            >
+                              &#x25BC;
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => removeFromRanking(oid)}
-                              className="text-gray-300 hover:text-red-500 text-xs px-1"
+                              aria-label={`Remove ${optionDisplayLabel(proposal, opt)} from your ranking`}
+                              className="min-w-8 min-h-8 text-gray-500 hover:text-red-600 text-xs"
                               title="Remove from ranking"
                             >
                               &#x2715;
@@ -377,18 +409,22 @@ export default function RankedBallot({ proposal, myVote, proposalId, onVoteChang
                         <li
                           ref={prov.innerRef}
                           {...prov.draggableProps}
-                          {...prov.dragHandleProps}
                           className={`bg-white border rounded-lg px-3 py-2 cursor-grab transition-shadow ${
                             snap.isDragging ? 'shadow-lg border-[var(--brand-accent)]' : 'border-gray-200'
                           }`}
                         >
                           {/* Phase 72b — same full-width stack as the ranking zone. */}
                           <div className="flex items-center gap-2">
-                            <span className="text-gray-300 text-sm select-none">⠿</span>
+                            <span
+                              {...prov.dragHandleProps}
+                              aria-label={`Drag ${optionDisplayLabel(proposal, opt)} into your ranking`}
+                              className="min-w-8 min-h-8 inline-flex items-center justify-center text-gray-500 text-sm select-none cursor-grab"
+                            >⠿</span>
                             <span className="flex-1" />
                             <button
                               type="button"
                               onClick={() => moveToRanking(oid)}
+                              aria-label={`Rank ${optionDisplayLabel(proposal, opt)}`}
                               className="text-xs text-[var(--brand-accent)] hover:underline"
                               title="Add to ranking"
                             >

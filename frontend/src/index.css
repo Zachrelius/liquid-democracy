@@ -14,6 +14,7 @@
   --brand-primary: #1B3A5C;
   --brand-primary-dark: #152d4a;
   --brand-accent: #2E75B6;
+  --brand-accent-text: #25639b;
 }
 
 body {
@@ -26,6 +27,20 @@ body {
 
 #root {
   min-height: 100vh;
+}
+
+/* Phase 94: a consistent keyboard-focus baseline, including controls whose
+   component styles only defined hover states. Individual components may add a
+   stronger ring, but must not suppress this visible fallback. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 3px solid #0b63ce;
+  outline-offset: 2px;
+}
+
+/* Accent backgrounds may stay vivid, while normal-size accent-colored text
+   uses the contrast-safe companion derived by BrandingThemeApplier. */
+[class~="text-[var(--brand-accent)]"] {
+  color: var(--brand-accent-text);
 }
 
 /* Prose styles for rendered markdown */

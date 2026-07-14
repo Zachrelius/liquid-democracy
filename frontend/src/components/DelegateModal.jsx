@@ -7,7 +7,7 @@ import useScopeCoverage from '../hooks/useScopeCoverage';
 import { urlFor } from '../utils/urls';
 import Avatar from './Avatar';
 import VerifyEmailInlineNote from './VerifyEmailInlineNote';
-import { timeAgo } from '../utils/timeAgo';
+import useModalDialog from '../hooks/useModalDialog';
 
 // Decision 10 helper — map persisted chain_behavior values to the human-
 // readable phrasing called out in the cross-scope disclosure copy.
@@ -296,6 +296,7 @@ export default function DelegateModal({
   // prop and see the original search-only behavior.
   preselectedUser = null,
 }) {
+  const dialogRef = useModalDialog({ onClose });
   const { user } = useAuth();
   const { currentOrg, userOrgs } = useOrg();
   const unverified = !user?.email_verified;
@@ -521,9 +522,9 @@ export default function DelegateModal({
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-xl shadow-lg w-full max-w-md max-h-[80vh] flex flex-col">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="delegate-dialog-title" tabIndex={-1} className="bg-white rounded-xl shadow-lg w-full max-w-md max-h-[80vh] flex flex-col">
         <div className="p-4 border-b border-gray-100">
-          <h2 className="font-semibold text-[var(--brand-primary)]">
+          <h2 id="delegate-dialog-title" className="font-semibold text-[var(--brand-primary)]">
             {topicName ? `Set delegate for ${topicName}` : 'Set global default delegate'}
           </h2>
           <p className="text-xs text-gray-400 mt-0.5">
@@ -680,7 +681,7 @@ export default function DelegateModal({
                 </button>
               )}
               <input
-                autoFocus
+                aria-label="Search for a delegate by name or username"
                 type="text"
                 value={query}
                 onChange={e => setQuery(e.target.value)}

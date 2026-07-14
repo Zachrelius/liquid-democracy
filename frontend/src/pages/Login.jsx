@@ -232,6 +232,8 @@ export default function Login() {
           {['login', 'register'].map(t => (
             <button
               key={t}
+              type="button"
+              aria-pressed={tab === t}
               onClick={() => { setTab(t); setError(''); }}
               className={`flex-1 py-3 text-sm font-medium capitalize transition-colors ${
                 tab === t
@@ -246,7 +248,7 @@ export default function Login() {
 
         <div className="p-6">
           {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
+            <div role="alert" className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
               {error}
             </div>
           )}
@@ -254,9 +256,11 @@ export default function Login() {
           {tab === 'login' ? (
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                <label htmlFor="login-username" className="block text-sm font-medium text-gray-700 mb-1">Username</label>
                 <input
+                  id="login-username"
                   type="text"
+                  autoComplete="username"
                   value={loginUsername}
                   onChange={e => setLoginUsername(e.target.value)}
                   required
@@ -265,9 +269,11 @@ export default function Login() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                <label htmlFor="login-password" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
                 <input
+                  id="login-password"
                   type="password"
+                  autoComplete="current-password"
                   value={loginPassword}
                   onChange={e => setLoginPassword(e.target.value)}
                   required
@@ -294,9 +300,12 @@ export default function Login() {
           ) : (
             <form onSubmit={handleRegister} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                <label htmlFor="register-username" className="block text-sm font-medium text-gray-700 mb-1">Username</label>
                 <input
+                  id="register-username"
                   type="text"
+                  autoComplete="username"
+                  aria-describedby="register-username-help"
                   value={regUsername}
                   onChange={e => setRegUsername(e.target.value)}
                   required
@@ -305,12 +314,14 @@ export default function Login() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
                   placeholder="your_username"
                 />
-                <p className="mt-1 text-xs text-gray-400">3-50 characters</p>
+                <p id="register-username-help" className="mt-1 text-xs text-gray-500">3-50 characters</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
+                <label htmlFor="register-display-name" className="block text-sm font-medium text-gray-700 mb-1">Display Name</label>
                 <input
+                  id="register-display-name"
                   type="text"
+                  autoComplete="name"
                   value={regDisplayName}
                   onChange={e => setRegDisplayName(e.target.value)}
                   required
@@ -319,9 +330,11 @@ export default function Login() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                <label htmlFor="register-email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                 <input
+                  id="register-email"
                   type="email"
+                  autoComplete="email"
                   value={regEmail}
                   onChange={e => setRegEmail(e.target.value)}
                   required
@@ -330,9 +343,12 @@ export default function Login() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                <label htmlFor="register-password" className="block text-sm font-medium text-gray-700 mb-1">Password</label>
                 <input
+                  id="register-password"
                   type="password"
+                  autoComplete="new-password"
+                  aria-describedby="register-password-help"
                   value={regPassword}
                   onChange={e => setRegPassword(e.target.value)}
                   required
@@ -340,7 +356,7 @@ export default function Login() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] focus:border-transparent"
                   placeholder="••••••••"
                 />
-                <p className="mt-1 text-xs text-gray-400">Minimum 8 characters</p>
+                <p id="register-password-help" className="mt-1 text-xs text-gray-500">Minimum 8 characters</p>
               </div>
               <button
                 type="submit"
@@ -395,7 +411,7 @@ export default function Login() {
                   First time? Load a demo scenario to explore the platform.
                 </p>
                 {demoMsg && (
-                  <div className="mb-2 p-2 bg-green-50 border border-green-200 text-green-700 text-xs rounded-lg text-center">
+                  <div role="status" aria-live="polite" className="mb-2 p-2 bg-green-50 border border-green-200 text-green-700 text-xs rounded-lg text-center">
                     {demoMsg}
                   </div>
                 )}
