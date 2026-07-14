@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import api from '../api';
 import { useAuth } from '../AuthContext';
@@ -278,6 +278,9 @@ export default function Delegations() {
     return currentOrg;
   }, [currentOrg, userOrgs]);
   const parentSlug = parentOrg?.slug || null;
+  const canCreateTopics = Array.isArray(parentOrg?.user_permissions)
+    && parentOrg.user_permissions.includes('topic.create');
+  const topicsAdminHref = parentOrg ? urlFor(parentOrg, 'admin-topics') : null;
 
   // Phase 65 — org-wide delegation master switch. Read-time default is
   // enabled: only an explicit `false` means the org turned delegation
@@ -712,7 +715,15 @@ export default function Delegations() {
                 </tr>
               ))}
               {orderedTopicDels.length === 0 && undelegatedTopics.length === 0 && (
-                <tr><td colSpan={5} className="py-6 text-center text-gray-400 text-sm">No topics configured. Create topics from the admin panel.</td></tr>
+                <tr>
+                  <td colSpan={5} className="py-6 text-center text-gray-400 text-sm">
+                    {canCreateTopics && topicsAdminHref ? (
+                      <>No topics are configured yet. <Link to={topicsAdminHref} className="text-[var(--brand-accent)] hover:underline">Create the first topic</Link> to enable per-topic delegation.</>
+                    ) : (
+                      'No topics are configured yet. A steward needs to create one before members can delegate by topic.'
+                    )}
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
@@ -764,6 +775,15 @@ export default function Delegations() {
               </button>
             </div>
           ))}
+          {orderedTopicDels.length === 0 && undelegatedTopics.length === 0 && (
+            <div className="bg-white border border-gray-200 rounded-xl p-6 text-center text-sm text-gray-400">
+              {canCreateTopics && topicsAdminHref ? (
+                <>No topics are configured yet. <Link to={topicsAdminHref} className="text-[var(--brand-accent)] hover:underline">Create the first topic</Link> to enable per-topic delegation.</>
+              ) : (
+                'No topics are configured yet. A steward needs to create one before members can delegate by topic.'
+              )}
+            </div>
+          )}
         </div>
       </section>
 
