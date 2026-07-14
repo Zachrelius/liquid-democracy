@@ -92,34 +92,44 @@ function OptionsEditor({ options, onChange, budgetCeilings = false, unitSymbol =
       {options.map((opt, idx) => {
         const isDuplicate = opt.label.trim() && labelCounts[opt.label.trim().toLowerCase()] > 1;
         return (
-          <div key={idx} className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
+          <fieldset key={idx} className="bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
+            <legend className="sr-only">Option {idx + 1}</legend>
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-400 w-6">{idx + 1}.</span>
+              <label htmlFor={`proposal-option-${idx}-label`} className="sr-only">Option {idx + 1} label</label>
               <input
+                id={`proposal-option-${idx}-label`}
                 type="text"
                 value={opt.label}
                 onChange={e => updateOption(idx, 'label', e.target.value)}
                 placeholder="Option label (required)"
                 maxLength={200}
+                aria-invalid={isDuplicate || undefined}
+                aria-describedby={isDuplicate ? `proposal-option-${idx}-error` : undefined}
                 className={`flex-1 px-2 py-1.5 border rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] ${isDuplicate ? 'border-red-400' : 'border-gray-300'}`}
               />
               <div className="flex gap-1">
                 <button type="button" onClick={() => moveOption(idx, -1)} disabled={idx === 0}
-                  className="text-gray-400 hover:text-gray-600 disabled:opacity-30 text-xs px-1">
+                  aria-label={`Move option ${idx + 1} up`}
+                  className="min-w-8 min-h-8 text-gray-500 hover:text-gray-700 disabled:opacity-30 text-xs">
                   &#x25b2;
                 </button>
                 <button type="button" onClick={() => moveOption(idx, 1)} disabled={idx === options.length - 1}
-                  className="text-gray-400 hover:text-gray-600 disabled:opacity-30 text-xs px-1">
+                  aria-label={`Move option ${idx + 1} down`}
+                  className="min-w-8 min-h-8 text-gray-500 hover:text-gray-700 disabled:opacity-30 text-xs">
                   &#x25bc;
                 </button>
               </div>
               <button type="button" onClick={() => removeOption(idx)}
-                className="text-red-400 hover:text-red-600 text-sm px-1">
+                aria-label={`Remove option ${idx + 1}`}
+                className="min-w-8 min-h-8 text-red-500 hover:text-red-700 text-sm">
                 &#x2715;
               </button>
             </div>
-            {isDuplicate && <p className="text-xs text-red-500 ml-8">Duplicate label</p>}
+            {isDuplicate && <p id={`proposal-option-${idx}-error`} role="alert" className="text-xs text-red-600 ml-8">Duplicate label</p>}
+            <label htmlFor={`proposal-option-${idx}-description`} className="sr-only">Option {idx + 1} description (optional)</label>
             <textarea
+              id={`proposal-option-${idx}-description`}
               value={opt.description}
               onChange={e => updateOption(idx, 'description', e.target.value)}
               placeholder="Description (optional)"
@@ -131,9 +141,10 @@ function OptionsEditor({ options, onChange, budgetCeilings = false, unitSymbol =
             {/* Phase 73 — optional per-bucket ceiling for budget proposals. */}
             {budgetCeilings && (
               <div className="ml-8 flex items-center gap-2 text-xs text-gray-500">
-                <span>Ceiling (optional):</span>
+                <label htmlFor={`proposal-option-${idx}-ceiling`}>Ceiling (optional):</label>
                 {unitSymbol && <span className="text-gray-400">{unitSymbol}</span>}
                 <input
+                  id={`proposal-option-${idx}-ceiling`}
                   type="number" min="0" step="1"
                   value={opt.budgetMaxAmount ?? ''}
                   onChange={e => updateOption(idx, 'budgetMaxAmount', e.target.value)}
@@ -142,7 +153,7 @@ function OptionsEditor({ options, onChange, budgetCeilings = false, unitSymbol =
                 />
               </div>
             )}
-          </div>
+          </fieldset>
         );
       })}
     </div>
@@ -1657,8 +1668,9 @@ function CreateProposalForm({
       )}
 
       <div>
-        <label className="block text-xs text-gray-500 mb-1">Title</label>
+        <label htmlFor="proposal-title" className="block text-xs text-gray-500 mb-1">Title</label>
         <input
+          id="proposal-title"
           type="text"
           value={title}
           onChange={e => setTitle(e.target.value)}
@@ -1668,8 +1680,9 @@ function CreateProposalForm({
       </div>
 
       <div>
-        <label className="block text-xs text-gray-500 mb-1">Body (markdown supported)</label>
+        <label htmlFor="proposal-body" className="block text-xs text-gray-500 mb-1">Body (markdown supported)</label>
         <textarea
+          id="proposal-body"
           value={body}
           onChange={e => setBody(e.target.value)}
           rows={6}
@@ -1813,8 +1826,9 @@ function CreateProposalForm({
       {/* num_winners input (ranked-choice only) */}
       {votingMethod === 'ranked_choice' && (
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Number of Winners</label>
+          <label htmlFor="proposal-number-of-winners" className="block text-xs text-gray-500 mb-1">Number of Winners</label>
           <input
+            id="proposal-number-of-winners"
             type="number"
             min={1}
             max={options.length || 1}
@@ -1844,10 +1858,11 @@ function CreateProposalForm({
           org's "delegation carries unverified weight" setting is on. */}
       <div className="border border-gray-200 rounded-lg p-4 bg-gray-50/50 space-y-3">
         <div>
-          <label className="block text-xs font-medium text-gray-700 mb-1">
+          <label htmlFor="proposal-verification-floor" className="block text-xs font-medium text-gray-700 mb-1">
             Identity verification required to vote
           </label>
           <select
+            id="proposal-verification-floor"
             value={verificationFloor}
             onChange={e => setVerificationFloor(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
@@ -1864,10 +1879,11 @@ function CreateProposalForm({
         </div>
         {(verificationFloor === 'address_on_id' || verificationFloor === 'residency_verified') && (
           <div>
-            <label className="block text-xs text-gray-500 mb-1">
+            <label htmlFor="proposal-verification-jurisdiction" className="block text-xs text-gray-500 mb-1">
               Jurisdiction (optional)
             </label>
             <input
+              id="proposal-verification-jurisdiction"
               type="text"
               value={verificationJurisdiction}
               onChange={e => setVerificationJurisdiction(e.target.value)}
@@ -1884,10 +1900,10 @@ function CreateProposalForm({
       </div>
 
       {inScopeTopics.length > 0 && (
-        <div>
-          <label className="block text-xs text-gray-500 mb-2">
+        <fieldset>
+          <legend className="block text-xs text-gray-500 mb-2">
             Topics ({inScopeTopics.length} in scope)
-          </label>
+          </legend>
           {/* Phase 56 F3 — org-level topic guidance hint. Collapsed by
               default to keep the form lean; expandable when present. */}
           <TopicGuidanceHint guidance={orgSettings?.topic_guidance} />
@@ -1900,7 +1916,7 @@ function CreateProposalForm({
             onToggle={toggleTopic}
             onRelevance={setRelevance}
           />
-        </div>
+        </fieldset>
       )}
 
       {/* Phase 12.5 F3 — threshold sliders are gated on `proposal.set_thresholds`.
@@ -1909,10 +1925,11 @@ function CreateProposalForm({
       {canSetThresholds ? (
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs text-gray-500 mb-1">
+            <label htmlFor="proposal-pass-threshold" className="block text-xs text-gray-500 mb-1">
               Pass Threshold: {Math.round(passThreshold * 100)}%
             </label>
             <input
+              id="proposal-pass-threshold"
               type="range"
               min={0}
               max={100}
@@ -1922,10 +1939,11 @@ function CreateProposalForm({
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">
+            <label htmlFor="proposal-quorum-threshold" className="block text-xs text-gray-500 mb-1">
               Quorum Threshold: {Math.round(quorumThreshold * 100)}%
             </label>
             <input
+              id="proposal-quorum-threshold"
               type="range"
               min={0}
               max={100}
@@ -1960,10 +1978,11 @@ function CreateProposalForm({
       {canSetDurations ? (
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs text-gray-500 mb-1">
+            <label htmlFor="proposal-deliberation-days" className="block text-xs text-gray-500 mb-1">
               Deliberation duration (days)
             </label>
             <input
+              id="proposal-deliberation-days"
               type="number"
               min={0}
               step={1}
@@ -1980,10 +1999,11 @@ function CreateProposalForm({
             </p>
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">
+            <label htmlFor="proposal-voting-days" className="block text-xs text-gray-500 mb-1">
               Voting duration (days)
             </label>
             <input
+              id="proposal-voting-days"
               type="number"
               min={0.05}
               step={0.05}
@@ -2021,10 +2041,11 @@ function CreateProposalForm({
       {/* Phase 75a — optional absolute voting deadline. Useful when an item
           has a known meeting/decision date. Wins over the voting duration. */}
       <div>
-        <label className="block text-xs text-gray-500 mb-1">
+        <label htmlFor="proposal-voting-deadline" className="block text-xs text-gray-500 mb-1">
           Absolute voting deadline (optional)
         </label>
         <input
+          id="proposal-voting-deadline"
           type="datetime-local"
           value={votingEndDate}
           onChange={e => setVotingEndDate(e.target.value)}
@@ -2227,7 +2248,7 @@ function CreateProposalForm({
         </div>
       )}
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
 
       <div className="flex gap-2 items-center">
         <button

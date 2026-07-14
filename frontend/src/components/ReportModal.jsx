@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import api from '../api';
 import { useToast } from './Toast';
+import useModalDialog from '../hooks/useModalDialog';
 
 /**
  * Phase 86 (B-4) — content report modal.
@@ -29,6 +30,8 @@ export default function ReportModal({ targetType, targetId, onClose }) {
   const [reason, setReason] = useState('');
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const cancelRef = useRef(null);
+  const dialogRef = useModalDialog({ onClose: submitting ? undefined : onClose, initialFocusRef: cancelRef });
 
   async function handleSubmit() {
     if (!reason) {
@@ -60,15 +63,16 @@ export default function ReportModal({ targetType, targetId, onClose }) {
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/40" onClick={submitting ? undefined : onClose} />
-      <div className="relative bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
-        <h3 className="text-lg font-semibold text-gray-800">Report this {label}</h3>
-        <p className="text-sm text-gray-600">
+      <div className="absolute inset-0 bg-black/40" onClick={submitting ? undefined : onClose} aria-hidden="true" />
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="report-dialog-title" aria-describedby="report-dialog-description" tabIndex={-1} className="relative bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
+        <h3 id="report-dialog-title" className="text-lg font-semibold text-gray-800">Report this {label}</h3>
+        <p id="report-dialog-description" className="text-sm text-gray-600">
           Tell this organization&apos;s moderators why. Your report is visible to
           this organization&apos;s moderators.
         </p>
 
-        <div className="space-y-2">
+        <fieldset className="space-y-2">
+          <legend className="text-xs font-medium text-gray-600 mb-1">Choose a reason</legend>
           {REASONS.map((r) => (
             <label key={r.value} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
               <input
@@ -81,13 +85,14 @@ export default function ReportModal({ targetType, targetId, onClose }) {
               <span>{r.label}</span>
             </label>
           ))}
-        </div>
+        </fieldset>
 
         <div>
-          <label className="block text-xs text-gray-500 mb-1">
+          <label htmlFor="report-note" className="block text-xs text-gray-500 mb-1">
             Add a note (optional)
           </label>
           <textarea
+            id="report-note"
             value={note}
             onChange={(e) => setNote(e.target.value.slice(0, NOTE_MAX))}
             rows={3}
@@ -99,6 +104,7 @@ export default function ReportModal({ targetType, targetId, onClose }) {
 
         <div className="flex justify-end gap-3 pt-1">
           <button
+            ref={cancelRef}
             type="button"
             onClick={onClose}
             disabled={submitting}

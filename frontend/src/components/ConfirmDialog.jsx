@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import { createContext, useContext, useState, useCallback, useRef } from 'react';
+import useModalDialog from '../hooks/useModalDialog';
 
 const ConfirmContext = createContext(null);
 
@@ -11,6 +12,11 @@ export function ConfirmProvider({ children }) {
   const [checked, setChecked] = useState(false);
   const confirmBtnRef = useRef(null);
   const cancelBtnRef = useRef(null);
+  const dialogRef = useModalDialog({
+    open: !!state,
+    onClose: handleCancel,
+    initialFocusRef: cancelBtnRef,
+  });
 
   const confirm = useCallback(({ title, message, destructive = false, checkbox = null } = {}) => {
     return new Promise((resolve) => {
@@ -37,51 +43,26 @@ export function ConfirmProvider({ children }) {
     setState(null);
   }
 
-  // Focus the confirm button when dialog opens; handle Esc and Enter
-  useEffect(() => {
-    if (!state) return;
-    cancelBtnRef.current?.focus();
-
-    function onKeyDown(e) {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        handleCancel();
-      } else if (e.key === 'Enter') {
-        e.preventDefault();
-        handleConfirm();
-      } else if (e.key === 'Tab') {
-        // Simple focus trap between cancel and confirm
-        const btns = [cancelBtnRef.current, confirmBtnRef.current].filter(Boolean);
-        if (btns.length < 2) return;
-        const idx = btns.indexOf(document.activeElement);
-        if (idx === -1) {
-          e.preventDefault();
-          btns[0].focus();
-        } else if (e.shiftKey && idx === 0) {
-          e.preventDefault();
-          btns[btns.length - 1].focus();
-        } else if (!e.shiftKey && idx === btns.length - 1) {
-          e.preventDefault();
-          btns[0].focus();
-        }
-      }
-    }
-
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [state]);
-
   return (
     <ConfirmContext.Provider value={confirm}>
       {children}
       {state && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={handleCancel} />
-          <div className="relative bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
+          <div className="absolute inset-0 bg-black/40" onClick={handleCancel} aria-hidden="true" />
+          <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-dialog-title"
+            aria-describedby="confirm-dialog-message"
+            tabIndex={-1}
+            className="relative bg-white rounded-xl shadow-xl max-w-md w-full mx-4 p-6 space-y-4"
+          >
             {state.title && (
-              <h3 className="text-lg font-semibold text-gray-800">{state.title}</h3>
+              <h3 id="confirm-dialog-title" className="text-lg font-semibold text-gray-800">{state.title}</h3>
             )}
-            <p className="text-sm text-gray-600">{state.message}</p>
+            {!state.title && <h3 id="confirm-dialog-title" className="sr-only">Confirm action</h3>}
+            <p id="confirm-dialog-message" className="text-sm text-gray-600">{state.message}</p>
             {state.checkbox && (
               <label className="flex items-start gap-2 text-sm text-gray-700 cursor-pointer select-none">
                 <input

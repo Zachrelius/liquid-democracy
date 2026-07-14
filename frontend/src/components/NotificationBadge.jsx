@@ -68,6 +68,7 @@ export default function NotificationBadge() {
   const [open, setOpen] = useState(false);
   const [introDismissed, setIntroDismissed] = useState(true);
   const ref = useRef(null);
+  const buttonRef = useRef(null);
 
   const load = useCallback(async () => {
     try {
@@ -121,6 +122,18 @@ export default function NotificationBadge() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
+  useEffect(() => {
+    if (!open) return undefined;
+    function handleKeyDown(event) {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setOpen(false);
+      buttonRef.current?.focus();
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [open]);
+
   const count = items.length;
   const badgeText = count === 0 ? null : (hasMore ? '20+' : (count > 9 ? '9+' : String(count)));
 
@@ -154,9 +167,12 @@ export default function NotificationBadge() {
   return (
     <div ref={ref} className="relative">
       <button
+        ref={buttonRef}
         onClick={() => setOpen(!open)}
         className="relative text-blue-200 hover:text-white transition-colors p-1"
-        aria-label="Notifications"
+        aria-label="Open notifications panel"
+        aria-expanded={open}
+        aria-controls="notifications-panel"
       >
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
@@ -171,7 +187,7 @@ export default function NotificationBadge() {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-80 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
+        <div id="notifications-panel" className="absolute right-0 top-full mt-2 w-80 bg-white border border-gray-200 rounded-xl shadow-lg z-50 overflow-hidden">
           {dropdownItems.length > 0 && (
             <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between bg-gray-50">
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">

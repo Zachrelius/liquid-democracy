@@ -73,7 +73,8 @@ export default function Avatar({ user, size = 'md', className = '' }) {
     return (
       <img
         src={url}
-        alt={user?.display_name || ''}
+        alt=""
+        aria-hidden="true"
         onError={() => setImgFailed(true)}
         className={`inline-block rounded-full object-cover ${className}`}
         style={{ width: px, height: px }}
@@ -86,7 +87,7 @@ export default function Avatar({ user, size = 'md', className = '' }) {
   const bg = `hsl(${hue}, 65%, 55%)`;
   return (
     <span
-      aria-label={user?.display_name || ''}
+      aria-hidden="true"
       className={`inline-flex items-center justify-center rounded-full text-white font-semibold select-none ${className}`}
       style={{
         width: px,

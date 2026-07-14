@@ -217,8 +217,9 @@ export default function CreateOrg() {
 
       <form onSubmit={handleSubmit} className="bg-white border border-gray-200 rounded-xl p-6 space-y-5">
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Organization Name</label>
+          <label htmlFor="create-org-name" className="block text-xs text-gray-500 mb-1">Organization Name</label>
           <input
+            id="create-org-name"
             type="text"
             value={name}
             onChange={e => handleNameChange(e.target.value)}
@@ -229,27 +230,30 @@ export default function CreateOrg() {
         </div>
 
         <div>
-          <label className="block text-xs text-gray-500 mb-1">
+          <label htmlFor="create-org-slug" className="block text-xs text-gray-500 mb-1">
             Slug (URL-friendly identifier)
           </label>
           <div className="flex items-center gap-2">
             <span className="text-sm text-gray-400">/</span>
             <input
+              id="create-org-slug"
               type="text"
               value={slug}
               onChange={e => { setSlug(e.target.value); setSlugEdited(true); }}
               required
               pattern="[a-z0-9][a-z0-9-]{1,48}[a-z0-9]"
               title="3-50 characters, lowercase letters, numbers, and hyphens"
+              aria-describedby="create-org-slug-help"
               className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] font-mono"
             />
           </div>
-          <p className="text-xs text-gray-400 mt-1">Lowercase letters, numbers, and hyphens only. 3-50 characters.</p>
+          <p id="create-org-slug-help" className="text-xs text-gray-500 mt-1">Lowercase letters, numbers, and hyphens only. 3-50 characters.</p>
         </div>
 
         <div>
-          <label className="block text-xs text-gray-500 mb-1">Description</label>
+          <label htmlFor="create-org-description" className="block text-xs text-gray-500 mb-1">Description</label>
           <textarea
+            id="create-org-description"
             value={description}
             onChange={e => setDescription(e.target.value)}
             rows={3}
@@ -263,10 +267,11 @@ export default function CreateOrg() {
             FIND the org; activity visibility controls what non-members
             SEE beyond the splash. */}
         <div>
-          <label className="block text-xs text-gray-500 mb-2">
+          <label htmlFor="create-org-join-policy" className="block text-xs text-gray-500 mb-2">
             Join policy <span className="text-gray-400">— how people join</span>
           </label>
           <select
+            id="create-org-join-policy"
             value={joinPolicy}
             onChange={e => setJoinPolicy(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
@@ -278,10 +283,11 @@ export default function CreateOrg() {
         </div>
 
         <div>
-          <label className="block text-xs text-gray-500 mb-2">
+          <label htmlFor="create-org-discoverability" className="block text-xs text-gray-500 mb-2">
             Discoverability <span className="text-gray-400">— how outsiders find your org</span>
           </label>
           <select
+            id="create-org-discoverability"
             value={discoverability}
             onChange={e => setDiscoverability(e.target.value)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
@@ -297,10 +303,10 @@ export default function CreateOrg() {
           </p>
         </div>
 
-        <div>
-          <label className="block text-xs text-gray-500 mb-2">
+        <fieldset>
+          <legend className="block text-xs text-gray-500 mb-2">
             Activity visibility <span className="text-gray-400">— what non-members see beyond the splash</span>
-          </label>
+          </legend>
           <div
             className={`space-y-2 ${discoverability === 'hidden' ? 'opacity-50' : ''}`}
           >
@@ -345,7 +351,7 @@ export default function CreateOrg() {
               Hidden orgs have no public surface, so activity visibility is moot.
             </p>
           )}
-        </div>
+        </fieldset>
 
         <div className="flex gap-3 pt-2">
           <button

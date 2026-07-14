@@ -1203,8 +1203,9 @@ export default function OrgSettings() {
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">General</h2>
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Organization Name</label>
+            <label htmlFor="org-settings-name" className="block text-xs text-gray-500 mb-1">Organization Name</label>
             <input
+              id="org-settings-name"
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
@@ -1212,8 +1213,9 @@ export default function OrgSettings() {
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Description</label>
+            <label htmlFor="org-settings-description" className="block text-xs text-gray-500 mb-1">Description</label>
             <textarea
+              id="org-settings-description"
               value={description}
               onChange={e => setDescription(e.target.value)}
               rows={3}
@@ -1238,10 +1240,11 @@ export default function OrgSettings() {
             </h3>
 
             <div className="mb-4">
-              <label className="block text-xs text-gray-500 mb-1">
+              <label htmlFor="org-settings-join-policy" className="block text-xs text-gray-500 mb-1">
                 Join policy <span className="text-gray-400">— how people join</span>
               </label>
               <select
+                id="org-settings-join-policy"
                 value={joinPolicy}
                 onChange={e => setJoinPolicy(e.target.value)}
                 className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
@@ -1253,10 +1256,11 @@ export default function OrgSettings() {
             </div>
 
             <div className="mb-4">
-              <label className="block text-xs text-gray-500 mb-1">
+              <label htmlFor="org-settings-discoverability" className="block text-xs text-gray-500 mb-1">
                 Discoverability <span className="text-gray-400">— how outsiders find your org</span>
               </label>
               <select
+                id="org-settings-discoverability"
                 value={discoverability}
                 onChange={e => setDiscoverability(e.target.value)}
                 className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
@@ -1272,10 +1276,10 @@ export default function OrgSettings() {
               </p>
             </div>
 
-            <div>
-              <label className="block text-xs text-gray-500 mb-2">
+            <fieldset>
+              <legend className="block text-xs text-gray-500 mb-2">
                 Activity visibility <span className="text-gray-400">— what non-members see</span>
-              </label>
+              </legend>
               <div
                 className={`space-y-2 ${discoverability === 'hidden' ? 'opacity-50' : ''}`}
               >
@@ -1320,7 +1324,7 @@ export default function OrgSettings() {
                   Hidden orgs have no public surface, so activity visibility is moot.
                 </p>
               )}
-            </div>
+            </fieldset>
           </div>
         </div>
         {/* Phase 16 F4 — Save button repositioned from page bottom to here
@@ -1562,8 +1566,9 @@ export default function OrgSettings() {
               supported (same syntax as proposal bodies).
             </p>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Intro text</label>
+              <label htmlFor="org-settings-intro" className="block text-xs text-gray-500 mb-1">Intro text</label>
               <textarea
+                id="org-settings-intro"
                 value={introText}
                 onChange={e => setIntroText(e.target.value)}
                 maxLength={INTRO_TEXT_MAX}
@@ -1662,8 +1667,9 @@ export default function OrgSettings() {
             proposal bodies). Hidden when empty.
           </p>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Guidance</label>
+            <label htmlFor="org-settings-topic-guidance" className="block text-xs text-gray-500 mb-1">Guidance</label>
             <textarea
+              id="org-settings-topic-guidance"
               value={topicGuidance}
               onChange={e => setTopicGuidance(e.target.value)}
               maxLength={TOPIC_GUIDANCE_MAX}
@@ -1818,8 +1824,9 @@ export default function OrgSettings() {
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Default Deliberation Days</label>
+              <label htmlFor="org-settings-default-deliberation-days" className="block text-xs text-gray-500 mb-1">Default Deliberation Days</label>
               <input
+                id="org-settings-default-deliberation-days"
                 type="number"
                 min={1}
                 max={90}
@@ -1829,8 +1836,9 @@ export default function OrgSettings() {
               />
             </div>
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Default Voting Days</label>
+              <label htmlFor="org-settings-default-voting-days" className="block text-xs text-gray-500 mb-1">Default Voting Days</label>
               <input
+                id="org-settings-default-voting-days"
                 type="number"
                 min={1}
                 max={90}
@@ -1871,10 +1879,11 @@ export default function OrgSettings() {
             </p>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs text-gray-500 mb-1">
+                <label htmlFor="org-settings-default-pass-threshold" className="block text-xs text-gray-500 mb-1">
                   Default pass threshold: {Math.round((settings.default_pass_threshold ?? 0.5) * 100)}%
                 </label>
                 <input
+                  id="org-settings-default-pass-threshold"
                   type="number"
                   min={0}
                   max={1}
@@ -1891,10 +1900,11 @@ export default function OrgSettings() {
                 <p className="text-xs text-gray-400 mt-1">0.0 to 1.0 (e.g. 0.5 = 50%)</p>
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">
+                <label htmlFor="org-settings-default-quorum-threshold" className="block text-xs text-gray-500 mb-1">
                   Default quorum threshold: {Math.round((settings.default_quorum_threshold ?? 0.4) * 100)}%
                 </label>
                 <input
+                  id="org-settings-default-quorum-threshold"
                   type="number"
                   min={0}
                   max={1}
@@ -2048,10 +2058,11 @@ export default function OrgSettings() {
           {canEditOrgSettings ? (
             <>
               <div className="space-y-2">
-                <label className="block text-xs text-gray-500">
+                <label htmlFor="org-settings-tie-approval" className="block text-xs text-gray-500">
                   Approval voting
                 </label>
                 <select
+                  id="org-settings-tie-approval"
                   value={tieApprovalMethod}
                   onChange={e => setTieApprovalMethod(e.target.value)}
                   className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] bg-white"
@@ -2066,10 +2077,11 @@ export default function OrgSettings() {
               </div>
 
               <div className="space-y-2 pt-2 border-t border-gray-100">
-                <label className="block text-xs text-gray-500">
+                <label htmlFor="org-settings-tie-ranked" className="block text-xs text-gray-500">
                   Ranked choice / STV
                 </label>
                 <select
+                  id="org-settings-tie-ranked"
                   value={tieRankedChoiceMethod}
                   onChange={e => setTieRankedChoiceMethod(e.target.value)}
                   className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] bg-white"
@@ -2911,7 +2923,7 @@ export default function OrgSettings() {
                 Each entry is a (state, optional city) pair; a user
                 satisfies the scope by matching ANY entry. */}
             <div className="pt-3 border-t border-gray-200 space-y-2">
-              <label className="block text-xs font-medium text-gray-700">
+              <label htmlFor="org-settings-high-confidence-action" className="block text-xs font-medium text-gray-700">
                 Residency scope (where members must live, when a gate requires it)
               </label>
               <p className="text-xs text-gray-500">
@@ -3090,6 +3102,7 @@ export default function OrgSettings() {
                 Action on high-confidence duplicate flag
               </label>
               <select
+                id="org-settings-high-confidence-action"
                 value={settings.verification_high_confidence_flag_action || 'pending_approval'}
                 onChange={e => updateSetting('verification_high_confidence_flag_action', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
@@ -3103,10 +3116,11 @@ export default function OrgSettings() {
             </div>
 
             <div className="pt-2 space-y-1">
-              <label className="block text-xs font-medium text-gray-700">
+              <label htmlFor="org-settings-low-confidence-action" className="block text-xs font-medium text-gray-700">
                 Action on low-confidence duplicate flag
               </label>
               <select
+                id="org-settings-low-confidence-action"
                 value={settings.verification_low_confidence_flag_action || 'pending_approval'}
                 onChange={e => updateSetting('verification_low_confidence_flag_action', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
@@ -3123,10 +3137,11 @@ export default function OrgSettings() {
                 must match; action picks block vs. flag on a non-match
                 (Z's locked decision: both options offered per org). */}
             <div className="pt-2 border-t border-gray-200 space-y-1">
-              <label className="block text-xs font-medium text-gray-700">
+              <label htmlFor="org-settings-name-match" className="block text-xs font-medium text-gray-700">
                 Require display name to match legal name
               </label>
               <select
+                id="org-settings-name-match"
                 value={settings.verification_require_name_match || 'off'}
                 onChange={e => updateSetting('verification_require_name_match', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
@@ -3145,10 +3160,11 @@ export default function OrgSettings() {
             {(settings.verification_require_name_match
                 && settings.verification_require_name_match !== 'off') && (
               <div className="pt-2 space-y-1">
-                <label className="block text-xs font-medium text-gray-700">
+                <label htmlFor="org-settings-name-match-action" className="block text-xs font-medium text-gray-700">
                   Action on non-matching display name
                 </label>
                 <select
+                  id="org-settings-name-match-action"
                   value={settings.verification_name_match_action || 'block'}
                   onChange={e => updateSetting('verification_name_match_action', e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
@@ -3165,10 +3181,11 @@ export default function OrgSettings() {
             {/* Phase 52g — membership minimum age. Stored as an int
                 from a fixed supported set. */}
             <div className="pt-2 border-t border-gray-200 space-y-1">
-              <label className="block text-xs font-medium text-gray-700">
+              <label htmlFor="org-settings-minimum-age" className="block text-xs font-medium text-gray-700">
                 Minimum age to join
               </label>
               <select
+                id="org-settings-minimum-age"
                 value={settings.verification_membership_min_age ?? ''}
                 onChange={e => updateSetting(
                   'verification_membership_min_age',
@@ -3193,10 +3210,11 @@ export default function OrgSettings() {
                 floor to every proposal. `never` ignores any stored
                 proposal floor at vote time. */}
             <div className="pt-2 border-t border-gray-200 space-y-1">
-              <label className="block text-xs font-medium text-gray-700">
+              <label htmlFor="org-settings-proposal-verification-policy" className="block text-xs font-medium text-gray-700">
                 Proposal verification policy
               </label>
               <select
+                id="org-settings-proposal-verification-policy"
                 value={settings.verification_proposal_policy || 'author'}
                 onChange={e => updateSetting('verification_proposal_policy', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
@@ -3212,10 +3230,11 @@ export default function OrgSettings() {
 
             {settings.verification_proposal_policy === 'always' && (
               <div className="pt-2 space-y-1">
-                <label className="block text-xs font-medium text-gray-700">
+                <label htmlFor="org-settings-proposal-verification-floor" className="block text-xs font-medium text-gray-700">
                   Required floor for every proposal
                 </label>
                 <select
+                  id="org-settings-proposal-verification-floor"
                   value={settings.verification_proposal_floor || ''}
                   onChange={e => updateSetting('verification_proposal_floor', e.target.value || null)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"

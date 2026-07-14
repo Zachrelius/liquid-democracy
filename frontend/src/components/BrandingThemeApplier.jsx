@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { deriveDarker } from '../utils/color_derive';
+import { accessibleAccentTextColor } from '../utils/colorContrast';
 
 /**
  * Phase 14 F2 — standalone branding theme applier.
@@ -35,13 +36,16 @@ export default function BrandingThemeApplier({ branding }) {
     }
     if (accent) {
       root.style.setProperty('--brand-accent', accent);
+      root.style.setProperty('--brand-accent-text', accessibleAccentTextColor(accent));
     } else {
       root.style.removeProperty('--brand-accent');
+      root.style.removeProperty('--brand-accent-text');
     }
     return () => {
       root.style.removeProperty('--brand-primary');
       root.style.removeProperty('--brand-primary-dark');
       root.style.removeProperty('--brand-accent');
+      root.style.removeProperty('--brand-accent-text');
     };
   }, [primary, accent]);
 

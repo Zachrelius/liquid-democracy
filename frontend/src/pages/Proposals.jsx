@@ -514,10 +514,12 @@ export default function Proposals() {
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-6">
         {/* Status filter */}
-        <div className="grid grid-cols-4 w-full sm:flex sm:w-auto bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div role="group" aria-label="Filter proposals by status" className="grid grid-cols-4 w-full sm:flex sm:w-auto bg-white border border-gray-200 rounded-lg overflow-hidden">
           {STATUS_FILTERS.filter(s => !(readOnly && s === 'unvoted')).map(s => (
             <button
               key={s}
+              type="button"
+              aria-pressed={statusFilter === s}
               onClick={() => setStatusFilter(s)}
               title={s === 'unvoted' ? "Voting proposals you haven't voted on yet" : undefined}
               className={`px-2 sm:px-3 py-1.5 text-sm capitalize transition-colors ${
@@ -534,6 +536,7 @@ export default function Proposals() {
         {/* Topic filter */}
         {topics.length > 0 && (
           <select
+            aria-label="Filter proposals by topic"
             value={topicFilter}
             onChange={e => setTopicFilter(e.target.value)}
             className="bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-600 focus:outline-none focus:ring-1 focus:ring-[var(--brand-accent)]"

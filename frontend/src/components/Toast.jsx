@@ -53,6 +53,9 @@ export function ToastProvider({ children }) {
         {toasts.map(t => (
           <div
             key={t.id}
+            role={t.type === 'error' ? 'alert' : 'status'}
+            aria-live={t.type === 'error' ? 'assertive' : 'polite'}
+            aria-atomic="true"
             onClick={() => !t.action && remove(t.id)}
             className={`pointer-events-auto max-w-sm px-4 py-3 rounded-lg shadow-lg text-sm font-medium transition-all flex items-center gap-3 ${
               t.action ? '' : 'cursor-pointer'

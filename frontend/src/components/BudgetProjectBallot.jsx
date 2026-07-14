@@ -131,6 +131,7 @@ export default function BudgetProjectBallot({ proposal, myVote, proposalId, onVo
     if (!kids.length) return null;
     return (
       <select
+        aria-label={`Funding tier for ${optionDisplayLabel(proposal, o)}`}
         value={tierSel[o.id] || ''}
         onChange={(e) => setTierSel((p) => ({ ...p, [o.id]: e.target.value }))}
         className="text-xs border border-gray-300 rounded px-1.5 py-0.5 ml-2"
@@ -233,11 +234,14 @@ export default function BudgetProjectBallot({ proposal, myVote, proposalId, onVo
                       : <span className="text-xs text-gray-400 ml-1">({fmt(itemCost(oid), currency)})</span>}
                   </span>
                   <button type="button" onClick={() => move(oid, -1)} disabled={idx === 0}
-                    className="text-gray-400 hover:text-gray-600 disabled:opacity-30 text-xs px-1">▲</button>
+                    aria-label={`Move ${optionDisplayLabel(proposal, o)} up in your ranking`}
+                    className="min-w-8 min-h-8 text-gray-500 hover:text-gray-700 disabled:opacity-30 text-xs">▲</button>
                   <button type="button" onClick={() => move(oid, 1)} disabled={idx === ranking.length - 1}
-                    className="text-gray-400 hover:text-gray-600 disabled:opacity-30 text-xs px-1">▼</button>
+                    aria-label={`Move ${optionDisplayLabel(proposal, o)} down in your ranking`}
+                    className="min-w-8 min-h-8 text-gray-500 hover:text-gray-700 disabled:opacity-30 text-xs">▼</button>
                   <button type="button" onClick={() => removeFromRanking(oid)}
-                    className="text-gray-300 hover:text-red-500 text-xs px-1" title="Remove">✕</button>
+                    aria-label={`Remove ${optionDisplayLabel(proposal, o)} from your ranking`}
+                    className="min-w-8 min-h-8 text-gray-500 hover:text-red-600 text-xs" title="Remove">✕</button>
                 </div>
               </li>
             );

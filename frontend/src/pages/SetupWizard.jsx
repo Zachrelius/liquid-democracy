@@ -17,11 +17,13 @@ const SUGGESTED_TOPICS = [
 ];
 
 function StepIndicator({ current, total }) {
+  const names = ['Organization', 'Topics', 'Invite members', 'Finish'];
   return (
-    <div className="flex items-center gap-2 mb-8">
+    <ol aria-label="Setup progress" className="flex items-center gap-2 mb-8">
       {Array.from({ length: total }, (_, i) => (
-        <div key={i} className="flex items-center gap-2">
-          <div
+        <li key={i} className="flex items-center gap-2">
+          <span
+            aria-current={i === current ? 'step' : undefined}
             className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors ${
               i < current
                 ? 'bg-[#2D8A56] text-white'
@@ -30,14 +32,18 @@ function StepIndicator({ current, total }) {
                 : 'bg-gray-200 text-gray-500'
             }`}
           >
-            {i < current ? '\u2713' : i + 1}
-          </div>
+            <span aria-hidden="true">{i < current ? '\u2713' : i + 1}</span>
+            <span className="sr-only">
+              Step {i + 1} of {total}: {names[i] || `Step ${i + 1}`}
+              {i < current ? ', completed' : i === current ? ', current' : ''}
+            </span>
+          </span>
           {i < total - 1 && (
-            <div className={`w-12 h-0.5 ${i < current ? 'bg-[#2D8A56]' : 'bg-gray-200'}`} />
+            <span aria-hidden="true" className={`w-12 h-0.5 ${i < current ? 'bg-[#2D8A56]' : 'bg-gray-200'}`} />
           )}
-        </div>
+        </li>
       ))}
-    </div>
+    </ol>
   );
 }
 
@@ -245,7 +251,7 @@ export default function SetupWizard() {
       </div>
 
       {error && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
+        <div role="alert" className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
           {error}
         </div>
       )}
@@ -259,8 +265,9 @@ export default function SetupWizard() {
           </p>
 
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Organization Name</label>
+            <label htmlFor="setup-org-name" className="block text-xs text-gray-500 mb-1">Organization Name</label>
             <input
+              id="setup-org-name"
               type="text"
               value={orgName}
               onChange={e => handleOrgNameChange(e.target.value)}
@@ -270,10 +277,11 @@ export default function SetupWizard() {
           </div>
 
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Slug (URL identifier)</label>
+            <label htmlFor="setup-org-slug" className="block text-xs text-gray-500 mb-1">Slug (URL identifier)</label>
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-400">/</span>
               <input
+                id="setup-org-slug"
                 type="text"
                 value={orgSlug}
                 onChange={e => { setOrgSlug(e.target.value); setSlugEdited(true); }}
@@ -283,8 +291,9 @@ export default function SetupWizard() {
           </div>
 
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Description (optional)</label>
+            <label htmlFor="setup-org-description" className="block text-xs text-gray-500 mb-1">Description (optional)</label>
             <textarea
+              id="setup-org-description"
               value={orgDescription}
               onChange={e => setOrgDescription(e.target.value)}
               rows={2}
@@ -293,8 +302,8 @@ export default function SetupWizard() {
             />
           </div>
 
-          <div>
-            <label className="block text-xs text-gray-500 mb-2">Join Policy</label>
+          <fieldset>
+            <legend className="block text-xs text-gray-500 mb-2">Join Policy</legend>
             {/* Phase 57 — three-value vocabulary (was open / approval_required
                 / invite_only). The CreateOrg page exposes the full
                 three-axis model; this Setup Wizard intentionally only
@@ -320,7 +329,7 @@ export default function SetupWizard() {
                 </label>
               ))}
             </div>
-          </div>
+          </fieldset>
 
           <div className="flex justify-end pt-2">
             <button
@@ -367,6 +376,7 @@ export default function SetupWizard() {
 
           <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
             <input
+              aria-label="Custom topic name"
               type="text"
               value={customTopic}
               onChange={e => setCustomTopic(e.target.value)}
@@ -375,6 +385,7 @@ export default function SetupWizard() {
               onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addCustomTopic())}
             />
             <input
+              aria-label="Custom topic color"
               type="color"
               value={customColor}
               onChange={e => setCustomColor(e.target.value)}
@@ -423,7 +434,11 @@ export default function SetupWizard() {
             Enter email addresses to invite people to your organization (one per line).
           </p>
 
+          <label htmlFor="setup-invitation-emails" className="block text-xs font-medium text-gray-600">
+            Email addresses, one per line
+          </label>
           <textarea
+            id="setup-invitation-emails"
             value={emails}
             onChange={e => setEmails(e.target.value)}
             rows={5}
@@ -432,7 +447,7 @@ export default function SetupWizard() {
           />
 
           {inviteMsg && (
-            <div className="p-2 bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg">
+            <div role="status" aria-live="polite" className="p-2 bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg">
               {inviteMsg}
             </div>
           )}
@@ -472,7 +487,7 @@ export default function SetupWizard() {
             {activeOrg?.name || 'Your organization'} has been created. Here are some next steps:
           </p>
           {inviteMsg && (
-            <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2 max-w-md mx-auto">
+            <p role="status" className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2 max-w-md mx-auto">
               {inviteMsg}
             </p>
           )}

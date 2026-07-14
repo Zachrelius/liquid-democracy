@@ -68,6 +68,9 @@ function DelegationRow({
   unverified,
   parentSlug,
   priorityNumber,
+  onMove,
+  canMoveUp,
+  canMoveDown,
   dragProvided,
   isDragging,
 }) {
@@ -110,7 +113,7 @@ function DelegationRow({
             {...dragProvided.dragHandleProps}
             className="text-gray-300 hover:text-gray-500 cursor-grab select-none inline-block"
             title="Drag to reorder priority"
-            aria-label="Drag to reorder priority"
+            aria-label={`Drag to reorder ${topic?.name || 'delegation'} priority`}
           >
             ⠿
           </span>
@@ -121,6 +124,12 @@ function DelegationRow({
           {priorityNumber != null && (
             <span className="text-xs text-gray-400 w-5 text-right select-none">{priorityNumber}.</span>
           )}
+          <button type="button" onClick={() => onMove(-1)} disabled={!canMoveUp}
+            aria-label={`Move ${topic?.name || 'delegation'} up in priority`}
+            className="min-w-8 min-h-8 text-gray-500 hover:text-gray-700 disabled:opacity-30">▲</button>
+          <button type="button" onClick={() => onMove(1)} disabled={!canMoveDown}
+            aria-label={`Move ${topic?.name || 'delegation'} down in priority`}
+            className="min-w-8 min-h-8 text-gray-500 hover:text-gray-700 disabled:opacity-30">▼</button>
           {topic ? <TopicBadge topic={topic} /> : <span className="text-xs italic text-gray-500">Global default</span>}
           <TopicScopeBadge topic={topic} subOrgsById={subOrgsById} />
           {/* Phase 65 — inert-delegation label. The row stays fully
@@ -139,6 +148,7 @@ function DelegationRow({
       </td>
       <td className="py-3 px-4">
         <select
+          aria-label={`Chain behavior for ${topic?.name || 'global default'}`}
           value={delegation.chain_behavior}
           onChange={handleChainChange}
           disabled={saving}
@@ -151,8 +161,8 @@ function DelegationRow({
       </td>
       <td className="py-3 px-4 text-right">
         <div className="flex gap-2 justify-end">
-          <button onClick={() => onChangeDelegate(delegation)} disabled={unverified} className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline">Change</button>
-          <button onClick={() => onRemove(delegation)} disabled={unverified} className="text-xs text-red-500 hover:underline disabled:opacity-50 disabled:no-underline">Remove</button>
+          <button aria-label={`Change delegate for ${topic?.name || 'global default'}`} onClick={() => onChangeDelegate(delegation)} disabled={unverified} className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline">Change</button>
+          <button aria-label={`Remove delegation for ${topic?.name || 'global default'}`} onClick={() => onRemove(delegation)} disabled={unverified} className="text-xs text-red-500 hover:underline disabled:opacity-50 disabled:no-underline">Remove</button>
         </div>
       </td>
     </tr>
@@ -171,6 +181,9 @@ function DelegationCard({
   unverified,
   parentSlug,
   priorityNumber,
+  onMove,
+  canMoveUp,
+  canMoveDown,
   dragProvided,
   isDragging,
 }) {
@@ -211,7 +224,7 @@ function DelegationCard({
               {...dragProvided.dragHandleProps}
               className="text-gray-300 hover:text-gray-500 cursor-grab select-none"
               title="Drag to reorder priority"
-              aria-label="Drag to reorder priority"
+              aria-label={`Drag to reorder ${topic?.name || 'delegation'} priority`}
             >
               ⠿
             </span>
@@ -219,6 +232,12 @@ function DelegationCard({
           {priorityNumber != null && (
             <span className="text-xs text-gray-400 select-none">{priorityNumber}.</span>
           )}
+          <button type="button" onClick={() => onMove(-1)} disabled={!canMoveUp}
+            aria-label={`Move ${topic?.name || 'delegation'} up in priority`}
+            className="min-w-8 min-h-8 text-gray-500 hover:text-gray-700 disabled:opacity-30">▲</button>
+          <button type="button" onClick={() => onMove(1)} disabled={!canMoveDown}
+            aria-label={`Move ${topic?.name || 'delegation'} down in priority`}
+            className="min-w-8 min-h-8 text-gray-500 hover:text-gray-700 disabled:opacity-30">▼</button>
           {topic ? <TopicBadge topic={topic} /> : <span className="text-xs italic text-gray-500">Global default</span>}
           <TopicScopeBadge topic={topic} subOrgsById={subOrgsById} />
           {/* Phase 65 — inert-delegation label (mobile card variant). */}
@@ -229,8 +248,8 @@ function DelegationCard({
           )}
         </div>
         <div className="flex gap-3">
-          <button onClick={() => onChangeDelegate(delegation)} disabled={unverified} className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline">Change</button>
-          <button onClick={() => onRemove(delegation)} disabled={unverified} className="text-xs text-red-500 hover:underline disabled:opacity-50 disabled:no-underline">Remove</button>
+          <button aria-label={`Change delegate for ${topic?.name || 'global default'}`} onClick={() => onChangeDelegate(delegation)} disabled={unverified} className="text-xs text-[var(--brand-accent)] hover:underline disabled:opacity-50 disabled:no-underline">Change</button>
+          <button aria-label={`Remove delegation for ${topic?.name || 'global default'}`} onClick={() => onRemove(delegation)} disabled={unverified} className="text-xs text-red-500 hover:underline disabled:opacity-50 disabled:no-underline">Remove</button>
         </div>
       </div>
       <div>
@@ -238,6 +257,7 @@ function DelegationCard({
         <span className="ml-1.5 text-xs text-gray-400">@{delegation.delegate.username}</span>
       </div>
       <select
+        aria-label={`Chain behavior for ${topic?.name || 'global default'}`}
         value={delegation.chain_behavior}
         onChange={handleChainChange}
         disabled={saving}
@@ -458,16 +478,7 @@ export default function Delegations() {
     }
   }
 
-  async function handleDragEnd(result) {
-    if (!result.destination) return;
-    // Phase 28 F1 — drag-end now operates on the priority-ordered list
-    // of delegated topics (orderedTopicDels) instead of the standalone
-    // precedences list. Send the reordered topic_id sequence to the
-    // existing PUT /precedence endpoint; rely on `load()` to refresh
-    // both the delegations and precedences state from the server.
-    const items = Array.from(orderedTopicDels);
-    const [moved] = items.splice(result.source.index, 1);
-    items.splice(result.destination.index, 0, moved);
+  async function persistPrecedence(items) {
     setSavingPrec(true);
     try {
       await api.put(`/api/orgs/${parentSlug}/delegations/precedence`, {
@@ -480,6 +491,19 @@ export default function Delegations() {
     } finally {
       setSavingPrec(false);
     }
+  }
+
+  async function moveDelegation(fromIndex, toIndex) {
+    if (toIndex < 0 || toIndex >= orderedTopicDels.length || savingPrec) return;
+    const items = Array.from(orderedTopicDels);
+    const [moved] = items.splice(fromIndex, 1);
+    items.splice(toIndex, 0, moved);
+    await persistPrecedence(items);
+  }
+
+  async function handleDragEnd(result) {
+    if (!result.destination) return;
+    await moveDelegation(result.source.index, result.destination.index);
   }
 
   if (loading) return <Spinner />;
@@ -641,7 +665,7 @@ export default function Delegations() {
           Topic Delegations {savingPrec && <span className="text-xs text-gray-400 font-normal ml-2">Saving…</span>}
         </h2>
         <p className="text-xs text-gray-400 mb-3">
-          Drag delegated topics to reorder priority. The top topic is used as a tiebreaker when relevance-weighted scores tie; for strict-priority strategy, it determines which delegate's vote applies first.
+          Use the arrow buttons or drag delegated topics to reorder priority. The top topic is used as a tiebreaker when relevance-weighted scores tie; for strict-priority strategy, it determines which delegate's vote applies first.
         </p>
 
         {/* Desktop table */}
@@ -673,6 +697,9 @@ export default function Delegations() {
                             unverified={unverified}
                             parentSlug={parentSlug}
                             priorityNumber={index + 1}
+                            onMove={(direction) => moveDelegation(index, index + direction)}
+                            canMoveUp={!savingPrec && index > 0}
+                            canMoveDown={!savingPrec && index < orderedTopicDels.length - 1}
                             dragProvided={dragProvided}
                             isDragging={snapshot.isDragging}
                           />
@@ -748,6 +775,9 @@ export default function Delegations() {
                           unverified={unverified}
                           parentSlug={parentSlug}
                           priorityNumber={index + 1}
+                          onMove={(direction) => moveDelegation(index, index + direction)}
+                          canMoveUp={!savingPrec && index > 0}
+                          canMoveDown={!savingPrec && index < orderedTopicDels.length - 1}
                           dragProvided={dragProvided}
                           isDragging={snapshot.isDragging}
                         />
