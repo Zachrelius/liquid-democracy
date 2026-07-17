@@ -4319,3 +4319,19 @@ Verification: frontend tests **8/8 PASS** (four new accessibility-contract tests
 Railway frontend deployment `b3d627cb-a177-40de-a472-c3ebea5492ee` SUCCESS; backend row `7efd5f30-33d5-4429-ab55-da54df770ee8` SKIPPED as expected. Homepage 200; readiness 200/database connected.
 
 Residual work is explicit rather than claimed complete: NVDA/JAWS/VoiceOver and Firefox/Safari passes; contrast enforcement for custom primary/on-primary color pairs; incremental cleanup of low-traffic historical forms and bespoke popovers; and eventual independent/manual review with disabled users before any conformance claim. The guided-onboarding walkthrough with Z's new example organization is a separate exercise and remains **NOT STARTED / deliberately deferred** until Z has time for it.
+
+---
+
+## Phase 95 — Onboarding Defaults Refinement ✅ Complete (2026-07-17)
+
+Spec: `phase95_onboarding_defaults_spec.md`. Branch `phase-95/onboarding-defaults`; implementation `602fdd8`; no-ff merge `7780fce`.
+
+Refined the Phase 93 setup based on Z's first real organization walkthrough. General, Budget, Policy, and Operations remain preselected; Events and Elections are now visibly optional unchecked suggestions. The topic step explicitly says users may choose any, all, or none and add their own. Unchecking everything changes the enabled primary action to `Continue without topics` and advances without creating topic rows.
+
+Fresh top-level organizations now explicitly persist all five supported voting methods (`binary`, `approval`, `ranked_choice`, `budget_allocation`, `budget_project`) and `verification_proposal_policy: "never"`. Existing organizations were deliberately not backfilled. Missing method settings retain the legacy binary+approval fallback, and missing verification policy retains the legacy author-chooses fallback. A broader voting regression test caught and prevented an early implementation that would have accidentally changed the old-org method fallback.
+
+Verification: frontend **9/9 PASS**; targeted backend **173 PASS** across creation/settings/verification and every non-binary voting family; production build PASS; changed setup files pass targeted lint. Repository lint is unchanged at the pre-existing 107 errors / 8 warnings. The full backend suite could not produce a complete result within either 15-minute run: the first was polluted by inaccessible Windows temp-directory errors, and the approved four-worker retry reached the timeout without a completion report; neither is claimed as green. Isolated Chromium QA confirmed optional-topic states, any/all/none copy, the zero-topic path and empty Topic Management, all five checked voting methods, selected `never` policy, and a clean console. No migration; PG smoke not required.
+
+Railway frontend deployment `65851f90-b834-45ad-94ee-23d5e8822da3` SUCCESS; backend deployment `fc0f3f54-65bb-4579-91cb-aa43e45282da` SUCCESS. Production bundle `index-CCwDG6q2.js`; homepage 200; readiness 200/database connected; clean-browser production sanity had no console errors.
+
+Operational note: Z's organization was created before Phase 95 deployed, so its persisted method list/policy remains unchanged. It can be updated manually in Organization Settings; all organizations created after this deploy receive the new defaults automatically.

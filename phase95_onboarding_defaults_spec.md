@@ -70,7 +70,7 @@ Single full-stack Codex pass. The changes are bounded to the setup topic chooser
 
 ## Status
 
-**IN PROGRESS — 2026-07-17**
+**COMPLETE — 2026-07-17**
 
 ## What this phase is
 
@@ -112,3 +112,18 @@ A small usability and policy-default refinement based on the owner's first real 
 
 - Revisit the exact starter-topic vocabulary after several pilot organizations have used the flow.
 - The owner's newly created pre-Phase-95 organization keeps its stored settings; it can enable all methods and choose `never` manually in Organization Settings if desired.
+
+## Verification and deployment
+
+- Frontend tests: **9/9 passed** (one new starter-topic/default-selection contract).
+- Directly relevant backend regression: **173 passed** across organization creation, organization settings, verification policy, ranked choice, allocation budget, and project budget.
+- Frontend production build: **PASS**; bundle `index-CCwDG6q2.js`.
+- Targeted lint for the changed setup utility/page/test: **PASS**. Repository-wide lint remains the pre-existing baseline at **107 errors / 8 warnings**; the changed Organization Settings file still contains its three previously known findings outside the edited copy block.
+- Full backend suite: two honest non-results, not counted as passes. The sequential run reached the 15-minute timeout after environment errors caused by pytest's inaccessible default Windows temp directory; rerunning four workers with an approved writable temp directory also reached the 15-minute ceiling without a completion report. No Phase 95 failure surfaced. The 173-test targeted set used an explicit writable base temp and completed cleanly.
+- Isolated Chromium browser QA: **PASS**. The topic step showed General/Budget/Policy/Operations selected and Events/Elections unselected; copy stated any/all/none; unchecking everything changed the enabled primary action to `Continue without topics`; the wizard advanced and Topic Management confirmed zero topics. Fresh Organization Settings showed all five methods checked and `Never require verification on proposals` selected. Console clean.
+- Compatibility regression caught before merge: the first implementation reused the fresh-org method list as the legacy fallback, enabling ranked choice for old unconfigured orgs. Split constants now preserve `binary` + `approval` for legacy missing-key reads while fresh orgs explicitly persist all five methods; the regression suite passes.
+- Implementation commit `602fdd8`; no-ff merge `7780fce`.
+- Railway frontend deployment `65851f90-b834-45ad-94ee-23d5e8822da3`: **SUCCESS**.
+- Railway backend deployment `fc0f3f54-65bb-4579-91cb-aa43e45282da`: **SUCCESS**.
+- Production homepage: HTTP 200. `/api/health/ready`: HTTP 200 with database connected. Clean browser refresh loaded `index-CCwDG6q2.js` with no warning/error console entries.
+- No schema migration was added; PostgreSQL migration smoke was not required.
