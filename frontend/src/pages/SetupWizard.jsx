@@ -6,15 +6,9 @@ import {
   parseInvitationEmails,
   pendingSelectedTopics,
   slugifyOrganizationName,
+  STARTER_TOPIC_SUGGESTIONS,
 } from '../utils/setupWizard';
 import api from '../api';
-
-const SUGGESTED_TOPICS = [
-  { name: 'General', color: '#6366f1', checked: true },
-  { name: 'Budget', color: '#3b82f6', checked: true },
-  { name: 'Policy', color: '#10b981', checked: true },
-  { name: 'Operations', color: '#f59e0b', checked: true },
-];
 
 function StepIndicator({ current, total }) {
   const names = ['Organization', 'Topics', 'Invite members', 'Finish'];
@@ -68,7 +62,7 @@ export default function SetupWizard() {
   const [createdOrg, setCreatedOrg] = useState(initialOrg);
 
   // Step 2: Topics
-  const [topics, setTopics] = useState(SUGGESTED_TOPICS.map(t => ({ ...t })));
+  const [topics, setTopics] = useState(STARTER_TOPIC_SUGGESTIONS.map(t => ({ ...t })));
   const [createdTopicNames, setCreatedTopicNames] = useState([]);
   const [customTopic, setCustomTopic] = useState('');
   const [customColor, setCustomColor] = useState('#8b5cf6');
@@ -349,6 +343,7 @@ export default function SetupWizard() {
           <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Create Topics</h2>
           <p className="text-sm text-gray-500">
             Topics help categorize proposals and let members delegate their votes per-topic.
+            Choose any, all, or none of these suggestions, and add your own below.
           </p>
 
           <div className="space-y-2">
@@ -416,10 +411,14 @@ export default function SetupWizard() {
               </button>
               <button
                 onClick={handleCreateTopics}
-                disabled={saving || topics.filter(t => t.checked).length === 0}
+                disabled={saving}
                 className="text-sm px-6 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
               >
-                {saving ? 'Creating...' : 'Next: Invite Members'}
+                {saving
+                  ? 'Creating...'
+                  : topics.some(t => t.checked)
+                    ? 'Next: Invite Members'
+                    : 'Continue without topics'}
               </button>
             </div>
           </div>

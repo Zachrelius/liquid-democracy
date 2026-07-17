@@ -118,6 +118,16 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+LEGACY_UNCONFIGURED_VOTING_METHODS = ["binary", "approval"]
+ALL_SUPPORTED_VOTING_METHODS = [
+    "binary",
+    "approval",
+    "ranked_choice",
+    "budget_allocation",
+    "budget_project",
+]
+
+
 DEFAULT_ORG_SETTINGS = {
     "default_deliberation_days": 14,
     "default_voting_days": 7,
@@ -126,7 +136,14 @@ DEFAULT_ORG_SETTINGS = {
     "allow_public_delegates": True,
     "public_delegate_policy": "admin_approval",
     "require_email_verification": True,
-    "allowed_voting_methods": ["binary", "approval"],
+    # Phase 95 — fresh organizations expose every supported proposal type.
+    # Stewards can still narrow this list later in Organization Settings.
+    "allowed_voting_methods": ALL_SUPPORTED_VOTING_METHODS,
+    # Phase 95 — do not let an individual proposal author unexpectedly add
+    # identity verification to an organization that has not adopted it.
+    # Legacy orgs without this key retain the `author` read-time fallback in
+    # verification.get_org_proposal_policy; there is intentionally no backfill.
+    "verification_proposal_policy": "never",
     # Phase 8 / Phase 20 — "Stable Result Required" voting-window config.
     # All defaults off / fail-safe so existing orgs see no behavior change
     # until an admin flips the switch. ``get_stable_result_config()``

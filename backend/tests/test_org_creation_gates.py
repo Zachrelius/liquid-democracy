@@ -244,6 +244,19 @@ class TestOrgCreationGates:
         # Phase 12 — preset role rename: 'owner' → 'steward'.
         assert body["user_role"] == "steward"
 
+        # Phase 95 — fresh orgs show every supported proposal type, while
+        # proposal authors cannot unexpectedly add ID verification unless
+        # the org later changes its policy.
+        created_org = db.get(models.Organization, body["id"])
+        assert created_org.settings["allowed_voting_methods"] == [
+            "binary",
+            "approval",
+            "ranked_choice",
+            "budget_allocation",
+            "budget_project",
+        ]
+        assert created_org.settings["verification_proposal_policy"] == "never"
+
         # Audit enrichment present
         audit = db.query(models.AuditLog).filter(
             models.AuditLog.action == "org.created",

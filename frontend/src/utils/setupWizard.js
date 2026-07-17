@@ -1,3 +1,12 @@
+export const STARTER_TOPIC_SUGGESTIONS = [
+  { name: 'General', color: '#6366f1', checked: true },
+  { name: 'Budget', color: '#3b82f6', checked: true },
+  { name: 'Policy', color: '#10b981', checked: true },
+  { name: 'Operations', color: '#f59e0b', checked: true },
+  { name: 'Events', color: '#ec4899', checked: false },
+  { name: 'Elections', color: '#0ea5e9', checked: false },
+];
+
 export function slugifyOrganizationName(text) {
   return text
     .toLowerCase()
