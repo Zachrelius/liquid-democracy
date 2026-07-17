@@ -377,6 +377,15 @@ def update_comment(
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
     comment = _comment_or_404(comment_id, db)
+    proposal = db.get(models.Proposal, comment.proposal_id)
+    if (
+        proposal is None
+        or (
+            not current_user.is_admin
+            and current_user.id not in _eligible_viewers_for_proposal(db, proposal)
+        )
+    ):
+        raise HTTPException(status_code=404, detail="Comment not found")
 
     if comment.author_id != current_user.id:
         raise HTTPException(

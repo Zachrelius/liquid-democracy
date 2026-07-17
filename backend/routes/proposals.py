@@ -233,6 +233,19 @@ def _proposal_or_404(proposal_id: str, db: Session) -> models.Proposal:
     return p
 
 
+def _require_proposal_viewer(
+    db: Session,
+    proposal: models.Proposal,
+    current_user: models.User,
+) -> None:
+    """Apply the canonical proposal visibility boundary to an ID route."""
+    if (
+        not current_user.is_admin
+        and current_user.id not in _eligible_viewers_for_proposal(db, proposal)
+    ):
+        raise HTTPException(status_code=404, detail="Proposal not found")
+
+
 def _validate_linked_polis_ids(
     db: Session,
     ids: list[str],
@@ -1276,6 +1289,11 @@ def create_proposal(
     # Phase 86 (B-9) — proposal creation requires a verified email.
     current_user: models.User = Depends(auth_utils.require_verified_email),
 ):
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Platform administrator access required for global proposals",
+        )
     _validate_proposal_creation(body)
 
     # Phase 12.5 — global (non-org) proposals have no org context for the
@@ -1322,8 +1340,14 @@ def create_proposal(
     stable_result_required = None
 
     for t in body.topics:
-        if not db.get(models.Topic, t.topic_id):
+        topic = db.get(models.Topic, t.topic_id)
+        if not topic:
             raise HTTPException(status_code=400, detail=f"Topic {t.topic_id} not found")
+        if topic.org_id is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Topic {t.topic_id} does not belong to the global scope",
+            )
 
     # Phase 9 — global (non-org) proposals don't have an org_id, so linked
     # Polis validation is skipped here (Polises always live under an org).
@@ -1457,6 +1481,7 @@ def update_proposal(
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
     proposal = _proposal_or_404(proposal_id, db)
+    _require_proposal_viewer(db, proposal, current_user)
 
     if proposal.status not in ("draft", "deliberation"):
         raise HTTPException(status_code=400, detail="Only draft or deliberation proposals can be edited")
@@ -1669,12 +1694,43 @@ def update_proposal(
     if body.body is not None:
         proposal.body = body.body
     if body.topics is not None:
+        validated_topics = []
+        for t in body.topics:
+            topic = db.get(models.Topic, t.topic_id)
+            if not topic:
+                raise HTTPException(status_code=400, detail=f"Topic {t.topic_id} not found")
+            if proposal.org_id is None:
+                if topic.org_id is not None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Topic {t.topic_id} does not belong to the global scope",
+                    )
+            elif topic.org_id != proposal.org_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Topic {t.topic_id} does not belong to this organization",
+                )
+            elif proposal.sub_org_id is None and topic.sub_org_id is not None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Topic {t.topic_id} is scoped to a sub-organization",
+                )
+            elif (
+                proposal.sub_org_id is not None
+                and topic.sub_org_id is not None
+                and topic.sub_org_id != proposal.sub_org_id
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Topic {t.topic_id} is scoped to a different sub-organization",
+                )
+            validated_topics.append(t)
+        # Validate the entire replacement set before deleting current links,
+        # so an object-substitution failure leaves the session unchanged.
         for pt in list(proposal.proposal_topics):
             db.delete(pt)
         db.flush()
-        for t in body.topics:
-            if not db.get(models.Topic, t.topic_id):
-                raise HTTPException(status_code=400, detail=f"Topic {t.topic_id} not found")
+        for t in validated_topics:
             db.add(models.ProposalTopic(
                 proposal_id=proposal.id, topic_id=t.topic_id, relevance=t.relevance
             ))
@@ -2105,6 +2161,7 @@ def delete_proposal(
     cascade scope is bounded.
     """
     proposal = _proposal_or_404(proposal_id, db)
+    _require_proposal_viewer(db, proposal, current_user)
     if proposal.status != "draft":
         raise HTTPException(
             status_code=400,
@@ -2206,6 +2263,7 @@ def archive_proposal(
     There is no "unarchive" in this pass (forward-only).
     """
     proposal = _proposal_or_404(proposal_id, db)
+    _require_proposal_viewer(db, proposal, current_user)
 
     # Idempotency guard: already-archived → 409 (nothing to do).
     if proposal.status == "withdrawn":
@@ -2340,22 +2398,7 @@ def get_proposal_revisions(
     to any authenticated user since there's no org-membership concept.
     """
     proposal = _proposal_or_404(proposal_id, db)
-
-    if proposal.org_id is not None and not current_user.is_admin:
-        membership = (
-            db.query(models.OrgMembership)
-            .filter(
-                models.OrgMembership.user_id == current_user.id,
-                models.OrgMembership.org_id == proposal.org_id,
-                models.OrgMembership.status == "active",
-            )
-            .first()
-        )
-        if membership is None:
-            raise HTTPException(
-                status_code=403,
-                detail="Not a member of this proposal's organization",
-            )
+    _require_proposal_viewer(db, proposal, current_user)
 
     revisions = (
         db.query(models.ProposalRevision)
@@ -2411,6 +2454,7 @@ def add_write_in_option(
     )
 
     proposal = _proposal_or_404(proposal_id, db)
+    _require_proposal_viewer(db, proposal, current_user)
     org = (
         db.get(models.Organization, proposal.org_id)
         if proposal.org_id else None
@@ -2591,6 +2635,7 @@ def delete_write_in_option(
     Document choice in closeout.
     """
     proposal = _proposal_or_404(proposal_id, db)
+    _require_proposal_viewer(db, proposal, current_user)
     option = db.get(models.ProposalOption, option_id)
     if option is None or option.proposal_id != proposal.id:
         raise HTTPException(status_code=404, detail="Option not found")
@@ -2718,6 +2763,7 @@ def update_option_text(
     deliberation only; the deliberation edit-lockout window applies.
     """
     proposal = _proposal_or_404(proposal_id, db)
+    _require_proposal_viewer(db, proposal, current_user)
     option = db.get(models.ProposalOption, option_id)
     if option is None or option.proposal_id != proposal.id:
         raise HTTPException(status_code=404, detail="Option not found")
@@ -3173,6 +3219,7 @@ def advance_proposal(
     # The moderator-of-someone-else's-proposal case keeps its specific 403
     # message (asserted by test_proposal_lifecycle).
     proposal = _proposal_or_404(proposal_id, db)
+    _require_proposal_viewer(db, proposal, current_user)
 
     if not _viewer_can_advance_permission(
         proposal, db, current_user.id, user=current_user,
@@ -3545,6 +3592,7 @@ def cosign_proposal(
     (advance-if-met / expire-if-unmet) at ``cosign_expires_at``.
     """
     proposal = _proposal_or_404(proposal_id, db)
+    _require_proposal_viewer(db, proposal, current_user)
     _require_cosign_gathering(proposal)
     _require_active_org_member(db, current_user.id, proposal)
 
@@ -3589,6 +3637,7 @@ def withdraw_cosign(
     threshold.
     """
     proposal = _proposal_or_404(proposal_id, db)
+    _require_proposal_viewer(db, proposal, current_user)
     _require_cosign_gathering(proposal)
     _require_active_org_member(db, current_user.id, proposal)
 
@@ -3888,6 +3937,7 @@ def my_verification_weight(
     the gating state).
     """
     proposal = _proposal_or_404(proposal_id, db)
+    _require_proposal_viewer(db, proposal, current_user)
     org_id = getattr(proposal, "org_id", None)
     floor = getattr(proposal, "verification_floor", None)
     jurisdiction = getattr(proposal, "verification_jurisdiction", None)
@@ -3971,6 +4021,7 @@ def my_vote_status(
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
     proposal = _proposal_or_404(proposal_id, db)
+    _require_proposal_viewer(db, proposal, current_user)
 
     # Phase 88 — the caller's effective voting weight (shares) on this
     # proposal, for the ballot "Your vote carries N shares" chip. None in
@@ -4796,6 +4847,7 @@ def get_trajectory(
     (the trajectory monotonically extends as the worker writes more rows).
     """
     proposal = _proposal_or_404(proposal_id, db)
+    _require_proposal_viewer(db, proposal, current_user)
 
     # D4 — org-scoped access. Platform admins bypass; org members of the
     # proposal's org pass; everyone else gets 403.

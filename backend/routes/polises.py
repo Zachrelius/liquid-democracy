@@ -127,6 +127,14 @@ def _can_manage_polis(db: Session, user_id: str, polis: models.Polis) -> bool:
     from moderators and have it actually enforced. Replaces the bare
     ``is_polis_admin`` gate at the manage/mutate call sites.
     """
+    user = db.get(models.User, user_id)
+    if user is not None and user.is_admin:
+        return True
+    # Ownership is meaningful only while the creator remains an eligible
+    # viewer. A removed or suspended member must not retain mutation or
+    # deanonymized-export access through a stale creator_id.
+    if user_id not in eligible_viewers_for_polis(db, polis):
+        return False
     if polis.created_by == user_id:
         return True
     if not is_polis_admin(db, user_id, polis):

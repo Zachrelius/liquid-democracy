@@ -639,6 +639,7 @@ class TestConfigValidation:
 
     def test_binary_with_config_400(self, client, test_db):
         u = _make_user(test_db, "val-bin")
+        u.is_admin = True
         test_db.commit()
         resp = client.post(
             "/api/proposals", headers=_auth(u),
@@ -653,6 +654,7 @@ class TestConfigValidation:
 
     def test_ranked_choice_with_config_400(self, client, test_db):
         u = _make_user(test_db, "val-rcv")
+        u.is_admin = True
         test_db.commit()
         resp = client.post(
             "/api/proposals", headers=_auth(u),
@@ -922,6 +924,7 @@ class TestRoundTrip:
 
     def test_global_create_roundtrip(self, client, test_db):
         u = _make_user(test_db, "rt-global")
+        u.is_admin = True
         test_db.commit()
         resp = client.post(
             "/api/proposals", headers=_auth(u),

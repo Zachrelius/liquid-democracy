@@ -201,11 +201,9 @@ app.include_router(delegations.router)
 app.include_router(votes.router)
 app.include_router(admin.router)
 app.include_router(users.router)
-app.include_router(delegates.router)
-# Phase 19 B4 — per-org public delegate browse endpoint
-# (GET /api/orgs/{slug}/delegates). Mounted as a separate APIRouter so
-# the org-scoped surface lives alongside the legacy /api/delegates/*
-# endpoints (deprecation handled in Cluster G of a later pass).
+# Phase 19 B4 / Phase 96 — the org-scoped, visibility-filtered delegate
+# directory is the only mounted browse surface. The legacy tenant-unscoped
+# /api/delegates/public routes are deliberately retired.
 app.include_router(delegates.org_delegates_router)
 app.include_router(follows.router)
 # Phase 14 B2 — public org landing page endpoint (no-auth GET /api/orgs/{slug}/public).

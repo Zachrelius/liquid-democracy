@@ -129,10 +129,9 @@ def test_public_delegates_filtered_by_sub_org_scope_for_authenticated_viewer(
         "/api/delegates/public",
         headers=_auth(viewer),
     )
-    assert resp.status_code == 200, resp.text
-    visible_ids = {entry["user"]["id"] for entry in resp.json()}
-    assert parent_delegate.id in visible_ids
-    assert sub_only_delegate.id not in visible_ids
+    # Phase 96: the unsafe tenant-unscoped directory is retired. Delegate
+    # discovery now goes exclusively through /api/orgs/{slug}/delegates.
+    assert resp.status_code == 404, resp.text
 
     # Now make viewer an active sub-org member → sub_only_delegate becomes
     # visible. Phase 15 Cluster S — use the conftest helper to populate
@@ -148,8 +147,4 @@ def test_public_delegates_filtered_by_sub_org_scope_for_authenticated_viewer(
         "/api/delegates/public",
         headers=_auth(viewer),
     )
-    assert resp_member.status_code == 200
-    visible_ids_member = {
-        entry["user"]["id"] for entry in resp_member.json()
-    }
-    assert sub_only_delegate.id in visible_ids_member
+    assert resp_member.status_code == 404
