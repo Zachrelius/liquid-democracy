@@ -818,9 +818,9 @@ class TestTrajectoryAPISRRAnnotations:
 
 
 class TestTrajectoryAPIOrgScoping:
-    """D4: non-members get 403; members get 200."""
+    """D4: non-members get a concealed 404; members get 200."""
 
-    def test_non_member_gets_403(self, db, client):
+    def test_non_member_gets_404(self, db, client):
         author = _user(db, "alice")
         outsider = _user(db, "outsider")
         org = _org(db)
@@ -833,7 +833,7 @@ class TestTrajectoryAPIOrgScoping:
             f"/api/proposals/{proposal.id}/trajectory",
             headers=_auth(outsider),
         )
-        assert resp.status_code == 403
+        assert resp.status_code == 404
 
     def test_member_gets_200(self, db, client):
         author = _user(db, "alice")

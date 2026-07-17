@@ -40,8 +40,40 @@ def list_topics(
         q = q.filter(models.Topic.org_id == org_id)
     all_topics = q.order_by(models.Topic.name).all()
 
+    topic_org_ids = {t.org_id for t in all_topics if t.org_id is not None}
+    orgs_by_id = {
+        org.id: org for org in (
+            db.query(models.Organization)
+            .filter(models.Organization.id.in_(topic_org_ids))
+            .all()
+            if topic_org_ids else []
+        )
+    }
+
+    def org_scope_visible(topic: models.Topic, member_org_ids: set[str]) -> bool:
+        if topic.org_id is None:
+            return True
+        org = orgs_by_id.get(topic.org_id)
+        return (
+            org is not None
+            and (
+                org.discoverability != "hidden"
+                or topic.org_id in member_org_ids
+            )
+        )
+
     if current_user is None:
-        return [t for t in all_topics if t.sub_org_id is None]
+        return [
+            t for t in all_topics
+            if t.sub_org_id is None and org_scope_visible(t, set())
+        ]
+
+    active_org_ids = {
+        row.org_id for row in db.query(models.OrgMembership.org_id).filter(
+            models.OrgMembership.user_id == current_user.id,
+            models.OrgMembership.status == "active",
+        ).all()
+    }
 
     # Phase 12 — resolve admin-tier orgs by joining through the Role table;
     # legacy string column ('admin', 'owner') is dropped.
@@ -70,9 +102,12 @@ def list_topics(
 
     return [
         t for t in all_topics
-        if t.sub_org_id is None
-        or t.sub_org_id in visible_sub_org_ids
-        or t.org_id in parent_admin_org_ids
+        if org_scope_visible(t, active_org_ids)
+        and (
+            t.sub_org_id is None
+            or t.sub_org_id in visible_sub_org_ids
+            or t.org_id in parent_admin_org_ids
+        )
     ]
 
 

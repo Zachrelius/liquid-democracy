@@ -379,6 +379,7 @@ def test_post_global_proposal_no_org_skips_duration_gate(client, test_db):
     context for the gate; the helper short-circuits and any duration
     value is honored — but floor checks still apply."""
     user = _make_user(test_db, "global_dur")
+    user.is_admin = True
     topic = models.Topic(
         name="GlobalT", color="#000000",
     )
@@ -406,6 +407,7 @@ def test_post_global_proposal_below_floor_returns_400(client, test_db):
     """Floors apply even to global proposals (no permission gate to
     skip — voting_days < 0.05 is always invalid)."""
     user = _make_user(test_db, "global_dur_floor")
+    user.is_admin = True
     topic = models.Topic(name="GT2", color="#000000")
     test_db.add(topic)
     test_db.commit()

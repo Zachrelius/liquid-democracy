@@ -4335,3 +4335,17 @@ Verification: frontend **9/9 PASS**; targeted backend **173 PASS** across creati
 Railway frontend deployment `65851f90-b834-45ad-94ee-23d5e8822da3` SUCCESS; backend deployment `fc0f3f54-65bb-4579-91cb-aa43e45282da` SUCCESS. Production bundle `index-CCwDG6q2.js`; homepage 200; readiness 200/database connected; clean-browser production sanity had no console errors.
 
 Operational note: Z's organization was created before Phase 95 deployed, so its persisted method list/policy remains unchanged. It can be updated manually in Organization Settings; all organizations created after this deploy receive the new defaults automatically.
+
+---
+
+## Phase 96 — Adversarial Security Verification ✅ Complete (2026-07-17)
+
+Spec: `phase96_adversarial_security_verification_spec.md`. Branch `phase-96/adversarial-security-verification`.
+
+The hostile-user pass confirmed and remediated eight authorization/privacy issues. Invitation acceptance is now email-bound, closing verified-account theft of forwarded admin/member invitations. The canonical proposal-viewer boundary now protects every audited private-suborg ID surface, including detail, revision, trajectory, ballot-status, verification-weight, write-in, edit/delete/archive/advance, cosign, and comment-edit paths. Cross-organization topic IDs are rejected on proposal create/update before existing topic links are modified.
+
+The unsafe tenant-unscoped `/api/delegates/public*` directory is retired; the org-scoped filtered directory remains. Removed/suspended Polis creators no longer retain mutation or deanonymized-export access through stale ownership. Platform-global proposal creation is platform-admin-only and accepts only global topics. Hidden-organization topic names no longer appear to anonymous/unrelated callers through `/api/topics`. Suspended authors no longer retain content-edit shortcuts after losing proposal visibility.
+
+Negative probes confirmed existing defenses for refresh-token atomic rotation/hashing, authorized-share serialization, private Railway proxy/header trust, WebSocket proposal authorization, Didit HMAC/freshness/deduplication, upload byte/pixel/decode/path boundaries, anti-enumeration, and high-risk rate limits. Python and npm production dependency audits report zero known vulnerabilities; the tracked-source credential scan found no high-confidence secret or private-key artifact.
+
+Verification: **17/17 Phase 96 adversarial regressions PASS**; full backend **2,983 passed / 18 skipped / 0 failed**; focused security/integration suites PASS; frontend production build PASS. No migration; PG smoke not required. Production deployment evidence is recorded in the Phase 96 closeout/spec.

@@ -4344,6 +4344,15 @@ def accept_invitation(
             status_code=403, detail=auth_utils.VERIFY_EMAIL_DETAIL,
         )
 
+    # The token is a bearer secret, but it is also bound to the invited
+    # address. Without this check any verified account holding a forwarded or
+    # stolen link could claim the invitation (including its requested role).
+    if current_user.email.strip().casefold() != inv.email.strip().casefold():
+        raise HTTPException(
+            status_code=403,
+            detail="This invitation was issued to a different email address",
+        )
+
     # Phase 52 Stage 1 — verification membership floor gate. Even an
     # invited user has to satisfy the org's membership floor; an
     # invitation is who-can-join-at-all, the verification floor is
@@ -4889,6 +4898,11 @@ def create_org_proposal(
         topic_obj = db.get(models.Topic, t.topic_id)
         if not topic_obj:
             raise HTTPException(status_code=400, detail=f"Topic {t.topic_id} not found")
+        if topic_obj.org_id != org.id:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Topic {t.topic_id} does not belong to this organization",
+            )
         # Phase 8.5: scope-compatibility for proposal topics.
         # Parent-org proposal: only parent-org-wide topics allowed.
         # Sub-org proposal: only parent-org-wide OR same-sub-org topics allowed.
@@ -5969,8 +5983,9 @@ def get_org_proposal(
     ).first()
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found in this organization")
-    from routes.proposals import _build_proposal_out
-    return _build_proposal_out(proposal, db)
+    from routes.proposals import _build_proposal_out, _require_proposal_viewer
+    _require_proposal_viewer(db, proposal, current_user)
+    return _build_proposal_out(proposal, db, viewer_id=current_user.id)
 
 
 @router.post("/{org_slug}/proposals/{proposal_id}/advance", response_model=schemas.ProposalOut)
@@ -5995,6 +6010,8 @@ def advance_org_proposal(
     ).first()
     if not proposal:
         raise HTTPException(status_code=404, detail="Proposal not found in this organization")
+    from routes.proposals import _require_proposal_viewer
+    _require_proposal_viewer(db, proposal, current_user)
 
     # Phase 12 — moderator-tier authors are restricted to advancing their
     # own proposals. Admin/Steward have no such restriction. Documented in

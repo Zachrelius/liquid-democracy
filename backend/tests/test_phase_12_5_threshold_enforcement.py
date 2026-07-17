@@ -306,6 +306,7 @@ def test_post_global_proposal_no_org_skips_threshold_gate(client, test_db):
     value is honored. This preserves pre-12.5 behavior for the global
     path (which is rarely used)."""
     user = _make_user(test_db, "global_thresh")
+    user.is_admin = True
     topic = models.Topic(
         name="GlobalT", color="#000000",
     )
