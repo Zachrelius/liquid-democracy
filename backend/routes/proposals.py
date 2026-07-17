@@ -763,11 +763,11 @@ def _collect_proposal_creation_errors(
     # Phase 8.5: walk the parent chain via get_org_config so a sub-org can
     # enable a voting method its parent doesn't, or vice-versa (Decision 9).
     if org is not None:
-        from routes.organizations import DEFAULT_ORG_SETTINGS
+        from routes.organizations import LEGACY_UNCONFIGURED_VOTING_METHODS
         allowed = get_org_config(
             org,
             "allowed_voting_methods",
-            DEFAULT_ORG_SETTINGS["allowed_voting_methods"],
+            LEGACY_UNCONFIGURED_VOTING_METHODS,
         )
         if body.voting_method not in allowed:
             status_code = 403 if body.voting_method == "ranked_choice" else 400
@@ -1703,7 +1703,7 @@ def update_proposal(
         new_method = body.voting_method
         # Validate against org's allowed_voting_methods (mirrors the
         # _validate_voting_method check on create).
-        from routes.organizations import DEFAULT_ORG_SETTINGS
+        from routes.organizations import LEGACY_UNCONFIGURED_VOTING_METHODS
         org_for_method = (
             db.get(models.Organization, proposal.org_id)
             if proposal.org_id else None
@@ -1711,7 +1711,7 @@ def update_proposal(
         if org_for_method is not None:
             allowed = (org_for_method.settings or {}).get(
                 "allowed_voting_methods",
-                DEFAULT_ORG_SETTINGS["allowed_voting_methods"],
+                LEGACY_UNCONFIGURED_VOTING_METHODS,
             )
             if new_method not in allowed:
                 raise HTTPException(

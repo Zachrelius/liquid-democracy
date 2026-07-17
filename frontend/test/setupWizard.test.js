@@ -6,6 +6,7 @@ import {
   parseInvitationEmails,
   pendingSelectedTopics,
   slugifyOrganizationName,
+  STARTER_TOPIC_SUGGESTIONS,
 } from '../src/utils/setupWizard.js';
 
 test('organization slugs are normalized and capped', () => {
@@ -34,6 +35,18 @@ test('topic retry excludes server-existing and locally completed topics', () => 
   );
 });
 
+test('starter topics distinguish selected defaults from optional examples', () => {
+  const selected = STARTER_TOPIC_SUGGESTIONS
+    .filter(topic => topic.checked)
+    .map(topic => topic.name);
+  const optional = STARTER_TOPIC_SUGGESTIONS
+    .filter(topic => !topic.checked)
+    .map(topic => topic.name);
+
+  assert.deepEqual(selected, ['General', 'Budget', 'Policy', 'Operations']);
+  assert.deepEqual(optional, ['Events', 'Elections']);
+});
+
 test('organization creation continues into the resumable onboarding route', () => {
   const createOrg = readFileSync(
     new URL('../src/pages/CreateOrg.jsx', import.meta.url),
@@ -48,4 +61,7 @@ test('organization creation continues into the resumable onboarding route', () =
   assert.match(wizard, /searchParams\.get\('org'\)/);
   assert.doesNotMatch(wizard, /onClick=\{\(\) => setStep\(0\)\}/);
   assert.match(wizard, /Create your first proposal/);
+  assert.match(wizard, /Choose any, all, or none of these suggestions/);
+  assert.match(wizard, /Continue without topics/);
+  assert.doesNotMatch(wizard, /disabled=\{saving \|\| topics\.filter\(t => t\.checked\)\.length === 0\}/);
 });

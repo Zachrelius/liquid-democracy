@@ -3204,11 +3204,11 @@ export default function OrgSettings() {
               </p>
             </div>
 
-            {/* Phase 52j J3 — org-level proposal verification policy.
-                `author` (default) keeps today's behavior: proposal
+            {/* Phase 52j J3 / Phase 95 — org-level proposal verification policy.
+                `author` keeps the legacy behavior: proposal
                 author picks the floor. `always` applies the org-chosen
                 floor to every proposal. `never` ignores any stored
-                proposal floor at vote time. */}
+                proposal floor at vote time and is the fresh-org default. */}
             <div className="pt-2 border-t border-gray-200 space-y-1">
               <label htmlFor="org-settings-proposal-verification-policy" className="block text-xs font-medium text-gray-700">
                 Proposal verification policy
@@ -3219,12 +3219,12 @@ export default function OrgSettings() {
                 onChange={e => updateSetting('verification_proposal_policy', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
               >
-                <option value="author">Proposal author chooses (default)</option>
+                <option value="author">Proposal author chooses</option>
                 <option value="always">Always require verification on every proposal</option>
-                <option value="never">Never require verification on proposals</option>
+                <option value="never">Never require verification on proposals (new organization default)</option>
               </select>
               <p className="text-xs text-gray-500">
-                Controls how the per-proposal verification gate is set. "Author chooses" preserves today's behavior. "Always" applies the org-wide floor below to every proposal's vote. "Never" ignores any author-set floor at vote time.
+                Controls how the per-proposal verification gate is set. "Author chooses" lets each proposal add a requirement. "Always" applies the org-wide floor below to every proposal's vote. "Never" prevents one proposal from unexpectedly requiring verification when the organization is not using it.
               </p>
             </div>
 
