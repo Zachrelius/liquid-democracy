@@ -1,6 +1,6 @@
 # Phase 96 — Adversarial Security Verification
 
-**Status:** Implementation and local verification complete; production deploy pending (2026-07-17)
+**Status:** Complete (2026-07-17)
 
 ## Goal
 
@@ -92,3 +92,17 @@ Report confirmed findings and fixes, negative probes that passed, test-count del
 - Tracked secret/key scan: no tracked `.env`, private-key file, or recognized high-confidence credential signature found.
 - Frontend production build: passed. Existing large-bundle warning remains a performance concern, not a security failure.
 - No migration added; PostgreSQL migration smoke is not required.
+
+## Production verification
+
+- Implementation commit `9eb39f4`; no-fast-forward merge to `master` at `e9ba7bb`.
+- Railway backend deployment `b327db06-9bb8-4947-af72-bd70c5685cb2` matched the Phase 96 merge and reported `Deployment successful`; the frontend service remained online and reported a successful active deployment on the unchanged frontend bundle.
+- Production bundle: `index-CCwDG6q2.js` (expected unchanged because Phase 96 contained no frontend source changes).
+- Non-destructive production smoke: homepage HTTP 200; `/api/health/ready` HTTP 200 with database connected; retired `/api/delegates/public` HTTP 404; invalid invitation metadata HTTP 404; unsigned Didit webhook HTTP 401.
+- Railway CLI authentication was unavailable locally, so deployment-row verification used the signed-in Railway dashboard. No production data was created or mutated during verification.
+
+## Residual risks and next security work
+
+- This pass substantially increased authorization-boundary coverage but is not a claim of formal penetration-test coverage or certification. Repeat adversarial verification after major identity, tenancy, voting, delegation, upload, or infrastructure changes.
+- Independent external penetration testing remains appropriate before a high-stakes or regulated deployment.
+- Repository-wide frontend lint debt and the existing large JavaScript bundle are engineering-quality/performance work, not confirmed Phase 96 security vulnerabilities.
