@@ -178,7 +178,12 @@ def test_disabled_workers_are_not_false_incidents(db, monkeypatch):
     monkeypatch.setenv("DISABLE_DIGEST_SCHEDULER", "true")
     monkeypatch.setattr(settings, "sustained_majority_worker_disable", True)
     monkeypatch.setattr(monitor, "_STARTED_AT", now - timedelta(days=1))
-    snapshot = monitor.build_snapshot(db, now=now)
+    # Keep this worker-state regression independent of Railway's production
+    # /data/uploads mount.  GitHub's Linux runner intentionally has no such
+    # directory, and storage-mount behavior is covered separately.
+    snapshot = monitor.build_snapshot(
+        db, now=now, upload_dir=Path("local-test-uploads")
+    )
     assert snapshot["components"]["digest_scheduler"]["status"] == "disabled"
     assert snapshot["components"]["decision_worker"]["status"] == "disabled"
     assert snapshot["status"] == "ok"
