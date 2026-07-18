@@ -117,7 +117,7 @@ Report implementation status by workstream, new alert thresholds, test count/res
 - Live component evidence at `2026-07-18T17:12:12Z`: database connectivity healthy; PostgreSQL capacity 5.67%; non-health 5xx count 0; email failure streak 0; digest and decision-worker heartbeats current; upload capacity 0.03%; one eligible operational recipient; no issues.
 - GitHub Actions manual production-monitor run `29653540197` completed successfully in 8 seconds against merge `8fe3fce`. The healthy run opened no monitoring incident.
 - Safe alert-delivery evidence is covered by the mocked common-email transport integration and test-alert endpoint regression tests; no fabricated production outage was generated.
-- The workflow's `actions/github-script` dependency was raised from v7 to v8 after the first production run exposed GitHub's Node 20 retirement warning. A second manual run is required after the closeout commit to verify the warning-free workflow revision.
+- Closeout commit `4928f33`; no-fast-forward closeout merge `da2f28b`. The workflow's `actions/github-script` dependency was raised from v7 to v8 after the first production run exposed GitHub's Node 20 retirement warning. Manual run `29653634264` then verified the final workflow revision: success in 7 seconds with no annotations and no open `production-monitor` incident.
 - No new subscription or recurring paid service was added. Normal healthy checks send no email and use only the repository's existing GitHub Actions and Railway/Resend resources.
 
 ## References
