@@ -489,6 +489,45 @@ def set_user_verification_state(
 # Phase 9.5 — Platform settings + per-user org-creation-limit override
 # ---------------------------------------------------------------------------
 
+@router.post("/monitoring/test-alert")
+async def send_monitoring_test_alert(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_admin),
+) -> dict:
+    """Send one safe operational test message to alert recipients.
+
+    No incident state is opened and recipient addresses are not returned.
+    The audit row records only the recipient count and delivery outcome.
+    """
+    from ops_monitoring import send_test_alert
+
+    delivered, recipient_count = await send_test_alert(db)
+    log_audit_event(
+        db,
+        action="ops.monitoring_test_alert",
+        target_type="platform",
+        target_id="production-monitoring",
+        actor_id=current_user.id,
+        details={
+            "recipient_count": recipient_count,
+            "delivered": delivered,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
+    db.commit()
+    if recipient_count == 0:
+        raise HTTPException(
+            status_code=409,
+            detail="No active verified platform-admin alert recipient is configured.",
+        )
+    if not delivered:
+        raise HTTPException(
+            status_code=502,
+            detail="Monitoring test alert delivery failed. Check the email provider logs.",
+        )
+    return {"delivered": True, "recipient_count": recipient_count}
+
 @router.get("/platform-settings")
 def get_platform_settings(
     db: Session = Depends(get_db),

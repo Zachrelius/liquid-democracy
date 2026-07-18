@@ -4351,3 +4351,17 @@ Negative probes confirmed existing defenses for refresh-token atomic rotation/ha
 Verification: **17/17 Phase 96 adversarial regressions PASS**; full backend **2,983 passed / 18 skipped / 0 failed**; focused security/integration suites PASS; frontend production build PASS. No migration; PG smoke not required.
 
 Implementation `9eb39f4`; no-ff merge `e9ba7bb`. Railway backend deployment `b327db06-9bb8-4947-af72-bd70c5685cb2` matched the merge and reported successful; the frontend remained online on unchanged bundle `index-CCwDG6q2.js`. Production smoke passed: homepage 200, readiness 200/database connected, retired legacy delegate directory 404, invalid invitation metadata 404, and unsigned Didit webhook 401. Railway deployment evidence was verified through the signed-in dashboard because the local CLI session was unauthenticated.
+
+---
+
+## Phase 97 — Low-Cost Production Monitoring and Actionable Alerts ⏳ Production verification pending (2026-07-18)
+
+Spec: `phase97_production_monitoring_and_alerts_spec.md`. Branch `phase-97/production-monitoring`.
+
+Implemented a no-new-subscription monitoring layer using the existing Railway, GitHub Actions, platform-admin, and Resend surfaces. The public-safe `/api/health/monitor` aggregates database connectivity/capacity, digest and decision-worker heartbeats, repeated non-health 5xx responses, consecutive email transport failures, upload-volume capacity, and alert-recipient readiness. Three-strike and staleness thresholds suppress isolated noise; sanitized request shapes and request IDs preserve log correlation without leaking organization slugs, query strings, user data, exceptions, or secrets.
+
+An internal five-minute loop sends deduplicated incident/change/reminder/recovery email to active verified real platform admins (or an explicit `OPS_ALERT_EMAIL`) and persists only incident-delivery state in the existing `PlatformSetting` table. Legacy demo/test placeholder domains are excluded. A platform-admin-only audited endpoint sends a clearly labeled safe test without opening incident state. Monitoring failure is isolated from application requests and ordinary email delivery.
+
+The external GitHub Actions workflow probes the homepage and combined monitor twice hourly with three bounded attempts. A sustained failure opens one durable `production-monitor` issue and fails the workflow; recovery comments and closes it. This is the independent route when the whole app, database, or email provider is unavailable. Railway's deployment healthcheck remains a rollout gate, not continuous monitoring.
+
+Pre-deploy verification: **15/15 new monitoring tests PASS**; focused monitoring-adjacent compatibility suites PASS; full backend **2,998 passed / 18 skipped / 0 failed** (Phase 96 2,983 + 15); workflow YAML/contract and Python compile PASS. No frontend source change. No migration; PG smoke not required. Production activation and external workflow/email proof remain pending and are not yet claimed complete.

@@ -1084,6 +1084,79 @@ If the cause is obvious from the logs and the fix is one or two lines, hot-fix-f
 
 If the cause requires more than ~10 minutes of investigation OR if the diagnosis isn't certain, **revert immediately** with `git revert -m 1 <merge-sha>` and push, then diagnose offline.
 
+---
+
+## Phase 97 production monitoring runbook
+
+The low-cost monitoring layer has two independent paths:
+
+1. `GET /api/health/monitor` aggregates database connectivity/capacity,
+   digest and decision-worker heartbeats, repeated non-health 5xx responses,
+   repeated email transport failures, upload-volume capacity, and availability
+   of a verified platform-admin alert recipient. It returns HTTP 503 only for
+   actionable errors; capacity warnings remain HTTP 200.
+2. `.github/workflows/production-monitor.yml` checks the homepage and combined
+   monitor at minutes 7 and 37 of every hour. Three bounded attempts avoid
+   opening an incident for a brief edge-network hiccup. A sustained failure
+   opens one `production-monitor` GitHub issue and fails the workflow; recovery
+   comments on and closes the issue.
+
+Railway's service healthcheck is still useful during deployment, but Railway
+documents that it stops continuously polling after a deployment becomes live.
+The GitHub probe is the whole-service/down-database backstop.
+
+### Thresholds and first response
+
+| Component | Alert threshold | First response |
+|---|---|---|
+| Database | `SELECT 1` fails | Check Railway Postgres and backend deployment/logs. Do not run destructive SQL. |
+| Database capacity | warning at 80% of configured 5 GB; error at 90% | Confirm `pg_database_size`, growth source, and resize before the error boundary. |
+| HTTP 5xx | 3 non-health 5xx responses in 15 minutes | Search backend logs using the sanitized request IDs in the alert. |
+| Email delivery | 3 consecutive common-transport failures | Check Resend logs, quota, domain health, and Railway email variables. GitHub remains the independent alert path. |
+| Digest scheduler | 2 failed ticks or no success for 2.5 hours | Inspect `digest_loop` logs and `/api/health/scheduler`; confirm the scheduler is not intentionally disabled. |
+| Decision worker | 3 failed ticks or heartbeat older than max(20 min, 3 intervals) | Inspect the sustained-majority/decision-worker process and heartbeat row. |
+| Upload volume | warning at 85%, error at 95%, or `/data/uploads` unavailable | Confirm Railway volume mount and usage; resize/archive before writes fail. |
+| Alert recipients | zero active, verified, non-placeholder platform-admin emails | Restore at least one real platform-admin email or set `OPS_ALERT_EMAIL` explicitly. |
+
+### Deduplication and recovery
+
+- The internal monitor checks every five minutes, sends once when the incident
+  component fingerprint opens/changes, retries failed delivery after one hour,
+  and sends at most one unchanged reminder every 12 hours.
+- Incident delivery state is stored in the existing
+  `platform_settings.ops_monitor_alert_state` JSON row, so normal deploys do not
+  reset deduplication.
+- Recovery sends one platform-admin email and clears the active fingerprint.
+- Known demo/test placeholder domains (including `@demo.example`) are excluded;
+  `OPS_ALERT_EMAIL` can explicitly select one operational destination later.
+- The GitHub workflow never opens a second issue while a labeled incident is
+  already open.
+
+### Safe verification
+
+```bash
+curl -i https://www.liquiddemocracy.us/api/health/monitor
+```
+
+Expected healthy response: HTTP 200 and top-level `"status":"ok"` (or
+`"warning"` for non-critical capacity pressure). Do not generate fake 500s in
+production. A platform admin can safely prove operational email delivery with
+`POST /api/admin/monitoring/test-alert`; it sends a clearly labeled test and
+does not open incident state. The GitHub workflow also supports manual
+`workflow_dispatch` for a safe external-path proof.
+
+### Limitations
+
+- GitHub scheduled runs can be delayed during load; this is twice-hourly
+  monitoring, not a contractual uptime SLA.
+- GitHub workflow email depends on the repository owner's Actions notification
+  preferences. The durable Actions failure and incident issue still exist.
+- Runtime 5xx/email counters are process-local, appropriate for today's
+  one-worker deployment. Revisit aggregation before increasing `WORKERS` or
+  adding replicas.
+- Internal email cannot deliver during a provider outage; the external GitHub
+  incident is the intended independent route.
+
 ### pg_smoke gap revealed by Phase 13.2
 
 Phase 13.1 and Phase 13.2's first attempt both passed `pg_smoke --mode both` against the migration that was about to fail in production. Why pg_smoke missed it:

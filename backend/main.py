@@ -79,8 +79,42 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request_id = str(uuid.uuid4())
         start = time.perf_counter()
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            # Phase 97: retain a bounded, sanitized sample for repeated-500
+            # detection. Monitoring must never interfere with exception
+            # propagation or turn a primary failure into a different one.
+            try:
+                from ops_monitoring import record_http_failure
+                record_http_failure(
+                    method=request.method,
+                    path=request.url.path,
+                    request_id=request_id,
+                    status_code=500,
+                )
+            except Exception:
+                pass
+            request_log.exception(
+                "Unhandled request exception method=%s path=%s request_id=%s",
+                request.method,
+                request.url.path,
+                request_id,
+            )
+            raise
         elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
+
+        if response.status_code >= 500:
+            try:
+                from ops_monitoring import record_http_failure
+                record_http_failure(
+                    method=request.method,
+                    path=request.url.path,
+                    request_id=request_id,
+                    status_code=response.status_code,
+                )
+            except Exception:
+                pass
 
         # Add request ID to response headers
         response.headers["X-Request-ID"] = request_id
@@ -481,6 +515,21 @@ async def startup() -> None:
             "90-day cleanup will not run until next deploy fixes this."
         )
 
+    # Phase 97 — five-minute internal monitoring loop. It is deliberately
+    # isolated from startup: failure to import/launch monitoring is logged but
+    # cannot take the application down. The external GitHub probe will then
+    # detect the missing/stale monitor surface.
+    try:
+        from ops_monitoring import is_disabled as monitor_disabled, monitor_loop
+        if monitor_disabled():
+            log.info("Operations monitoring disabled via OPS_MONITOR_ENABLED=false.")
+        else:
+            import asyncio
+            app.state.ops_monitor_task = asyncio.create_task(monitor_loop())
+            log.info("Operations monitoring loop launched.")
+    except Exception:  # noqa: BLE001
+        log.exception("Failed to start operations monitoring loop")
+
     log.info("Startup complete.")
 
 
@@ -565,3 +614,18 @@ def health_scheduler(db: Session = Depends(get_db)):
         "digest_scheduler": _digest_state(),
         "sustained_majority_worker": sm_state,
     }
+
+
+@app.get("/api/health/monitor")
+def health_monitor(db: Session = Depends(get_db)):
+    """Phase 97 combined public-safe production monitor.
+
+    HTTP 503 is reserved for actionable errors so the external GitHub probe
+    can fail. Capacity warnings remain HTTP 200 while still appearing in the
+    payload and triggering the deduplicated internal admin alert.
+    """
+    from ops_monitoring import build_snapshot
+    snapshot = build_snapshot(db, upload_dir=_UPLOADS_BASE_DIR)
+    if snapshot["status"] == "error":
+        return JSONResponse(status_code=503, content=snapshot)
+    return snapshot
