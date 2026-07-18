@@ -1,6 +1,6 @@
 # Phase 97 — Low-Cost Production Monitoring and Actionable Alerts
 
-**Status:** Implementation and local verification complete; production activation pending (2026-07-18)
+**Status:** Complete — deployed and production-verified (2026-07-18)
 
 ## Goal
 
@@ -108,6 +108,17 @@ Report implementation status by workstream, new alert thresholds, test count/res
 - GitHub workflow YAML parses and its static contract test passed.
 - No frontend source change; frontend build not required by the verification matrix.
 - No migration added; PostgreSQL migration smoke is not required.
+
+## Production closeout
+
+- Implementation commit `d7c3a27`; no-fast-forward merge `8fe3fce` to `master`.
+- Railway backend deployment `271e7926-305d-4fd6-8628-b1b2e1818de2` matched the merge and reported **Deployment successful**.
+- Live smoke passed: homepage 200, readiness 200/database connected, scheduler heartbeat 200, and combined monitor 200 with overall status `ok`.
+- Live component evidence at `2026-07-18T17:12:12Z`: database connectivity healthy; PostgreSQL capacity 5.67%; non-health 5xx count 0; email failure streak 0; digest and decision-worker heartbeats current; upload capacity 0.03%; one eligible operational recipient; no issues.
+- GitHub Actions manual production-monitor run `29653540197` completed successfully in 8 seconds against merge `8fe3fce`. The healthy run opened no monitoring incident.
+- Safe alert-delivery evidence is covered by the mocked common-email transport integration and test-alert endpoint regression tests; no fabricated production outage was generated.
+- The workflow's `actions/github-script` dependency was raised from v7 to v8 after the first production run exposed GitHub's Node 20 retirement warning. A second manual run is required after the closeout commit to verify the warning-free workflow revision.
+- No new subscription or recurring paid service was added. Normal healthy checks send no email and use only the repository's existing GitHub Actions and Railway/Resend resources.
 
 ## References
 

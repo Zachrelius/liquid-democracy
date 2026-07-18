@@ -4354,7 +4354,7 @@ Implementation `9eb39f4`; no-ff merge `e9ba7bb`. Railway backend deployment `b32
 
 ---
 
-## Phase 97 — Low-Cost Production Monitoring and Actionable Alerts ⏳ Production verification pending (2026-07-18)
+## Phase 97 — Low-Cost Production Monitoring and Actionable Alerts ✅ Complete (2026-07-18)
 
 Spec: `phase97_production_monitoring_and_alerts_spec.md`. Branch `phase-97/production-monitoring`.
 
@@ -4364,4 +4364,6 @@ An internal five-minute loop sends deduplicated incident/change/reminder/recover
 
 The external GitHub Actions workflow probes the homepage and combined monitor twice hourly with three bounded attempts. A sustained failure opens one durable `production-monitor` issue and fails the workflow; recovery comments and closes it. This is the independent route when the whole app, database, or email provider is unavailable. Railway's deployment healthcheck remains a rollout gate, not continuous monitoring.
 
-Pre-deploy verification: **15/15 new monitoring tests PASS**; focused monitoring-adjacent compatibility suites PASS; full backend **2,998 passed / 18 skipped / 0 failed** (Phase 96 2,983 + 15); workflow YAML/contract and Python compile PASS. No frontend source change. No migration; PG smoke not required. Production activation and external workflow/email proof remain pending and are not yet claimed complete.
+Verification: **15/15 new monitoring tests PASS**; focused monitoring-adjacent compatibility suites PASS; full backend **2,998 passed / 18 skipped / 0 failed** (Phase 96 2,983 + 15); workflow YAML/contract and Python compile PASS. No frontend source change. No migration; PG smoke not required.
+
+Implementation `d7c3a27`; no-ff merge `8fe3fce`. Railway backend deployment `271e7926-305d-4fd6-8628-b1b2e1818de2` matched the merge and reported successful. Production smoke passed: homepage/readiness/scheduler/combined monitor all 200; the monitor reported `ok`, database capacity 5.67%, uploads 0.03%, zero recent 5xx, zero email-failure streak, current scheduler heartbeats, one eligible alert recipient, and no issues. GitHub Actions production-monitor run `29653540197` succeeded in 8 seconds and opened no incident. Safe email-delivery behavior is covered by mocked transport integration plus the audited test-alert endpoint; no fake production outage was created. No new paid subscription or recurring service was added.
