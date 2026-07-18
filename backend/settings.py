@@ -88,6 +88,20 @@ class Settings(BaseSettings):
     # Base URL for the pol.is API. Override for self-hosted instances.
     polis_api_base_url: str = "https://pol.is"
 
+    # Phase 97 — low-cost production monitoring. Defaults match the current
+    # single-instance Railway deployment and 5 GB Postgres volume. All are
+    # env-overridable without a code change as the deployment grows.
+    ops_monitor_enabled: bool = True
+    ops_monitor_interval_seconds: int = 300
+    ops_monitor_initial_delay_seconds: int = 60
+    ops_monitor_startup_grace_seconds: int = 1200
+    ops_digest_stale_seconds: int = 9000  # 2.5 hours for the hourly loop
+    ops_decision_worker_min_stale_seconds: int = 1200
+    ops_database_capacity_bytes: int = 5 * 1024 * 1024 * 1024
+    # Optional explicit destination. Empty uses active, verified platform
+    # admins while excluding known demo/test placeholder domains.
+    ops_alert_email: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

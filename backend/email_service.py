@@ -114,19 +114,29 @@ _SUBJECTS: dict[str, str] = {
 async def send_email(to: str, subject: str, html_body: str) -> bool:
     """Send an email via Resend (preferred), SMTP (fallback), or console."""
     if settings.resend_api_key:
-        return await _send_via_resend(to, subject, html_body)
-    if settings.smtp_host:
-        return await _send_via_smtp(to, subject, html_body)
+        sent = await _send_via_resend(to, subject, html_body)
+    elif settings.smtp_host:
+        sent = await _send_via_smtp(to, subject, html_body)
+    else:
+        # Console mode — no provider configured. Log so devs see the link.
+        log.info("=" * 60)
+        log.info("EMAIL (console mode — no email provider configured)")
+        log.info(f"  To:      {to}")
+        log.info(f"  Subject: {subject}")
+        log.info(f"  Body:")
+        print(html_body)
+        log.info("=" * 60)
+        sent = True
 
-    # Console mode — no provider configured. Log so devs see the link.
-    log.info("=" * 60)
-    log.info("EMAIL (console mode — no email provider configured)")
-    log.info(f"  To:      {to}")
-    log.info(f"  Subject: {subject}")
-    log.info(f"  Body:")
-    print(html_body)
-    log.info("=" * 60)
-    return True
+    # Phase 97: common transport-boundary instrumentation. Lazy import avoids
+    # coupling ordinary email delivery to monitoring initialization; failure
+    # to record must never change the caller-visible send result.
+    try:
+        from ops_monitoring import record_email_result
+        record_email_result(bool(sent))
+    except Exception:
+        pass
+    return bool(sent)
 
 
 async def _send_via_resend(to: str, subject: str, html_body: str) -> bool:

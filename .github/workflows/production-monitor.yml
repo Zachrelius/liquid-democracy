@@ -1,0 +1,126 @@
+name: Production monitor
+
+on:
+  schedule:
+    # Twice hourly, away from the top-of-hour congestion window.
+    - cron: "7,37 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: production-monitor
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe production with bounded retries
+        id: probe
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -u
+          healthy=false
+          homepage_status=000
+          monitor_status=000
+          for attempt in 1 2 3; do
+            homepage_status=$(curl --silent --show-error --location \
+              --connect-timeout 10 --max-time 20 \
+              --output /dev/null --write-out '%{http_code}' \
+              https://www.liquiddemocracy.us/ || true)
+            monitor_status=$(curl --silent --show-error --location \
+              --connect-timeout 10 --max-time 20 \
+              --output monitor.json --write-out '%{http_code}' \
+              https://www.liquiddemocracy.us/api/health/monitor || true)
+            if [ "$homepage_status" = "200" ] && [ "$monitor_status" = "200" ]; then
+              healthy=true
+              break
+            fi
+            if [ "$attempt" != "3" ]; then
+              sleep 20
+            fi
+          done
+          echo "homepage_status=$homepage_status" >> "$GITHUB_OUTPUT"
+          echo "monitor_status=$monitor_status" >> "$GITHUB_OUTPUT"
+          echo "healthy=$healthy" >> "$GITHUB_OUTPUT"
+          if [ "$healthy" != "true" ]; then
+            exit 1
+          fi
+
+      - name: Open one durable incident issue
+        if: steps.probe.outcome == 'failure'
+        uses: actions/github-script@v7
+        env:
+          HOMEPAGE_STATUS: ${{ steps.probe.outputs.homepage_status }}
+          MONITOR_STATUS: ${{ steps.probe.outputs.monitor_status }}
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const label = 'production-monitor';
+            try {
+              await github.rest.issues.getLabel({ owner, repo, name: label });
+            } catch (error) {
+              if (error.status === 404) {
+                await github.rest.issues.createLabel({
+                  owner, repo, name: label, color: 'B60205',
+                  description: 'Opened automatically when production monitoring fails'
+                });
+              } else {
+                throw error;
+              }
+            }
+            const open = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', labels: label, per_page: 20
+            });
+            if (open.data.length === 0) {
+              const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title: '[Production monitor] Liquid Democracy is unhealthy',
+                labels: [label],
+                body: [
+                  `The external production probe failed at ${new Date().toISOString()}.`,
+                  '',
+                  `- Homepage HTTP status: ${process.env.HOMEPAGE_STATUS || 'unknown'}`,
+                  `- Combined monitor HTTP status: ${process.env.MONITOR_STATUS || 'unknown'}`,
+                  `- [Workflow run](${runUrl})`,
+                  `- [Live monitor](https://www.liquiddemocracy.us/api/health/monitor)`,
+                  '',
+                  'First response: check the Railway backend/frontend/Postgres service state and backend logs. Monitoring makes no automatic production changes.'
+                ].join('\n')
+              });
+            }
+
+      - name: Close the incident after recovery
+        if: steps.probe.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const label = 'production-monitor';
+            const open = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', labels: label, per_page: 20
+            });
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            for (const issue of open.data) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: issue.number,
+                body: `Production recovered at ${new Date().toISOString()}. [Successful workflow run](${runUrl}).`
+              });
+              await github.rest.issues.update({
+                owner, repo, issue_number: issue.number, state: 'closed',
+                state_reason: 'completed'
+              });
+            }
+
+      - name: Mark an unhealthy probe failed
+        if: steps.probe.outcome == 'failure'
+        run: exit 1
