@@ -1346,6 +1346,12 @@ The restore CLI is never imported by application startup or exposed through an
 HTTP route. Run it only on an isolated operator machine with the offline private
 identity, a separate read-only R2 credential, a fresh PostgreSQL 18 database on
 a host other than production, and an already-created empty uploads directory.
+Do not retrieve the private identity during worker enablement or encrypted
+upload verification. Request it only after the ciphertext object's size,
+checksum metadata, lock, and lifecycle are verified, immediately before the
+isolated download/decrypt/restore step. Put the temporary operator copy in a
+local file outside the repository; communicate only that the file is ready,
+never the key contents.
 Set restore secrets in the local process environment rather than command-line
 arguments:
 
@@ -1398,6 +1404,13 @@ do not inspect or print private row/file contents.
   credential. Restore rehearsals should use a separate read-only credential.
 - Railway native restore stages a replacement volume in the same project and
   environment. Prove mechanics only with a disposable test service/volume.
+  Before an on-demand snapshot, quiesce fixture/application writes, explicitly
+  flush the mounted filesystem (`sync` in the Phase 98 Linux rehearsal), allow
+  a short settle interval, and record file hashes. Then back up, mutate and
+  flush distinct fixture values, restore the staged replacement volume, deploy
+  only the disposable change, and compare the restored hashes. Phase 98's first
+  immediate test snapshot returned zero-byte file entries despite correct
+  pre-backup reads; the flushed/settled repeat restored both original hashes.
   Never click through a production-volume restore for testing, and never detach,
   resize, replace, wipe, or overwrite a production volume during rehearsal.
 - Before a Pro-to-Hobby downgrade, record schedules, retained native backup
