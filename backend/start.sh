@@ -93,6 +93,18 @@ if [ "${SUSTAINED_MAJORITY_WORKER_DISABLE}" != "true" ]; then
     echo "Sustained-majority worker PID: ${SM_WORKER_PID}"
 fi
 
+# Phase 98 — encrypted offsite backup worker.  It is configuration-disabled
+# by default and deliberately non-critical: a configuration error or worker
+# crash must degrade /api/health/monitor without taking Uvicorn down.
+case "${OFFSITE_BACKUP_ENABLED:-false}" in
+    true|TRUE|True|1|yes|YES|on|ON)
+        echo "Starting offsite backup worker…"
+        python -m offsite_backup_worker &
+        BACKUP_WORKER_PID=$!
+        echo "Offsite backup worker PID: ${BACKUP_WORKER_PID}"
+        ;;
+esac
+
 echo "Starting application…"
 # Phase 35 D17 — Memory is the primary cost axis (97% of May 2026 usage).
 # Each uvicorn worker is a full Python process loading FastAPI + models +
@@ -136,7 +148,13 @@ UVICORN_PID=$!
 echo "Uvicorn PID: ${UVICORN_PID}"
 
 _cleanup() {
+    EXIT_CODE=${1:-0}
     echo "[start.sh] Received shutdown signal; forwarding to children…"
+    # The backup worker first so it can terminate pg_dump/age, close any
+    # object-store request, and remove its 0700 ephemeral workspace.
+    if [ -n "${BACKUP_WORKER_PID:-}" ]; then
+        kill -TERM "${BACKUP_WORKER_PID}" 2>/dev/null || true
+    fi
     # Worker first — needs time to finish current tick. Tolerate the worker
     # not being set (SUSTAINED_MAJORITY_WORKER_DISABLE=true skipped its
     # launch) by guarding on the PID being non-empty.
@@ -152,16 +170,32 @@ _cleanup() {
     if [ -n "${SM_WORKER_PID:-}" ]; then
         wait "${SM_WORKER_PID}" 2>/dev/null || true
     fi
+    if [ -n "${BACKUP_WORKER_PID:-}" ]; then
+        wait "${BACKUP_WORKER_PID}" 2>/dev/null || true
+    fi
     wait "${UVICORN_PID}" 2>/dev/null || true
     echo "[start.sh] All children exited; goodbye."
-    exit 0
+    exit "${EXIT_CODE}"
 }
 
 trap _cleanup SIGTERM SIGINT
 
-# Block until any child exits. If uvicorn or the worker dies for unrelated
-# reasons (OOM, crash), we fall through to the cleanup path and bring the
-# other child down too — no orphans.
-wait -n
-echo "[start.sh] A child process exited unexpectedly; shutting down…"
-_cleanup
+# Supervise the two load-bearing children explicitly.  The backup worker is
+# observed too, but its unexpected exit only opens monitoring state; the site
+# and decision worker remain available.
+while true; do
+    if ! kill -0 "${UVICORN_PID}" 2>/dev/null; then
+        echo "[start.sh] Uvicorn exited unexpectedly; shutting down…"
+        _cleanup 1
+    fi
+    if [ -n "${SM_WORKER_PID:-}" ] && ! kill -0 "${SM_WORKER_PID}" 2>/dev/null; then
+        echo "[start.sh] Decision worker exited unexpectedly; shutting down…"
+        _cleanup 1
+    fi
+    if [ -n "${BACKUP_WORKER_PID:-}" ] && ! kill -0 "${BACKUP_WORKER_PID}" 2>/dev/null; then
+        wait "${BACKUP_WORKER_PID}" 2>/dev/null || true
+        echo "[start.sh] Offsite backup worker exited; application remains available and monitoring is degraded."
+        BACKUP_WORKER_PID=""
+    fi
+    sleep 2
+done

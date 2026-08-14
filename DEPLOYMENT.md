@@ -1238,3 +1238,174 @@ _cleanup
 Cost: bash script is PID 1 instead of uvicorn — Railway tolerates shell-script entrypoints for this. Benefit: SIGTERM propagates to both subprocesses; the SM worker's `_Stop.flag=True` → finishes current tick → exits cleanly path actually runs on redeploy.
 
 **Verifying the fix is working post-deploy:** after any backend redeploy, search the REMOVED deployment's logs (i.e., the deployment that just got replaced) for the SM worker's shutdown line. The worker's `_install_signal_handlers` logs `Received signal {signum}; finishing tick and exiting.` when the trap forwards SIGTERM. If absent, the trap isn't delivering — investigate. If present, the fix is working as designed.
+## Layered backup and recovery (Phase 98)
+
+Liquid Democracy has two independent recovery layers:
+
+1. Railway-native volume backups cover fast, same-project recovery of the
+   Postgres and `/data/uploads` volumes while the workspace has the required
+   Railway entitlement.
+2. A dedicated backend child process creates a PostgreSQL custom-format dump
+   plus an uploads archive, embeds both and a versioned manifest in one tar
+   bundle, encrypts that bundle with `age`, and uploads only ciphertext to a
+   private Cloudflare R2 bucket. This application layer continues to work on
+   Hobby and is configuration-disabled by default.
+
+The offsite worker is not part of Uvicorn or the digest scheduler. `start.sh`
+launches it only when `OFFSITE_BACKUP_ENABLED=true`, forwards shutdown signals,
+and deliberately keeps Uvicorn running if the backup worker exits. A stable
+PostgreSQL advisory lock prevents deploy overlap or two selected replicas from
+backing up concurrently. Lifecycle expiration is an R2 policy; the worker has
+no pruning path and never exercises delete permission.
+
+### Offsite configuration
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `OFFSITE_BACKUP_ENABLED` | `false` | Starts the scheduler only when explicitly enabled |
+| `OFFSITE_BACKUP_TIME_UTC` | `11:00` | Daily `HH:MM` UTC schedule |
+| `OFFSITE_BACKUP_S3_ENDPOINT` | empty | HTTPS R2 S3 endpoint |
+| `OFFSITE_BACKUP_S3_REGION` | `auto` | R2 region value |
+| `OFFSITE_BACKUP_BUCKET` | empty | Dedicated private bucket name |
+| `OFFSITE_BACKUP_PREFIX` | `production` | Root object prefix |
+| `OFFSITE_BACKUP_ACCESS_KEY_ID` | empty | Bucket-scoped write credential |
+| `OFFSITE_BACKUP_SECRET_ACCESS_KEY` | empty | Bucket-scoped write secret |
+| `OFFSITE_BACKUP_AGE_RECIPIENT` | empty | Dedicated public `age1...` recipient only |
+| `OFFSITE_BACKUP_STALE_AFTER_SECONDS` | `129600` | Monitor error threshold (36 hours) |
+| `OFFSITE_BACKUP_WORKER_INSTANCE_ID` | empty | Optional match for `INSTANCE_ID` or `RAILWAY_REPLICA_ID` |
+
+Missing credentials are valid while disabled. If enabled configuration is
+missing, placeholder, non-HTTPS, or malformed, only the backup process exits;
+the site remains available and monitoring records a sanitized category. Never
+put the private `AGE-SECRET-KEY-...` identity in Railway, R2, repository files,
+logs, Google Drive, email, or application environment variables.
+
+The container installs PostgreSQL 18 `pg_dump`/`pg_restore` and checksum-pins
+official `age` v1.3.1. Both the image build and runtime preflight enforce the
+versions; runtime also refuses a PostgreSQL client older than the live server.
+Safe non-secret version checks are:
+
+```bash
+pg_dump --version
+pg_restore --version
+age --version
+```
+
+### R2 policy before first production object
+
+Create a private Standard-storage bucket without a public development URL,
+custom domain, public listing, or browser CORS exposure. Use credentials scoped
+to that one bucket. Configure locks and lifecycle rules over the exact worker
+prefixes before enabling:
+
+| Prefix | Minimum lock | Lifecycle expiration |
+|---|---:|---:|
+| `production/daily/` | 7 days | 8 days |
+| `production/weekly/` | 35 days | 36 days |
+| `production/monthly/` | 100 days | 101 days |
+
+Every run writes `daily/`; Sunday UTC also writes `weekly/`, and the first day
+of the UTC month also writes `monthly/`. These keys reference the same local
+ciphertext and are unique/non-overwriting. Do not enable production offsite
+backup until Railway-native coverage is visible, per the Phase 98 gate order.
+
+### Preflight, manual run, and monitoring
+
+The preflight reads database/tool/version/upload/space/advisory-lock state,
+validates the public recipient by encrypting an empty ephemeral file, and calls
+R2 `HEAD Bucket`. It does not invoke `pg_dump` or upload an object, and it can be
+run while the enable flag is still false:
+
+```bash
+python -m offsite_backup_worker --preflight
+```
+
+After native coverage and provider policies are independently verified, enable
+and deploy, then use the scheduler's exact core path for the initial manual run:
+
+```bash
+python -m offsite_backup_worker --once
+```
+
+`GET /api/health/monitor` exposes only coarse `offsite_backup` state:
+`disabled`, first-run `warning`, recent verified `ok`, or `error` after a failed
+run or 36-hour staleness. It never exposes endpoints, bucket names, object keys,
+credentials, database URLs, upload filenames, row contents, or raw command
+output. Phase 97 incident/recovery email and the external GitHub monitor consume
+this component through the existing deduplicated behavior.
+
+Useful incident order is: confirm the site is healthy; read the public monitor;
+run preflight; inspect the backup worker's sanitized category; confirm the R2
+bucket/policy/credential and Railway database/uploads services; then manually
+run once only after fixing the cause. Do not disable locks, make the bucket
+public, log credentials, or restore production as a troubleshooting shortcut.
+
+### Isolated verify and restore rehearsal
+
+The restore CLI is never imported by application startup or exposed through an
+HTTP route. Run it only on an isolated operator machine with the offline private
+identity, a separate read-only R2 credential, a fresh PostgreSQL 18 database on
+a host other than production, and an already-created empty uploads directory.
+Set restore secrets in the local process environment rather than command-line
+arguments:
+
+```bash
+export OFFSITE_RESTORE_S3_ENDPOINT="https://<account>.r2.cloudflarestorage.com"
+export OFFSITE_RESTORE_S3_REGION="auto"
+export OFFSITE_RESTORE_BUCKET="<private-bucket>"
+export OFFSITE_RESTORE_ACCESS_KEY_ID="<read-only-key>"
+export OFFSITE_RESTORE_SECRET_ACCESS_KEY="<read-only-secret>"
+export OFFSITE_RESTORE_TARGET_DATABASE_URL="postgresql://<user>:<password>@<isolated-host>/phase98_restore_test"
+export OFFSITE_PRODUCTION_DATABASE_HOST="<exact-production-host>"
+export OFFSITE_PRODUCTION_DATABASE_NAME="<exact-production-database-name>"
+python backend/scripts/restore_offsite_backup.py \
+  --object-key "production/daily/YYYY/MM/<ciphertext>.tar.age" \
+  --identity "/offline/path/phase98-age-identity.txt" \
+  --confirm "RESTORE DISPOSABLE DATABASE phase98_restore_test ON <isolated-host>" \
+  --uploads-destination "/isolated/empty/uploads" \
+  --verify-only
+```
+
+Remove `--verify-only` for the approved rehearsal. The tool rejects missing or
+ambiguous targets, the current database URL, either configured production host
+or database name (case-insensitive), libpq query-string routing overrides,
+non-empty databases across all non-system schemas, non-empty upload targets,
+and targets whose database name does not clearly contain `restore`, `test`,
+`rehearsal`, `disposable`, `scratch`, or `temp`. It verifies ciphertext metadata
+and checksum, decrypts, verifies the manifest/member checksums, requires the
+backup's Alembic current revision to equal its recorded head, restores with
+PostgreSQL 18 `pg_restore`, rechecks revisions and representative counts, then
+extracts uploads with traversal/link/special-file rejection and count/byte
+verification.
+
+Temporary plaintext is removed on normal completion and failures. The command
+fails loudly if cleanup cannot be completed. `--keep-temporary` is an explicit
+diagnostic override and must never be used casually with production data.
+Filesystem deletion is not guaranteed forensic erasure on SSDs; use an
+encrypted operator disk, destroy the disposable database/uploads promptly, and
+do not inspect or print private row/file contents.
+
+### Key loss, credential rotation, downgrade, and real incidents
+
+- Losing the private age identity makes existing objects unrecoverable. Keep it
+  in a password-manager secure note and a second offline recovery location;
+  read both back before the first live run. If the identity may be compromised,
+  generate a new dedicated pair, preserve the old identity offline until its
+  objects expire, update only the public recipient in Railway, and prove a new
+  backup/restore.
+- Rotate R2 credentials by creating a new bucket-scoped credential, updating
+  Railway, running preflight plus one verified backup, then revoking the old
+  credential. Restore rehearsals should use a separate read-only credential.
+- Railway native restore stages a replacement volume in the same project and
+  environment. Prove mechanics only with a disposable test service/volume.
+  Never click through a production-volume restore for testing, and never detach,
+  resize, replace, wipe, or overwrite a production volume during rehearsal.
+- Before a Pro-to-Hobby downgrade, record schedules, retained native backup
+  identifiers, renewal timing, and what Railway's authenticated UI says. Do not
+  promise that native schedules or retained-backup access survive. After Hobby
+  becomes effective, prove another offsite success and monitor/object state.
+- A real production restore is outside Phase 98. Freeze writes and preserve
+  evidence, identify the incident window and best verified artifact, obtain a
+  separate incident decision, rehearse against disposable resources, and only
+  then author a production-specific recovery plan. Never improvise an automated
+  destructive restore.
