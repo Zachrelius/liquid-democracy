@@ -1,6 +1,31 @@
 # Phase 98 — Layered Backup and Recovery
 
-**Status:** Ready for execution; no paid plan change, provider account change, production backup, or production-data restore has started
+**Status:** Stages 0-1 complete and Stage 3 disabled-deploy checks partially complete; Gate 2 awaits Z's explicit R2 billing/storage approval. No paid plan change, provider account change, production backup, or production-data restore has started.
+
+## Execution results — 2026-08-14
+
+### Stage 0 — DONE (read-only)
+
+- The authenticated Railway UI confirms the workspace remains on Hobby. The current billing cycle is August 5–September 5. The Pro confirmation modal displayed an immediate **$20** charge; it was closed without purchasing.
+- Both the Postgres and backend/uploads Backups tabs state that backups and PITR require Pro. No schedules were configured.
+- Postgres and uploads each retain a 5 GB Railway volume in US East at `/var/lib/postgresql/data` and `/data/uploads`, respectively. Postgres still has the no-expiration 440 MB `Online resize to 5000MB` recovery point plus the 959 MB `Pre-Security-Patch Backup`; uploads has no backup.
+- The production homepage, readiness endpoint, and combined monitor were healthy before implementation. The monitor reported database capacity below 10%, uploads at 0.03%, no recent 5xx responses, current scheduler/decision-worker heartbeats, and one alert recipient.
+
+### Stage 1 — DONE
+
+- Implemented the configuration-disabled worker, PG advisory lock, PG custom dump, no-follow uploads archive, versioned manifest, pinned age encryption, private immutable R2 upload/verification path, coarse `PlatformSetting` state, monitor component, isolated process supervision, and fail-closed disposable-target restore CLI.
+- Added PostgreSQL 18 clients plus checksum-pinned age v1.3.1 to the container and pinned boto3/botocore 1.43.54. The worker has no object-delete path and receives no private age identity.
+- Verification passed: Phase 98 suites 36 passed/2 environment skips; a separate real age v1.3.1 round-trip passed with a disposable identity and wrong-key rejection; full backend 3,034 passed/20 skipped/0 failed (Phase 97 baseline 2,998, +36); Python compile, Git Bash syntax, diff check, and scoped high-confidence secret scan passed. The remaining local symlink fixture skip is Windows privilege-specific and its no-follow behavior has independent contract coverage.
+- Implementation commit `83698f1`; no-fast-forward merge `ab4356f`; Railway backend deployment `17d6ced9-bb75-46ab-84e8-d4973dfa8026` became Active. The image build verified the official age archive checksum and version assertions. The live container reports `pg_dump 18.6`, `pg_restore 18.6`, and `age v1.3.1`.
+- Disabled production smoke passed: homepage title correct, readiness `ok` with database connected, monitor overall `ok`, and `offsite_backup.status=disabled` with no issues. Post-deploy GitHub production-monitor run `31815337987` succeeded and opened no incident.
+- No migration was added; PG migration smoke was not required. No frontend source changed; frontend build was not required.
+
+### Remaining gates
+
+- **Stage 2 / Gate 2 — BLOCKED pending explicit Z approval.** No production age keypair, R2 bucket, billing relationship, credentials, locks, lifecycle rules, or stored object exists yet.
+- **Stage 3 — PARTIAL.** The disabled deploy, live tool versions, and disabled monitor behavior are proven. R2-connected preflight and the synthetic `test/` object/restore/lifecycle proof are not started because Stage 2 is not approved.
+- **Stages 4–7 — NOT STARTED.** Railway remains on Hobby; no Pro charge was accepted; no native schedules/manual backups, disposable native restore, production offsite backup, isolated production-data restore rehearsal, or downgrade-continuity proof has run.
+- Phase 98 is deliberately **not complete**. Completion still requires both the isolated offsite restore and the disposable native restore-mechanics rehearsal required by this spec.
 
 ## Goal
 
