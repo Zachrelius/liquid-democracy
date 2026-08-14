@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import html
 import json
@@ -211,6 +211,99 @@ def _worker_component(
     }
 
 
+def _offsite_backup_component(db: Session, now: datetime) -> dict[str, Any]:
+    """Render versioned backup state without destination/object identifiers."""
+    stale_after = settings.offsite_backup_stale_after_seconds
+    if not settings.offsite_backup_enabled:
+        return {
+            "status": "disabled",
+            "last_success_at": None,
+            "age_seconds": None,
+            "stale_after_seconds": stale_after,
+            "guidance": "Encrypted offsite backups are intentionally disabled by configuration.",
+        }
+    try:
+        row = db.get(models.PlatformSetting, "offsite_backup_state_v1")
+        state = dict(row.value) if row is not None and isinstance(row.value, dict) else {}
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        state = {}
+    def safe_int(value: Any) -> int:
+        try:
+            return max(0, min(int(value), 9_223_372_036_854_775_807))
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
+    def safe_float(value: Any) -> Optional[float]:
+        try:
+            result = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return round(result, 3) if 0 <= result <= 7 * 24 * 60 * 60 else None
+
+    safe_categories = {
+        "archive_failure", "concurrent_run", "database_metadata_failure",
+        "disabled", "encryption_failure", "insufficient_space",
+        "interrupted", "invalid_configuration", "invalid_recipient",
+        "lock_unavailable", "object_store_unavailable", "subprocess_failure",
+        "toolchain_incompatible", "toolchain_unavailable", "unexpected_failure",
+        "unsafe_upload_tree", "upload_failure", "upload_tree_changed",
+        "uploads_unavailable", "verification_failure", "wrong_instance",
+    }
+    consecutive_failures = safe_int(state.get("consecutive_failures"))
+    category_value = state.get("failure_category")
+    safe_category = category_value if category_value in safe_categories else (
+        "unexpected_failure" if category_value else None
+    )
+    raw_classes = state.get("last_retention_classes")
+    safe_classes = (
+        [item for item in raw_classes if item in {"daily", "weekly", "monthly"}]
+        if isinstance(raw_classes, list) else None
+    )
+    encrypted_size = safe_int(state.get("last_encrypted_size")) or None
+    last_success = _as_utc(state.get("last_success_at"))
+    last_failure = _as_utc(state.get("last_failure_at"))
+    if last_success is not None and last_success > now + timedelta(minutes=5):
+        last_success = None
+    if last_failure is not None and last_failure > now + timedelta(minutes=5):
+        last_failure = None
+    age = int((now - last_success).total_seconds()) if last_success else None
+    startup_age = int((now - _STARTED_AT).total_seconds())
+    within_grace = startup_age < settings.ops_monitor_startup_grace_seconds
+    has_failure = consecutive_failures > 0
+    failure_after_success = last_failure is not None and (
+        last_success is None or last_failure > last_success
+    )
+    stale = age is not None and age > stale_after
+    missing = last_success is None
+    if has_failure or failure_after_success or stale or (missing and not within_grace):
+        status = "error"
+    elif missing:
+        status = "warning"
+    else:
+        status = "ok"
+    return {
+        "status": status,
+        "last_success_at": last_success.isoformat() if last_success else None,
+        "last_failure_at": last_failure.isoformat() if last_failure else None,
+        "age_seconds": age,
+        "stale_after_seconds": stale_after,
+        "consecutive_failures": consecutive_failures,
+        "last_encrypted_size": encrypted_size if last_success else None,
+        "last_retention_classes": safe_classes if last_success else None,
+        "last_duration_seconds": safe_float(state.get("last_duration_seconds")) if last_success else None,
+        "failure_category": safe_category if status == "error" else None,
+        "guidance": (
+            "Run the offsite backup preflight and inspect sanitized backend worker logs."
+            if status in {"warning", "error"}
+            else "No action required."
+        ),
+    }
+
+
 def _capacity_component(
     *, used_bytes: Optional[int], capacity_bytes: Optional[int], guidance: str,
     warning_percent: float = 85, error_percent: float = 95,
@@ -342,6 +435,8 @@ def build_snapshot(
         failure_threshold=3,
         disabled=settings.sustained_majority_worker_disable,
     )
+
+    components["offsite_backup"] = _offsite_backup_component(db, now)
 
     upload_dir = Path(upload_dir or os.environ.get("UPLOAD_DIR") or "/data/uploads")
     should_check_storage = force_storage_check or str(upload_dir).replace("\\", "/").startswith("/data/")

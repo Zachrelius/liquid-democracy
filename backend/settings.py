@@ -102,6 +102,24 @@ class Settings(BaseSettings):
     # admins while excluding known demo/test placeholder domains.
     ops_alert_email: str = ""
 
+    # Phase 98 — encrypted offsite backup worker.  These defaults are
+    # deliberately inert: importing web settings never requires R2 credentials
+    # or an age recipient.  The dedicated worker performs fail-closed
+    # validation only when it is started or explicitly preflighted.
+    offsite_backup_enabled: bool = False
+    offsite_backup_time_utc: str = "11:00"
+    offsite_backup_s3_endpoint: str = ""
+    offsite_backup_s3_region: str = "auto"
+    offsite_backup_bucket: str = ""
+    offsite_backup_prefix: str = "production"
+    offsite_backup_access_key_id: str = ""
+    offsite_backup_secret_access_key: str = ""
+    offsite_backup_age_recipient: str = ""
+    offsite_backup_stale_after_seconds: int = 129600  # 36 hours
+    # Empty means run on the current single instance.  When populated it must
+    # match INSTANCE_ID or RAILWAY_REPLICA_ID before a run may start.
+    offsite_backup_worker_instance_id: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 
