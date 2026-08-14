@@ -1,6 +1,6 @@
 # Phase 98 — Layered Backup and Recovery
 
-**Status:** Stages 0-2 complete. Stage 3's live R2 preflight and synthetic backup/restore proof passed; observation of the one-day synthetic lifecycle deletion is not yet due. Railway remains on Hobby, the production offsite worker remains disabled, and no production backup or production-data restore has started.
+**Status:** Stages 0-2 and Stage 4 are complete. Stage 3's live R2 preflight and synthetic backup/restore proof passed; its one-day lifecycle deletion observation remains clock-bound and Z explicitly directed Stage 4 to proceed without waiting for it. Railway Pro is active, both production volumes have native daily/weekly/monthly schedules and fresh manual recovery points, the production offsite worker remains disabled, and no production offsite backup or production-data restore has started.
 
 ## Execution results — 2026-08-14
 
@@ -38,11 +38,20 @@
 - The standalone restore CLI downloaded and verified ciphertext SHA-256 `630288a97a1a0ad32d3a5a15788bcc405ad8a398bc9759fe233002f71a909bc4`, decrypted with a disposable synthetic identity, restored into a separate empty PostgreSQL 18 database, and verified Alembic head `c5d6e7f8a9b0`, the known user count, and a byte-for-byte upload match. It left zero decrypted `offsite-restore-*` directories.
 - Both disposable databases, all synthetic source/restore/key files, the transient credential, and the temporary Railway service were removed. Only the encrypted test object remains so Cloudflare lifecycle deletion can be observed. Its dashboard timestamp is August 14, 2026 at 12:45:50 EDT; deletion observation is **NOT YET DUE** before August 15, 2026 at 12:45:50 EDT and may be eventually processed after that boundary.
 
+### Stage 4 / Gate 4 — DONE
+
+- Z activated Railway Pro and explicitly directed Stage 4 to continue without waiting for the clock-bound R2 lifecycle observation. The authenticated workspace now reports **Pro** active as of August 14, 2026. The current billing cycle is August 5–September 5; the billing history records a **$10.73** usage-based subscription invoice on August 14, while the usage page reports the ongoing **$20.00 Pro plan fee** with **$20.00 included usage**. The downgrade/keep decision is due before the September 5 cycle boundary.
+- Enabled and re-opened the schedule dialogs to verify all three selections are checked on both `postgres-volume` and `user-uploads`: daily every 24 hours retained 6 days, weekly every 7 days retained 1 month, and monthly every 30 days retained 3 months.
+- Created one manual backup on each production volume without invoking Restore. PostgreSQL recovery point `2026-08-14 14:28` reports **991 MB** referenced size; uploads recovery point `2026-08-14 14:30` reports **150 MB**. The existing PostgreSQL manual points remain `Pre-Security-Patch Backup` at **959 MB** and `Online resize to 5000MB` at **440 MB**.
+- Railway's August 5–September 5 usage ledger currently reports **6,284.48 minutely GB** of Backup usage at **$0.000003/GB/minute**, costing **$0.0218** cycle-to-date. The four visible references total 2.54 GB, which projects to about **$0.34 per 31 days** if the footprint stays flat; scheduled retention will grow that footprint, while Railway's incremental storage behavior may reduce the realized amount. The workspace's overall current estimated bill is **$4.47**.
+- PostgreSQL PITR remains off because Stage 4 requires native volume schedules, not a production redeploy for PITR. No production Restore control was used. After the changes, the combined production monitor remained `ok` with no issues, both capacity checks healthy, and `offsite_backup.status=disabled` as intended.
+- No continuity assumption is made for these Pro-created backups after downgrade. Their accessibility must be treated as unproved unless Railway documents or a later safe observation establishes it.
+
 ### Remaining gates
 
-- **Stage 3 — PARTIAL only for the clock-bound lifecycle observation.** The preflight and complete synthetic object/restore/cleanup proof passed. Confirm the one-day lifecycle removed the synthetic object after its due time, then remove the temporary synthetic lifecycle rule if no longer needed.
-- **Stage 4 / Gate 4 — BLOCKED pending exact Z approval for the immediate $20 Railway Pro charge.** The preparation conditions are now met, but approval for the paid Railway plan change has not been granted.
-- **Stages 4–7 — NOT STARTED.** Railway remains on Hobby; no Pro charge was accepted; no native schedules/manual backups, disposable native volume restore, production offsite backup, isolated production-data restore rehearsal, or downgrade-continuity proof has run.
+- **Stage 3 — PARTIAL only for the clock-bound lifecycle observation.** The preflight and complete synthetic object/restore/cleanup proof passed. Z explicitly waived waiting for this observation before Stage 4. Confirm the one-day lifecycle removed the synthetic object after its due time, then remove the temporary synthetic lifecycle rule if no longer needed.
+- **Stage 4 / Gate 4 — DONE.** Pro is active; both native schedule matrices and both new manual recovery points are verified above.
+- **Stages 5–7 — NOT STARTED.** No disposable native-volume restore, production offsite backup, isolated production-data restore rehearsal, or downgrade-continuity proof has run.
 - Phase 98 is deliberately **not complete**. Completion still requires both the isolated offsite restore and the disposable native restore-mechanics rehearsal required by this spec.
 
 ## Goal
