@@ -1,6 +1,6 @@
 # Phase 98 — Layered Backup and Recovery
 
-**Status:** Stages 0-1 complete and Stage 3 disabled-deploy checks partially complete; Gate 2 awaits Z's explicit R2 billing/storage approval. No paid plan change, provider account change, production backup, or production-data restore has started.
+**Status:** Stages 0-2 complete. Stage 3's live R2 preflight and synthetic backup/restore proof passed; observation of the one-day synthetic lifecycle deletion is not yet due. Railway remains on Hobby, the production offsite worker remains disabled, and no production backup or production-data restore has started.
 
 ## Execution results — 2026-08-14
 
@@ -20,11 +20,29 @@
 - Disabled production smoke passed: homepage title correct, readiness `ok` with database connected, monitor overall `ok`, and `offsite_backup.status=disabled` with no issues. Post-deploy GitHub production-monitor run `31815337987` succeeded and opened no incident.
 - No migration was added; PG migration smoke was not required. No frontend source changed; frontend build was not required.
 
+### Stage 2 / Gate 2 — DONE
+
+- Z explicitly approved the Cloudflare R2 billing relationship and storage of Phase 98 production backups. R2 was activated with $0 due at checkout; usage remains subject to Cloudflare's included allowance and overage pricing.
+- Created the private Standard bucket `liquid-democracy-production-backups` in Eastern North America. Public access is disabled; no public development URL, custom domain, CORS policy, or R2 Data Catalog is enabled.
+- Enabled prefix locks before any production object: `production/daily/` for 7 days, `production/weekly/` for 35 days, and `production/monthly/` for 100 days. Enabled lifecycle deletion after 8, 36, and 101 days on those prefixes respectively.
+- Generated a dedicated production age identity. Z saved and verified password-manager and offline flash-drive copies by exact private-identity/public-recipient readback. Railway received only the public recipient. The temporary workstation identity/tooling directory and clipboard copy were removed after verification; the private identity was never stored in Railway, R2, GitHub, the repository, or application logs.
+- Created `Phase 98 production backup writer` with Object Read & Write access scoped only to this bucket. It can read, write, and list objects but cannot administer buckets. Its one-time values were transferred directly into Railway secret variables and not written to the repository or a local credential file.
+- Applied all 10 `OFFSITE_BACKUP_*` variables to the Railway backend while explicitly retaining `OFFSITE_BACKUP_ENABLED=false`. Deployment `dabaa9dc-9987-43f7-b88e-ca4440634da0` became Active.
+
+### Stage 3 — PARTIAL (all immediately runnable checks passed)
+
+- Live production preflight passed without dumping or uploading: database and upload-volume reads, advisory lock, temporary-space check, age recipient parsing, bucket connectivity, PostgreSQL client/server compatibility, and R2 credentials all succeeded. The container reported `pg_dump 18.6`, `pg_restore 18.6`, and `age v1.3.1`.
+- Immediately after preflight, Cloudflare still showed a 0-byte bucket with no objects and Public Access disabled. The production monitor remained overall `ok` with `offsite_backup.status=disabled` and no offsite issue.
+- Added an enabled one-day lifecycle rule for `test/phase98-synthetic-20260814/`, then used a short-lived isolated Railway `postgres:18` service containing one known synthetic user and one 33-byte upload fixture. No production database or production uploads path was read.
+- The full pipeline produced one 194,792-byte ciphertext object under the synthetic `test/` prefix. HEAD verification found exactly the allowed metadata keys: artifact format version, creation time, encrypted length, and ciphertext SHA-256. No plaintext object was uploaded.
+- The standalone restore CLI downloaded and verified ciphertext SHA-256 `630288a97a1a0ad32d3a5a15788bcc405ad8a398bc9759fe233002f71a909bc4`, decrypted with a disposable synthetic identity, restored into a separate empty PostgreSQL 18 database, and verified Alembic head `c5d6e7f8a9b0`, the known user count, and a byte-for-byte upload match. It left zero decrypted `offsite-restore-*` directories.
+- Both disposable databases, all synthetic source/restore/key files, the transient credential, and the temporary Railway service were removed. Only the encrypted test object remains so Cloudflare lifecycle deletion can be observed. Its dashboard timestamp is August 14, 2026 at 12:45:50 EDT; deletion observation is **NOT YET DUE** before August 15, 2026 at 12:45:50 EDT and may be eventually processed after that boundary.
+
 ### Remaining gates
 
-- **Stage 2 / Gate 2 — BLOCKED pending explicit Z approval.** No production age keypair, R2 bucket, billing relationship, credentials, locks, lifecycle rules, or stored object exists yet.
-- **Stage 3 — PARTIAL.** The disabled deploy, live tool versions, and disabled monitor behavior are proven. R2-connected preflight and the synthetic `test/` object/restore/lifecycle proof are not started because Stage 2 is not approved.
-- **Stages 4–7 — NOT STARTED.** Railway remains on Hobby; no Pro charge was accepted; no native schedules/manual backups, disposable native restore, production offsite backup, isolated production-data restore rehearsal, or downgrade-continuity proof has run.
+- **Stage 3 — PARTIAL only for the clock-bound lifecycle observation.** The preflight and complete synthetic object/restore/cleanup proof passed. Confirm the one-day lifecycle removed the synthetic object after its due time, then remove the temporary synthetic lifecycle rule if no longer needed.
+- **Stage 4 / Gate 4 — BLOCKED pending exact Z approval for the immediate $20 Railway Pro charge.** The preparation conditions are now met, but approval for the paid Railway plan change has not been granted.
+- **Stages 4–7 — NOT STARTED.** Railway remains on Hobby; no Pro charge was accepted; no native schedules/manual backups, disposable native volume restore, production offsite backup, isolated production-data restore rehearsal, or downgrade-continuity proof has run.
 - Phase 98 is deliberately **not complete**. Completion still requires both the isolated offsite restore and the disposable native restore-mechanics rehearsal required by this spec.
 
 ## Goal
