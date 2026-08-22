@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
@@ -10,6 +10,12 @@ import LinkedPolisesPicker from '../../components/LinkedPolisesPicker';
 // the proposal-creation topic picker.
 import renderMarkdown from '../../utils/renderMarkdown';
 import { unitInputSymbol } from '../../utils/budgetFormat';
+import {
+  aggregateBulkAdvanceResponses,
+  bulkAdvanceSummaryMessage,
+  chunkProposalIds,
+  visibleDraftProposalIds,
+} from '../../utils/bulkDeliberation';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
 // Phase 52 Stage 1 — shared verification state label tables.
@@ -2540,11 +2546,40 @@ export default function ProposalManagement() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [showCreate, setShowCreate] = useState(searchParams.get('create') === '1');
   const [expandedId, setExpandedId] = useState(null);
+  const [proposalSelection, setProposalSelection] = useState(
+    () => ({ slug: null, ids: new Set() }),
+  );
+  const [bulkAdvanceWorking, setBulkAdvanceWorking] = useState(false);
+  const selectAllDraftsRef = useRef(null);
   // Phase 72 — when an import file carries 2+ proposals, the create form
   // hands the per-item preview results here and we render the review list.
   const [multiImportItems, setMultiImportItems] = useState(null);
 
   const slug = currentOrg?.slug;
+  const selectedProposalIds = proposalSelection.slug === slug
+    ? proposalSelection.ids
+    : new Set();
+  const updateSelectedProposalIds = useCallback((updater) => {
+    setProposalSelection(previous => {
+      const current = previous.slug === slug ? previous.ids : new Set();
+      const next = typeof updater === 'function' ? updater(current) : updater;
+      return { slug, ids: next };
+    });
+  }, [slug]);
+  const visibleDraftIds = useMemo(
+    () => visibleDraftProposalIds(proposals),
+    [proposals],
+  );
+  const selectedCount = selectedProposalIds.size;
+  const allVisibleDraftsSelected = visibleDraftIds.length > 0
+    && visibleDraftIds.every(id => selectedProposalIds.has(id));
+
+  useEffect(() => {
+    if (selectAllDraftsRef.current) {
+      selectAllDraftsRef.current.indeterminate = selectedCount > 0
+        && !allVisibleDraftsSelected;
+    }
+  }, [selectedCount, allVisibleDraftsSelected]);
 
   const load = useCallback(async () => {
     if (!slug) return;
@@ -2554,6 +2589,16 @@ export default function ProposalManagement() {
         api.get(`/api/orgs/${slug}/topics`),
       ]);
       setProposals(props);
+      const eligibleDrafts = new Set(visibleDraftProposalIds(props));
+      setProposalSelection(previous => {
+        if (previous.slug !== slug || !canAdvancePhase) {
+          return { slug, ids: new Set() };
+        }
+        return {
+          slug,
+          ids: new Set([...previous.ids].filter(id => eligibleDrafts.has(id))),
+        };
+      });
       setTopics(tops);
     } catch { /* ignore */ } finally {
       setLoading(false);
@@ -2565,7 +2610,7 @@ export default function ProposalManagement() {
         setSubOrgs(subs || []);
       } catch { setSubOrgs([]); }
     }
-  }, [slug, currentOrg, fetchSubOrgsFor]);
+  }, [slug, currentOrg, fetchSubOrgsFor, canAdvancePhase]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -2603,6 +2648,85 @@ export default function ProposalManagement() {
       load();
     } catch (e) {
       toast.error(e.message);
+    }
+  }
+
+  function toggleProposalSelection(proposalId) {
+    updateSelectedProposalIds(previous => {
+      const next = new Set(previous);
+      if (next.has(proposalId)) next.delete(proposalId);
+      else next.add(proposalId);
+      return next;
+    });
+  }
+
+  function toggleAllVisibleDrafts() {
+    updateSelectedProposalIds(previous => {
+      const next = new Set(previous);
+      if (allVisibleDraftsSelected) {
+        visibleDraftIds.forEach(id => next.delete(id));
+      } else {
+        visibleDraftIds.forEach(id => next.add(id));
+      }
+      return next;
+    });
+  }
+
+  async function handleBulkAdvanceToDeliberation() {
+    if (!canAdvancePhase || bulkAdvanceWorking || selectedCount === 0) return;
+    const snapshot = [...selectedProposalIds];
+    const selectedRows = snapshot
+      .map(id => proposals.find(proposal => proposal.id === id))
+      .filter(Boolean);
+    const shownTitles = selectedRows.slice(0, 5).map(proposal => `“${proposal.title}”`);
+    const remainingCount = Math.max(0, selectedRows.length - shownTitles.length);
+    const titleList = [
+      shownTitles.join(', '),
+      remainingCount ? `and ${remainingCount} more` : '',
+    ].filter(Boolean).join(' ');
+    const ok = await confirm({
+      title: 'Advance selected drafts?',
+      message: [
+        `${currentOrg.name}: move ${snapshot.length} selected ${snapshot.length === 1 ? 'draft' : 'drafts'} to deliberation?`,
+        'Only proposals that are still drafts will move, and their deliberation timing starts immediately.',
+        titleList,
+      ].filter(Boolean).join(' '),
+    });
+    if (!ok) return;
+
+    const responses = [];
+    const completedIds = new Set();
+    setBulkAdvanceWorking(true);
+    try {
+      for (const proposalIds of chunkProposalIds(snapshot)) {
+        const response = await api.post(
+          `/api/orgs/${slug}/proposals/bulk-advance-to-deliberation`,
+          { proposal_ids: proposalIds },
+        );
+        responses.push(response);
+        (response.results || []).forEach(result => completedIds.add(result.proposal_id));
+      }
+      const summary = aggregateBulkAdvanceResponses(responses);
+      updateSelectedProposalIds(previous => new Set(
+        [...previous].filter(id => !completedIds.has(id)),
+      ));
+      const message = bulkAdvanceSummaryMessage(summary);
+      if (summary.couldNotAdvance > 0) toast.error(message);
+      else toast.success(message);
+    } catch (error) {
+      const summary = aggregateBulkAdvanceResponses(responses);
+      updateSelectedProposalIds(previous => new Set(
+        [...previous].filter(id => !completedIds.has(id)),
+      ));
+      const completedMessage = responses.length
+        ? `${bulkAdvanceSummaryMessage(summary)} `
+        : '';
+      toast.error(
+        `${completedMessage}The remaining selected drafts were not submitted. ${error.message || 'Try again.'}`,
+      );
+    } finally {
+      await load();
+      setBulkAdvanceWorking(false);
     }
   }
 
@@ -2685,12 +2809,49 @@ export default function ProposalManagement() {
         />
       )}
 
+      {canAdvancePhase && selectedCount > 0 && (
+        <div className="sticky top-2 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm">
+          <span className="mr-auto text-sm font-medium text-blue-900">
+            {selectedCount} {selectedCount === 1 ? 'draft selected' : 'drafts selected'}
+          </span>
+          <button
+            type="button"
+            disabled={bulkAdvanceWorking}
+            onClick={() => updateSelectedProposalIds(new Set())}
+            className="min-h-11 rounded-lg border border-blue-300 px-3 py-2 text-sm text-blue-800 hover:bg-blue-100 disabled:opacity-50"
+          >
+            Clear selection
+          </button>
+          <button
+            type="button"
+            disabled={bulkAdvanceWorking}
+            onClick={handleBulkAdvanceToDeliberation}
+            className="min-h-11 rounded-lg bg-[var(--brand-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--brand-accent)] disabled:opacity-50"
+          >
+            {bulkAdvanceWorking ? 'Advancing selected drafts…' : 'Advance selected to deliberation'}
+          </button>
+        </div>
+      )}
+
       {/* Proposals Table */}
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="flex items-center gap-4 px-4 py-2 bg-gray-50 text-xs font-medium text-gray-500 uppercase">
+          {canAdvancePhase && (
+            <span className="flex w-11 shrink-0 items-center justify-center">
+              <input
+                ref={selectAllDraftsRef}
+                type="checkbox"
+                checked={allVisibleDraftsSelected}
+                disabled={bulkAdvanceWorking || visibleDraftIds.length === 0}
+                onChange={toggleAllVisibleDrafts}
+                aria-label="Select all visible draft proposals"
+                className="h-6 w-6 rounded border-gray-300 accent-[var(--brand-primary)] disabled:opacity-50"
+              />
+            </span>
+          )}
           <span className="flex-1">Title</span>
           <span className="w-24">Status</span>
-          <span className="w-28">Created</span>
+          <span className="hidden w-28 sm:block">Created</span>
           <span className="w-4" />
         </div>
         {proposals.length === 0 ? (
@@ -2702,6 +2863,21 @@ export default function ProposalManagement() {
                 onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
                 className="flex items-center gap-4 px-4 py-3 text-sm cursor-pointer hover:bg-gray-50 transition-colors"
               >
+                {canAdvancePhase && (
+                  <span className="flex w-11 shrink-0 items-center justify-center">
+                    {p.status === 'draft' && (
+                      <input
+                        type="checkbox"
+                        checked={selectedProposalIds.has(p.id)}
+                        disabled={bulkAdvanceWorking}
+                        onClick={event => event.stopPropagation()}
+                        onChange={() => toggleProposalSelection(p.id)}
+                        aria-label={`Select draft: ${p.title}`}
+                        className="h-6 w-6 rounded border-gray-300 accent-[var(--brand-primary)] disabled:opacity-50"
+                      />
+                    )}
+                  </span>
+                )}
                 <span className="flex-1 font-medium text-gray-800">
                   {p.title}
                   {p.voting_method === 'approval' && (
@@ -2714,7 +2890,7 @@ export default function ProposalManagement() {
                   )}
                 </span>
                 <span className="w-24"><StatusBadge status={p.status} /></span>
-                <span className="w-28 text-xs text-gray-400">{new Date(p.created_at).toLocaleDateString()}</span>
+                <span className="hidden w-28 text-xs text-gray-400 sm:block">{new Date(p.created_at).toLocaleDateString()}</span>
                 <svg className={`w-4 h-4 text-gray-400 transition-transform ${expandedId === p.id ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
