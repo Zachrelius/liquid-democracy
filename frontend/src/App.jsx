@@ -89,6 +89,7 @@ import About from './pages/About';
 import Why from './pages/Why';
 import Security from './pages/Security';
 import Demo from './pages/Demo';
+import Pilot from './pages/Pilot';
 // Phase 55 — public org discovery page at /explore. Lists the
 // discoverable public orgs (open / approval_required / invite_only_public)
 // excluding demo + sub-orgs, with search + sort.
@@ -305,6 +306,9 @@ export default function App() {
         <Route path="/why" element={<Why />} />
         <Route path="/security" element={<Security />} />
         <Route path="/demo" element={<Demo />} />
+        {/* Phase 99 — direct-URL preview only. Intentionally absent from
+            public/authenticated navigation and marked noindex by Pilot. */}
+        <Route path="/pilot" element={<Pilot />} />
         {/* Phase 55 — public org discovery page. Fixed segment; must
             resolve before /:org_slug catch-all (route order below). The
             'explore' slug is also in RESERVED_SLUGS so no org can claim

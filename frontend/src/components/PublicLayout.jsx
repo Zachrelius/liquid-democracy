@@ -16,7 +16,7 @@ export default function PublicLayout({ children }) {
             <span className="text-gray-300">·</span>
             <span className="text-xs">open source</span>
           </div>
-          <div className="flex items-center gap-5">
+          <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 sm:justify-end">
             <a
               href="https://github.com/Zachrelius/liquid-democracy"
               target="_blank"

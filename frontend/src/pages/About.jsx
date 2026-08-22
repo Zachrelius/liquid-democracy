@@ -141,8 +141,10 @@ export default function About() {
 
         <Section title="What's built">
           <p>
-            The platform is live at liquiddemocracy.us and in pilot use by
-            real organizations. Everything below is shipped and running.
+            The platform is live at liquiddemocracy.us and ready for its first
+            supported external pilots. Everything below is shipped and running;
+            the next step is learning how it performs for real organizations
+            making recurring, correctable decisions.
           </p>
           <p>
             <strong>Voting.</strong> Binary (yes/no/abstain), approval,
@@ -208,11 +210,14 @@ export default function About() {
           </p>
           <p>
             <strong>Identity verification.</strong> Five-level verification
-            state model from email-only through residency-verified, integrated
-            with Didit for real KYC verification. Privacy-preserving duplicate
-            detection via HMAC-SHA256 hashing. Per-proposal gates on
-            verification level, jurisdiction, and minimum age. Org-scoped
-            duplicate flags with admin adjudication.
+            state model from email-only through residency-verified, with
+            optional Didit-hosted identity checks. Liquid Democracy stores
+            verification results and privacy-preserving derived hashes rather
+            than raw identity-document images or document numbers.
+            Organizations can leave verification off or set proposal-level
+            verification and jurisdiction requirements. An age threshold is
+            available only as part of the optional identity-verification flow;
+            the platform does not otherwise verify a member&apos;s age.
           </p>
           <p>
             <strong>Deliberation.</strong> Pol.is integration as a first-class
@@ -233,6 +238,15 @@ export default function About() {
             daily content reset for evaluation. Rate limiting, input
             sanitization, and a full security review with fixes shipped.
           </p>
+          <p>
+            Production monitoring covers database health and capacity,
+            background workers, repeated server errors, upload capacity, and
+            email delivery, with both internal email alerts and an external
+            GitHub-based outage path. Recovery uses provider-native volume
+            backups plus daily encrypted offsite backups stored separately in
+            Cloudflare R2. Both restore paths have been successfully rehearsed
+            using disposable targets rather than production.
+          </p>
         </Section>
 
         <Section title="What's next">
@@ -242,28 +256,30 @@ export default function About() {
             liquid democracy work for your group, tell us — either in the
             Platform Feedback organization on the site or by emailing{' '}
             <a
-              href="mailto:z@liquiddemocracy.us"
+              href="mailto:support@liquiddemocracy.us"
               className="text-[var(--brand-accent)] hover:text-[var(--brand-primary)] underline"
             >
-              z@liquiddemocracy.us
+              support@liquiddemocracy.us
             </a>.
           </p>
         </Section>
 
         <Section title="Get involved">
           <p>
-            If this is interesting to you, reach out. I'd love to hear
-            feedback about what we've built so far. Doubly so if you're
-            interested in collaborating or are part of an organization that
-            would be interested in learning more and potentially piloting
-            a liquid democracy voting project.
+            If you are part of an organization interested in trying liquid
+            democracy, we&apos;re recruiting a small number of supported pilot
+            groups. The strongest early fit is a known-membership organization
+            with a committed steward, roughly 20–200 members, and one or more
+            meaningful but correctable decisions to make. We&apos;ll help configure
+            the organization, rehearse the member experience, and learn from
+            what works and what does not.
           </p>
           <p className="flex flex-wrap items-center gap-3 pt-2">
             <a
-              href="mailto:z@liquiddemocracy.us"
+              href="mailto:support@liquiddemocracy.us"
               className="inline-flex items-center px-5 py-2.5 bg-white text-[var(--brand-primary)] text-sm font-medium rounded-lg border border-gray-300 hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors"
             >
-              z@liquiddemocracy.us
+              support@liquiddemocracy.us
             </a>
             <a
               href="https://github.com/Zachrelius/liquid-democracy"

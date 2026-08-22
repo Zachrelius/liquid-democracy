@@ -95,11 +95,12 @@ export default function Security() {
             <li>
               <strong>Platform-level administrators</strong> (a privileged
               role separate from organization administrators) have access
-              to a system-wide audit log. Ballot contents are redacted
-              from the default audit view; viewing them requires explicit
-              elevation by a platform administrator with a reason
-              captured, and that elevation is itself recorded as an audit
-              event. Every user can see who has accessed their data —
+              to a system-wide audit log, but the ordinary platform-admin
+              screen has no ballot viewer and normal audit responses redact
+              ballot fields. A restricted platform-admin API can retrieve a
+              specific unredacted audit entry only when supplied with its
+              entry ID and a written reason. That access creates a separate
+              audit event. Every user can see who has accessed their data —
               including any platform-level access events that touched
               their account — in the{' '}
               <Link
@@ -177,19 +178,45 @@ export default function Security() {
           </p>
         </Section>
 
-        <Section title="About this demo specifically">
+        <Section title="About this hosted pilot service">
           <p>
-            The current deployment at liquiddemocracy.us is a public demo,
-            run informally by the project's founder. There is not yet a
-            formal operator agreement, an independent oversight body, or a
-            separation between platform operations and the founder's
-            individual access. As the platform matures toward real pilot
-            deployments, those institutional safeguards will be
-            established and documented. Until then, the trust model for
-            the demo is "the founder is operating in good faith and the
-            code is open for inspection." If that's not enough for your
-            use case, that's a fair conclusion — wait for the formal
-            pilot deployments.
+            The current deployment at liquiddemocracy.us is a hosted,
+            pilot-stage service operated by the project&apos;s founder with
+            assistance from AI development agents. It has not received a
+            formal penetration test or certification by an independent
+            election-security firm, and there is not yet an independent
+            oversight body separating platform operations from the founder&apos;s
+            access.
+          </p>
+          <p>
+            The operational safeguards are stronger than the original public
+            demo. The service now has external and internal health monitoring,
+            actionable administrator alerts, provider-native volume recovery
+            points, daily encrypted offsite backups stored with a separate
+            provider, and successful restore rehearsals using isolated
+            disposable targets. Those controls reduce operational risk; they
+            do not create conventional ballot secrecy or eliminate the need to
+            trust the platform operator.
+          </p>
+          <p>
+            This is appropriate for an early organizational pilot involving
+            known members and correctable decisions. It is not appropriate as
+            the sole system for governmental elections, legally mandated secret
+            ballots, or decisions where an outage, error, or later correction
+            would create unacceptable harm. Organizations considering a pilot
+            should review these boundaries openly with their members.
+          </p>
+        </Section>
+
+        <Section title="Service providers">
+          <p>
+            The hosted service depends on specialized providers: Railway for
+            application and database hosting, Resend for transactional email,
+            Cloudflare R2 for encrypted offsite backups, optional Didit identity
+            verification, and optional hosted pol.is deliberation. The Privacy
+            Policy explains what each provider processes. Provider use is part
+            of the trust boundary and is not hidden behind a claim that the
+            service is entirely self-contained.
           </p>
         </Section>
 
@@ -244,17 +271,33 @@ export default function Security() {
             our thinking, not so you think they exist.
           </p>
           <p>
-            <strong>We've done the security work that's appropriate for
-            the current stage.</strong> The codebase has been reviewed
-            against the OWASP Top 10. State-changing actions are recorded
-            in the audit log described above. Authentication uses
-            industry-standard practices: bcrypt password hashing,
-            short-lived access tokens with rotation, email verification,
-            password reset, rate limiting on auth endpoints. The code is
-            open source and publicly auditable. We're not claiming this is
-            battle-hardened for national elections — we're claiming it's
-            responsibly built for organizational governance, which is what
-            it's for right now.
+            <strong>We&apos;ve built and tested the security controls appropriate
+            to the current pilot stage.</strong> The codebase has undergone
+            repeated authorization, privacy, dependency, and adversarial review
+            passes, including checks based on the OWASP Top 10 and OWASP ASVS.
+            The backend has more than 3,000 automated tests, supplemented by
+            browser verification of important user journeys. Authentication
+            uses bcrypt password hashing, short-lived access tokens, rotating
+            refresh tokens stored only as one-way digests, email verification,
+            password reset, and rate limiting. Privileged access and
+            state-changing actions are audited, and the public backend is
+            isolated behind Railway private networking.
+          </p>
+          <p>
+            Production monitoring checks database connectivity and capacity,
+            background workers, repeated server errors, upload capacity, and
+            email failures. A separate external check can report a total outage
+            even if the application cannot send its own alert. Daily offsite
+            backups are encrypted before upload with a recovery key that is not
+            stored in the application environment, and both native-volume and
+            offsite database restoration have been rehearsed against disposable
+            targets.
+          </p>
+          <p>
+            These are meaningful safeguards, not a claim that the service is
+            invulnerable or certified for high-stakes public elections.
+            Independent professional security testing remains a future
+            requirement before higher-risk deployment.
           </p>
         </Section>
 
