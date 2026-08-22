@@ -45,7 +45,7 @@ import CommentThread from '../components/CommentThread';
 // Phase 19 F3 — inline rationale composer for the user's own vote.
 import MyVoteRationaleBox from '../components/MyVoteRationaleBox';
 import { colorForOption } from '../components/voteFlowGraphUtils';
-import renderMarkdown from '../utils/renderMarkdown';
+import ProposalBody from '../components/ProposalBody';
 import { urlFor } from '../utils/urls';
 // Multi-winner approval — shared rule phrasing + seat-attribution copy
 // (same helpers the creation form uses, so the wording matches).
@@ -92,8 +92,8 @@ import {
  * conversationId in first-seen order.
  *
  * Implementation choice: client-side, post-markdown-render. The proposal
- * body markdown rendering is a tiny inline helper (`renderMarkdown`) that
- * doesn't expose a plugin point; intercepting at server-side would mean
+ * body Markdown uses a deliberately small shared renderer without a plugin
+ * point; intercepting at server-side would mean
  * touching the markdown sanitizer in ``backend/schemas.py``. Client-side
  * walking of the rendered HTML is simpler and keeps the URL-detection
  * logic colocated with the link-card UI it feeds.
@@ -2448,10 +2448,7 @@ export default function ProposalDetail() {
 
           {/* Body */}
           {proposal.body ? (
-            <div
-              className="prose text-[#2C3E50] text-sm leading-relaxed"
-              dangerouslySetInnerHTML={{ __html: `<p>${renderMarkdown(proposal.body)}</p>` }}
-            />
+            <ProposalBody body={proposal.body} />
           ) : (
             <p className="text-gray-400 italic text-sm">No description provided.</p>
           )}

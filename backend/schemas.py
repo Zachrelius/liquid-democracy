@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, field_validator, Field, model_validator
 import re
 import nh3
@@ -1573,6 +1573,43 @@ class PersonalDelegationNetwork(BaseModel):
 
 class AdvanceProposalRequest(BaseModel):
     voting_end: Optional[datetime] = None  # Required when advancing to voting
+
+
+class BulkAdvanceToDeliberationRequest(BaseModel):
+    """Phase 100 — one bounded, org-scoped draft-advance request."""
+
+    proposal_ids: list[str] = Field(min_length=1, max_length=500)
+
+    @field_validator("proposal_ids")
+    @classmethod
+    def validate_proposal_ids(cls, values: list[str]) -> list[str]:
+        # Preserve request order and duplicates here so the response can
+        # distinguish requested count from processed (deduplicated) count.
+        # The route canonicalizes + de-duplicates after validation.
+        for value in values:
+            _validate_uuid(value)
+        return values
+
+
+class BulkAdvanceToDeliberationItem(BaseModel):
+    proposal_id: str
+    result: Literal[
+        "advanced",
+        "already_in_deliberation",
+        "ineligible_status",
+        "not_found",
+    ]
+    status: Optional[str] = None
+
+
+class BulkAdvanceToDeliberationResponse(BaseModel):
+    requested: int
+    processed: int
+    advanced: int
+    already_in_deliberation: int
+    ineligible_status: int
+    not_found: int
+    results: list[BulkAdvanceToDeliberationItem]
 
 
 class SeedRequest(BaseModel):

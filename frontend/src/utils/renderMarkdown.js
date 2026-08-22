@@ -15,6 +15,8 @@
  *   - ``# h1`` / ``## h2`` / ``### h3`` (line-anchored)
  *   - ``**bold**`` and ``*italic*``
  *   - inline `` `code` ``
+ *   - explicit ``[label](https://example.test)`` links for absolute
+ *     HTTP(S) destinations only (still no raw-URL autolinking)
  *   - ``- item`` / ``* item`` bullet list (the first run gets wrapped
  *     in a single ``<ul>``)
  *   - paragraph breaks on blank lines
@@ -28,8 +30,9 @@
  *      the cost.
  *
  *   2. Explicitness. The supported syntax IS the regex list below — there
- *      are no surprise extensions, no link auto-detection, no HTML
- *      passthrough. What you see is what gets rendered. The server-side
+ *      are no surprise extensions, no raw-URL auto-detection, no HTML
+ *      passthrough. Explicit Markdown links are scheme-validated before
+ *      anchor emission. The server-side
  *      sanitizer (``backend/schemas.py:_sanitize_markdown``) uses ``nh3``
  *      with a matching allowlist, so the two layers stay in sync.
  *
@@ -45,10 +48,60 @@
  * @returns {string} rendered HTML safe to drop into
  *   ``dangerouslySetInnerHTML``.
  */
+export function safeMarkdownLinkDestination(rawDestination) {
+  const hasControlOrSpace = [...(rawDestination || '')].some(character => {
+    const code = character.charCodeAt(0);
+    return code <= 32 || code === 127;
+  });
+  if (!rawDestination || hasControlOrSpace || /["'<>\\]/.test(rawDestination)) {
+    return null;
+  }
+  try {
+    const parsed = new URL(rawDestination);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    // Requiring the serialized URL to begin with an explicit supported
+    // scheme rejects relative and protocol-relative destinations.
+    if (!/^https?:\/\//i.test(rawDestination)) return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function escapeAttribute(text) {
+  return escapeHtml(text)
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function tokenizeSafeLinks(text) {
+  const anchors = [];
+  const tokenized = text.replace(
+    /\[([^\]\r\n]+)\]\(([^()\s]+)\)/g,
+    (match, label, destination) => {
+      const safeDestination = safeMarkdownLinkDestination(destination);
+      if (!safeDestination) return match;
+      const token = `\u0001LDLINK${anchors.length}\u0002`;
+      anchors.push(
+        `<a href="${escapeAttribute(safeDestination)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a>`,
+      );
+      return token;
+    },
+  );
+  return { tokenized, anchors };
+}
+
 export default function renderMarkdown(text) {
   if (!text) return '';
-  return text
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const { tokenized, anchors } = tokenizeSafeLinks(text);
+  let rendered = escapeHtml(tokenized)
     .replace(/^### (.+)$/gm, '<h3>$1</h3>')
     .replace(/^## (.+)$/gm, '<h2>$1</h2>')
     .replace(/^# (.+)$/gm, '<h1>$1</h1>')
@@ -59,4 +112,8 @@ export default function renderMarkdown(text) {
     .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
     .replace(/\n\n/g, '</p><p>')
     .replace(/^(?!<[hul])(.+)$/gm, (m) => m.startsWith('<') ? m : m);
+  anchors.forEach((anchor, index) => {
+    rendered = rendered.replace(`\u0001LDLINK${index}\u0002`, anchor);
+  });
+  return rendered;
 }

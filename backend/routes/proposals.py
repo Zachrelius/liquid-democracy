@@ -45,6 +45,42 @@ STATUS_TRANSITIONS = {
 }
 
 
+def _transition_draft_to_deliberation(
+    db: Session,
+    proposal: models.Proposal,
+    *,
+    actor_id: Optional[str],
+    ip_address: Optional[str],
+) -> datetime:
+    """Apply the shared draft -> deliberation lifecycle mutation.
+
+    Phase 100 deliberately centralizes only this simple transition. The
+    caller owns flushing and committing so single-item routes retain their
+    existing transaction boundary and the bulk route can isolate each item
+    behind a savepoint.
+    """
+    if proposal.status != "draft":
+        raise ValueError("draft-to-deliberation transition requires draft status")
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    proposal.deliberation_start = now
+    proposal.status = "deliberation"
+    log_audit_event(
+        db,
+        action="proposal.status_changed",
+        target_type="proposal",
+        target_id=proposal.id,
+        actor_id=actor_id,
+        details={
+            "proposal_id": proposal.id,
+            "old_status": "draft",
+            "new_status": "deliberation",
+        },
+        ip_address=ip_address,
+    )
+    return now
+
+
 def _strip_tz(dt: Optional[datetime]) -> Optional[datetime]:
     """Phase 75a — normalize an optional datetime to naive UTC (the platform's
     storage convention). NULL passes through."""
@@ -3243,10 +3279,16 @@ def advance_proposal(
         raise HTTPException(status_code=400, detail=f"Cannot advance from status '{proposal.status}'")
 
     old_status = proposal.status
+    draft_transition = next_status == "deliberation"
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    if next_status == "deliberation":
-        proposal.deliberation_start = now
+    if draft_transition:
+        now = _transition_draft_to_deliberation(
+            db,
+            proposal,
+            actor_id=current_user.id,
+            ip_address=request.client.host if request.client else None,
+        )
     elif next_status == "voting":
         proposal.voting_start = now
         # Phase 25 B1.1 — derive voting_end from proposal.voting_days (or
@@ -3343,7 +3385,8 @@ def advance_proposal(
             else:
                 next_status = "failed"
 
-    proposal.status = next_status
+    if not draft_transition:
+        proposal.status = next_status
     db.flush()
 
     # Phase 48 Stage 1 — close→assign-title hook. Phase 67 W1: quorum
@@ -3372,15 +3415,16 @@ def advance_proposal(
             ip_address=request.client.host if request.client else None,
         )
 
-    log_audit_event(
-        db,
-        action="proposal.status_changed",
-        target_type="proposal",
-        target_id=proposal.id,
-        actor_id=current_user.id,
-        details={"proposal_id": proposal.id, "old_status": old_status, "new_status": next_status},
-        ip_address=request.client.host if request.client else None,
-    )
+    if not draft_transition:
+        log_audit_event(
+            db,
+            action="proposal.status_changed",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=current_user.id,
+            details={"proposal_id": proposal.id, "old_status": old_status, "new_status": next_status},
+            ip_address=request.client.host if request.client else None,
+        )
 
     db.commit()
     db.refresh(proposal)

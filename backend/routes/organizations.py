@@ -4,6 +4,7 @@ delegate applications, topics, proposals, and analytics.
 """
 import logging
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -5988,6 +5989,125 @@ def get_org_proposal(
     return _build_proposal_out(proposal, db, viewer_id=current_user.id)
 
 
+@router.post(
+    "/{org_slug}/proposals/bulk-advance-to-deliberation",
+    response_model=schemas.BulkAdvanceToDeliberationResponse,
+)
+def bulk_advance_org_proposals_to_deliberation(
+    org_slug: str,
+    body: schemas.BulkAdvanceToDeliberationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Advance a bounded set of this org's drafts to deliberation.
+
+    Known stale states are per-item results, not request failures. Each
+    draft mutation is isolated by a savepoint; an unexpected item failure
+    is logged server-side, reported generically as ineligible, and cannot
+    roll back successful siblings.
+    """
+    del membership  # membership is the authentication/access dependency
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug,
+    ).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if not has_permission(
+        db, current_user.id, org.id, "proposal.advance_phase",
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to advance proposal phases.",
+        )
+
+    requested = len(body.proposal_ids)
+    unique_ids: list[str] = []
+    seen: set[str] = set()
+    for raw_id in body.proposal_ids:
+        canonical_id = str(uuid.UUID(raw_id))
+        if canonical_id not in seen:
+            seen.add(canonical_id)
+            unique_ids.append(canonical_id)
+
+    from routes.proposals import _transition_draft_to_deliberation
+
+    results: list[schemas.BulkAdvanceToDeliberationItem] = []
+    ip_address = request.client.host if request.client else None
+    for proposal_id in unique_ids:
+        proposal = db.query(models.Proposal).filter(
+            models.Proposal.id == proposal_id,
+            models.Proposal.org_id == org.id,
+        ).first()
+        if proposal is None:
+            results.append(schemas.BulkAdvanceToDeliberationItem(
+                proposal_id=proposal_id,
+                result="not_found",
+                status=None,
+            ))
+            continue
+        if proposal.status == "deliberation":
+            results.append(schemas.BulkAdvanceToDeliberationItem(
+                proposal_id=proposal_id,
+                result="already_in_deliberation",
+                status="deliberation",
+            ))
+            continue
+        if proposal.status != "draft":
+            results.append(schemas.BulkAdvanceToDeliberationItem(
+                proposal_id=proposal_id,
+                result="ineligible_status",
+                status=proposal.status,
+            ))
+            continue
+
+        try:
+            with db.begin_nested():
+                _transition_draft_to_deliberation(
+                    db,
+                    proposal,
+                    actor_id=current_user.id,
+                    ip_address=ip_address,
+                )
+                db.flush()
+        except Exception:  # noqa: BLE001 — isolate and sanitize per item
+            log.exception(
+                "bulk draft advance failed for proposal %s in org %s",
+                proposal_id,
+                org.id,
+            )
+            results.append(schemas.BulkAdvanceToDeliberationItem(
+                proposal_id=proposal_id,
+                result="ineligible_status",
+                status=proposal.status,
+            ))
+            continue
+
+        results.append(schemas.BulkAdvanceToDeliberationItem(
+            proposal_id=proposal_id,
+            result="advanced",
+            status="deliberation",
+        ))
+
+    db.commit()
+    counts = {
+        key: sum(item.result == key for item in results)
+        for key in (
+            "advanced",
+            "already_in_deliberation",
+            "ineligible_status",
+            "not_found",
+        )
+    }
+    return schemas.BulkAdvanceToDeliberationResponse(
+        requested=requested,
+        processed=len(unique_ids),
+        results=results,
+        **counts,
+    )
+
+
 @router.post("/{org_slug}/proposals/{proposal_id}/advance", response_model=schemas.ProposalOut)
 def advance_org_proposal(
     org_slug: str,
@@ -6029,10 +6149,17 @@ def advance_org_proposal(
         raise HTTPException(status_code=400, detail=f"Cannot advance from status '{proposal.status}'")
 
     old_status = proposal.status
+    draft_transition = next_status == "deliberation"
     now = _now()
 
-    if next_status == "deliberation":
-        proposal.deliberation_start = now
+    if draft_transition:
+        from routes.proposals import _transition_draft_to_deliberation
+        now = _transition_draft_to_deliberation(
+            db,
+            proposal,
+            actor_id=current_user.id,
+            ip_address=request.client.host if request.client else None,
+        )
     elif next_status == "voting":
         proposal.voting_start = now
         # Phase 25 B1.1 — derive voting_end from proposal.voting_days (or
@@ -6119,7 +6246,8 @@ def advance_org_proposal(
             else:
                 next_status = "failed"
 
-    proposal.status = next_status
+    if not draft_transition:
+        proposal.status = next_status
     db.flush()
 
     # Phase 67 W1 — election close hook. This org-scoped advance path
@@ -6148,15 +6276,16 @@ def advance_org_proposal(
             ip_address=request.client.host if request.client else None,
         )
 
-    log_audit_event(
-        db,
-        action="proposal.status_changed",
-        target_type="proposal",
-        target_id=proposal.id,
-        actor_id=current_user.id,
-        details={"proposal_id": proposal.id, "old_status": old_status, "new_status": next_status},
-        ip_address=request.client.host if request.client else None,
-    )
+    if not draft_transition:
+        log_audit_event(
+            db,
+            action="proposal.status_changed",
+            target_type="proposal",
+            target_id=proposal.id,
+            actor_id=current_user.id,
+            details={"proposal_id": proposal.id, "old_status": old_status, "new_status": next_status},
+            ip_address=request.client.host if request.client else None,
+        )
 
     db.commit()
     db.refresh(proposal)
