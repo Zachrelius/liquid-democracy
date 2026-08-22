@@ -9,7 +9,7 @@ checked against this set on creation.
 RESERVED_SLUGS = {
     "admin", "api", "app", "assets", "auth", "blog", "delegates", "demo",
     "docs", "explore", "forgot-password", "help", "info", "invite", "login",
-    "logout", "o", "orgs", "pricing", "privacy", "public", "register",
+    "logout", "o", "orgs", "pilot", "pricing", "privacy", "public", "register",
     "reset-password", "security", "settings", "setup", "signup", "static",
     "support", "terms", "test", "tests", "uploads", "verify-email", "why",
 }
