@@ -4403,3 +4403,31 @@ The standalone restore CLI downloaded and checksum-verified the manual 58,761,41
 Cleanup passed completely. The temporary identity, read-only R2 credential, disposable connection files, restored uploads directory, downloaded archives/binaries, and decrypted work directories are gone. The read-only Cloudflare token was revoked while the production writer remained present. The disposable Railway service and its orphaned volume were deleted after exact-name confirmations. Both encrypted R2 objects remain private under their daily controls; backend, production PostgreSQL, and frontend remained Online. The worker-driven 19:03:31 UTC run and manual 19:04:13 UTC run provide independent normal/manual success proof. Final monitor state is `ok` with zero issues and no offsite failure.
 
 Both native and offsite restore mechanisms are now proven without replacing production data. Stage 3's one-day synthetic lifecycle observation remains pending but non-blocking at Z's direction. Stage 7 and post-downgrade continuity are not started, so Phase 98 remains operationally open for those later gates only.
+
+---
+
+## Phase 99 — Pilot Page Preview and Public-Copy Truth Pass ✅ Deployed (2026-08-22)
+
+Spec: `phase99_pilot_conversion_and_public_trust_spec.md`. Branch `phase-99/pilot-page-preview`; implementation `4840ca7`; no-ff merge `9a9b2ad`.
+
+Published the direct, intentionally unpromoted `/pilot` preview with `noindex,nofollow`, a support-email CTA, demo CTA, responsive public layout, and candid fit/support/security boundaries. `pilot` is now rejected as both an organization and sub-organization slug. Privacy and Terms now describe the actual hosted service, and About/Security no longer carry demo-era adoption, self-hosting, or routine-ballot-viewer claims. No inquiry form, CRM, video, analytics, provider, subscription, or recurring cost was added; promotion, permanent inquiry intake, and video remain **NOT STARTED**.
+
+Verification: frontend **15/15 PASS**; focused reserved-slug **73 PASS**; production-like full backend **3,036 passed / 20 skipped / 0 failed** (Phase 98 baseline +2 reserved-slug cases); production build PASS. Repository lint remained the documented 107 errors / 8 warnings with no Phase 99 changed-file error. No migration; PG smoke not required. Production served exact bundle `index-BQQaxIYy.js` / CSS `index-BeCeUJt1.css`; `/pilot`, homepage, and readiness returned 200; readiness reported database connected; monitor was `ok` with zero issues.
+
+Interactive desktop/mobile/keyboard/print browser QA remains **BLOCKED / not claimed** because the Codex Chrome bridge fails internally before attaching to a tab. Railway deployment-row IDs are also unavailable because the local CLI OAuth refresh is expired. Exact bundle activation plus live health/monitor checks provide deployment evidence, but do not substitute for the missing visual pass. Z's review URL is `https://www.liquiddemocracy.us/pilot`.
+
+---
+
+## Phase 100 — Bill Readability and Bulk Deliberation ✅ Deployed (2026-08-22)
+
+Spec: `phase100_bill_readability_and_bulk_deliberation_spec.md`. Branch `phase-100/bill-readability-bulk-deliberation`; implementation `7ee1891`; initial no-ff merge `0cade91`.
+
+The shared escape-first Markdown renderer now activates only explicit absolute HTTP(S) links, escapes labels/attributes, opens anchors in a new tab with `noopener noreferrer`, and leaves unsafe, relative, protocol-relative, malformed, or attribute-breakout syntax as text. Proposal bodies alone recognize the exact `## Full legal text` heading: summary/sources render immediately, the complete legal section defaults closed behind an announced Show/Hide control, and ordinary bodies render in full. Every existing shared-renderer call site was reviewed; none nests the output inside another anchor.
+
+Draft-to-deliberation mutation now has one shared helper used by both pre-existing single routes and a typed org-scoped bulk endpoint. The endpoint requires `proposal.advance_phase`, accepts 1–500 valid UUIDs, de-duplicates in stable first-occurrence order, returns per-ID retry-safe results, creates exactly one existing status audit for each success, adds no notification, and isolates unexpected item failures with savepoints. Proposal Management shows draft-only selection to permission holders, supports visible-draft select-all/indeterminate state, confirms organization/count/timing/up-to-five titles, submits deterministic sequential chunks of at most 500, reconciles selections, and aggregates partial/retry feedback. The 501-item local scale proof produced exactly two calls (500 + 1); no per-proposal browser request pattern was added.
+
+Verification: Phase 100 backend **15/15 PASS**; lifecycle/permission/notification focused set **94 PASS**; production-like full backend **3,051 passed / 20 skipped / 0 failed** (+15 over Phase 99). Frontend **24/24 PASS**; changed utility/component/test lint PASS; repository lint unchanged at 107 errors / 8 warnings; production build PASS at JS `index-CL4XIpnJ.js` (1,872.36 kB / 476.40 kB gzip) and CSS `index-BxiUMwkJ.css` (65.86 kB / 12.36 kB gzip), with only the existing large-chunk warning. Python compile and `git diff --check` PASS. No migration; PG smoke not required.
+
+Production flipped to `index-CL4XIpnJ.js`; its live bytes contain the bulk route, legal-text disclosure, safe-link isolation, Phase 99 `/pilot`, and `noindex,nofollow` markers. Homepage and `/pilot` returned 200; readiness returned 200/database connected; monitor returned `ok` with zero issues; the five-test production proxy/service-worker smoke suite passed. A no-auth, empty-payload POST to the new bulk URL returned 401, proving backend route deployment without mutating data. No production proposal was created or advanced for QA.
+
+Interactive link/disclosure/selection desktop/mobile/keyboard QA and authenticated production bulk-action QA remain **BLOCKED / not claimed** by the same Codex Chrome bridge failure. Railway deployment rows remain unavailable through the expired local CLI session. AI summarization, pagination/virtualization, database-wide select-all, and advancement beyond draft→deliberation remain **NOT STARTED**.
