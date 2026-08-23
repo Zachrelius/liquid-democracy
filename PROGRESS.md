@@ -4431,3 +4431,17 @@ Verification: Phase 100 backend **15/15 PASS**; lifecycle/permission/notificatio
 Production flipped to `index-CL4XIpnJ.js`; its live bytes contain the bulk route, legal-text disclosure, safe-link isolation, Phase 99 `/pilot`, and `noindex,nofollow` markers. Homepage and `/pilot` returned 200; readiness returned 200/database connected; monitor returned `ok` with zero issues; the five-test production proxy/service-worker smoke suite passed. A no-auth, empty-payload POST to the new bulk URL returned 401, proving backend route deployment without mutating data. No production proposal was created or advanced for QA.
 
 Interactive link/disclosure/selection desktop/mobile/keyboard QA and authenticated production bulk-action QA remain **BLOCKED / not claimed** by the same Codex Chrome bridge failure. Railway deployment rows remain unavailable through the expired local CLI session. AI summarization, pagination/virtualization, database-wide select-all, and advancement beyond draft→deliberation remain **NOT STARTED**.
+
+---
+
+## Phase 99a — Pilot Copy Clarity and Homepage Promotion ✅ Deployed (2026-08-23)
+
+Spec: `phase99a_pilot_copy_clarity_spec.md`. Branch `phase-99a/pilot-copy-and-promotion`; implementation `d09534d`; no-ff merge `d6d2a9c`.
+
+The promoted Pilot page now states plainly that Liquid Democracy is free during and after the pilot with no subscription fee, begins the administrator-ballot answer with `No.`, and removes the ambiguous organization-publicity obligation and FAQ-level API mechanics. Its title/description lifecycle remains intact, while all creation, mutation, restoration, and cleanup of a robots meta element were removed. The homepage now makes `Pilot your organization` the filled primary action and demo the outlined secondary action; browse, auth-aware create, About, and logged-out sign-in remain quieter tertiary paths. The supported-pilot explainer, focused bottom CTA, and union-use copy now match the approved pilot boundaries. Promotion remains bounded to the homepage; shared footer, About, Security, and authenticated navigation were unchanged.
+
+Verification: frontend **24/24 PASS**; changed-file lint PASS; production build PASS at JS `index-u_OX331_.js` (1,872.46 kB / 476.20 kB gzip) and CSS `index-UmXqc-Uh.css` (66.16 kB / 12.40 kB gzip), with only the existing large-chunk warning. `git diff --check` PASS. No backend source changed, so the backend suite was not required. No migration; PG smoke not required.
+
+Production serves the exact new bundle. `/`, `/pilot`, `/privacy`, and `/security` return 200; fresh HTML contains no robots element; the shipped bundle contains the new CTA and exact revised FAQ sentences and contains no `noindex,nofollow` or removed Pilot copy. Readiness returns `ok` with the database connected; the production monitor returns `ok` with zero issues; the five proxy/service-worker smoke tests pass. Railway deployment-row lookup remains unavailable because the local CLI OAuth refresh is expired.
+
+Interactive desktop/~380px-mobile, keyboard, and client-navigation head inspection are **BLOCKED / not claimed** because the Codex Chrome bridge still fails inside its trusted-runtime bootstrap before attaching to a tab. The live HTTP, HTML-head, source, bundle, and responsive-class checks pass but do not substitute for that visual browser pass. Inquiry form, video, CRM, analytics, sitemap/SEO expansion, additional navigation promotion, outbound recruitment, and changes to elevated ballot access remain **NOT STARTED**.
