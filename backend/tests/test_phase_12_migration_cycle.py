@@ -349,15 +349,16 @@ def test_role_permissions_seeded_per_preset_role():
                 # Expected counts bumped through the backfill-migration
                 # history: Phase 47 (title.manage), Phase 49a, Phase 68b
                 # (proposal.archive), Phase 77 (org_inbox.view), and Phase 88
-                # (member.set_voting_weight) each add a steward+admin row via
-                # their backfill migrations, bringing both tiers to 31.
-                assert counts.get("steward") == 31, (
-                    f"org {org_id}: steward should have 31 permissions "
-                    f"(Phase 88's member.set_voting_weight is the latest "
-                    f"addition), got {counts.get('steward')}"
+                # (member.set_voting_weight) and Phase 101's high-volume
+                # create permission each add a steward+admin row via their
+                # backfill migrations, bringing both tiers to 32.
+                assert counts.get("steward") == 32, (
+                    f"org {org_id}: steward should have 32 permissions "
+                    f"(Phase 101 high-volume create is the latest addition), "
+                    f"got {counts.get('steward')}"
                 )
-                assert counts.get("admin") == 31, (
-                    f"org {org_id}: admin should have 31 permissions "
+                assert counts.get("admin") == 32, (
+                    f"org {org_id}: admin should have 32 permissions "
                     f"(lockstep with steward), got {counts.get('admin')}"
                 )
                 # Phase 71a — backfill migration c1d2e3f4a5b6 adds two

@@ -27,6 +27,21 @@ function authHeaders() {
 }
 
 /**
+ * Normalize API error envelopes without ever stringifying an arbitrary object.
+ * Pydantic detail remains authoritative; SlowAPI's safe top-level string
+ * `error` is the final structured shape before the status fallback.
+ */
+export function normalizeApiError(data, status) {
+  const detail = data?.detail;
+  if (Array.isArray(detail)) {
+    return detail.map(e => `${e.loc?.slice(1).join('.')} — ${e.msg}`).join('; ');
+  }
+  if (typeof detail === 'string') return detail;
+  if (typeof data?.error === 'string') return data.error;
+  return `Server error ${status}`;
+}
+
+/**
  * Try to refresh the access token using the stored refresh token.
  * Returns true on success, false on failure.
  * Deduplicates concurrent refresh attempts.
@@ -71,7 +86,7 @@ async function request(method, path, body) {
   let res;
   try {
     res = await fetch(path, opts);
-  } catch (err) {
+  } catch {
     throw { message: 'Network error — is the server running?', status: 0 };
   }
 
@@ -84,7 +99,7 @@ async function request(method, path, body) {
       if (body !== undefined) retryOpts.body = JSON.stringify(body);
       try {
         res = await fetch(path, retryOpts);
-      } catch (err) {
+      } catch {
         throw { message: "Couldn't reach the server. Check your connection and try again.", status: 0 };
       }
       // If still 401 after refresh, give up
@@ -109,16 +124,7 @@ async function request(method, path, body) {
   }
 
   if (!res.ok) {
-    // Pydantic validation errors come as { detail: [...] }
-    const detail = data?.detail;
-    let message;
-    if (Array.isArray(detail)) {
-      message = detail.map(e => `${e.loc?.slice(1).join('.')} — ${e.msg}`).join('; ');
-    } else if (typeof detail === 'string') {
-      message = detail;
-    } else {
-      message = `Server error ${res.status}`;
-    }
+    const message = normalizeApiError(data, res.status);
     throw { message, status: res.status, raw: data };
   }
 
@@ -176,15 +182,7 @@ async function requestFormData(path, formData) {
   }
 
   if (!res.ok) {
-    const detail = data?.detail;
-    let message;
-    if (Array.isArray(detail)) {
-      message = detail.map(e => `${e.loc?.slice(1).join('.')} — ${e.msg}`).join('; ');
-    } else if (typeof detail === 'string') {
-      message = detail;
-    } else {
-      message = `Server error ${res.status}`;
-    }
+    const message = normalizeApiError(data, res.status);
     throw { message, status: res.status, raw: data };
   }
 

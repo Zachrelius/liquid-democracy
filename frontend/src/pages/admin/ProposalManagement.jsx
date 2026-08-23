@@ -16,6 +16,11 @@ import {
   chunkProposalIds,
   visibleDraftProposalIds,
 } from '../../utils/bulkDeliberation';
+import {
+  createProposalRowsSequentially,
+  proposalImportRateLimitMessage,
+  proposalImportSelectionState,
+} from '../../utils/proposalImportBatch';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
 // Phase 52 Stage 1 — shared verification state label tables.
@@ -2321,6 +2326,7 @@ export { CreateProposalForm as ProposalForm };
 // remaining rows stay actionable for retry.
 function MultiImportReview({ items, slug, onDone, onCancel }) {
   const toast = useToast();
+  const canHighVolumeCreate = useHasPermission('proposal.high_volume_create');
   const [rows, setRows] = useState(() => items.map((it, i) => ({
     id: it.index ?? i,
     valid: !!it.proposal && (!it.errors || Object.keys(it.errors).length === 0),
@@ -2341,37 +2347,57 @@ function MultiImportReview({ items, slug, onDone, onCancel }) {
   const validCount = rows.filter(r => r.valid).length;
   const selectedRemaining = rows.filter(r => r.selected && r.valid && !r.created);
   const createdCount = rows.filter(r => r.created).length;
+  const selectionState = proposalImportSelectionState(
+    selectedRemaining.length, canHighVolumeCreate,
+  );
 
   function patchRow(id, patch) {
     setRows(prev => prev.map(r => (r.id === id ? { ...r, ...patch } : r)));
   }
 
   async function createSelected() {
+    if (selectionState.blocked) return;
     setCreating(true);
     const toCreate = rows.filter(r => r.selected && r.valid && !r.created);
-    let created = 0;
-    for (let i = 0; i < toCreate.length; i++) {
-      const row = toCreate[i];
-      setProgress({ current: i + 1, total: toCreate.length });
-      try {
-        await api.post(`/api/orgs/${slug}/proposals`, { ...row.payload, title: row.title });
-        patchRow(row.id, { created: true, selected: false, failed: null });
-        created += 1;
-      } catch (e) {
-        // Stop on the first failure — already-created drafts persist; the
-        // remaining selected rows stay checked and actionable for retry.
-        patchRow(row.id, { failed: e?.message || 'Create failed' });
-        setCreating(false);
-        setProgress(null);
-        toast.error(`${created} created, ${toCreate.length - created} remaining — retry the rest.`);
-        return;
-      }
-    }
+    const result = await createProposalRowsSequentially(
+      toCreate,
+      row => api.post(
+        `/api/orgs/${slug}/proposals`,
+        { ...row.payload, title: row.title },
+      ),
+      {
+        highVolumeEnabled: canHighVolumeCreate,
+        onProgress: (current, total) => setProgress({ current, total }),
+        onCreated: row => {
+          patchRow(row.id, { created: true, selected: false, failed: null });
+        },
+        onFailed: (row, error) => {
+          patchRow(row.id, { failed: error?.message || 'Create failed' });
+        },
+      },
+    );
     setCreating(false);
     setProgress(null);
-    toast.success(`Created ${created} proposal${created === 1 ? '' : 's'}.`);
-    if (rows.filter(r => r.selected && r.valid && !r.created).length === 0) {
-      onDone(createdCount + created);
+
+    if (result.error) {
+      if (result.error?.status === 429) {
+        const message = proposalImportRateLimitMessage(
+          canHighVolumeCreate, result.created, result.remaining,
+        );
+        patchRow(result.failedRow.id, { failed: message });
+        toast.error(message);
+      } else {
+        toast.error(
+          `${result.created} created, ${result.remaining} remaining — retry the rest.`,
+        );
+      }
+      return;
+    }
+    toast.success(
+      `Created ${result.created} proposal${result.created === 1 ? '' : 's'}.`,
+    );
+    if (result.remaining === 0) {
+      onDone(createdCount + result.created);
     }
   }
 
@@ -2401,6 +2427,21 @@ function MultiImportReview({ items, slug, onDone, onCancel }) {
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-900">
           No proposals are ready to create yet — fix the flagged items below
           (or cancel).
+        </div>
+      )}
+
+      {(selectionState.note || selectionState.guidance) && (
+        <div
+          id="proposal-import-create-guidance"
+          role={selectionState.blocked ? 'alert' : 'status'}
+          aria-live="polite"
+          className={`rounded-lg border p-3 text-sm ${
+            selectionState.blocked
+              ? 'bg-amber-50 border-amber-200 text-amber-900'
+              : 'bg-blue-50 border-blue-200 text-blue-900'
+          }`}
+        >
+          {selectionState.guidance || selectionState.note}
         </div>
       )}
 
@@ -2505,7 +2546,14 @@ function MultiImportReview({ items, slug, onDone, onCancel }) {
         <button
           type="button"
           onClick={createSelected}
-          disabled={creating || selectedRemaining.length === 0}
+          disabled={
+            creating || selectedRemaining.length === 0 || selectionState.blocked
+          }
+          aria-describedby={
+            selectionState.note || selectionState.guidance
+              ? 'proposal-import-create-guidance'
+              : undefined
+          }
           className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
         >
           {creating
@@ -2612,7 +2660,11 @@ export default function ProposalManagement() {
     }
   }, [slug, currentOrg, fetchSubOrgsFor, canAdvancePhase]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // Existing page-load synchronization: load owns the loading-state update.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load();
+  }, [load]);
 
   if (!currentOrg) return <div className="text-center py-16 text-gray-400">No organization selected</div>;
   if (loading) return (

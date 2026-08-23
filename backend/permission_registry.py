@@ -56,18 +56,28 @@ CATEGORIES: list[str] = [
 ]
 
 
-# Full registry — 29 entries. Stage 1 shipped 23; Stage 2 added
+# Full registry — 32 entries. Stage 1 shipped 23; Stage 2 added
 # `role_permissions.edit`; Phase 12.5 adds `proposal.set_thresholds`;
 # Phase 16 adds `proposal.set_durations`; Phase 32.2 adds
 # `org.edit_proposal`; Phase 47 adds `title.manage`; Phase 68b adds
-# `proposal.archive`.
+# `proposal.archive`; Phase 77 adds `org_inbox.view`; Phase 88 adds
+# `member.set_voting_weight`; Phase 101 adds `proposal.high_volume_create`.
 # See spec §"Permission registry" lines 105-144 for Stage 1's 23-key table.
 PERMISSION_REGISTRY: list[PermissionDefinition] = [
-    # --- Proposals (6) ---
+    # --- Proposals (9) ---
     PermissionDefinition(
         "proposal.create",
         "Create proposals",
         "Allow creating new proposals in this organization.",
+        "Proposals",
+    ),
+    # Phase 101 — changes only the organization-scoped proposal-create rate
+    # tier. Every ordinary membership, permission, validation, and side-effect
+    # rule continues to apply.
+    PermissionDefinition(
+        "proposal.high_volume_create",
+        "High-volume proposal creation",
+        "Allow creating proposals above the standard daily limit for trusted bulk-import and large-organization maintenance. All ordinary proposal permissions and validation still apply.",
         "Proposals",
     ),
     PermissionDefinition(
@@ -311,8 +321,8 @@ ALL_PERMISSION_KEYS: set[str] = {p.key for p in PERMISSION_REGISTRY}
 # role_permissions rows when an org is created.
 #
 # Counts (verified by test_permission_registry.py):
-#   steward   = 31  (every key; Phase 88 added member.set_voting_weight)
-#   admin     = 31  (every key; Phase 88 added member.set_voting_weight)
+#   steward   = 32  (every key; Phase 101 added proposal.high_volume_create)
+#   admin     = 32  (every key; Phase 101 added proposal.high_volume_create)
 #   moderator = 11  (+2 from Phase 71a: member.suspend, polis.manage —
 #                    NOT new powers; moderators could already suspend +
 #                    manage polises via the moderator+ tier. Phase 71
