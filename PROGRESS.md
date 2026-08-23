@@ -4445,3 +4445,17 @@ Verification: frontend **24/24 PASS**; changed-file lint PASS; production build 
 Production serves the exact new bundle. `/`, `/pilot`, `/privacy`, and `/security` return 200; fresh HTML contains no robots element; the shipped bundle contains the new CTA and exact revised FAQ sentences and contains no `noindex,nofollow` or removed Pilot copy. Readiness returns `ok` with the database connected; the production monitor returns `ok` with zero issues; the five proxy/service-worker smoke tests pass. Railway deployment-row lookup remains unavailable because the local CLI OAuth refresh is expired.
 
 Interactive desktop/~380px-mobile, keyboard, and client-navigation head inspection are **BLOCKED / not claimed** because the Codex Chrome bridge still fails inside its trusted-runtime bootstrap before attaching to a tab. The live HTTP, HTML-head, source, bundle, and responsive-class checks pass but do not substitute for that visual browser pass. Inquiry form, video, CRM, analytics, sitemap/SEO expansion, additional navigation promotion, outbound recruitment, and changes to elevated ballot access remain **NOT STARTED**.
+
+---
+
+## Phase 99b — Homepage CTA Balance ✅ Deployed (2026-08-23)
+
+Spec: `phase99b_homepage_cta_balance_spec.md`. Branch `phase-99b/homepage-cta-balance`; implementation `7758d30`; no-ff merge `f665084`.
+
+Rebalanced the homepage without changing Pilot copy, routing, or any non-homepage surface. `Browse public organizations` moved from the quiet tertiary links into the shared full-button group after Pilot and Demo, so both the hero and bottom CTA now render Pilot, Demo, and Browse in that order. Pilot remains filled-primary; Demo and Browse are outlined peers. The tertiary group retains auth-aware Create, About, and logged-out Sign in, including demo-user create suppression. The redundant `Explore the supported pilot` Link was removed from the supported-pilot explainer while both approved paragraphs remain unchanged.
+
+Verification: focused Pilot/homepage **7/7 PASS**; complete frontend **24/24 PASS**; changed-file lint PASS; production build PASS at JS `index-Bwx2-jeD.js` (1,872.17 kB / 476.16 kB gzip) and unchanged CSS `index-UmXqc-Uh.css` (66.16 kB / 12.40 kB gzip), with only the existing large-chunk warning. `git diff --check` PASS. No backend source changed, so the backend suite was not required. No migration; PG smoke not required.
+
+Production serves the exact new bundle. `/`, `/pilot`, `/demo`, and `/explore` return 200; the shipped bundle contains all three CTA labels and the unchanged supported-pilot/Pilot-free copy, while `Explore the supported pilot` and `noindex,nofollow` are absent. Readiness is `ok` with the database connected; the monitor is `ok` with zero issues; and the five proxy/service-worker smoke tests pass. Railway deployment-row lookup remains unavailable because the local CLI OAuth refresh is expired.
+
+Interactive logged-out/logged-in/demo-user desktop and ~380px mobile browser QA is **BLOCKED / not claimed** because the Codex Chrome bridge still fails inside its trusted-runtime bootstrap before attaching to a tab. Source contracts prove ordering, shared reuse, responsive full-width classes, focus styles, and unchanged auth/demo gates, but do not replace the requested rendered layout review. Pilot-page copy, inquiry form, video, CRM, analytics, sitemap/SEO expansion, additional navigation promotion, outbound recruitment, and elevated-ballot access remain unchanged or **NOT STARTED**.
