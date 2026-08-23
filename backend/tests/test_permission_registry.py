@@ -44,9 +44,10 @@ def test_registry_has_26_entries():
     """Stage 1 shipped 23 keys; Stage 2 + Phase 12.5 + Phase 16 + Phase
     32.2 + Phase 47 brought it to 28; Phase 68b adds `proposal.archive`
     (29); Phase 77 adds `org_inbox.view` (30); Phase 88 adds
-    `member.set_voting_weight` (31). Per-category breakdown:
-    8+3+6+3+1+2+1+4+2+1 = 31."""
-    assert len(PERMISSION_REGISTRY) == 31
+    `member.set_voting_weight` (31); Phase 101 adds
+    `proposal.high_volume_create` (32). Per-category breakdown:
+    9+3+6+3+1+2+1+4+2+1 = 32."""
+    assert len(PERMISSION_REGISTRY) == 32
 
 
 def test_registry_keys_are_unique():
@@ -72,7 +73,7 @@ def test_registry_per_category_counts_match_spec():
     adds `proposal.archive` to the Proposals category, bumping that
     category from 7 to 8."""
     expected = {
-        "Proposals": 8,
+        "Proposals": 9,
         "Topics": 3,
         # Phase 88 — added member.set_voting_weight (now 6 = the existing 5 +
         # member.set_voting_weight).
@@ -110,8 +111,20 @@ def test_proposal_delete_key_is_present_and_honestly_labeled():
     assert "no effect" in desc
     # And must NOT claim it actually gates deletion.
     assert "allow deleting" not in desc
-    # Keeping (not removing) the key leaves the count at 31.
-    assert len(PERMISSION_REGISTRY) == 31
+    # Keeping (not removing) the key leaves the Phase 101 count at 32.
+    assert len(PERMISSION_REGISTRY) == 32
+
+
+def test_high_volume_permission_is_registered_with_locked_copy():
+    by_key = {p.key: p for p in PERMISSION_REGISTRY}
+    permission = by_key["proposal.high_volume_create"]
+    assert permission.label == "High-volume proposal creation"
+    assert permission.category == "Proposals"
+    assert permission.description == (
+        "Allow creating proposals above the standard daily limit for trusted "
+        "bulk-import and large-organization maintenance. All ordinary proposal "
+        "permissions and validation still apply."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -125,8 +138,9 @@ def test_default_grants_steward_gets_all_26():
     column also has three lockout-protected cells per Stage 2 spec Q1,
     but those still appear in DEFAULT_GRANTS as TRUE — they're enforced
     as-locked at the PATCH endpoint, not via DEFAULT_GRANTS."""
-    assert len(DEFAULT_GRANTS["steward"]) == 31
+    assert len(DEFAULT_GRANTS["steward"]) == 32
     assert DEFAULT_GRANTS["steward"] == ALL_PERMISSION_KEYS
+    assert "proposal.high_volume_create" in DEFAULT_GRANTS["steward"]
 
 
 def test_default_grants_admin_gets_all_26():
@@ -134,8 +148,9 @@ def test_default_grants_admin_gets_all_26():
     `role_permissions.edit`, `proposal.set_thresholds`, and
     `proposal.set_durations`. The matrix UI is what permits orgs to scope
     these back if they want stricter Admin scopes."""
-    assert len(DEFAULT_GRANTS["admin"]) == 31
+    assert len(DEFAULT_GRANTS["admin"]) == 32
     assert DEFAULT_GRANTS["admin"] == ALL_PERMISSION_KEYS
+    assert "proposal.high_volume_create" in DEFAULT_GRANTS["admin"]
 
 
 def test_default_grants_moderator_gets_11():
@@ -163,6 +178,7 @@ def test_default_grants_moderator_gets_11():
         "polis.manage",
     }
     assert DEFAULT_GRANTS["moderator"] == expected
+    assert "proposal.high_volume_create" not in DEFAULT_GRANTS["moderator"]
 
 
 def test_default_grants_member_gets_zero():
@@ -170,6 +186,7 @@ def test_default_grants_member_gets_zero():
     delegating, posting comments, etc. are gated by membership status,
     not by entries in role_permissions."""
     assert DEFAULT_GRANTS["member"] == set()
+    assert "proposal.high_volume_create" not in DEFAULT_GRANTS["member"]
 
 
 def test_default_grants_keys_all_exist_in_registry():
@@ -261,7 +278,7 @@ def test_get_registry_returns_26_entries_with_correct_shape(client, test_db):
 
     assert "permissions" in body
     assert "categories" in body
-    assert len(body["permissions"]) == 31
+    assert len(body["permissions"]) == 32
     for entry in body["permissions"]:
         assert set(entry.keys()) == {"key", "label", "description", "category"}
         assert isinstance(entry["key"], str) and entry["key"]

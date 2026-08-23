@@ -33,8 +33,9 @@ from reserved_slugs import RESERVED_SLUGS
 from org_titles import seed_system_titles_for_org
 from role_permissions import has_permission
 from rate_limit_utils import (
-    content_limiter, JOIN_REQUEST_LIMIT, ORG_CREATE_LIMIT, PROPOSAL_CREATE_LIMIT,
+    content_limiter, JOIN_REQUEST_LIMIT, ORG_CREATE_LIMIT,
     INVITATION_CREATE_LIMIT, SHARE_TRANSFER_LIMIT,
+    enforce_proposal_create_rate_limit, resolve_proposal_create_rate_tier,
 )
 from org_restriction import (
     effective_discoverability, assert_org_accessible, is_suspended,
@@ -4814,7 +4815,6 @@ def list_org_proposals(
 
 
 @router.post("/{org_slug}/proposals", response_model=schemas.ProposalOut, status_code=201)
-@content_limiter.limit(PROPOSAL_CREATE_LIMIT)
 def create_org_proposal(
     org_slug: str,
     body: schemas.ProposalCreate,
@@ -5114,6 +5114,18 @@ def create_org_proposal(
     if get_weighted_voting_config(_cm_org)["enabled"]:
         effective_count_mode = getattr(body, "count_mode", None)
 
+    # Phase 101 — charge exactly one server-resolved proposal-create bucket
+    # after authentication, effective-scope authorization, and every
+    # validation above have passed, but before the first database write. The
+    # trusted tier changes only the rate allowance; it cannot grant creation
+    # authority or bypass any validation.
+    proposal_create_rate_tier = resolve_proposal_create_rate_tier(
+        db, current_user.id, target_sub_org or org,
+    )
+    enforce_proposal_create_rate_limit(
+        request, current_user.id, proposal_create_rate_tier,
+    )
+
     proposal = models.Proposal(
         title=body.title,
         body=body.body,
@@ -5239,13 +5251,21 @@ def create_org_proposal(
     if body.voting_method in ("approval", "ranked_choice", "budget_allocation", "budget_project") and body.options:
         _create_proposal_options(db, proposal.id, body.options)
 
+    proposal_created_details = {
+        "title": proposal.title,
+        "org_id": org.id,
+        "voting_method": body.voting_method,
+    }
+    if proposal_create_rate_tier == "high_volume":
+        proposal_created_details["high_volume_rate_tier"] = True
+
     log_audit_event(
         db,
         action="proposal.created",
         target_type="proposal",
         target_id=proposal.id,
         actor_id=current_user.id,
-        details={"title": proposal.title, "org_id": org.id, "voting_method": body.voting_method},
+        details=proposal_created_details,
         ip_address=request.client.host if request.client else None,
     )
 

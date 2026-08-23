@@ -104,11 +104,12 @@ def test_steward_sees_all_25_permission_keys(client, test_db):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert "user_permissions" in body
-    # 31 matrix-routed (Phase 77 org_inbox.view + Phase 88
-    # member.set_voting_weight) + 2 OWNER_ONLY_KEYS (org.delete +
+    # 32 matrix-routed (through Phase 101 high-volume create) + 2
+    # OWNER_ONLY_KEYS (org.delete +
     # org.transfer_stewardship) surfaced via the Phase 45a hotfix #1
-    # enrichment loop = 33.
-    assert len(body["user_permissions"]) == 33
+    # enrichment loop = 34.
+    assert len(body["user_permissions"]) == 34
+    assert "proposal.high_volume_create" in body["user_permissions"]
     # Spot-check one key from each category.
     expected_subset = {
         "proposal.create",
@@ -137,7 +138,8 @@ def test_admin_sees_all_25_permission_keys(client, test_db):
 
     resp = client.get(f"/api/orgs/{org.slug}", headers=_auth(user))
     assert resp.status_code == 200, resp.text
-    assert len(resp.json()["user_permissions"]) == 31
+    assert len(resp.json()["user_permissions"]) == 32
+    assert "proposal.high_volume_create" in resp.json()["user_permissions"]
 
 
 def test_moderator_sees_exactly_eleven_default_grants(client, test_db):
@@ -163,6 +165,7 @@ def test_moderator_sees_exactly_eleven_default_grants(client, test_db):
         "member.suspend", "polis.manage",
     }
     assert keys == expected
+    assert "proposal.high_volume_create" not in keys
     assert "proposal.set_thresholds" not in keys
     assert "role_permissions.edit" not in keys
 
@@ -285,11 +288,11 @@ def test_repeated_has_permission_calls_via_endpoint_use_cache(client, test_db):
         event.remove(test_db.bind, "before_cursor_execute", _count)
 
     assert resp.status_code == 200, resp.text
-    # Steward returns 33 keys (31 matrix incl. Phase 88 member.set_voting_weight
+    # Steward returns 34 keys (32 matrix incl. Phase 101 high-volume create
     # + 2 OWNER_ONLY post-45a-hotfix); cache should have absorbed all
     # has_permission calls into ONE SELECT (the first call's load —
     # OWNER_ONLY_KEYS don't hit role_permissions).
-    assert len(resp.json()["user_permissions"]) == 33
+    assert len(resp.json()["user_permissions"]) == 34
     assert role_permission_query_count["n"] == 1, (
         f"expected exactly 1 SELECT FROM role_permissions across the "
         f"has_permission calls inside _org_to_out (Stage 1's per-request "

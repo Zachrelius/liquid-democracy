@@ -51,15 +51,18 @@ from delegation_engine import (
 def _reset_slowapi_limiter():
     from routes import auth as _auth_routes
     from main import limiter as _main_limiter
+    from rate_limit_utils import content_limiter as _content_limiter
     try:
         _auth_routes.limiter.reset()
         _main_limiter.reset()
+        _content_limiter.reset()
     except Exception:
         pass  # defensive — never let limiter wiring break test collection
     yield
     try:
         _auth_routes.limiter.reset()
         _main_limiter.reset()
+        _content_limiter.reset()
     except Exception:
         pass
 
