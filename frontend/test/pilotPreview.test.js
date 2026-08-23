@@ -6,6 +6,14 @@ function source(relativePath) {
   return readFileSync(new URL(`../src/${relativePath}`, import.meta.url), 'utf8');
 }
 
+function sourceSlice(text, startMarker, endMarker) {
+  const start = text.indexOf(startMarker);
+  const end = text.indexOf(endMarker, start + startMarker.length);
+  assert.ok(start >= 0, `missing source marker: ${startMarker}`);
+  assert.ok(end > start, `missing source marker after ${startMarker}: ${endMarker}`);
+  return text.slice(start, end);
+}
+
 test('pilot is a fixed public route registered before the org catch-all', () => {
   const app = source('App.jsx');
   const pilotRoute = app.indexOf('path="/pilot"');
@@ -57,13 +65,34 @@ test('pilot metadata is indexable and restores pre-existing title and descriptio
 
 test('homepage promotes the pilot while shared and authenticated navigation stay bounded', () => {
   const landing = source('pages/Landing.jsx');
+  const ctaButtons = sourceSlice(landing, 'const ctaButtons = (', 'const tertiaryLinks = (');
+  const tertiaryLinks = sourceSlice(landing, 'const tertiaryLinks = (', 'return (');
+  const pilotExplainer = sourceSlice(landing, '{/* Supported pilot */}', '{/* Bottom CTA */}');
+  const pilotIndex = ctaButtons.indexOf('to="/pilot"');
+  const demoIndex = ctaButtons.indexOf('to="/demo"');
+  const browseIndex = ctaButtons.indexOf('to="/explore"');
+  const pilotButton = sourceSlice(ctaButtons, 'to="/pilot"', '</Link>');
+  const demoButton = sourceSlice(ctaButtons, 'to="/demo"', '</Link>');
+  const browseButton = sourceSlice(ctaButtons, 'to="/explore"', '</Link>');
 
-  assert.match(landing, /to="\/pilot"[\s\S]*Pilot your organization/);
-  assert.match(landing, /to="\/pilot"[\s\S]*Explore the supported pilot/);
-  assert.match(landing, /to="\/demo"/);
-  assert.match(landing, /to="\/explore"/);
+  assert.ok(pilotIndex >= 0 && demoIndex > pilotIndex && browseIndex > demoIndex);
+  assert.match(pilotButton, /bg-\[var\(--brand-primary\)\]/);
+  for (const outlinedButton of [demoButton, browseButton]) {
+    assert.match(outlinedButton, /border border-gray-300 bg-white/);
+  }
+  assert.match(browseButton, /Browse public organizations/);
+  assert.doesNotMatch(browseButton, /hover:underline/);
+  assert.doesNotMatch(tertiaryLinks, /to="\/explore"|Browse public organizations/);
+  assert.equal(landing.match(/\{ctaButtons\}/g)?.length, 2);
+
+  assert.match(pilotExplainer, /Liquid Democracy is ready for its first supported external pilots\./);
+  assert.match(pilotExplainer, /Learn what a strong pilot looks like, what support is included/);
+  assert.doesNotMatch(pilotExplainer, /Explore the supported pilot|<Link\b/);
+  assert.match(landing, /const startOrgTo = user \? '\/orgs\/create' : '\/register\?next=\/orgs\/create'/);
+  assert.match(tertiaryLinks, /!isDemoUser/);
   assert.match(landing, /to=\{startOrgTo\}/);
   assert.match(landing, /to="\/about"/);
+  assert.match(landing, /!user[\s\S]*to="\/login"/);
   assert.match(landing, /to="\/login"/);
   assert.match(landing, /Member resolutions, policy priorities, committee recommendations, and issue discussions\./);
   assert.doesNotMatch(landing, /mailto:z@liquiddemocracy\.us|2,500\+ unit tests/);

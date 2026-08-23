@@ -17,7 +17,7 @@ export default function Landing() {
   // `/` so this is belt-and-suspenders.
   const isDemoUser = useIsDemoUser();
 
-  // Phase 99a — the pilot and demo are the two main conversion actions.
+  // Phase 99b — pilot leads the shared Pilot/Demo/Browse action group.
   const ctaButtons = (
     <>
       <Link
@@ -32,17 +32,17 @@ export default function Landing() {
       >
         Explore a demo org
       </Link>
+      <Link
+        to="/explore"
+        className="inline-flex w-full items-center justify-center rounded-lg border border-gray-300 bg-white px-6 py-3 text-sm font-semibold text-[var(--brand-primary)] transition-colors hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)] sm:w-auto"
+      >
+        Browse public organizations
+      </Link>
     </>
   );
 
   const tertiaryLinks = (
     <>
-      <Link
-        to="/explore"
-        className="inline-flex min-h-11 w-full items-center justify-center rounded-lg px-3 py-2 text-sm font-medium text-[var(--brand-accent)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)] sm:w-auto"
-      >
-        Browse public organizations
-      </Link>
       {!isDemoUser && (
         <Link
           to={startOrgTo}
@@ -79,7 +79,7 @@ export default function Landing() {
             An open-source platform for flexible, accountable governance at any level.
           </p>
 
-          {/* Phase 99a — primary pilot path, secondary demo, quiet discovery links. */}
+          {/* Phase 99b — pilot first, with demo and browse as full-button peers. */}
           <div className="mt-10 flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-3">
             {ctaButtons}
           </div>
@@ -189,12 +189,6 @@ export default function Landing() {
               Learn what a strong pilot looks like, what support is included, and the privacy and security boundaries before deciding whether it fits your group.
             </p>
           </div>
-          <Link
-            to="/pilot"
-            className="mt-8 inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-[var(--brand-primary)] px-6 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[var(--brand-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)] sm:w-auto"
-          >
-            Explore the supported pilot
-          </Link>
         </div>
       </section>
 
