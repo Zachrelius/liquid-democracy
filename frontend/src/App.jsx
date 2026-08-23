@@ -306,8 +306,7 @@ export default function App() {
         <Route path="/why" element={<Why />} />
         <Route path="/security" element={<Security />} />
         <Route path="/demo" element={<Demo />} />
-        {/* Phase 99 — direct-URL preview only. Intentionally absent from
-            public/authenticated navigation and marked noindex by Pilot. */}
+        {/* Phase 99a — public pilot route promoted from the homepage. */}
         <Route path="/pilot" element={<Pilot />} />
         {/* Phase 55 — public org discovery page. Fixed segment; must
             resolve before /:org_slug catch-all (route order below). The

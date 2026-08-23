@@ -16,8 +16,12 @@ test('pilot is a fixed public route registered before the org catch-all', () => 
   assert.match(app, /import Pilot from '\.\/pages\/Pilot';/);
 });
 
-test('pilot preview carries the approved offer, actions, and trust boundaries', () => {
+test('pilot page carries the approved offer, actions, and clarified FAQ answers', () => {
   const pilot = source('pages/Pilot.jsx');
+  const adminFaq = pilot.slice(
+    pilot.indexOf('<Faq question="Can administrators see how members voted?">'),
+    pilot.indexOf('<Faq question="Is this a legally binding election system?">'),
+  );
 
   for (const claim of [
     'Supported organizational pilots',
@@ -27,29 +31,45 @@ test('pilot preview carries the approved offer, actions, and trust boundaries', 
     'no preset end date',
     'Not a certified public-election system',
     'Honest boundaries, tested recovery',
-    'No pilot organization will be charged later without advance discussion and express agreement',
+    'No. Liquid Democracy is free to use during and after the pilot.',
+    'There is no subscription fee.',
+    'No. Organization administrators can see membership and aggregate results, but not individual members&apos; ballots.',
   ]) {
     assert.match(pilot, new RegExp(claim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 
+  assert.doesNotMatch(pilot, /No pilot organization will be charged later/);
+  assert.doesNotMatch(pilot, /Keep names, logos, quotes, and results private/);
+  assert.doesNotMatch(adminFaq, /reason-recorded API|audit entry|GET \/api\/admin\/audit\/ballots/i);
   assert.match(pilot, /mailto:support@liquiddemocracy\.us\?subject=Pilot%20conversation/);
   assert.match(pilot, /to="\/demo"/);
   assert.doesNotMatch(pilot, /<form\b|<iframe\b|youtube|google\.com/i);
 });
 
-test('pilot metadata is noindex and restores pre-existing head state', () => {
+test('pilot metadata is indexable and restores pre-existing title and description state', () => {
   const pilot = source('pages/Pilot.jsx');
 
-  assert.match(pilot, /robots\.setAttribute\('content', 'noindex,nofollow'\)/);
+  assert.doesNotMatch(pilot, /noindex,nofollow|meta\[name=["']robots["']\]|existingRobots|previousRobots/);
   assert.match(pilot, /document\.title = 'Supported organizational pilots \| Liquid Democracy'/);
   assert.match(pilot, /document\.title = previousTitle/);
   assert.match(pilot, /description\.remove\(\)/);
-  assert.match(pilot, /robots\.remove\(\)/);
 });
 
-test('preview remains isolated from every public and authenticated navigation surface', () => {
+test('homepage promotes the pilot while shared and authenticated navigation stay bounded', () => {
+  const landing = source('pages/Landing.jsx');
+
+  assert.match(landing, /to="\/pilot"[\s\S]*Pilot your organization/);
+  assert.match(landing, /to="\/pilot"[\s\S]*Explore the supported pilot/);
+  assert.match(landing, /to="\/demo"/);
+  assert.match(landing, /to="\/explore"/);
+  assert.match(landing, /to=\{startOrgTo\}/);
+  assert.match(landing, /to="\/about"/);
+  assert.match(landing, /to="\/login"/);
+  assert.match(landing, /Member resolutions, policy priorities, committee recommendations, and issue discussions\./);
+  assert.doesNotMatch(landing, /mailto:z@liquiddemocracy\.us|2,500\+ unit tests/);
+  assert.doesNotMatch(landing, /Contract ratification|officer elections|strike authorization/);
+
   for (const file of [
-    'pages/Landing.jsx',
     'components/PublicLayout.jsx',
     'pages/About.jsx',
     'pages/Security.jsx',

@@ -8,19 +8,12 @@ function usePilotMetadata() {
   useEffect(() => {
     const previousTitle = document.title;
     const existingDescription = document.querySelector('meta[name="description"]');
-    const existingRobots = document.querySelector('meta[name="robots"]');
     const previousDescription = existingDescription?.getAttribute('content') ?? null;
-    const previousRobots = existingRobots?.getAttribute('content') ?? null;
     const description = existingDescription || document.createElement('meta');
-    const robots = existingRobots || document.createElement('meta');
 
     if (!existingDescription) {
       description.setAttribute('name', 'description');
       document.head.appendChild(description);
-    }
-    if (!existingRobots) {
-      robots.setAttribute('name', 'robots');
-      document.head.appendChild(robots);
     }
 
     document.title = 'Supported organizational pilots | Liquid Democracy';
@@ -28,7 +21,6 @@ function usePilotMetadata() {
       'content',
       'A supported, no-cost Liquid Democracy pilot for known-member organizations making meaningful, correctable decisions.',
     );
-    robots.setAttribute('content', 'noindex,nofollow');
 
     return () => {
       document.title = previousTitle;
@@ -37,12 +29,6 @@ function usePilotMetadata() {
         else description.setAttribute('content', previousDescription);
       } else {
         description.remove();
-      }
-      if (existingRobots) {
-        if (previousRobots == null) robots.removeAttribute('content');
-        else robots.setAttribute('content', previousRobots);
-      } else {
-        robots.remove();
       }
     };
   }, []);
@@ -190,7 +176,6 @@ export default function Pilot() {
               'Tell members the service is pilot-stage and explain how results will be used.',
               'Run at least one real, appropriate, correctable decision.',
               'Share candid feedback on comprehension, participation, workload, missing features, and trust.',
-              'Keep names, logos, quotes, and results private unless separate permission is given for public use.',
             ].map(item => (
               <li key={item} className="rounded-lg border border-[#D6E0E7] bg-white px-5 py-4 text-base leading-7">{item}</li>
             ))}
@@ -219,7 +204,7 @@ export default function Pilot() {
         <Section eyebrow="Questions" title="Pilot FAQ" tinted>
           <div className="rounded-xl border border-[#D8E0E7] bg-white px-6 sm:px-8">
             <Faq question="Does the pilot cost anything?">
-              <p>The initial supported pilot is free and has no preset end date. Support tapers as the organization becomes self-sufficient, and continued use is welcome. No pilot organization will be charged later without advance discussion and express agreement.</p>
+              <p>No. Liquid Democracy is free to use during and after the pilot. There is no subscription fee. Pilot organizations also receive hands-on setup and early support at no charge.</p>
             </Faq>
             <Faq question="How many members do we need?">
               <p>Roughly 20–200 members is the strongest initial range, but a committed steward and an appropriate, correctable decision matter more than an exact number.</p>
@@ -228,7 +213,7 @@ export default function Pilot() {
               <p>No. Government-ID verification is optional and normally off unless an organization&apos;s use case needs it. An age threshold works only through that optional verification flow; the platform does not otherwise verify age.</p>
             </Faq>
             <Faq question="Can administrators see how members voted?">
-              <p>Normal organization-admin tools show membership and aggregate information, not a routine individual-ballot view. The ordinary platform-admin screen also has no ballot viewer. A restricted, reason-recorded API can reveal one specific audit entry and is itself audited; the underlying operator can access the database. Some activity is intentionally visible when a member becomes a public delegate or grants follower visibility.</p>
+              <p>No. Organization administrators can see membership and aggregate results, but not individual members&apos; ballots. Members can choose to make some voting activity visible through public-delegate or follower settings. Because Liquid Democracy is a hosted service, the platform operator can technically access stored data; the Privacy and Security &amp; Trust pages explain that narrow trust boundary.</p>
             </Faq>
             <Faq question="Is this a legally binding election system?">
               <p>No. The organization decides what authority to give a platform result and remains responsible for any separate legal, procedural, notice, meeting, record, or ballot requirements.</p>

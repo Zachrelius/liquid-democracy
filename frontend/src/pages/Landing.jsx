@@ -17,32 +17,43 @@ export default function Landing() {
   // `/` so this is belt-and-suspenders.
   const isDemoUser = useIsDemoUser();
 
-  // Phase 78 — shared CTA row, reused in the hero and the bottom CTA.
+  // Phase 99a — the pilot and demo are the two main conversion actions.
   const ctaButtons = (
     <>
       <Link
-        to="/explore"
-        className="inline-flex items-center justify-center px-6 py-3 bg-[var(--brand-primary)] text-white text-sm font-medium rounded-lg hover:bg-[var(--brand-accent)] transition-colors shadow-sm w-full sm:w-auto"
+        to="/pilot"
+        className="inline-flex w-full items-center justify-center rounded-lg bg-[var(--brand-primary)] px-6 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[var(--brand-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)] sm:w-auto"
       >
-        Browse and join public orgs
+        Pilot your organization
       </Link>
       <Link
         to="/demo"
-        className="inline-flex items-center justify-center px-6 py-3 bg-white text-[var(--brand-primary)] text-sm font-medium rounded-lg border border-gray-300 hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors w-full sm:w-auto"
+        className="inline-flex w-full items-center justify-center rounded-lg border border-gray-300 bg-white px-6 py-3 text-sm font-semibold text-[var(--brand-primary)] transition-colors hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)] sm:w-auto"
       >
         Explore a demo org
+      </Link>
+    </>
+  );
+
+  const tertiaryLinks = (
+    <>
+      <Link
+        to="/explore"
+        className="inline-flex min-h-11 w-full items-center justify-center rounded-lg px-3 py-2 text-sm font-medium text-[var(--brand-accent)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)] sm:w-auto"
+      >
+        Browse public organizations
       </Link>
       {!isDemoUser && (
         <Link
           to={startOrgTo}
-          className="inline-flex items-center justify-center px-6 py-3 bg-white text-[var(--brand-primary)] text-sm font-medium rounded-lg border border-gray-300 hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors w-full sm:w-auto"
+          className="inline-flex min-h-11 w-full items-center justify-center rounded-lg px-3 py-2 text-sm font-medium text-[var(--brand-accent)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)] sm:w-auto"
         >
-          Create an org for your group
+          Create an organization
         </Link>
       )}
       <Link
         to="/about"
-        className="inline-flex items-center justify-center px-6 py-3 bg-white text-[var(--brand-primary)] text-sm font-medium rounded-lg border border-gray-300 hover:border-[var(--brand-accent)] hover:text-[var(--brand-accent)] transition-colors w-full sm:w-auto"
+        className="inline-flex min-h-11 w-full items-center justify-center rounded-lg px-3 py-2 text-sm font-medium text-[var(--brand-accent)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)] sm:w-auto"
       >
         About the project
       </Link>
@@ -68,13 +79,16 @@ export default function Landing() {
             An open-source platform for flexible, accountable governance at any level.
           </p>
 
-          {/* Phase 78 — reordered CTAs. Create-an-org hidden for demo users. */}
+          {/* Phase 99a — primary pilot path, secondary demo, quiet discovery links. */}
           <div className="mt-10 flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-3">
             {ctaButtons}
+          </div>
+          <div className="mt-4 flex flex-col items-center justify-center gap-1 sm:flex-row sm:flex-wrap sm:gap-2">
+            {tertiaryLinks}
             {!user && (
               <Link
                 to="/login"
-                className="inline-flex items-center justify-center px-6 py-3 text-[var(--brand-accent)] text-sm font-medium rounded-lg hover:underline w-full sm:w-auto"
+                className="inline-flex min-h-11 w-full items-center justify-center rounded-lg px-3 py-2 text-sm font-medium text-[var(--brand-accent)] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)] sm:w-auto"
               >
                 Sign in
               </Link>
@@ -148,7 +162,7 @@ export default function Landing() {
           />
           <AudienceCard
             title="Unions and locals"
-            body="Contract ratification, officer elections, strike authorization. Run them transparently, with delegation so members who can't attend still have a voice."
+            body="Member resolutions, policy priorities, committee recommendations, and issue discussions. Give members a voice between meetings while keeping any separately required legal procedures outside the pilot."
           />
           <AudienceCard
             title="Student governments"
@@ -161,40 +175,26 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* Pilot explainer */}
+      {/* Supported pilot */}
       <section className="bg-[#F0F4F8] border-t border-b border-gray-200">
         <div className="max-w-3xl mx-auto px-6 py-16 text-center">
           <h2 className="text-xl sm:text-2xl font-semibold text-[var(--brand-primary)]">
-            What "pilot stage" means
+            Ready to try it with a real organization?
           </h2>
           <div className="mt-6 space-y-4 text-sm sm:text-base text-[#2C3E50] leading-relaxed text-left">
             <p>
-              We've built all these features and tested them with 2,500+ unit tests
-              and extensive in-browser testing, but we know that real organizations
-              using the platform will find things that could work better. We can act
-              on bug reports and feature requests quickly.
+              Liquid Democracy is ready for its first supported external pilots. The platform is free to use, and pilot organizations receive hands-on help choosing settings, rehearsing the member experience, and running their first decisions.
             </p>
             <p>
-              If you're part of a group that wants to try making decisions with
-              Liquid Democracy, feel free to create an org. The platform is set up
-              for anyone to do that. But orgs are meant to be very configurable for
-              different use cases, so there are a lot of settings that can be
-              intimidating when you're getting started.{' '}
-              <a
-                href="mailto:z@liquiddemocracy.us"
-                className="text-[var(--brand-accent)] font-medium hover:underline"
-              >
-                Reach out
-              </a>{' '}
-              and I'm happy to walk early orgs through the setup process and discuss
-              what configuration makes sense for your group.
-            </p>
-            <p>
-              Once we get a few orgs up and running, we'll create templates that make
-              initial setup easier. I want to see real use cases in action rather
-              than assume.
+              Learn what a strong pilot looks like, what support is included, and the privacy and security boundaries before deciding whether it fits your group.
             </p>
           </div>
+          <Link
+            to="/pilot"
+            className="mt-8 inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-[var(--brand-primary)] px-6 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-[var(--brand-accent)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--brand-accent)] sm:w-auto"
+          >
+            Explore the supported pilot
+          </Link>
         </div>
       </section>
 
