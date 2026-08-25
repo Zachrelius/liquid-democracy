@@ -354,3 +354,72 @@ def test_bulk_schedule_requires_reason_to_shorten_active_vote(db):
     assert response.json()["invalid"] == 1
     db.expire_all()
     assert db.get(models.Proposal, proposal.id).voting_end == original_end
+
+
+def test_reconciliation_is_scoped_audited_suppressed_and_idempotent(db):
+    from scripts.reconcile_deliberation_schedules import (
+        apply_reconciliation,
+        capture_verification_baseline,
+        verify_reconciliation,
+    )
+
+    now = datetime.utcnow()
+    user = _user(db, "reconciliation")
+    reform = _org(db)
+    reform.slug = "reform-table"
+    other = _org(db)
+    overdue = _proposal(
+        db, reform, user, status="deliberation",
+        deliberation_start=now - timedelta(days=5), deliberation_end=None,
+        deliberation_days=2, voting_days=500,
+    )
+    existing_voting = _proposal(
+        db, reform, user, status="voting", title="Existing voting",
+        deliberation_start=now - timedelta(days=8),
+        voting_start=now - timedelta(days=2), voting_end=now + timedelta(days=498),
+    )
+    withdrawn = _proposal(
+        db, reform, user, status="withdrawn", title="Withdrawn",
+        deliberation_start=now - timedelta(days=8),
+    )
+    unrelated_overdue = _proposal(
+        db, other, user, status="deliberation", title="Other overdue",
+        deliberation_start=now - timedelta(days=5), deliberation_end=None,
+        deliberation_days=2,
+    )
+    future = _proposal(
+        db, other, user, status="deliberation", title="Other future",
+        deliberation_start=now, deliberation_end=None, deliberation_days=2,
+    )
+    db.commit()
+
+    baseline = capture_verification_baseline(db, now)
+    changes = apply_reconciliation(db, now)
+    verification = verify_reconciliation(db, baseline, changes, now)
+
+    assert [row["id"] for row in changes["reform_table_advanced"]] == [overdue.id]
+    assert [row["id"] for row in changes["future_initialized"]] == [future.id]
+    assert changes["failures"] == []
+    assert verification["advanced_count"] == 1
+    assert verification["reconciliation_audit_count"] == 1
+    assert verification["one_reconciliation_audit_per_advanced"] is True
+    assert verification["entered_voting_notification_count"] == 0
+    assert verification["future_initialized_count"] == 1
+    assert verification["future_initialization_audit_count"] == 1
+    assert verification["reform_qualifying_overdue_count"] == 0
+    assert verification["preexisting_voting_withdrawn_unchanged"] is True
+    assert verification["content_configuration_changed_columns"] == []
+    assert verification["content_configuration_unchanged"] is True
+    assert len(verification["content_configuration_hash"]) == 64
+    assert verification["unrelated_overdue_unchanged"] is True
+    db.expire_all()
+    assert db.get(models.Proposal, overdue.id).status == "voting"
+    assert db.get(models.Proposal, overdue.id).voting_days == 500
+    assert db.get(models.Proposal, existing_voting.id).status == "voting"
+    assert db.get(models.Proposal, withdrawn.id).status == "withdrawn"
+    assert db.get(models.Proposal, unrelated_overdue.id).deliberation_end is None
+
+    retry = apply_reconciliation(db, now)
+    assert retry == {
+        "future_initialized": [], "reform_table_advanced": [], "failures": [],
+    }
