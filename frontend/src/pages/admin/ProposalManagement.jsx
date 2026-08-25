@@ -14,7 +14,8 @@ import {
   aggregateBulkAdvanceResponses,
   bulkAdvanceSummaryMessage,
   chunkProposalIds,
-  visibleDraftProposalIds,
+  proposalEligibleForBulkOperation,
+  visibleEligibleProposalIds,
 } from '../../utils/bulkDeliberation';
 import {
   createProposalRowsSequentially,
@@ -2584,6 +2585,7 @@ export default function ProposalManagement() {
   // Phase 12.5 F2 — per-control permission gating.
   const canCreateProposal = useHasPermission('proposal.create');
   const canAdvancePhase = useHasPermission('proposal.advance_phase');
+  const canSetDurations = useHasPermission('proposal.set_durations');
   const [proposals, setProposals] = useState([]);
   const [topics, setTopics] = useState([]);
   const [subOrgs, setSubOrgs] = useState([]);
@@ -2599,6 +2601,11 @@ export default function ProposalManagement() {
   );
   const [bulkAdvanceWorking, setBulkAdvanceWorking] = useState(false);
   const selectAllDraftsRef = useRef(null);
+  const [bulkOperation, setBulkOperation] = useState('');
+  const [bulkVotingStartsAt, setBulkVotingStartsAt] = useState('');
+  const [bulkVotingEndsAt, setBulkVotingEndsAt] = useState('');
+  const [bulkScheduleReason, setBulkScheduleReason] = useState('');
+  const [scheduleReferenceMs] = useState(() => Date.now());
   // Phase 72 — when an import file carries 2+ proposals, the create form
   // hands the per-item preview results here and we render the review list.
   const [multiImportItems, setMultiImportItems] = useState(null);
@@ -2615,8 +2622,8 @@ export default function ProposalManagement() {
     });
   }, [slug]);
   const visibleDraftIds = useMemo(
-    () => visibleDraftProposalIds(proposals),
-    [proposals],
+    () => visibleEligibleProposalIds(proposals, bulkOperation),
+    [proposals, bulkOperation],
   );
   const selectedCount = selectedProposalIds.size;
   const allVisibleDraftsSelected = visibleDraftIds.length > 0
@@ -2637,7 +2644,7 @@ export default function ProposalManagement() {
         api.get(`/api/orgs/${slug}/topics`),
       ]);
       setProposals(props);
-      const eligibleDrafts = new Set(visibleDraftProposalIds(props));
+      const eligibleDrafts = new Set(visibleEligibleProposalIds(props, bulkOperation));
       setProposalSelection(previous => {
         if (previous.slug !== slug || !canAdvancePhase) {
           return { slug, ids: new Set() };
@@ -2658,7 +2665,7 @@ export default function ProposalManagement() {
         setSubOrgs(subs || []);
       } catch { setSubOrgs([]); }
     }
-  }, [slug, currentOrg, fetchSubOrgsFor, canAdvancePhase]);
+  }, [slug, currentOrg, fetchSubOrgsFor, canAdvancePhase, bulkOperation]);
 
   useEffect(() => {
     // Existing page-load synchronization: load owns the loading-state update.
@@ -2782,6 +2789,124 @@ export default function ProposalManagement() {
     }
   }
 
+  async function handleBulkOperationChange(nextOperation) {
+    if (selectedCount > 0) {
+      const ok = await confirm({
+        title: 'Change bulk operation?',
+        message: 'Changing the operation clears the current proposal selection.',
+      });
+      if (!ok) return;
+    }
+    updateSelectedProposalIds(new Set());
+    setBulkOperation(nextOperation);
+    setBulkVotingStartsAt('');
+    setBulkVotingEndsAt('');
+    setBulkScheduleReason('');
+  }
+
+  async function handlePhase102BulkOperation() {
+    if (bulkOperation === 'draft_to_deliberation') {
+      await handleBulkAdvanceToDeliberation();
+      return;
+    }
+    if (!canAdvancePhase || bulkAdvanceWorking || selectedCount === 0) return;
+    const scheduling = ['schedule_start', 'set_end'].includes(bulkOperation);
+    if (scheduling && !canSetDurations) {
+      toast.error('You need both phase-advance and duration permissions.');
+      return;
+    }
+    if (bulkOperation === 'schedule_start' && !bulkVotingStartsAt) {
+      toast.error('Choose when voting should begin.');
+      return;
+    }
+    if (bulkOperation === 'set_end' && !bulkVotingEndsAt) {
+      toast.error('Choose when voting should end.');
+      return;
+    }
+    const snapshot = [...selectedProposalIds];
+    const selectedRows = snapshot.map(id => proposals.find(p => p.id === id)).filter(Boolean);
+    const startsIso = bulkVotingStartsAt ? new Date(bulkVotingStartsAt).toISOString() : null;
+    const endsIso = bulkVotingEndsAt ? new Date(bulkVotingEndsAt).toISOString() : null;
+    const shortensActive = bulkOperation === 'set_end' && selectedRows.some(p => (
+      p.status === 'voting' && p.voting_end && endsIso
+      && new Date(endsIso).getTime() < new Date(p.voting_end).getTime()
+    ));
+    if (shortensActive && !bulkScheduleReason.trim()) {
+      toast.error('Add a reason before shortening an active voting deadline.');
+      return;
+    }
+    const labels = {
+      deliberation_to_voting: 'Move to voting now',
+      schedule_start: 'Schedule voting to begin',
+      set_end: 'Set voting end',
+    };
+    const shown = selectedRows.slice(0, 5).map(p => `“${p.title}”`).join(', ');
+    const more = selectedRows.length > 5 ? ` and ${selectedRows.length - 5} more` : '';
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const timing = [
+      startsIso ? `Begins ${new Date(startsIso).toLocaleString()} (${timezone}).` : '',
+      endsIso ? `Ends ${new Date(endsIso).toLocaleString()} (${timezone}).` : '',
+    ].filter(Boolean).join(' ');
+    const ok = await confirm({
+      title: `${labels[bulkOperation]}?`,
+      message: [
+        `${currentOrg.name}: ${labels[bulkOperation]} for ${snapshot.length} selected proposal${snapshot.length === 1 ? '' : 's'}.`,
+        bulkOperation === 'deliberation_to_voting'
+          ? 'Voting starts immediately; each proposal keeps its own configured voting duration or end rule.'
+          : 'Automation normally applies a scheduled start within five minutes. The server validates every proposal separately.',
+        timing,
+        `${shown}${more}`,
+      ].filter(Boolean).join(' '),
+    });
+    if (!ok) return;
+
+    const responses = [];
+    const completedIds = new Set();
+    setBulkAdvanceWorking(true);
+    try {
+      for (const proposalIds of chunkProposalIds(snapshot)) {
+        let response;
+        if (bulkOperation === 'deliberation_to_voting') {
+          response = await api.post(
+            `/api/orgs/${slug}/proposals/bulk-advance-to-voting`,
+            { proposal_ids: proposalIds },
+          );
+        } else {
+          response = await api.patch(
+            `/api/orgs/${slug}/proposals/bulk-schedule`,
+            {
+              proposal_ids: proposalIds,
+              voting_starts_at: bulkOperation === 'schedule_start' ? startsIso : undefined,
+              voting_ends_at: bulkVotingEndsAt ? endsIso : undefined,
+              reason: bulkScheduleReason.trim() || null,
+            },
+          );
+        }
+        responses.push(response);
+        (response.results || []).forEach(item => {
+          if (['advanced', 'already_in_voting', 'updated', 'unchanged', 'ineligible', 'ineligible_status', 'not_found'].includes(item.result)) {
+            completedIds.add(item.proposal_id);
+          }
+        });
+      }
+      const totals = responses.reduce((sum, response) => ({
+        success: sum.success + (response.advanced || 0) + (response.updated || 0),
+        unchanged: sum.unchanged + (response.already_in_voting || 0) + (response.unchanged || 0),
+        failed: sum.failed + (response.invalid_schedule || 0) + (response.invalid || 0)
+          + (response.cosign_gate_required || 0) + (response.ineligible_status || 0)
+          + (response.ineligible || 0) + (response.not_found || 0),
+      }), { success: 0, unchanged: 0, failed: 0 });
+      updateSelectedProposalIds(previous => new Set([...previous].filter(id => !completedIds.has(id))));
+      const summary = `${totals.success} updated; ${totals.unchanged} unchanged; ${totals.failed} could not be updated.`;
+      if (totals.failed) toast.error(summary); else toast.success(summary);
+    } catch (error) {
+      toast.error(`The remaining selected proposals were not submitted. ${error.message || 'Try again.'}`);
+    } finally {
+      await load();
+      setBulkAdvanceWorking(false);
+    }
+  }
+
   // Phase 8 — resolve a legacy sustained-majority escalation. Phase 20
   // removed the escalate mechanism going forward; this handler is kept
   // for the rare case that historic proposals still carry status=unresolved.
@@ -2861,10 +2986,59 @@ export default function ProposalManagement() {
         />
       )}
 
-      {canAdvancePhase && selectedCount > 0 && (
-        <div className="sticky top-2 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm">
+      {canAdvancePhase && (
+        <div className="sticky top-2 z-10 grid gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm sm:grid-cols-2">
+          <label className="text-sm font-medium text-blue-950">
+            Bulk operation
+            <select
+              value={bulkOperation}
+              disabled={bulkAdvanceWorking}
+              onChange={event => handleBulkOperationChange(event.target.value)}
+              className="mt-1 min-h-11 w-full rounded-lg border border-blue-300 bg-white px-3 text-sm"
+            >
+              <option value="">Choose an operation…</option>
+              <option value="draft_to_deliberation">Move drafts to deliberation</option>
+              <option value="deliberation_to_voting">Move to voting now</option>
+              {canSetDurations && <option value="schedule_start">Schedule voting to begin</option>}
+              {canSetDurations && <option value="set_end">Set voting end</option>}
+            </select>
+          </label>
+          {bulkOperation === 'schedule_start' && (
+            <>
+              <label className="text-sm font-medium text-blue-950">
+                Voting begins (your timezone)
+                <input type="datetime-local" value={bulkVotingStartsAt}
+                  onChange={event => setBulkVotingStartsAt(event.target.value)}
+                  className="mt-1 min-h-11 w-full rounded-lg border border-blue-300 bg-white px-3 text-sm" />
+              </label>
+              <label className="text-sm font-medium text-blue-950">
+                Voting ends (optional)
+                <input type="datetime-local" value={bulkVotingEndsAt}
+                  onChange={event => setBulkVotingEndsAt(event.target.value)}
+                  className="mt-1 min-h-11 w-full rounded-lg border border-blue-300 bg-white px-3 text-sm" />
+              </label>
+            </>
+          )}
+          {bulkOperation === 'set_end' && (
+            <>
+              <label className="text-sm font-medium text-blue-950">
+                Voting ends (your timezone)
+                <input type="datetime-local" value={bulkVotingEndsAt}
+                  onChange={event => setBulkVotingEndsAt(event.target.value)}
+                  className="mt-1 min-h-11 w-full rounded-lg border border-blue-300 bg-white px-3 text-sm" />
+              </label>
+              <label className="text-sm font-medium text-blue-950 sm:col-span-2">
+                Reason when shortening active voting
+                <input value={bulkScheduleReason}
+                  onChange={event => setBulkScheduleReason(event.target.value)}
+                  className="mt-1 min-h-11 w-full rounded-lg border border-blue-300 bg-white px-3 text-sm"
+                  placeholder="Required only for a shorter active deadline" />
+              </label>
+            </>
+          )}
+          {selectedCount > 0 && <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
           <span className="mr-auto text-sm font-medium text-blue-900">
-            {selectedCount} {selectedCount === 1 ? 'draft selected' : 'drafts selected'}
+            {selectedCount} {selectedCount === 1 ? 'proposal selected' : 'proposals selected'}
           </span>
           <button
             type="button"
@@ -2877,11 +3051,12 @@ export default function ProposalManagement() {
           <button
             type="button"
             disabled={bulkAdvanceWorking}
-            onClick={handleBulkAdvanceToDeliberation}
+            onClick={handlePhase102BulkOperation}
             className="min-h-11 rounded-lg bg-[var(--brand-primary)] px-4 py-2 text-sm font-medium text-white hover:bg-[var(--brand-accent)] disabled:opacity-50"
           >
-            {bulkAdvanceWorking ? 'Advancing selected drafts…' : 'Advance selected to deliberation'}
+            {bulkAdvanceWorking ? 'Applying operation…' : 'Review and apply'}
           </button>
+          </div>}
         </div>
       )}
 
@@ -2896,7 +3071,9 @@ export default function ProposalManagement() {
                 checked={allVisibleDraftsSelected}
                 disabled={bulkAdvanceWorking || visibleDraftIds.length === 0}
                 onChange={toggleAllVisibleDrafts}
-                aria-label="Select all visible draft proposals"
+                aria-label={bulkOperation === 'draft_to_deliberation'
+                  ? 'Select all visible draft proposals'
+                  : 'Select all visible eligible proposals'}
                 className="h-6 w-6 rounded border-gray-300 accent-[var(--brand-primary)] disabled:opacity-50"
               />
             </span>
@@ -2917,14 +3094,14 @@ export default function ProposalManagement() {
               >
                 {canAdvancePhase && (
                   <span className="flex w-11 shrink-0 items-center justify-center">
-                    {p.status === 'draft' && (
+                    {proposalEligibleForBulkOperation(p, bulkOperation) && (
                       <input
                         type="checkbox"
                         checked={selectedProposalIds.has(p.id)}
                         disabled={bulkAdvanceWorking}
                         onClick={event => event.stopPropagation()}
                         onChange={() => toggleProposalSelection(p.id)}
-                        aria-label={`Select draft: ${p.title}`}
+                        aria-label={`Select for ${bulkOperation}: ${p.title}`}
                         className="h-6 w-6 rounded border-gray-300 accent-[var(--brand-primary)] disabled:opacity-50"
                       />
                     )}
@@ -2949,6 +3126,15 @@ export default function ProposalManagement() {
               </div>
               {expandedId === p.id && (
                 <div className="px-4 py-3 bg-gray-50 flex items-center flex-wrap gap-3">
+                  <p className="w-full text-xs text-gray-600">
+                    {p.status === 'deliberation' && p.deliberation_end
+                      ? `Voting begins ${new Date(p.deliberation_end).toLocaleString()}${new Date(p.deliberation_end).getTime() < scheduleReferenceMs - 11 * 60 * 1000 ? ' · automatic transition delayed' : ''}`
+                      : p.status === 'deliberation'
+                        ? 'Voting start is not scheduled.'
+                        : ''}
+                    {p.voting_end_date && ` · Voting ends ${new Date(p.voting_end_date).toLocaleString()}`}
+                    {!p.voting_end_date && p.status === 'voting' && p.voting_end && `Voting ends ${new Date(p.voting_end).toLocaleString()}`}
+                  </p>
                   {/* Phase 70 — "View proposal page" navigates to the
                       member-facing proposal detail (the same route a member
                       reaches it by) so an admin can see it as members do.

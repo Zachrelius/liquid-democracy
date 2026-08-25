@@ -95,6 +95,11 @@ from sustained_majority_service import (
     _sum_extension_seconds,
 )
 import models
+from proposal_lifecycle import (
+    emit_status_notifications,
+    resolve_tie_if_needed,
+    transition_deliberation_to_voting,
+)
 
 
 # How far back to scan for "recent voters" on the
@@ -347,6 +352,9 @@ def _build_outcome_detail(
             return f"passed — {label_str} won" if label_str else "passed"
         return "failed (no winner)" if new_status == "failed" else new_status
 
+    if proposal.voting_method in {"budget_allocation", "budget_project"}:
+        return "passed (quorum met)" if new_status == "passed" else new_status
+
     yes = int(getattr(tally, "yes_count", 0) or 0)
     no = int(getattr(tally, "no_count", 0) or 0)
     if new_status == "passed":
@@ -464,9 +472,8 @@ def _close_proposal_now(
             and (tally.winners or getattr(tally, "boundary_tied", None))
         ):
             try:
-                from routes.proposals import _maybe_resolve_tie
-                _maybe_resolve_tie(
-                    proposal, tally, "approval", db, current_user_id=None,
+                resolve_tie_if_needed(
+                    proposal, tally, "approval", db, actor_id=None,
                 )
             except Exception as e:  # noqa: BLE001
                 log.warning("tie-resolution helper failed: %s", e)
@@ -480,16 +487,24 @@ def _close_proposal_now(
             and tally.winners
         ):
             try:
-                from routes.proposals import _maybe_resolve_tie
-                _maybe_resolve_tie(
-                    proposal, tally, "ranked_choice", db,
-                    current_user_id=None,
+                resolve_tie_if_needed(
+                    proposal, tally, "ranked_choice", db, actor_id=None,
                 )
             except Exception as e:  # noqa: BLE001
                 log.warning("tie-resolution helper failed: %s", e)
             new_status = "passed"
         else:
             new_status = "failed"
+    elif proposal.voting_method in {"budget_allocation", "budget_project"}:
+        # Phase 102 — budget ballots have no yes/no threshold or winner set;
+        # the same quorum-only rule used by both manual close routes applies.
+        from budget_tally import AllocationTally, ProjectTally
+        new_status = (
+            "passed"
+            if isinstance(tally, (AllocationTally, ProjectTally))
+            and tally.quorum_met(proposal.quorum_threshold)
+            else "failed"
+        )
     else:
         if (
             tally.threshold_met(proposal.pass_threshold)
@@ -769,6 +784,134 @@ def _react_to_destabilization(
     return "destabilized_at_max"
 
 
+def _bounded_due_query(query, db: Session):
+    """Apply the Phase 102 concurrency policy to one due-work query."""
+    query = query.order_by(models.Proposal.deliberation_end.asc(), models.Proposal.id.asc())
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        query = query.with_for_update(skip_locked=True)
+    return query.limit(100).all()
+
+
+def advance_due_deliberation_proposals(db: Session) -> dict[str, int]:
+    """Advance one bounded batch of ordinary due deliberations.
+
+    Every item has its own commit/rollback boundary.  Known stale state is a
+    harmless skip; an invalid voting deadline is logged without preventing a
+    sibling transition.  Notifications are queued only after the lifecycle
+    mutation has committed.
+    """
+    now = _now_naive()
+    ordinary = _bounded_due_query(
+        db.query(models.Proposal).filter(
+            models.Proposal.status == "deliberation",
+            models.Proposal.is_cosign_gated.is_(False),
+            models.Proposal.deliberation_end.is_not(None),
+            models.Proposal.deliberation_end <= now,
+        ),
+        db,
+    )
+    advanced = 0
+    skipped = 0
+    failed = 0
+    for proposal in ordinary:
+        try:
+            db.refresh(proposal)
+            if (
+                proposal.status != "deliberation"
+                or proposal.is_cosign_gated
+                or proposal.deliberation_end is None
+                or proposal.deliberation_end > now
+            ):
+                skipped += 1
+                continue
+            result = transition_deliberation_to_voting(
+                db, proposal, actor_id=None, ip_address=None,
+                trigger="deliberation_end_reached", now=now,
+            )
+            db.commit()
+            try:
+                emit_status_notifications(
+                    db, None, proposal, old_status=result.old_status,
+                    new_status=result.new_status, actor_id=None,
+                )
+                db.commit()
+            except Exception:  # noqa: BLE001
+                log.exception(
+                    "scheduled lifecycle notification failed for %s",
+                    proposal.id,
+                )
+                db.rollback()
+            advanced += 1
+        except Exception:  # noqa: BLE001
+            failed += 1
+            log.exception(
+                "scheduled lifecycle advance failed for %s; continuing",
+                proposal.id,
+            )
+            db.rollback()
+    return {"advanced": advanced, "skipped": skipped, "failed": failed}
+
+
+def close_due_budget_proposals(db: Session) -> dict[str, int]:
+    """Close one bounded batch of due budget ballots, without snapshots."""
+    now = _now_naive()
+    budget_due = (
+        db.query(models.Proposal)
+        .filter(
+            models.Proposal.status == "voting",
+            models.Proposal.voting_method.in_(["budget_allocation", "budget_project"]),
+            models.Proposal.voting_end.is_not(None),
+            models.Proposal.voting_end <= now,
+        )
+        .order_by(models.Proposal.voting_end.asc(), models.Proposal.id.asc())
+    )
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        budget_due = budget_due.with_for_update(skip_locked=True)
+    budget_closed = 0
+    skipped = 0
+    failed = 0
+    for proposal in budget_due.limit(100).all():
+        try:
+            db.refresh(proposal)
+            if (
+                proposal.status != "voting"
+                or proposal.voting_method not in {"budget_allocation", "budget_project"}
+                or proposal.voting_end is None
+                or proposal.voting_end > now
+            ):
+                skipped += 1
+                continue
+            old_status = proposal.status
+            new_status = _close_proposal_now(
+                db, proposal, trigger=TRIGGER_VOTING_END_REACHED,
+                update_voting_end=False,
+            )
+            db.commit()
+            _emit_proposal_closed_natural(
+                db, proposal, old_status=old_status, new_status=new_status,
+            )
+            db.commit()
+            budget_closed += 1
+        except Exception:  # noqa: BLE001
+            failed += 1
+            log.exception(
+                "scheduled budget close failed for %s; continuing", proposal.id,
+            )
+            db.rollback()
+    return {"closed": budget_closed, "skipped": skipped, "failed": failed}
+
+
+def resolve_due_scheduled_proposals(db: Session) -> dict[str, int]:
+    ordinary = advance_due_deliberation_proposals(db)
+    budget = close_due_budget_proposals(db)
+    return {
+        "advanced": ordinary["advanced"],
+        "budget_closed": budget["closed"],
+        "skipped": ordinary["skipped"] + budget["skipped"],
+        "failed": ordinary["failed"] + budget["failed"],
+    }
+
+
 def run_one_tick(db: Session) -> int:
     """Iterate every proposal currently in ``voting`` and evaluate each.
 
@@ -786,6 +929,20 @@ def run_one_tick(db: Session) -> int:
     caught + logged; the loop keeps going so one bad row doesn't block
     the rest.
     """
+    # Phase 102: scheduled lifecycle work runs before snapshot/evaluation so
+    # a proposal that becomes voting on this tick can immediately receive its
+    # first universal vote snapshot. The rollout gate is intentionally narrow:
+    # legacy non-budget close and cosign behavior below always remains live.
+    if settings.proposal_schedule_automation_enabled:
+        lifecycle = resolve_due_scheduled_proposals(db)
+        if lifecycle["advanced"] or lifecycle["budget_closed"]:
+            log.info(
+                "scheduled lifecycle tick: advanced %s / budget closed %s",
+                lifecycle["advanced"], lifecycle["budget_closed"],
+            )
+    else:
+        log.info("scheduled proposal automation is disabled by rollout gate")
+
     voting_proposals = (
         db.query(models.Proposal)
         .filter(models.Proposal.status == "voting")
@@ -914,7 +1071,6 @@ def resolve_due_cosign_proposals(db: Session) -> dict[str, int]:
     # Late imports — keep worker startup cheap + avoid cycles.
     from cosign import cosign_weight, signature_count
     from audit_utils import log_audit_event
-    from routes.proposals import _advance_cosign_to_voting
 
     advanced = 0
     expired = 0
@@ -927,13 +1083,34 @@ def resolve_due_cosign_proposals(db: Session) -> dict[str, int]:
             if weight >= threshold and threshold > 0:
                 # Window-end gate met → advance via the standard path
                 # so downstream behavior matches a manual advance.
-                _advance_cosign_to_voting(
-                    db, proposal,
-                    background_tasks=None,
+                result = transition_deliberation_to_voting(
+                    db, proposal, actor_id=None, ip_address=None,
+                    trigger="cosign_threshold_met", allow_cosign=True,
+                )
+                log_audit_event(
+                    db, action="proposal.cosign_threshold_met",
+                    target_type="proposal", target_id=proposal.id,
                     actor_id=None,
-                    ip_address=None,
+                    details={
+                        "proposal_id": proposal.id,
+                        "threshold": proposal.cosign_threshold_snapshot,
+                        "voting_start": result.occurred_at.isoformat(),
+                        "voting_end": result.voting_end.isoformat(),
+                    },
                 )
                 db.commit()
+                try:
+                    emit_status_notifications(
+                        db, None, proposal, old_status=result.old_status,
+                        new_status=result.new_status, actor_id=None,
+                    )
+                    db.commit()
+                except Exception:  # noqa: BLE001
+                    log.exception(
+                        "cosign window-end notification failed for %s",
+                        proposal.id,
+                    )
+                    db.rollback()
                 advanced += 1
                 log.info(
                     f"cosign window-end: proposal {proposal.id} advanced "

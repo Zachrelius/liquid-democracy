@@ -1287,6 +1287,7 @@ def _open_scheduled_election(
         num_winners=max(1, title.max_holders or 1) if title.cardinality_mode == "multi" else 1,
         status="deliberation",
         deliberation_start=now,
+        deliberation_end=now + timedelta(days=deliberation_days),
         deliberation_days=deliberation_days,
         voting_days=voting_days,
         pass_threshold=settings.get("default_pass_threshold", 0.50) if settings else 0.50,

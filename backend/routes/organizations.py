@@ -32,6 +32,12 @@ from permission_registry import PERMISSION_REGISTRY
 from reserved_slugs import RESERVED_SLUGS
 from org_titles import seed_system_titles_for_org
 from role_permissions import has_permission
+from proposal_lifecycle import (
+    emit_status_notifications,
+    refresh_deliberation_window,
+    transition_deliberation_to_voting,
+    transition_draft_to_deliberation,
+)
 from rate_limit_utils import (
     content_limiter, JOIN_REQUEST_LIMIT, ORG_CREATE_LIMIT,
     INVITATION_CREATE_LIMIT, SHARE_TRANSFER_LIMIT,
@@ -2789,7 +2795,8 @@ def create_issuance_proposal(
         count_mode="weighted",
         is_issuance=True, issuance_payload=body.issuance_payload,
         status="voting" if skip_delib else "draft",
-        deliberation_start=now_at, voting_start=now_at,
+        deliberation_start=now_at, deliberation_end=now_at,
+        voting_start=now_at,
         voting_end=(now_at + timedelta(days=float(eff_vote)) if skip_delib else None),
         deliberation_days=eff_delib, voting_days=eff_vote,
         pass_threshold=0.5, quorum_threshold=0.0,
@@ -5137,6 +5144,7 @@ def create_org_proposal(
         count_mode=effective_count_mode,
         status=initial_status,
         deliberation_start=now_at_create,
+        deliberation_end=now_at_create if skip_deliberation else None,
         voting_start=now_at_create if skip_deliberation else None,
         voting_end=(
             now_at_create + timedelta(days=float(effective_vote_days))
@@ -6051,6 +6059,9 @@ def bulk_advance_org_proposals_to_deliberation(
             seen.add(canonical_id)
             unique_ids.append(canonical_id)
 
+    # Keep the Phase 100 compatibility seam; the route helper delegates to
+    # the Phase 102 lifecycle service but remains monkeypatchable by the
+    # established per-item failure-containment tests.
     from routes.proposals import _transition_draft_to_deliberation
 
     results: list[schemas.BulkAdvanceToDeliberationItem] = []
@@ -6085,8 +6096,7 @@ def bulk_advance_org_proposals_to_deliberation(
         try:
             with db.begin_nested():
                 _transition_draft_to_deliberation(
-                    db,
-                    proposal,
+                    db, proposal,
                     actor_id=current_user.id,
                     ip_address=ip_address,
                 )
@@ -6125,6 +6135,274 @@ def bulk_advance_org_proposals_to_deliberation(
         processed=len(unique_ids),
         results=results,
         **counts,
+    )
+
+
+def _phase102_unique_ids(values: list[str]) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        canonical = str(uuid.UUID(raw))
+        if canonical not in seen:
+            seen.add(canonical)
+            unique.append(canonical)
+    return unique
+
+
+@router.post(
+    "/{org_slug}/proposals/bulk-advance-to-voting",
+    response_model=schemas.BulkAdvanceToVotingResponse,
+)
+def bulk_advance_org_proposals_to_voting(
+    org_slug: str,
+    body: schemas.BulkAdvanceToVotingRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    del membership
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug,
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if not has_permission(db, current_user.id, org.id, "proposal.advance_phase"):
+        raise HTTPException(status_code=403, detail="You do not have permission to advance proposal phases.")
+
+    unique_ids = _phase102_unique_ids(body.proposal_ids)
+    results: list[schemas.BulkAdvanceToVotingItem] = []
+    transitioned: list[tuple[models.Proposal, object]] = []
+    ip = request.client.host if request.client else None
+    for proposal_id in unique_ids:
+        proposal = db.query(models.Proposal).filter(
+            models.Proposal.id == proposal_id,
+            models.Proposal.org_id == org.id,
+        ).first()
+        if proposal is None:
+            results.append(schemas.BulkAdvanceToVotingItem(
+                proposal_id=proposal_id, result="not_found",
+            ))
+            continue
+        if proposal.status == "voting":
+            results.append(schemas.BulkAdvanceToVotingItem(
+                proposal_id=proposal_id, result="already_in_voting", status="voting",
+            ))
+            continue
+        if proposal.status != "deliberation":
+            results.append(schemas.BulkAdvanceToVotingItem(
+                proposal_id=proposal_id, result="ineligible_status", status=proposal.status,
+            ))
+            continue
+        if proposal.is_cosign_gated:
+            results.append(schemas.BulkAdvanceToVotingItem(
+                proposal_id=proposal_id, result="cosign_gate_required",
+                status=proposal.status,
+                detail="This proposal advances only through its cosign window gate.",
+            ))
+            continue
+        try:
+            with db.begin_nested():
+                transition = transition_deliberation_to_voting(
+                    db, proposal, org=org, actor_id=current_user.id,
+                    ip_address=ip, trigger="bulk_manual",
+                )
+                db.flush()
+            transitioned.append((proposal, transition))
+            results.append(schemas.BulkAdvanceToVotingItem(
+                proposal_id=proposal_id, result="advanced", status="voting",
+            ))
+        except (HTTPException, ValueError) as exc:
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            results.append(schemas.BulkAdvanceToVotingItem(
+                proposal_id=proposal_id, result="invalid_schedule",
+                status=proposal.status, detail=str(detail)[:300],
+            ))
+        except Exception:  # noqa: BLE001
+            log.exception("bulk voting advance failed for proposal %s", proposal_id)
+            results.append(schemas.BulkAdvanceToVotingItem(
+                proposal_id=proposal_id, result="invalid_schedule",
+                status=proposal.status,
+                detail="The proposal schedule could not be applied.",
+            ))
+    db.commit()
+    for proposal, transition in transitioned:
+        try:
+            emit_status_notifications(
+                db, background_tasks, proposal,
+                old_status=transition.old_status,
+                new_status=transition.new_status,
+                actor_id=current_user.id,
+            )
+            db.commit()
+        except Exception:  # noqa: BLE001
+            log.exception("bulk voting notification failed for proposal %s", proposal.id)
+            db.rollback()
+    names = (
+        "advanced", "already_in_voting", "ineligible_status",
+        "cosign_gate_required", "invalid_schedule", "not_found",
+    )
+    counts = {name: sum(row.result == name for row in results) for name in names}
+    return schemas.BulkAdvanceToVotingResponse(
+        requested=len(body.proposal_ids), processed=len(unique_ids),
+        results=results, **counts,
+    )
+
+
+@router.patch(
+    "/{org_slug}/proposals/bulk-schedule",
+    response_model=schemas.BulkScheduleResponse,
+)
+def bulk_schedule_org_proposals(
+    org_slug: str,
+    body: schemas.BulkScheduleRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    del membership
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug,
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    required = ("proposal.advance_phase", "proposal.set_durations")
+    if not all(has_permission(db, current_user.id, org.id, key) for key in required):
+        raise HTTPException(status_code=403, detail="Both phase-advance and duration permissions are required.")
+
+    from proposal_lifecycle import strip_tz
+    starts_at = strip_tz(body.voting_starts_at)
+    ends_at = strip_tz(body.voting_ends_at)
+    now = _now()
+    unique_ids = _phase102_unique_ids(body.proposal_ids)
+    results: list[schemas.BulkScheduleItem] = []
+    ip = request.client.host if request.client else None
+    for proposal_id in unique_ids:
+        proposal = db.query(models.Proposal).filter(
+            models.Proposal.id == proposal_id,
+            models.Proposal.org_id == org.id,
+        ).first()
+        if proposal is None:
+            results.append(schemas.BulkScheduleItem(
+                proposal_id=proposal_id, result="not_found",
+            ))
+            continue
+        if proposal.status not in {"deliberation", "voting"}:
+            results.append(schemas.BulkScheduleItem(
+                proposal_id=proposal_id, result="ineligible", status=proposal.status,
+                detail="Only deliberating or voting proposals can be scheduled.",
+            ))
+            continue
+        if starts_at is not None and (
+            proposal.status != "deliberation" or proposal.is_cosign_gated
+        ):
+            results.append(schemas.BulkScheduleItem(
+                proposal_id=proposal_id, result="ineligible", status=proposal.status,
+                detail="A voting start can be set only for ordinary deliberating proposals.",
+            ))
+            continue
+
+        proposed_start = starts_at or (
+            proposal.deliberation_end if proposal.status == "deliberation"
+            else proposal.voting_start
+        )
+        invalid: Optional[str] = None
+        if starts_at is not None:
+            if starts_at <= now:
+                invalid = "The voting start must be in the future."
+            elif proposal.deliberation_start is None:
+                invalid = "The proposal has no deliberation start to synchronize."
+        if invalid is None and ends_at is not None:
+            if proposed_start is None:
+                invalid = "Set a voting start before setting this voting end."
+            elif ends_at <= proposed_start or (ends_at - proposed_start).total_seconds() < 4320:
+                invalid = "The voting end must be at least 72 minutes after voting starts."
+            elif proposal.status == "voting" and ends_at <= now:
+                invalid = "An active voting deadline must be in the future."
+            elif (
+                proposal.status == "voting"
+                and proposal.voting_end is not None
+                and ends_at < proposal.voting_end
+                and not (body.reason or "").strip()
+            ):
+                invalid = "A reason is required when shortening active voting."
+        if invalid:
+            results.append(schemas.BulkScheduleItem(
+                proposal_id=proposal_id, result="invalid", status=proposal.status,
+                detail=invalid,
+            ))
+            continue
+
+        old = {
+            "deliberation_end": proposal.deliberation_end,
+            "deliberation_days": proposal.deliberation_days,
+            "voting_end_date": proposal.voting_end_date,
+            "voting_end": proposal.voting_end,
+        }
+        new_deliberation_end = starts_at or proposal.deliberation_end
+        new_deliberation_days = (
+            (starts_at - proposal.deliberation_start).total_seconds() / 86400
+            if starts_at is not None else proposal.deliberation_days
+        )
+        new_voting_end_date = ends_at or proposal.voting_end_date
+        new_voting_end = (
+            ends_at if ends_at is not None and proposal.status == "voting"
+            else proposal.voting_end
+        )
+        changed = any((
+            old["deliberation_end"] != new_deliberation_end,
+            old["deliberation_days"] != new_deliberation_days,
+            old["voting_end_date"] != new_voting_end_date,
+            old["voting_end"] != new_voting_end,
+        ))
+        if not changed:
+            results.append(schemas.BulkScheduleItem(
+                proposal_id=proposal_id, result="unchanged", status=proposal.status,
+            ))
+            continue
+        try:
+            with db.begin_nested():
+                proposal.deliberation_end = new_deliberation_end
+                proposal.deliberation_days = new_deliberation_days
+                proposal.voting_end_date = new_voting_end_date
+                proposal.voting_end = new_voting_end
+                log_audit_event(
+                    db, action="proposal.schedule_changed",
+                    target_type="proposal", target_id=proposal.id,
+                    actor_id=current_user.id,
+                    details={
+                        "proposal_id": proposal.id,
+                        "old_deliberation_end": old["deliberation_end"].isoformat() if old["deliberation_end"] else None,
+                        "new_deliberation_end": proposal.deliberation_end.isoformat() if proposal.deliberation_end else None,
+                        "old_deliberation_days": old["deliberation_days"],
+                        "new_deliberation_days": proposal.deliberation_days,
+                        "old_voting_end_date": old["voting_end_date"].isoformat() if old["voting_end_date"] else None,
+                        "new_voting_end_date": proposal.voting_end_date.isoformat() if proposal.voting_end_date else None,
+                        "old_voting_end": old["voting_end"].isoformat() if old["voting_end"] else None,
+                        "new_voting_end": proposal.voting_end.isoformat() if proposal.voting_end else None,
+                        "reason": (body.reason or "").strip() or None,
+                    },
+                    ip_address=ip,
+                )
+                db.flush()
+            results.append(schemas.BulkScheduleItem(
+                proposal_id=proposal_id, result="updated", status=proposal.status,
+            ))
+        except Exception:  # noqa: BLE001
+            log.exception("bulk schedule failed for proposal %s", proposal_id)
+            db.expire(proposal)
+            results.append(schemas.BulkScheduleItem(
+                proposal_id=proposal_id, result="invalid", status=proposal.status,
+                detail="The proposal schedule could not be saved.",
+            ))
+    db.commit()
+    names = ("updated", "unchanged", "ineligible", "invalid", "not_found")
+    counts = {name: sum(row.result == name for row in results) for name in names}
+    return schemas.BulkScheduleResponse(
+        requested=len(body.proposal_ids), processed=len(unique_ids),
+        results=results, **counts,
     )
 
 
@@ -6173,24 +6451,16 @@ def advance_org_proposal(
     now = _now()
 
     if draft_transition:
-        from routes.proposals import _transition_draft_to_deliberation
-        now = _transition_draft_to_deliberation(
-            db,
-            proposal,
+        now = transition_draft_to_deliberation(
+            db, proposal, org=org,
             actor_id=current_user.id,
             ip_address=request.client.host if request.client else None,
-        )
+        ).occurred_at
     elif next_status == "voting":
-        proposal.voting_start = now
-        # Phase 25 B1.1 — derive voting_end from proposal.voting_days (or
-        # org default) when the body doesn't supply one. body.voting_end is
-        # honored if present but logs a deprecation warning.
-        from routes.proposals import _compute_voting_end_at_advance
-        proposal.voting_end = _compute_voting_end_at_advance(
-            voting_start=now,
+        transition_deliberation_to_voting(
+            db, proposal, org=org, actor_id=current_user.id,
+            ip_address=request.client.host if request.client else None,
             body_voting_end=body.voting_end,
-            proposal=proposal,
-            org=org,
         )
     elif next_status == "passed":
         from delegation_engine import engine as delegation_engine, ApprovalTally, RCVTally
@@ -6266,7 +6536,7 @@ def advance_org_proposal(
             else:
                 next_status = "failed"
 
-    if not draft_transition:
+    if not draft_transition and old_status != "deliberation":
         proposal.status = next_status
     db.flush()
 
@@ -6296,7 +6566,7 @@ def advance_org_proposal(
             ip_address=request.client.host if request.client else None,
         )
 
-    if not draft_transition:
+    if not draft_transition and old_status != "deliberation":
         log_audit_event(
             db,
             action="proposal.status_changed",
@@ -6312,9 +6582,9 @@ def advance_org_proposal(
 
     # Phase 13 B-emit — proposal.entered_voting / proposal.closed.
     try:
-        from routes.proposals import _emit_proposal_status_notifications
-        _emit_proposal_status_notifications(
-            db, background_tasks, proposal, old_status, next_status,
+        emit_status_notifications(
+            db, background_tasks, proposal,
+            old_status=old_status, new_status=next_status,
             actor_id=current_user.id,
         )
         db.commit()
@@ -6433,6 +6703,7 @@ def resolve_escalation(
     elif body.action == "back_to_deliberation":
         proposal.status = "deliberation"
         new_status = "deliberation"
+        refresh_deliberation_window(proposal, org)
 
     db.flush()
 

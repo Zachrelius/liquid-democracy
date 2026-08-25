@@ -814,6 +814,7 @@ class ProposalOut(BaseModel):
     issuance_preview: Optional[dict] = None
     tie_resolution: Optional[dict] = None
     deliberation_start: Optional[datetime]
+    deliberation_end: Optional[datetime] = None
     voting_start: Optional[datetime]
     voting_end: Optional[datetime]
     pass_threshold: float
@@ -1610,6 +1611,62 @@ class BulkAdvanceToDeliberationResponse(BaseModel):
     ineligible_status: int
     not_found: int
     results: list[BulkAdvanceToDeliberationItem]
+
+
+class BulkAdvanceToVotingRequest(BulkAdvanceToDeliberationRequest):
+    """Phase 102 — bounded ordinary deliberation-to-voting request."""
+
+
+class BulkAdvanceToVotingItem(BaseModel):
+    proposal_id: str
+    result: Literal[
+        "advanced", "already_in_voting", "ineligible_status",
+        "cosign_gate_required", "invalid_schedule", "not_found",
+    ]
+    status: Optional[str] = None
+    detail: Optional[str] = None
+
+
+class BulkAdvanceToVotingResponse(BaseModel):
+    requested: int
+    processed: int
+    advanced: int
+    already_in_voting: int
+    ineligible_status: int
+    cosign_gate_required: int
+    invalid_schedule: int
+    not_found: int
+    results: list[BulkAdvanceToVotingItem]
+
+
+class BulkScheduleRequest(BulkAdvanceToDeliberationRequest):
+    voting_starts_at: Optional[datetime] = None
+    voting_ends_at: Optional[datetime] = None
+    reason: Optional[str] = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_schedule_value(self):
+        if self.voting_starts_at is None and self.voting_ends_at is None:
+            raise ValueError("At least one of voting_starts_at or voting_ends_at is required")
+        return self
+
+
+class BulkScheduleItem(BaseModel):
+    proposal_id: str
+    result: Literal["updated", "unchanged", "ineligible", "invalid", "not_found"]
+    status: Optional[str] = None
+    detail: Optional[str] = None
+
+
+class BulkScheduleResponse(BaseModel):
+    requested: int
+    processed: int
+    updated: int
+    unchanged: int
+    ineligible: int
+    invalid: int
+    not_found: int
+    results: list[BulkScheduleItem]
 
 
 class SeedRequest(BaseModel):

@@ -36,6 +36,7 @@ EMAIL_FAILURE_THRESHOLD = 3
 INTERNAL_ALERT_REMINDER_SECONDS = 12 * 60 * 60
 FAILED_DELIVERY_RETRY_SECONDS = 60 * 60
 STATE_KEY = "ops_monitor_alert_state"
+PROPOSAL_LIFECYCLE_GRACE_SECONDS = 11 * 60
 
 _STARTED_AT = datetime.now(timezone.utc)
 _REQUEST_FAILURES: deque[dict[str, Any]] = deque(maxlen=200)
@@ -304,6 +305,71 @@ def _offsite_backup_component(db: Session, now: datetime) -> dict[str, Any]:
     }
 
 
+def _proposal_lifecycle_component(db: Session, now: datetime) -> dict[str, Any]:
+    """Public-safe overdue state for the Phase 102 scheduler."""
+    enabled = bool(settings.proposal_schedule_automation_enabled)
+    if not enabled:
+        return {
+            "status": "warning",
+            "automation_enabled": False,
+            "overdue_count": 0,
+            "oldest_overdue_age_seconds": None,
+            "grace_seconds": PROPOSAL_LIFECYCLE_GRACE_SECONDS,
+            "guidance": "Scheduled proposal automation is rollout-disabled; complete reconciliation before enabling it.",
+        }
+    now_naive = now.astimezone(timezone.utc).replace(tzinfo=None)
+    threshold = now_naive - timedelta(seconds=PROPOSAL_LIFECYCLE_GRACE_SECONDS)
+    try:
+        ordinary = db.query(models.Proposal).filter(
+            models.Proposal.status == "deliberation",
+            models.Proposal.is_cosign_gated.is_(False),
+            models.Proposal.deliberation_end.is_not(None),
+            models.Proposal.deliberation_end <= threshold,
+        ).all()
+        voting = db.query(models.Proposal).filter(
+            models.Proposal.status == "voting",
+            models.Proposal.voting_end.is_not(None),
+            models.Proposal.voting_end <= threshold,
+        ).all()
+        deadlines = [p.deliberation_end for p in ordinary] + [p.voting_end for p in voting]
+        unscheduled = db.query(models.Proposal).filter(
+            models.Proposal.status == "deliberation",
+            models.Proposal.is_cosign_gated.is_(False),
+            models.Proposal.deliberation_end.is_(None),
+        ).count()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return {
+            "status": "error",
+            "automation_enabled": True,
+            "overdue_count": None,
+            "oldest_overdue_age_seconds": None,
+            "grace_seconds": PROPOSAL_LIFECYCLE_GRACE_SECONDS,
+            "guidance": "Check Railway backend logs and proposal lifecycle database access.",
+        }
+    oldest_age = (
+        max(0, int((now_naive - min(deadlines)).total_seconds()))
+        if deadlines else None
+    )
+    return {
+        "status": "error" if deadlines else "ok",
+        "automation_enabled": True,
+        "overdue_count": len(deadlines),
+        "ordinary_deliberation_overdue_count": len(ordinary),
+        "voting_overdue_count": len(voting),
+        "unscheduled_active_deliberation_count": int(unscheduled),
+        "oldest_overdue_age_seconds": oldest_age,
+        "grace_seconds": PROPOSAL_LIFECYCLE_GRACE_SECONDS,
+        "guidance": (
+            "Check decision-worker logs, invalid proposal schedules, and the lifecycle feature-gate state."
+            if deadlines else "No action required."
+        ),
+    }
+
+
 def _capacity_component(
     *, used_bytes: Optional[int], capacity_bytes: Optional[int], guidance: str,
     warning_percent: float = 85, error_percent: float = 95,
@@ -435,6 +501,8 @@ def build_snapshot(
         failure_threshold=3,
         disabled=settings.sustained_majority_worker_disable,
     )
+
+    components["proposal_lifecycle"] = _proposal_lifecycle_component(db, now)
 
     components["offsite_backup"] = _offsite_backup_component(db, now)
 

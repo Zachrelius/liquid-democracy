@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     sustained_majority_worker_instance_id: str = ""
     # Hard kill-switch for ops emergencies.
     sustained_majority_worker_disable: bool = False
+    # Phase 102 — gates only the new ordinary deliberation auto-advance and
+    # timed budget close paths. Existing SRR/non-budget close and cosign gates
+    # remain active when this is false.
+    proposal_schedule_automation_enabled: bool = True
 
     # Phase 23 (D9) — demo daily-reset time-of-day, HH:MM 24h format in
     # Pacific timezone. Default midnight Pacific. The scheduler computes
