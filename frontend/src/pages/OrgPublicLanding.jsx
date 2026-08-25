@@ -10,13 +10,11 @@ import Nav from '../components/Nav';
 import VotingModelBadge from '../components/VotingModelBadge';
 import EmailVerificationBanner from '../components/EmailVerificationBanner';
 import MessageButton from '../components/MessageButton';
+import VerificationJoinDialog from '../components/VerificationJoinDialog';
 import renderMarkdown from '../utils/renderMarkdown';
 import { urlFor } from '../utils/urls';
 // Phase 52 Stage 1 — structured-403 verification_required handling.
-import {
-  extractVerificationRequiredDetail,
-  ctaCopyForVerificationRequired,
-} from '../verificationLabels';
+import { extractVerificationRequiredDetail } from '../verificationLabels';
 
 /**
  * Phase 14 F2 — public org landing page (the splash at bare /{slug}).
@@ -62,6 +60,7 @@ export default function OrgPublicLanding() {
   const [orgData, setOrgData] = useState(null);
   const [fetchStatus, setFetchStatus] = useState('loading'); // 'loading' | 'ok' | 'not_found' | 'error'
   const [actionInFlight, setActionInFlight] = useState(false);
+  const [verificationDialogDetail, setVerificationDialogDetail] = useState(null);
 
   // Fetch the public-endpoint payload. 404 covers both "no such org" and
   // "invite_only_secret" per the security posture (B2 spec).
@@ -81,7 +80,10 @@ export default function OrgPublicLanding() {
     }
   }, [slug]);
 
-  useEffect(() => { fetchPublic(); }, [fetchPublic]);
+  useEffect(() => {
+    const request = Promise.resolve().then(fetchPublic);
+    return () => { void request; };
+  }, [fetchPublic]);
 
   // Determine the visitor's relationship to this org. We deliberately don't
   // ask the public endpoint for this — it's user-state-free per spec — and
@@ -175,11 +177,12 @@ export default function OrgPublicLanding() {
       // and the user's org list (so member/pending state updates).
       await Promise.all([fetchPublic(), refreshOrgs()]);
     } catch (err) {
-      // Phase 52 Stage 1 — surface verification_required with the
-      // plain-language CTA copy rather than the raw error code.
       const vDetail = extractVerificationRequiredDetail(err);
-      const cta = vDetail ? ctaCopyForVerificationRequired(vDetail) : null;
-      toast.error(cta || err?.message || 'Couldn’t complete that action.');
+      if (vDetail) {
+        setVerificationDialogDetail(vDetail);
+      } else {
+        toast.error(err?.message || 'Couldn’t complete that action.');
+      }
     } finally {
       setActionInFlight(false);
     }
@@ -296,6 +299,17 @@ export default function OrgPublicLanding() {
           <PublicProposalsPanel slug={slug} />
         )}
       </div>
+
+      <VerificationJoinDialog
+        open={!!verificationDialogDetail}
+        organizationName={orgData.name}
+        detail={verificationDialogDetail}
+        onClose={() => setVerificationDialogDetail(null)}
+        onGoToVerification={() => {
+          setVerificationDialogDetail(null);
+          navigate('/settings#identity-verification');
+        }}
+      />
     </>
   );
 
@@ -514,9 +528,14 @@ function PublicProposalsPanel({ slug }) {
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    setError(null);
-    api.get(`/api/orgs/${slug}/public/proposals`)
+    Promise.resolve()
+      .then(() => {
+        if (alive) {
+          setLoading(true);
+          setError(null);
+        }
+        return api.get(`/api/orgs/${slug}/public/proposals`);
+      })
       .then(data => {
         if (alive) {
           setProposals(Array.isArray(data) ? data : []);

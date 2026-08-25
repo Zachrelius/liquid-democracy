@@ -389,12 +389,11 @@ def check_membership_floor_for_join(user, org) -> None:
     floor, jurisdiction = get_org_verification_floor(org, "membership")
     if user_satisfies_floor(user, floor, jurisdiction):
         return
-    raise HTTPException(
-        status_code=403,
-        detail=verification_required_payload(
-            floor=floor, jurisdiction=jurisdiction, scope="membership",
-        ),
+    detail = verification_required_payload(
+        floor=floor, jurisdiction=jurisdiction, scope="membership",
     )
+    detail["membership_requirements"] = membership_verification_requirements(org)
+    raise HTTPException(status_code=403, detail=detail)
 
 
 def check_role_grant_floor(user, org, role_system_key: str) -> None:
@@ -776,6 +775,7 @@ def check_membership_min_age_for_join(user, org) -> None:
             "error": "verification_required",
             "scope": "min_age",
             "min_age": threshold,
+            "membership_requirements": membership_verification_requirements(org),
         },
     )
 
@@ -1104,6 +1104,57 @@ def membership_requires_residency(org) -> bool:
     return bool(settings.get(SETTING_MEMBERSHIP_REQUIRE_RESIDENCY, False))
 
 
+def _membership_residency_requirement_enabled(org) -> bool:
+    """Return whether either the current or legacy membership residency gate fires."""
+    settings = getattr(org, "settings", None) or {}
+    if not isinstance(settings, dict):
+        return False
+    legacy_locality = settings.get(SETTING_MEMBERSHIP_LOCALITY)
+    legacy_state = settings.get(SETTING_MEMBERSHIP_JURISDICTION)
+    legacy_active = (
+        isinstance(legacy_locality, str)
+        and bool(legacy_locality.strip())
+        and isinstance(legacy_state, str)
+        and bool(legacy_state.strip())
+    )
+    return membership_requires_residency(org) or legacy_active
+
+
+def membership_verification_requirements(org) -> dict:
+    """Return only the public configuration for an organization's join gate.
+
+    The payload deliberately excludes every applicant-derived verification
+    field. It is safe to attach to a membership rejection so a prospective
+    member can understand the rule that applies before starting verification.
+    """
+    floor, jurisdiction = get_org_verification_floor(org, "membership")
+    settings = getattr(org, "settings", None) or {}
+    min_age = None
+    if isinstance(settings, dict):
+        raw_min_age = settings.get(SETTING_MEMBERSHIP_MIN_AGE)
+        try:
+            parsed_min_age = int(raw_min_age) if raw_min_age is not None else None
+        except (TypeError, ValueError):
+            parsed_min_age = None
+        if parsed_min_age in SUPPORTED_AGE_THRESHOLDS:
+            min_age = parsed_min_age
+
+    return {
+        "floor": floor,
+        "jurisdiction": jurisdiction,
+        "requires_residency": _membership_residency_requirement_enabled(org),
+        "residency_scope": [
+            {
+                "country": entry.get("country"),
+                "state": entry.get("state"),
+                "city": entry.get("city"),
+            }
+            for entry in _residency_scope_entries(org)
+        ],
+        "min_age": min_age,
+    }
+
+
 def role_requires_residency(org, role_system_key: str) -> bool:
     """Phase 52j J1 — does the org require residency-scope match for
     holders of ``role_system_key``? Reads
@@ -1142,7 +1193,9 @@ def check_membership_residency_for_join(user, org) -> None:
         return
     if user_satisfies_residency_scope(user, org):
         return
-    raise HTTPException(status_code=403, detail=_residency_payload(org))
+    detail = _residency_payload(org)
+    detail["membership_requirements"] = membership_verification_requirements(org)
+    raise HTTPException(status_code=403, detail=detail)
 
 
 def check_role_residency_for_grant(user, org, role_system_key: str) -> None:
@@ -1191,21 +1244,13 @@ def check_membership_locality_for_join(user, org) -> None:
     Either trigger raises the scope-based 403 on mismatch.
     """
     from fastapi import HTTPException
-    settings = getattr(org, "settings", None) or {}
-    if not isinstance(settings, dict):
-        return
-    legacy_locality = settings.get(SETTING_MEMBERSHIP_LOCALITY)
-    legacy_active = (
-        isinstance(legacy_locality, str)
-        and legacy_locality.strip()
-        and isinstance(settings.get(SETTING_MEMBERSHIP_JURISDICTION), str)
-        and settings.get(SETTING_MEMBERSHIP_JURISDICTION, "").strip()
-    )
-    if not (membership_requires_residency(org) or legacy_active):
+    if not _membership_residency_requirement_enabled(org):
         return
     if user_satisfies_residency_scope(user, org):
         return
-    raise HTTPException(status_code=403, detail=_residency_payload(org))
+    detail = _residency_payload(org)
+    detail["membership_requirements"] = membership_verification_requirements(org)
+    raise HTTPException(status_code=403, detail=detail)
 
 
 def user_meets_locality(user, org) -> bool:
