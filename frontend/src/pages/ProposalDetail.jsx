@@ -1627,6 +1627,7 @@ export default function ProposalDetail() {
   const [archiving, setArchiving] = useState(false);
   // Phase 70 — advance-to-next-phase busy guard for the author control.
   const [advancing, setAdvancing] = useState(false);
+  const [scheduleReferenceMs] = useState(() => Date.now());
   // Lazy-loaded inputs for the form (topics + sub-orgs). Fetched only
   // when entering edit mode so the regular read-view path doesn't pay
   // the API cost.
@@ -1997,9 +1998,9 @@ export default function ProposalDetail() {
   const isPlatformAdmin = !!user && !!user.is_admin;
   const canEditAsNonAuthor = isPlatformAdmin || canEditViaPermission;
   let editLockoutReached = false;
-  if (isDeliberation && proposal.deliberation_start && proposal.deliberation_days) {
+  if (isDeliberation && proposal.deliberation_start && proposal.deliberation_end) {
     const startMs = new Date(proposal.deliberation_start).getTime();
-    const endMs = startMs + Number(proposal.deliberation_days) * 86400_000;
+    const endMs = new Date(proposal.deliberation_end).getTime();
     const lockoutFrac = (
       proposal.edit_lockout_fraction != null
         ? proposal.edit_lockout_fraction
@@ -2017,6 +2018,23 @@ export default function ProposalDetail() {
     (isDraft || isDeliberation)
     && (isAuthor || canEditAsNonAuthor)
     && !editLockoutReached;
+  const scheduledVotingMs = proposal.deliberation_end
+    ? new Date(proposal.deliberation_end).getTime()
+    : null;
+  const lifecycleGraceMs = 11 * 60 * 1000;
+  const scheduleDateTime = scheduledVotingMs
+    ? new Date(scheduledVotingMs).toLocaleString()
+    : null;
+  let deliberationScheduleCopy = 'Voting has not been scheduled.';
+  if (scheduledVotingMs != null && scheduledVotingMs > scheduleReferenceMs) {
+    deliberationScheduleCopy = `Voting is scheduled to begin ${scheduleDateTime}.`;
+  } else if (scheduledVotingMs != null && scheduleReferenceMs - scheduledVotingMs <= lifecycleGraceMs) {
+    deliberationScheduleCopy = `Voting is scheduled to begin shortly (${scheduleDateTime}).`;
+  } else if (scheduledVotingMs != null) {
+    deliberationScheduleCopy = `Voting was scheduled to begin ${scheduleDateTime} and the automatic transition is delayed.`;
+  } else if (proposal.can_advance) {
+    deliberationScheduleCopy = 'Voting has not been scheduled. An administrator can set a date or move it to voting.';
+  }
 
   // ── Phase 8.5 — scope detection (Decisions 7 + 10) ────────────────────────
   // hasSubOrgScope: proposal is sub-org-scoped (sub_org_id is set).
@@ -2258,7 +2276,7 @@ export default function ProposalDetail() {
             <p className="text-sm text-gray-400">
               Proposed by {proposal.author?.display_name}
               {proposal.created_at && ` · ${new Date(proposal.created_at).toLocaleDateString()}`}
-              {proposal.voting_end && isVoting && ` · Closes ${new Date(proposal.voting_end).toLocaleDateString()}`}
+              {proposal.voting_end && isVoting && ` · Closes ${new Date(proposal.voting_end).toLocaleString()}`}
               {isClosed && proposal.voting_end && ` · Closed ${new Date(proposal.voting_end).toLocaleDateString()}`}
               {/* Phase 86 (B-4) — subtle report affordance for non-author members. */}
               {!!user && isMember && proposal.author_id !== user.id && (
@@ -2813,10 +2831,13 @@ export default function ProposalDetail() {
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-blue-700 mb-1">Deliberation Period</h3>
               <p className="text-sm text-blue-600">
-                {proposal.voting_start
-                  ? `Voting opens ${new Date(proposal.voting_start).toLocaleDateString()}`
-                  : 'Voting has not yet been scheduled.'}
+                {deliberationScheduleCopy}
               </p>
+              {proposal.can_advance && scheduledVotingMs != null && scheduledVotingMs < scheduleReferenceMs - lifecycleGraceMs && (
+                <Link to={`/${linkOrg?.slug}/admin/proposals`} className="mt-2 inline-block text-sm font-medium underline">
+                  Open schedule controls
+                </Link>
+              )}
             </div>
           )}
 

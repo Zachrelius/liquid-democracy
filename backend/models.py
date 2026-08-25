@@ -913,6 +913,13 @@ class Proposal(Base):
         default="draft",
     )
     deliberation_start: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Phase 102 — durable, server-authored end of the deliberation window.
+    # Stored as naive UTC, matching the existing lifecycle timestamps.  NULL
+    # means intentionally unscheduled (including historical rows awaiting the
+    # gated reconciliation), never "recompute this deadline at read time".
+    deliberation_end: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True, index=True,
+    )
     voting_start: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     voting_end: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     voting_method: Mapped[str] = mapped_column(

@@ -140,6 +140,11 @@ def _get_or_create_proposal(
         voting_method=voting_method,
         num_winners=num_winners,
         deliberation_start=now - timedelta(days=days_ago_deliberation),
+        deliberation_end=(
+            now - timedelta(days=days_ago_voting)
+            if status != "deliberation"
+            else now + timedelta(days=max(0, 7 - days_ago_deliberation))
+        ),
         voting_start=now - timedelta(days=days_ago_voting) if status != "deliberation" else None,
         voting_end=now + timedelta(days=days_ahead_close) if days_ahead_close and status == "voting" else None,
         pass_threshold=0.50,

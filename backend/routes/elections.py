@@ -314,6 +314,7 @@ def open_election(
         num_winners=body.num_winners,
         status="deliberation",
         deliberation_start=now,
+        deliberation_end=now + timedelta(days=float(body.deliberation_days)),
         deliberation_days=body.deliberation_days,
         voting_days=body.voting_days,
         pass_threshold=org.settings.get("default_pass_threshold", 0.50) if org.settings else 0.50,

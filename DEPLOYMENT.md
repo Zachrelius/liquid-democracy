@@ -1417,6 +1417,32 @@ do not inspect or print private row/file contents.
   identifiers, renewal timing, and what Railway's authenticated UI says. Do not
   promise that native schedules or retained-backup access survive. After Hobby
   becomes effective, prove another offsite success and monitor/object state.
+
+## Phase 102 scheduled proposal lifecycle rollout
+
+The production rollout is deliberately gated. Set
+`PROPOSAL_SCHEDULE_AUTOMATION_ENABLED=false` before deploying the migration.
+After the backend is healthy at Alembic head, run the inventory in dry-run
+mode (the default):
+
+```bash
+python backend/scripts/reconcile_deliberation_schedules.py
+```
+
+Review the organization/category counts. Any overdue budget voting proposal
+blocks enablement and requires an owner disposition. If the inventory is
+clean, apply the locked reconciliation:
+
+```bash
+python backend/scripts/reconcile_deliberation_schedules.py --apply
+```
+
+The apply mode can initialize future ordinary legacy schedules outside
+`reform-table` and advance only qualifying overdue ordinary deliberations in
+`reform-table`; it accepts no IDs, slugs, SQL, or notification controls. Verify
+the printed before/after counts and audit/notification invariants, then set the
+gate to `true`. `GET /api/health/monitor` must report the public-safe
+`proposal_lifecycle` component `ok` after at most two worker intervals.
 - A real production restore is outside Phase 98. Freeze writes and preserve
   evidence, identify the incident window and best verified artifact, obtain a
   separate incident decision, rehearse against disposable resources, and only

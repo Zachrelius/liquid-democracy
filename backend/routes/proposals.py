@@ -32,6 +32,13 @@ from permissions import can_see_votes
 from polis_engine import eligible_viewers_for_polis
 from role_permissions import has_permission as _has_permission
 from rate_limit_utils import content_limiter, PROPOSAL_CREATE_LIMIT, WRITEIN_OPTION_LIMIT
+from proposal_lifecycle import (
+    compute_voting_end as _lifecycle_compute_voting_end,
+    emit_status_notifications as _lifecycle_emit_status_notifications,
+    lock_election_candidate_options as _lifecycle_lock_election_options,
+    transition_deliberation_to_voting,
+    transition_draft_to_deliberation as _lifecycle_draft_to_deliberation,
+)
 
 
 log = logging.getLogger(__name__)
@@ -59,26 +66,10 @@ def _transition_draft_to_deliberation(
     existing transaction boundary and the bulk route can isolate each item
     behind a savepoint.
     """
-    if proposal.status != "draft":
-        raise ValueError("draft-to-deliberation transition requires draft status")
-
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    proposal.deliberation_start = now
-    proposal.status = "deliberation"
-    log_audit_event(
-        db,
-        action="proposal.status_changed",
-        target_type="proposal",
-        target_id=proposal.id,
-        actor_id=actor_id,
-        details={
-            "proposal_id": proposal.id,
-            "old_status": "draft",
-            "new_status": "deliberation",
-        },
-        ip_address=ip_address,
-    )
-    return now
+    org = db.get(models.Organization, proposal.org_id) if proposal.org_id else None
+    return _lifecycle_draft_to_deliberation(
+        db, proposal, org=org, actor_id=actor_id, ip_address=ip_address,
+    ).occurred_at
 
 
 def _strip_tz(dt: Optional[datetime]) -> Optional[datetime]:
@@ -118,60 +109,12 @@ def _compute_voting_end_at_advance(
         log.warning(
             "advance_proposal: body.voting_end is deprecated; "
             "set proposal.voting_days at create or via PATCH instead "
-            "(proposal_id=%s)",
-            proposal.id,
+            "(proposal_id=%s)", proposal.id,
         )
-        if body_voting_end.tzinfo is not None:
-            return body_voting_end.replace(tzinfo=None)
-        return body_voting_end
-
-    # Phase 75a — absolute voting end date takes priority over voting_days
-    # (and the org default). When set and valid, it becomes voting_end
-    # directly. The real staleness check is here at advance time (not at
-    # create), mirroring how voting_days has no create-time "enough time?"
-    # check — a proposal may sit in draft for days.
-    end_date = getattr(proposal, "voting_end_date", None)
-    if end_date is not None:
-        if end_date.tzinfo is not None:
-            end_date = end_date.replace(tzinfo=None)
-        if end_date <= voting_start:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"The specified voting end date "
-                    f"({end_date.strftime('%Y-%m-%d %H:%M')}) has already "
-                    "passed or is before voting would start. Update it or "
-                    "remove it to use the default voting duration."
-                ),
-            )
-        derived_days = (end_date - voting_start).total_seconds() / 86400
-        if derived_days < _VOTING_DAYS_FLOOR:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "The specified voting end date is too soon — the voting "
-                    f"window would be {derived_days:.2f} days, below the "
-                    f"minimum of {_VOTING_DAYS_FLOOR} days (~72 minutes)."
-                ),
-            )
-        return end_date
-
-    voting_days: Optional[float] = getattr(proposal, "voting_days", None)
-    if voting_days is None:
-        _, default_vote = get_default_proposal_durations(org)
-        voting_days = default_vote
-
-    if voting_days is None or voting_days <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Cannot advance to voting: proposal has no voting_days and "
-                "the organization has no positive default_voting_days. "
-                "Set proposal.voting_days or fix the org configuration."
-            ),
-        )
-
-    return voting_start + timedelta(days=float(voting_days))
+    return _lifecycle_compute_voting_end(
+        voting_start=voting_start, body_voting_end=body_voting_end,
+        proposal=proposal, org=org,
+    )
 
 
 def _viewer_can_advance_permission(
@@ -476,6 +419,7 @@ def _build_proposal_out(
         ),
         tie_resolution=proposal.tie_resolution,
         deliberation_start=proposal.deliberation_start,
+        deliberation_end=getattr(proposal, "deliberation_end", None),
         voting_start=proposal.voting_start,
         voting_end=proposal.voting_end,
         pass_threshold=proposal.pass_threshold,
@@ -1418,6 +1362,7 @@ def create_proposal(
         num_winners=body.num_winners,
         status="voting" if skip_deliberation else "draft",
         deliberation_start=now_at_create,
+        deliberation_end=now_at_create if skip_deliberation else None,
         voting_start=now_at_create,
         voting_end=(
             now_at_create + timedelta(days=float(effective_vote_days))
@@ -2992,69 +2937,10 @@ def _emit_proposal_status_notifications(
     Author-self-vote dedup: a single user_id appears at most once per
     event regardless of how many roles (author, voter) they hold.
     """
-    payload_base = {
-        "proposal_id": proposal.id,
-        "proposal_title": proposal.title,
-        "org_id": proposal.org_id,
-        "old_status": old_status,
-        "new_status": new_status,
-    }
-
-    if old_status != "voting" and new_status == "voting":
-        try:
-            voter_ids = eligible_voter_ids_for_proposal(db, proposal)
-        except Exception as e:  # noqa: BLE001
-            log.warning(
-                "proposal.entered_voting eligible-voters lookup failed: %s",
-                e,
-            )
-            return
-        for uid in voter_ids:
-            chosen = _resolve_voting_event_for_recipient(db, uid, proposal)
-            if chosen is None:
-                # Recipient is opted into none of the three voting-opened
-                # events — emit nothing for them. Single-notification-per-
-                # recipient invariant: this is the "zero" case.
-                continue
-            emit_notification(
-                db,
-                background_tasks,
-                event_type=chosen,
-                user_id=uid,
-                org_id=proposal.org_id,
-                actor_id=actor_id,
-                target_type="proposal",
-                target_id=proposal.id,
-                payload=payload_base,
-            )
-
-    if old_status == "voting" and new_status in ("passed", "failed"):
-        recipients: set[str] = set()
-        if proposal.author_id:
-            recipients.add(proposal.author_id)
-        # Everyone who cast a direct vote on this proposal.
-        vote_rows = (
-            db.query(models.Vote.user_id)
-            .filter(models.Vote.proposal_id == proposal.id)
-            .all()
-        )
-        for r in vote_rows:
-            recipients.add(r.user_id)
-        for uid in recipients:
-            emit_notification(
-                db,
-                background_tasks,
-                event_type="proposal.closed",
-                user_id=uid,
-                org_id=proposal.org_id,
-                actor_id=actor_id,
-                target_type="proposal",
-                target_id=proposal.id,
-                payload={
-                    **payload_base,
-                    "outcome": new_status,
-                },
-            )
+    return _lifecycle_emit_status_notifications(
+        db, background_tasks, proposal, old_status=old_status,
+        new_status=new_status, actor_id=actor_id,
+    )
 
 
 def _maybe_resolve_tie(
@@ -3290,21 +3176,22 @@ def advance_proposal(
             ip_address=request.client.host if request.client else None,
         )
     elif next_status == "voting":
-        proposal.voting_start = now
-        # Phase 25 B1.1 — derive voting_end from proposal.voting_days (or
-        # org default) when the body doesn't supply one. body.voting_end is
-        # honored if present but logs a deprecation warning.
+        if body.voting_end is not None:
+            log.warning(
+                "advance_proposal: body.voting_end is deprecated; "
+                "set proposal.voting_days at create or via PATCH instead "
+                "(proposal_id=%s)", proposal.id,
+            )
         org_for_advance = (
             db.get(models.Organization, proposal.org_id)
             if proposal.org_id else None
         )
-        proposal.voting_end = _compute_voting_end_at_advance(
-            voting_start=now,
+        transition_deliberation_to_voting(
+            db, proposal, org=org_for_advance,
+            actor_id=current_user.id,
+            ip_address=request.client.host if request.client else None,
             body_voting_end=body.voting_end,
-            proposal=proposal,
-            org=org_for_advance,
         )
-        _lock_election_candidate_options(db, proposal)
     elif next_status == "passed":
         tally = delegation_engine.compute_tally(proposal, db)
         if getattr(proposal, "is_election", False):
@@ -3385,7 +3272,7 @@ def advance_proposal(
             else:
                 next_status = "failed"
 
-    if not draft_transition:
+    if not draft_transition and old_status != "deliberation":
         proposal.status = next_status
     db.flush()
 
@@ -3415,7 +3302,7 @@ def advance_proposal(
             ip_address=request.client.host if request.client else None,
         )
 
-    if not draft_transition:
+    if not draft_transition and old_status != "deliberation":
         log_audit_event(
             db,
             action="proposal.status_changed",
@@ -3473,22 +3360,7 @@ def _lock_election_candidate_options(
     (``_advance_cosign_to_voting``) so cosign-triggered elections (D4
     member_cosign trigger) lock options too.
     """
-    if not getattr(proposal, "is_election", False):
-        return
-    if proposal.options:
-        return
-    from elections import active_candidacies
-    candidates = active_candidacies(db, proposal.id)
-    for i, c in enumerate(candidates):
-        user = db.get(models.User, c.user_id)
-        display = user.display_name if user else c.user_id
-        db.add(models.ProposalOption(
-            proposal_id=proposal.id,
-            label=c.user_id,
-            description=display,
-            display_order=i,
-        ))
-    db.flush()
+    return _lifecycle_lock_election_options(db, proposal)
 
 
 def _advance_cosign_to_voting(
@@ -3519,36 +3391,14 @@ def _advance_cosign_to_voting(
     """
     if proposal.status != "deliberation":
         return  # Defensive: already advanced or in a terminal state.
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
     org_for_advance = (
         db.get(models.Organization, proposal.org_id)
         if proposal.org_id else None
     )
-    proposal.voting_start = now
-    proposal.voting_end = _compute_voting_end_at_advance(
-        voting_start=now,
-        body_voting_end=None,
-        proposal=proposal,
-        org=org_for_advance,
-    )
-    old_status = proposal.status
-    proposal.status = "voting"
-    # Phase 48 Stage 3 — cosign-triggered elections: lock candidate
-    # options before voting opens (same as the admin-direct path).
-    _lock_election_candidate_options(db, proposal)
-    log_audit_event(
-        db,
-        action="proposal.status_changed",
-        target_type="proposal",
-        target_id=proposal.id,
-        actor_id=actor_id,
-        details={
-            "proposal_id": proposal.id,
-            "old_status": old_status,
-            "new_status": "voting",
-            "trigger": "cosign_threshold_met",
-        },
-        ip_address=ip_address,
+    result = transition_deliberation_to_voting(
+        db, proposal, org=org_for_advance, actor_id=actor_id,
+        ip_address=ip_address, trigger="cosign_threshold_met",
+        allow_cosign=True,
     )
     log_audit_event(
         db,
@@ -3559,7 +3409,7 @@ def _advance_cosign_to_voting(
         details={
             "proposal_id": proposal.id,
             "threshold": proposal.cosign_threshold_snapshot,
-            "voting_start": now.isoformat(),
+            "voting_start": result.occurred_at.isoformat(),
             "voting_end": proposal.voting_end.isoformat(),
         },
         ip_address=ip_address,
@@ -3567,7 +3417,7 @@ def _advance_cosign_to_voting(
     try:
         _emit_proposal_status_notifications(
             db, background_tasks, proposal,
-            old_status=old_status, new_status="voting",
+            old_status=result.old_status, new_status="voting",
             actor_id=actor_id,
         )
     except Exception:  # noqa: BLE001
