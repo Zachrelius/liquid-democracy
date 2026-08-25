@@ -11,25 +11,41 @@ import AccessHistory from '../components/AccessHistory';
 import { Link } from 'react-router-dom';
 
 /**
- * Phase 52a — verification section with the real Didit "Start
- * verification" CTA. Shows current status + provenance; hides the
- * CTA when the user is already at the strongest state we can
- * produce from Didit (address_on_id) since re-verifying buys
- * nothing. Disclosure copy returned by the backend is rendered
- * verbatim BEFORE the redirect.
+ * Phase 52a/102a — verification section with the real Didit session flow.
+ * Real accounts can start or deliberately update verification; demo stubs
+ * remain sealed. Disclosure copy returned by the backend is rendered
+ * verbatim before the redirect.
  */
 function VerificationSection({ user }) {
   const [starting, setStarting] = useState(false);
   const [pendingDisclosure, setPendingDisclosure] = useState(null);
   const [pendingUrl, setPendingUrl] = useState(null);
   const [err, setErr] = useState('');
+  const sectionRef = useRef(null);
+  const confirm = useConfirm();
 
   const state = user?.verification_state || 'email_only';
-  // Don't show the CTA once the user is already verified at our
-  // strongest state.
-  const showStartCta = state === 'email_only' || state === 'identity' || state === 'identity_unique';
+  const isDemoStub = user?.verification_provenance === 'demo_stub';
+  const isFullyVerified = state === 'address_on_id' || state === 'residency_verified';
+  const showStartCta = !isDemoStub;
+
+  useEffect(() => {
+    if (window.location.hash !== '#identity-verification') return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      sectionRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   async function handleStart() {
+    if (isFullyVerified) {
+      const ok = await confirm({
+        title: 'Update identity verification?',
+        message: 'A new check will update or replace your current verification and use verification capacity. It does not guarantee eligibility—the address on your submitted ID must still match the organization’s rule.',
+      });
+      if (!ok) return;
+    }
     setStarting(true);
     setErr('');
     try {
@@ -55,8 +71,14 @@ function VerificationSection({ user }) {
   }
 
   return (
-    <section className="space-y-3">
-      <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Identity verification</h2>
+    <section
+      id="identity-verification"
+      ref={sectionRef}
+      tabIndex={-1}
+      aria-labelledby="identity-verification-heading"
+      className="space-y-3 scroll-mt-6 focus:outline-none"
+    >
+      <h2 id="identity-verification-heading" className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Identity verification</h2>
       <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-2">
         <div className="flex items-baseline gap-3">
           <span className="text-xs text-gray-500">Status</span>
@@ -128,7 +150,7 @@ function VerificationSection({ user }) {
               disabled={starting}
               className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
             >
-              {starting ? 'Starting…' : 'Start verification'}
+              {starting ? 'Starting…' : (isFullyVerified ? 'Update verification' : 'Start verification')}
             </button>
             {err && (
               <p className="text-xs text-red-600 mt-2">{err}</p>
@@ -165,7 +187,7 @@ const POLICY_OPTIONS = [
 // "Public Delegate Page" section below for the replacement link.
 
 export default function Settings() {
-  const { user: authUser, refreshUser, logout } = useAuth();
+  const { refreshUser, logout } = useAuth();
   const { currentOrg } = useOrg();
   const toast = useToast();
   const confirm = useConfirm();
@@ -199,7 +221,10 @@ export default function Settings() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const request = Promise.resolve().then(load);
+    return () => { void request; };
+  }, [load]);
 
   async function saveProfile() {
     setProfileMsg('');

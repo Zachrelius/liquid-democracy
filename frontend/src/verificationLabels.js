@@ -9,7 +9,7 @@
  * this module — keep the label tables in one place so a future
  * copy change is a one-file edit.
  */
-import { countryName } from './utils/countries';
+import { countryName } from './utils/countries.js';
 
 // Long labels intentionally spell out what was verified (a government
 // ID was confirmed for the account) so the badge doesn't overclaim —
@@ -56,6 +56,96 @@ export function labelForState(state) {
 
 export function shortLabelForState(state) {
   return VERIFICATION_STATE_SHORT_LABELS[state] || VERIFICATION_STATE_SHORT_LABELS.email_only;
+}
+
+const US_STATE_NAMES = {
+  AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California',
+  CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia',
+  HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa',
+  KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland',
+  MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri',
+  MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey',
+  NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio',
+  OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina',
+  SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont',
+  VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming',
+  DC: 'District of Columbia',
+};
+
+function readableState(value) {
+  const state = typeof value === 'string' ? value.trim().toUpperCase() : '';
+  return US_STATE_NAMES[state] || state;
+}
+
+function readableResidencyEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  if (typeof entry.city === 'string' && entry.city.trim()) {
+    const city = entry.city.trim();
+    const state = readableState(entry.state);
+    return state ? `${city}, ${state}` : city;
+  }
+  if (typeof entry.state === 'string' && entry.state.trim()) {
+    return readableState(entry.state);
+  }
+  if (typeof entry.country === 'string' && entry.country.trim()) {
+    return countryName(entry.country.trim().toUpperCase());
+  }
+  return null;
+}
+
+function grammaticalList(values) {
+  if (values.length === 1) return values[0];
+  if (values.length === 2) return `${values[0]} or ${values[1]}`;
+  return `${values.slice(0, -1).join(', ')}, or ${values[values.length - 1]}`;
+}
+
+/**
+ * Build plain-language, structured membership-gate copy for the join dialog.
+ * The canonical payload lives under membership_requirements, while the
+ * fallbacks keep older scope-specific 403s useful during rolling deploys.
+ */
+export function formatMembershipVerificationRequirements(detail) {
+  const payload = detail && typeof detail === 'object' ? detail : {};
+  const canonical = payload.membership_requirements
+    && typeof payload.membership_requirements === 'object'
+    ? payload.membership_requirements
+    : {};
+  const floor = canonical.floor || payload.floor || null;
+  const jurisdiction = canonical.jurisdiction || payload.jurisdiction || null;
+  const residencyScope = Array.isArray(canonical.residency_scope)
+    ? canonical.residency_scope
+    : (Array.isArray(payload.residency_scope) ? payload.residency_scope : []);
+  const requiresResidency = canonical.requires_residency === true
+    || payload.scope === 'residency_scope'
+    || payload.scope === 'locality';
+  const rawMinAge = canonical.min_age ?? payload.min_age;
+  const minAge = Number.isInteger(Number(rawMinAge)) && Number(rawMinAge) > 0
+    ? Number(rawMinAge)
+    : null;
+
+  const requirements = [];
+  if (floor === 'address_on_id' || floor === 'residency_verified') {
+    requirements.push('A government-issued ID with an address on it is required.');
+  } else if (floor && floor !== 'email_only') {
+    requirements.push('A government-issued ID is required.');
+  } else {
+    requirements.push('Identity verification is required.');
+  }
+
+  const locationLabels = residencyScope.map(readableResidencyEntry).filter(Boolean);
+  if (requiresResidency) {
+    requirements.push(locationLabels.length
+      ? `Your verified ID address must be in ${grammaticalList(locationLabels)}.`
+      : 'Your verified ID address must be in one of the organization’s allowed locations.');
+  } else if (jurisdiction) {
+    requirements.push(`Your verified ID address must be in ${readableState(jurisdiction)}.`);
+  }
+
+  if (minAge) {
+    requirements.push(`You must be at least ${minAge} years old based on your verification.`);
+  }
+
+  return { requirements, floor, jurisdiction, requiresResidency, residencyScope, minAge };
 }
 
 /**
@@ -159,6 +249,7 @@ export const UP_FRONT_ONE_IDENTITY_COPY =
 export function extractVerificationRequiredDetail(error) {
   if (!error) return null;
   const candidates = [
+    error?.raw?.detail,
     error.detail,
     error?.response?.data?.detail,
     error?.body?.detail,
