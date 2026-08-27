@@ -11,8 +11,8 @@ talks only to:
     over the raw body + ``X-Timestamp`` freshness ≤300s + constant-
     time signature compare. Returns False on any failure; callers
     return 401 on False.
-  * ``map_decision_to_state(decision)`` — pure mapper from Didit's
-    decision payload shape to our internal record fields. This is the
+  * ``map_decision_to_state(payload)`` — pure mapper from Didit's full
+    webhook payload shape to our internal record fields. This is the
     one place provider-specific response interpretation lives — keep
     pure + unit-tested.
 
@@ -43,6 +43,7 @@ import logging
 import os
 import re
 import time
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import httpx
@@ -59,6 +60,138 @@ DIDIT_API_BASE = os.environ.get(
     "DIDIT_API_BASE", "https://verification.didit.me/v3"
 ).rstrip("/")
 WEBHOOK_FRESHNESS_SECONDS = 300
+
+# Phase 102b — code-owned contract for the configured Didit workflow.
+# IP_ANALYSIS may also be present, but Didit's overall decision owns that
+# signal; it is not an independent Liquid Democracy identity rung.
+EXPECTED_IDENTITY_FEATURES = frozenset({
+    "ID_VERIFICATION", "LIVENESS", "FACE_MATCH",
+})
+_FEATURE_RESULT_ARRAYS = {
+    "ID_VERIFICATION": "id_verifications",
+    "LIVENESS": "liveness_checks",
+    "FACE_MATCH": "face_matches",
+}
+
+
+def _normalize_status(value: Any) -> str:
+    """Return a stable, PII-free provider status token."""
+    if not isinstance(value, str):
+        return "missing"
+    token = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
+    return token or "missing"
+
+
+@dataclass(frozen=True)
+class ProviderDecisionResult:
+    """Strict, PII-free classification of one complete Didit V3 payload."""
+
+    approved: bool
+    normalized_status: str
+    decision_status: str
+    reason: str
+    feature_statuses: tuple[tuple[str, tuple[str, ...]], ...]
+
+    def statuses_for(self, feature: str) -> tuple[str, ...]:
+        return dict(self.feature_statuses).get(feature, ())
+
+
+def classify_provider_decision(payload: Any) -> ProviderDecisionResult:
+    """Classify a full Didit V3 decision envelope, failing closed."""
+    if not isinstance(payload, dict):
+        return ProviderDecisionResult(
+            False, "missing", "missing", "malformed_payload", (),
+        )
+    overall_status = _normalize_status(payload.get("status"))
+    decision = payload.get("decision")
+    if not isinstance(decision, dict):
+        return ProviderDecisionResult(
+            False, overall_status, "missing", "missing_decision", (),
+        )
+    decision_status = _normalize_status(decision.get("status"))
+
+    raw_features = payload.get("features")
+    declared: set[str] = set()
+    if isinstance(raw_features, str):
+        declared = {
+            item.strip().upper() for item in raw_features.split(",")
+            if item.strip()
+        }
+    elif isinstance(raw_features, list):
+        for item in raw_features:
+            if isinstance(item, str) and item.strip():
+                declared.add(item.strip().upper())
+            elif isinstance(item, dict):
+                value = item.get("feature") or item.get("name")
+                if isinstance(value, str) and value.strip():
+                    declared.add(value.strip().upper())
+
+    feature_statuses: list[tuple[str, tuple[str, ...]]] = []
+    feature_problem: Optional[str] = None
+    for feature, array_key in _FEATURE_RESULT_ARRAYS.items():
+        nodes = decision.get(array_key)
+        if not isinstance(nodes, list) or not nodes:
+            statuses: tuple[str, ...] = ()
+            feature_problem = feature_problem or f"missing_{array_key}"
+        else:
+            statuses = tuple(
+                _normalize_status(node.get("status"))
+                if isinstance(node, dict) else "malformed"
+                for node in nodes
+            )
+            if any(status != "approved" for status in statuses):
+                feature_problem = feature_problem or f"unapproved_{array_key}"
+        feature_statuses.append((feature, statuses))
+
+    result_kwargs = {
+        "approved": False,
+        "normalized_status": overall_status,
+        "decision_status": decision_status,
+        "feature_statuses": tuple(feature_statuses),
+    }
+    if overall_status != "approved":
+        return ProviderDecisionResult(reason="overall_not_approved", **result_kwargs)
+    if decision_status != "approved":
+        return ProviderDecisionResult(reason="decision_not_approved", **result_kwargs)
+    if EXPECTED_IDENTITY_FEATURES - declared:
+        return ProviderDecisionResult(reason="missing_required_features", **result_kwargs)
+    if feature_problem:
+        return ProviderDecisionResult(reason=feature_problem, **result_kwargs)
+    return ProviderDecisionResult(
+        True, overall_status, decision_status, "approved", tuple(feature_statuses),
+    )
+
+
+def classify_retrieved_session_decision(payload: Any) -> ProviderDecisionResult:
+    """Strictly classify Didit's flat ``GET .../decision/`` V3 response.
+
+    Didit's retrieval endpoint returns one overall ``status`` plus plural
+    feature arrays at the top level, unlike the webhook's nested ``decision``
+    envelope. Build a minimal in-memory canonical envelope containing only
+    status/features and per-node status; never copy provider PII into a log or
+    database object. This helper is audit-only and does not weaken the webhook
+    requirement that both of its actual envelope statuses be Approved.
+    """
+    if not isinstance(payload, dict):
+        return ProviderDecisionResult(
+            False, "missing", "missing", "malformed_payload", (),
+        )
+    minimal_decision: dict[str, Any] = {"status": payload.get("status")}
+    for array_key in _FEATURE_RESULT_ARRAYS.values():
+        raw_nodes = payload.get(array_key)
+        if isinstance(raw_nodes, list):
+            minimal_decision[array_key] = [
+                {"status": node.get("status")}
+                if isinstance(node, dict) else None
+                for node in raw_nodes
+            ]
+        else:
+            minimal_decision[array_key] = raw_nodes
+    return classify_provider_decision({
+        "status": payload.get("status"),
+        "features": payload.get("features"),
+        "decision": minimal_decision,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +309,23 @@ def create_session(user_id: str) -> dict[str, str]:
             f"got keys={list(data.keys())}"
         )
     return {"session_url": session_url, "session_id": session_id}
+
+
+def retrieve_session_decision(session_id: str) -> dict[str, Any]:
+    """Retrieve one current Didit V3 decision for audit/remediation.
+
+    The result contains sensitive provider data. Callers must classify it in
+    memory and must never log or persist the raw response.
+    """
+    api_key = _require_env("DIDIT_API_KEY")
+    url = f"{DIDIT_API_BASE}/session/{session_id}/decision/"
+    with httpx.Client(timeout=15.0) as client:
+        response = client.get(url, headers={"x-api-key": api_key})
+        response.raise_for_status()
+        data = response.json()
+    if not isinstance(data, dict):
+        raise RuntimeError("Didit decision response was not an object")
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -466,39 +616,10 @@ def _extract_country(decision: dict) -> Optional[str]:
     return None
 
 
-def _decision_passed_id(decision: dict) -> bool:
-    """True iff the decision indicates a passed ID-verification check.
-
-    Real Didit shape (captured in Phase 52c/52e): the per-feature
-    status lives at ``decision.id_verifications[0].status`` (plural
-    array). Back-compat: also accept the documented singular
-    ``decision.id_verification.status`` and the overall
-    ``decision.status``.
-    """
-    if not isinstance(decision, dict):
-        return False
-    overall = str(decision.get("status") or "").strip().lower()
-    # Phase 52h Stage 2 — the rest of the mapper reads the plural
-    # ``id_verifications`` array; this consistency fix matches that.
-    iv_plural = decision.get("id_verifications")
-    iv_plural_status = ""
-    if isinstance(iv_plural, list) and iv_plural:
-        first = iv_plural[0]
-        if isinstance(first, dict):
-            iv_plural_status = str(first.get("status") or "").strip().lower()
-    # Legacy singular path.
-    iv = decision.get("id_verification")
-    iv_status = ""
-    if isinstance(iv, dict):
-        iv_status = str(iv.get("status") or "").strip().lower()
-    return (
-        iv_plural_status == "approved"
-        or iv_status == "approved"
-        or overall == "approved"
-    )
-
-
-def map_decision_to_state(decision: dict) -> dict:
+def map_decision_to_state(
+    payload: dict,
+    result: Optional[ProviderDecisionResult] = None,
+) -> dict:
     """Pure mapper from Didit's ``decision`` payload to our record
     fields. The single place where provider-specific response shape
     is interpreted.
@@ -542,13 +663,17 @@ def map_decision_to_state(decision: dict) -> dict:
       * ID check passed? → at least IDENTITY.
       * Jurisdiction parsed from address? → ADDRESS_ON_ID.
     """
-    if not isinstance(decision, dict) or not _decision_passed_id(decision):
+    classification = result or classify_provider_decision(payload)
+    if not classification.approved:
         return {
             "verification_state": EMAIL_ONLY,
             "verification_jurisdiction": None,
             "verification_country": None,
             "verification_attestation_id": None,
         }
+    decision = payload.get("decision")
+    if not isinstance(decision, dict):  # approved classifier forbids this
+        raise ValueError("approved decision classification without decision object")
     jurisdiction = _extract_jurisdiction(decision)
     # Phase 76c — country is captured independently of the (US-centric)
     # state ladder: a non-US address parses a country but no recognized

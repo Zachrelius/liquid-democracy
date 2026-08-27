@@ -423,7 +423,9 @@ def _apply_decision(
     db: Session,
     *,
     target_user: models.User,
+    payload: dict,
     decision: dict,
+    provider_result: verification_provider.ProviderDecisionResult,
     session_row: models.VerificationSession,
     request: Request,
 ) -> None:
@@ -475,7 +477,7 @@ def _apply_decision(
     name_dob_address_hash = hashes.get("name_dob_address_hash")
     name_dob_hash = hashes.get("name_dob_hash")
 
-    mapped = verification_provider.map_decision_to_state(decision)
+    mapped = verification_provider.map_decision_to_state(payload, provider_result)
     new_state = mapped["verification_state"]
     new_jurisdiction = mapped["verification_jurisdiction"]
     new_country = mapped.get("verification_country")
@@ -670,7 +672,7 @@ async def didit_webhook(
     db: Session = Depends(get_db),
 ):
     """Didit webhook receiver. Signature + freshness verified;
-    idempotent on ``(provider_session_id, webhook_type)``.
+    idempotent on normalized provider outcome for each session.
 
     Returns 200 with ``{"ok": True}`` on accept (including the
     deduped no-op and the explicitly-declined-to-apply paths).
@@ -734,17 +736,6 @@ async def didit_webhook(
         # retries; do not fabricate state.
         return {"ok": False, "reason": "unknown_session"}
 
-    # Idempotency: same (session, webhook_type) twice is a no-op 200.
-    # Phase 52e — adds ``approved_purged`` + ``approved_purge_failed``
-    # so a replay after the purge step has run still dedupes (the
-    # state-write was the load-bearing action; the purge outcome
-    # doesn't change the verification record).
-    if session_row.webhook_type_last == webhook_type and session_row.status in (
-        "approved", "approved_purged", "approved_purge_failed",
-        "declined", "collision_rejected",
-    ):
-        return {"ok": True, "deduped": True}
-
     target_user = db.get(models.User, session_row.user_id)
     if target_user is None:
         # User was deleted between session and webhook. Audit + ack.
@@ -754,14 +745,62 @@ async def didit_webhook(
         db.commit()
         return {"ok": False, "reason": "user_missing"}
 
+    # Phase 102b — classify the complete envelope BEFORE any approval side
+    # effect. Only the strict all-features-approved verdict can reach
+    # `_apply_decision`; every other provider state is an honest, PII-free
+    # bookkeeping/audit update that leaves last-known-good user state alone.
+    provider_result = verification_provider.classify_provider_decision(payload)
+    if provider_result.approved:
+        outcome_status = "approved"
+    elif provider_result.reason in {
+        "malformed_payload", "missing_decision", "missing_required_features",
+    } or provider_result.reason.startswith(("missing_", "unapproved_")):
+        outcome_status = "provider_invalid"
+    else:
+        outcome_status = f"provider_{provider_result.normalized_status}"[:32]
+
+    approved_statuses = {
+        "approved", "approved_purged", "approved_purge_failed",
+    }
+    if (
+        provider_result.approved
+        and session_row.status in approved_statuses
+    ) or (
+        not provider_result.approved
+        and session_row.status == outcome_status
+    ):
+        return {"ok": True, "deduped": True}
+
     decision = payload.get("decision")
-    if not isinstance(decision, dict):
-        # Status updates without a decision body (e.g. "session.opened"):
-        # just record the webhook_type and ack.
+    if not provider_result.approved:
         session_row.webhook_type_last = webhook_type
+        session_row.status = outcome_status
         session_row.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        log_audit_event(
+            db,
+            action="verification.provider_outcome",
+            target_type="user",
+            target_id=target_user.id,
+            actor_id=target_user.id,
+            details={
+                "provider": "didit",
+                "outcome": provider_result.normalized_status,
+                "decision_outcome": provider_result.decision_status,
+                "reason": provider_result.reason,
+                "feature_statuses": {
+                    feature: list(statuses)
+                    for feature, statuses in provider_result.feature_statuses
+                },
+            },
+            ip_address=request.client.host if request.client else None,
+        )
         db.commit()
-        return {"ok": True}
+        return {"ok": True, "outcome": provider_result.normalized_status}
+
+    # The classifier guarantees this, but retain a loud defensive guard so a
+    # future refactor cannot pass a missing decision to the approval writer.
+    if not isinstance(decision, dict):
+        raise RuntimeError("approved provider result missing decision object")
 
     # Phase 52h Stage 2 — the IntegrityError catch that wrapped this
     # block to handle the doc_number_hash partial-unique-index race
@@ -773,7 +812,9 @@ async def didit_webhook(
     _apply_decision(
         db,
         target_user=target_user,
+        payload=payload,
         decision=decision,
+        provider_result=provider_result,
         session_row=session_row,
         request=request,
     )

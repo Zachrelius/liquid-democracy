@@ -351,9 +351,14 @@ class TestCaptureFiresOnWebhook:
         payload = {
             "session_id": "sess_no_dedup",
             "webhook_type": "session.completed",
+            "status": "Approved",
+            "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
             "decision": {
                 "session_id": "sess_no_dedup",
-                "id_verification": {"status": "Approved"},
+                "status": "Approved",
+                "id_verifications": [{"status": "Approved"}],
+                "liveness_checks": [{"status": "Approved"}],
+                "face_matches": [{"status": "Approved"}],
             },
         }
         body = json.dumps(payload).encode("utf-8")
@@ -385,7 +390,14 @@ class TestCaptureFiresOnWebhook:
         payload = {
             "session_id": "sess_redactor_oops",
             "webhook_type": "session.completed",
-            "decision": {"id_verification": {"status": "Approved"}},
+            "status": "Approved",
+            "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
+            "decision": {
+                "status": "Approved",
+                "id_verifications": [{"status": "Approved"}],
+                "liveness_checks": [{"status": "Approved"}],
+                "face_matches": [{"status": "Approved"}],
+            },
         }
         body = json.dumps(payload).encode("utf-8")
         r = client.post(

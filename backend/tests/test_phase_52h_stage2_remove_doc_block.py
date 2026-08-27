@@ -85,6 +85,8 @@ def _real_payload(session_id: str, *, doc_number: str = "X9876543") -> dict:
     return {
         "session_id": session_id,
         "webhook_type": "session.completed",
+        "status": "Approved",
+        "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
         "decision": {
             "session_id": session_id,
             "status": "Approved",
@@ -95,6 +97,8 @@ def _real_payload(session_id: str, *, doc_number: str = "X9876543") -> dict:
                 "last_name": "Robertson",
                 "date_of_birth": "1985-03-14",
             }],
+            "liveness_checks": [{"status": "Approved"}],
+            "face_matches": [{"status": "Approved"}],
         },
     }
 
@@ -244,7 +248,16 @@ class TestMapperUniquenessRungRemoved:
 
     def test_mapper_passed_id_no_address_returns_identity(self):
         m = verification_provider.map_decision_to_state(
-            {"id_verifications": [{"status": "Approved"}]},
+            {
+                "status": "Approved",
+                "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
+                "decision": {
+                    "status": "Approved",
+                    "id_verifications": [{"status": "Approved"}],
+                    "liveness_checks": [{"status": "Approved"}],
+                    "face_matches": [{"status": "Approved"}],
+                },
+            },
         )
         # Was IDENTITY_UNIQUE-eligible pre-Stage-2 when caller passed
         # doc_number_unique=True. Post-Stage-2, no IDENTITY_UNIQUE
@@ -253,10 +266,19 @@ class TestMapperUniquenessRungRemoved:
 
     def test_mapper_passed_id_with_jurisdiction_returns_address_on_id(self):
         m = verification_provider.map_decision_to_state(
-            {"id_verifications": [{
+            {
                 "status": "Approved",
-                "parsed_address": {"region": "Massachusetts"},
-            }]},
+                "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
+                "decision": {
+                    "status": "Approved",
+                    "id_verifications": [{
+                        "status": "Approved",
+                        "parsed_address": {"region": "Massachusetts"},
+                    }],
+                    "liveness_checks": [{"status": "Approved"}],
+                    "face_matches": [{"status": "Approved"}],
+                },
+            },
         )
         assert m["verification_state"] == verification.ADDRESS_ON_ID
         assert m["verification_jurisdiction"] == "MA"

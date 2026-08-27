@@ -104,6 +104,8 @@ def _real_shape_payload(session_id: str, *, doc_number: str = "X9876543") -> dic
     return {
         "session_id": session_id,
         "webhook_type": "session.completed",
+        "status": "Approved",
+        "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
         "decision": {
             "session_id": session_id,
             "status": "Approved",
@@ -114,6 +116,8 @@ def _real_shape_payload(session_id: str, *, doc_number: str = "X9876543") -> dic
                 "last_name": "Robertson",
                 "date_of_birth": "1985-03-14",
             }],
+            "liveness_checks": [{"status": "Approved"}],
+            "face_matches": [{"status": "Approved"}],
         },
     }
 

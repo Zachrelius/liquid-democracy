@@ -315,13 +315,34 @@ class TestMapDecisionToStatePrecedence:
 
     def test_passed_id_no_address_returns_identity(self):
         m = verification_provider.map_decision_to_state(
-            {"id_verification": {"status": "Approved"}},
+            {
+                "status": "Approved",
+                "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
+                "decision": {
+                    "status": "Approved",
+                    "id_verifications": [{"status": "Approved"}],
+                    "liveness_checks": [{"status": "Approved"}],
+                    "face_matches": [{"status": "Approved"}],
+                },
+            },
         )
         assert m["verification_state"] == verification.IDENTITY
 
     def test_passed_id_with_address_returns_address_on_id(self):
         m = verification_provider.map_decision_to_state(
-            {"id_verification": {"status": "Approved", "address_state": "CA"}},
+            {
+                "status": "Approved",
+                "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
+                "decision": {
+                    "status": "Approved",
+                    "id_verifications": [{
+                        "status": "Approved",
+                        "parsed_address": {"region": "CA"},
+                    }],
+                    "liveness_checks": [{"status": "Approved"}],
+                    "face_matches": [{"status": "Approved"}],
+                },
+            },
         )
         assert m["verification_state"] == verification.ADDRESS_ON_ID
         assert m["verification_jurisdiction"] == "CA"
@@ -375,6 +396,8 @@ class TestDocumentNumberHardBlock:
         return {
             "session_id": session_id,
             "webhook_type": "session.completed",
+            "status": "Approved",
+            "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
             "decision": {
                 "session_id": session_id,
                 "status": "Approved",
@@ -385,6 +408,8 @@ class TestDocumentNumberHardBlock:
                     "document_number": doc_number,
                     "date_of_birth": "1985-03-14",
                 }],
+                "liveness_checks": [{"status": "Approved"}],
+                "face_matches": [{"status": "Approved"}],
             },
         }
 
@@ -491,6 +516,8 @@ class TestPurgeWiring:
         return {
             "session_id": session_id,
             "webhook_type": "session.completed",
+            "status": "Approved",
+            "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
             "decision": {
                 "session_id": session_id,
                 "status": "Approved",
@@ -501,6 +528,8 @@ class TestPurgeWiring:
                     "document_number": "X9876543",
                     "date_of_birth": "1985-03-14",
                 }],
+                "liveness_checks": [{"status": "Approved"}],
+                "face_matches": [{"status": "Approved"}],
             },
         }
 
