@@ -3392,10 +3392,15 @@ def public_org_proposal_feed(
 @public_org_router.get(
     "/{org_slug}/public/proposals",
     response_model=list[schemas.ProposalOut],
+    deprecated=True,
 )
 def list_public_org_proposals(
     org_slug: str,
+    request: Request,
+    response: Response,
     status_filter: Optional[str] = Query(None, alias="status"),
+    limit: int = Query(25, ge=1, le=50),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
     """Phase 57 B5 — list an org's proposals to anonymous viewers when
@@ -3416,11 +3421,14 @@ def list_public_org_proposals(
     if status_filter:
         q = q.filter(models.Proposal.status == status_filter)
     # Phase 31 F1 — three-tier ordering (voting → deliberation → closed).
-    from routes.proposals import (
-        _proposal_list_ordering as _f1_ordering, _build_proposal_out,
+    from proposal_pagination import proposal_ordering, set_legacy_pagination_headers
+    from routes.proposals import _build_proposal_out
+    rows = q.order_by(*proposal_ordering()).offset(offset).limit(limit + 1).all()
+    has_more = len(rows) > limit
+    set_legacy_pagination_headers(
+        response, request, limit=limit, offset=offset, has_more=has_more,
     )
-    proposals = q.order_by(*_f1_ordering()).all()
-    return [_build_proposal_out(p, db) for p in proposals]
+    return [_build_proposal_out(p, db) for p in rows[:limit]]
 
 
 @public_org_router.get(
@@ -4817,11 +4825,83 @@ def org_proposal_feed(
         viewer=current_user,
     )
 
-@router.get("/{org_slug}/proposals", response_model=list[schemas.ProposalOut])
+
+@router.get(
+    "/{org_slug}/proposal-management-feed",
+    response_model=schemas.ProposalManagementFeedOut,
+)
+def org_proposal_management_feed(
+    org_slug: str,
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    status_filter: str = Query("all", alias="status"),
+    sub_org_id: Optional[str] = Query(None),
+    parent_only: bool = Query(False),
+    q: Optional[str] = Query(None, max_length=100),
+    eligible_for: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Compact administrative proposal rows with bounded keyset pagination."""
+    org = db.query(models.Organization).filter(
+        models.Organization.slug == org_slug,
+        models.Organization.parent_org_id.is_(None),
+    ).first()
+    if org is None:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    if sub_org_id and parent_only:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "mutually_exclusive_management_scope"},
+        )
+
+    is_parent_admin = membership_role_system_key(membership) in ("admin", "steward")
+    if sub_org_id:
+        sub_org = db.query(models.Organization).filter(
+            models.Organization.id == sub_org_id,
+            models.Organization.parent_org_id == org.id,
+        ).first()
+        if sub_org is None:
+            raise HTTPException(status_code=404, detail="Sub-organization not found")
+        if not is_parent_admin and bool((sub_org.settings or {}).get("private", False)):
+            is_sub_member = db.query(models.SubOrgMembership.id).filter(
+                models.SubOrgMembership.sub_org_id == sub_org.id,
+                models.SubOrgMembership.user_id == current_user.id,
+                models.SubOrgMembership.status == "active",
+            ).first()
+            if is_sub_member is None:
+                raise HTTPException(status_code=404, detail="Sub-organization not found")
+
+    from proposal_management import build_management_feed, management_visibility
+    return build_management_feed(
+        db,
+        visibility=management_visibility(
+            db, org, current_user, is_admin=is_parent_admin,
+        ),
+        status=status_filter,
+        sub_org_id=sub_org_id,
+        parent_only=parent_only,
+        title_query=q,
+        eligible_for=eligible_for,
+        cursor=cursor,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/{org_slug}/proposals",
+    response_model=list[schemas.ProposalOut],
+    deprecated=True,
+)
 def list_org_proposals(
     org_slug: str,
+    request: Request,
+    response: Response,
     status_filter: Optional[str] = Query(None, alias="status"),
     topic_id: Optional[str] = Query(None),
+    limit: int = Query(25, ge=1, le=50),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
     membership: models.OrgMembership = Depends(require_org_membership),
@@ -4839,63 +4919,23 @@ def list_org_proposals(
     org = db.query(models.Organization).filter(
         models.Organization.slug == org_slug
     ).first()
-    # Phase 34.1 E3 — when org_slug resolves to a sub-org, proposals are
-    # stored with org_id=parent + sub_org_id=this-sub. Filter accordingly
-    # so navigating to /api/orgs/<sub_slug>/proposals returns the sub-org's
-    # proposals (was empty list pre-fix).
-    if org.parent_org_id is not None:
-        q = db.query(models.Proposal).filter(
-            models.Proposal.org_id == org.parent_org_id,
-            models.Proposal.sub_org_id == org.id,
-        )
-    else:
-        q = db.query(models.Proposal).filter(models.Proposal.org_id == org.id)
+    from proposal_feed import member_visibility
+    is_parent_admin = membership_role_system_key(membership) in ("admin", "steward")
+    q = db.query(models.Proposal).filter(
+        member_visibility(db, org, current_user, is_admin=is_parent_admin)
+    )
     if status_filter:
         q = q.filter(models.Proposal.status == status_filter)
     if topic_id:
         q = q.join(models.ProposalTopic).filter(models.ProposalTopic.topic_id == topic_id)
-    # Phase 31 F1 — three-tier ordering: voting → deliberation → closed.
-    from routes.proposals import _proposal_list_ordering as _f1_ordering
-    proposals = q.order_by(*_f1_ordering()).all()
-
-    # Phase 12 — admin-tier visibility (parent-org admin/steward see all
-    # sub-org proposals regardless of membership).
-    is_parent_admin = membership_role_system_key(membership) in ("admin", "steward")
-    if not is_parent_admin:
-        # Resolve which (private) sub-orgs the viewer is a member of, so
-        # private-flag filtering is correct.
-        viewer_sub_org_ids = {row.sub_org_id for row in db.query(
-            models.SubOrgMembership.sub_org_id
-        ).filter(
-            models.SubOrgMembership.user_id == current_user.id,
-            models.SubOrgMembership.status == "active",
-        ).all()}
-
-        # Build a {sub_org_id -> private_bool} cache, only for sub-orgs that
-        # actually appear in the proposal list (typically just a few).
-        relevant_sub_org_ids = {p.sub_org_id for p in proposals if p.sub_org_id}
-        private_map: dict[str, bool] = {}
-        if relevant_sub_org_ids:
-            for sub in db.query(models.Organization).filter(
-                models.Organization.id.in_(relevant_sub_org_ids)
-            ).all():
-                private_map[sub.id] = bool((sub.settings or {}).get("private", False))
-
-        filtered = []
-        for p in proposals:
-            if p.sub_org_id is None:
-                filtered.append(p)
-                continue
-            if not private_map.get(p.sub_org_id, False):
-                filtered.append(p)
-                continue
-            # Private sub-org: only members can see.
-            if p.sub_org_id in viewer_sub_org_ids:
-                filtered.append(p)
-        proposals = filtered
-
+    from proposal_pagination import proposal_ordering, set_legacy_pagination_headers
+    rows = q.order_by(*proposal_ordering()).offset(offset).limit(limit + 1).all()
+    has_more = len(rows) > limit
+    set_legacy_pagination_headers(
+        response, request, limit=limit, offset=offset, has_more=has_more,
+    )
     from routes.proposals import _build_proposal_out
-    return [_build_proposal_out(p, db) for p in proposals]
+    return [_build_proposal_out(p, db) for p in rows[:limit]]
 
 
 @router.post("/{org_slug}/proposals", response_model=schemas.ProposalOut, status_code=201)
@@ -6140,6 +6180,7 @@ def bulk_advance_org_proposals_to_deliberation(
     # the Phase 102 lifecycle service but remains monkeypatchable by the
     # established per-item failure-containment tests.
     from routes.proposals import _transition_draft_to_deliberation
+    from proposal_management import is_structurally_eligible
 
     results: list[schemas.BulkAdvanceToDeliberationItem] = []
     ip_address = request.client.host if request.client else None
@@ -6162,7 +6203,7 @@ def bulk_advance_org_proposals_to_deliberation(
                 status="deliberation",
             ))
             continue
-        if proposal.status != "draft":
+        if not is_structurally_eligible(proposal, "draft_to_deliberation"):
             results.append(schemas.BulkAdvanceToDeliberationItem(
                 proposal_id=proposal_id,
                 result="ineligible_status",
@@ -6248,6 +6289,7 @@ def bulk_advance_org_proposals_to_voting(
     if not has_permission(db, current_user.id, org.id, "proposal.advance_phase"):
         raise HTTPException(status_code=403, detail="You do not have permission to advance proposal phases.")
 
+    from proposal_management import is_structurally_eligible
     unique_ids = _phase102_unique_ids(body.proposal_ids)
     results: list[schemas.BulkAdvanceToVotingItem] = []
     transitioned: list[tuple[models.Proposal, object]] = []
@@ -6267,16 +6309,16 @@ def bulk_advance_org_proposals_to_voting(
                 proposal_id=proposal_id, result="already_in_voting", status="voting",
             ))
             continue
-        if proposal.status != "deliberation":
+        if not is_structurally_eligible(proposal, "deliberation_to_voting"):
+            if proposal.status == "deliberation" and proposal.is_cosign_gated:
+                results.append(schemas.BulkAdvanceToVotingItem(
+                    proposal_id=proposal_id, result="cosign_gate_required",
+                    status=proposal.status,
+                    detail="This proposal advances only through its cosign window gate.",
+                ))
+                continue
             results.append(schemas.BulkAdvanceToVotingItem(
                 proposal_id=proposal_id, result="ineligible_status", status=proposal.status,
-            ))
-            continue
-        if proposal.is_cosign_gated:
-            results.append(schemas.BulkAdvanceToVotingItem(
-                proposal_id=proposal_id, result="cosign_gate_required",
-                status=proposal.status,
-                detail="This proposal advances only through its cosign window gate.",
             ))
             continue
         try:
@@ -6352,6 +6394,8 @@ def bulk_schedule_org_proposals(
     from proposal_lifecycle import strip_tz
     starts_at = strip_tz(body.voting_starts_at)
     ends_at = strip_tz(body.voting_ends_at)
+    from proposal_management import is_structurally_eligible
+    structural_operation = "schedule_start" if starts_at is not None else "set_end"
     now = _now()
     unique_ids = _phase102_unique_ids(body.proposal_ids)
     results: list[schemas.BulkScheduleItem] = []
@@ -6366,18 +6410,14 @@ def bulk_schedule_org_proposals(
                 proposal_id=proposal_id, result="not_found",
             ))
             continue
-        if proposal.status not in {"deliberation", "voting"}:
+        if not is_structurally_eligible(proposal, structural_operation):
             results.append(schemas.BulkScheduleItem(
                 proposal_id=proposal_id, result="ineligible", status=proposal.status,
-                detail="Only deliberating or voting proposals can be scheduled.",
-            ))
-            continue
-        if starts_at is not None and (
-            proposal.status != "deliberation" or proposal.is_cosign_gated
-        ):
-            results.append(schemas.BulkScheduleItem(
-                proposal_id=proposal_id, result="ineligible", status=proposal.status,
-                detail="A voting start can be set only for ordinary deliberating proposals.",
+                detail=(
+                    "A voting start can be set only for ordinary deliberating proposals."
+                    if structural_operation == "schedule_start"
+                    else "Only deliberating or voting proposals can receive a voting end."
+                ),
             ))
             continue
 

@@ -19,7 +19,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlalchemy.orm import Session, aliased, joinedload
 
 import auth as auth_utils
 import models
@@ -34,9 +35,11 @@ from permission_registry import PERMISSION_REGISTRY
 from permissions import is_sub_org_admin
 from reserved_slugs import RESERVED_SLUGS
 from role_permissions import (
+    ROLE_TIER,
     effective_role_on_sub_org,
     has_permission,
     has_permission_on_sub_org,
+    role_transfers_to_sub_orgs,
 )
 
 
@@ -139,6 +142,24 @@ def _sub_org_or_404(
     if not sub_org:
         raise HTTPException(status_code=404, detail="Sub-organization not found")
     return sub_org
+
+
+def _parent_sub_or_404(
+    db: Session, org_slug: str, sub_slug: str,
+) -> tuple[models.Organization, models.Organization]:
+    """Resolve a parent and its child in one visibility-preserving query."""
+    parent_alias = aliased(models.Organization)
+    row = db.query(parent_alias, models.Organization).join(
+        models.Organization,
+        models.Organization.parent_org_id == parent_alias.id,
+    ).filter(
+        parent_alias.slug == org_slug,
+        parent_alias.parent_org_id.is_(None),
+        models.Organization.slug == sub_slug,
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Sub-organization not found")
+    return row[0], row[1]
 
 
 def _require_parent_org_member(
@@ -584,6 +605,106 @@ def update_sub_org(
     return _sub_org_to_out(sub_org, db, current_user.id)
 
 
+def _require_sub_org_delete_permission(
+    db: Session,
+    current_user: models.User,
+    parent: models.Organization,
+    sub_org: models.Organization,
+) -> None:
+    """Apply the exact effective permission boundary shared by impact/DELETE."""
+    parent_membership = db.query(models.OrgMembership).options(
+        joinedload(models.OrgMembership.role),
+    ).filter(
+        models.OrgMembership.user_id == current_user.id,
+        models.OrgMembership.org_id == parent.id,
+        models.OrgMembership.status == "active",
+    ).first()
+    sub_membership = db.query(models.SubOrgMembership).options(
+        joinedload(models.SubOrgMembership.role),
+    ).filter(
+        models.SubOrgMembership.user_id == current_user.id,
+        models.SubOrgMembership.sub_org_id == sub_org.id,
+        models.SubOrgMembership.status == "active",
+    ).first()
+    parent_role = parent_membership.role if parent_membership is not None else None
+    sub_role = sub_membership.role if sub_membership is not None else None
+    is_parent_admin = bool(
+        parent_role and parent_role.system_key in ("admin", "steward")
+    )
+    is_sub_steward = bool(sub_role and sub_role.system_key == "steward")
+    if not (is_parent_admin or is_sub_steward):
+        raise HTTPException(
+            status_code=403,
+            detail="Parent-org admin or sub-org Steward access required",
+        )
+    candidates = []
+    if sub_role is not None:
+        candidates.append(sub_role)
+    if parent_role is not None and role_transfers_to_sub_orgs(
+        parent, parent_role.system_key,
+    ):
+        candidates.append(parent_role)
+    if current_user.is_admin:
+        platform_role = db.query(models.Role).filter(
+            models.Role.org_id == parent.id,
+            models.Role.system_key == "admin",
+        ).first()
+        if platform_role is not None:
+            candidates.append(platform_role)
+    effective_role = max(
+        candidates,
+        key=lambda role: ROLE_TIER.get(role.system_key, -1),
+        default=None,
+    )
+    allowed = False
+    if effective_role is not None:
+        allowed = bool(db.query(models.RolePermission.enabled).filter(
+            models.RolePermission.role_id == effective_role.id,
+            models.RolePermission.permission_key == "sub_org.delete",
+        ).scalar())
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to delete this sub-organization.",
+        )
+
+
+def sub_org_deletion_impact(
+    db: Session, sub_org_id: str,
+) -> schemas.SubOrgDeletionImpactOut:
+    """Count every scoped topic/proposal; archived rows intentionally block."""
+    topic_count = db.query(func.count(models.Topic.id)).filter(
+        models.Topic.sub_org_id == sub_org_id,
+    ).scalar_subquery()
+    proposal_count = db.query(func.count(models.Proposal.id)).filter(
+        models.Proposal.sub_org_id == sub_org_id,
+    ).scalar_subquery()
+    row = db.query(
+        topic_count.label("topic_count"),
+        proposal_count.label("proposal_count"),
+    ).one()
+    return schemas.SubOrgDeletionImpactOut(
+        topic_count=int(row.topic_count),
+        proposal_count=int(row.proposal_count),
+        can_delete=not (row.topic_count or row.proposal_count),
+    )
+
+
+@router.get(
+    "/{org_slug}/sub-orgs/{sub_slug}/deletion-impact",
+    response_model=schemas.SubOrgDeletionImpactOut,
+)
+def get_sub_org_deletion_impact(
+    org_slug: str,
+    sub_slug: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    parent, sub_org = _parent_sub_or_404(db, org_slug, sub_slug)
+    _require_sub_org_delete_permission(db, current_user, parent, sub_org)
+    return sub_org_deletion_impact(db, sub_org.id)
+
+
 @router.delete(
     "/{org_slug}/sub-orgs/{sub_slug}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -595,57 +716,26 @@ def delete_sub_org(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
-    """Delete a sub-org (parent-org admin or sub-org owner).
+    """Delete a sub-org (parent-org admin or sub-org Steward).
 
-    Behavior choice: 409 Conflict if the sub-org has any non-archived
-    proposals or topics scoped to it. Cascading would orphan votes and
+    Returns 409 if the sub-org has any proposal (including archived rows) or
+    topic scoped to it. Cascading would orphan votes and
     delegations on those proposals/topics in confusing ways; requiring the
     admin to explicitly clean up first matches the existing parent-org
     delete-protection norms.
     """
-    parent = _parent_or_404(db, org_slug)
-    sub_org = _sub_org_or_404(db, parent, sub_slug)
+    parent, sub_org = _parent_sub_or_404(db, org_slug, sub_slug)
 
-    is_parent_admin = _is_parent_org_admin(db, current_user.id, parent)
-    # Phase 15 Cluster S: "owner" → "steward" rename applies here too.
-    is_sub_steward = False
-    sm = db.query(models.SubOrgMembership).filter(
-        models.SubOrgMembership.user_id == current_user.id,
-        models.SubOrgMembership.sub_org_id == sub_org.id,
-        models.SubOrgMembership.status == "active",
-    ).first()
-    if _sub_membership_role_system_key(sm) == "steward":
-        is_sub_steward = True
-
-    if not (is_parent_admin or is_sub_steward):
-        raise HTTPException(
-            status_code=403,
-            detail="Parent-org admin or sub-org Steward access required",
-        )
-    # Phase 71b — config-authoritative. The (parent-admin OR sub-steward) tier
-    # is the floor; has_permission on the SUB-ORG id resolves the effective
-    # role and checks the parent matrix's sub_org.delete cell at that role
-    # (covers both the parent-admin and sub-steward paths).
-    if not has_permission(db, current_user.id, sub_org.id, "sub_org.delete"):
-        raise HTTPException(
-            status_code=403,
-            detail="You do not have permission to delete this sub-organization.",
-        )
-
-    # Block delete if the sub-org has any active topics or proposals.
-    topic_count = db.query(models.Topic).filter(
-        models.Topic.sub_org_id == sub_org.id,
-    ).count()
-    proposal_count = db.query(models.Proposal).filter(
-        models.Proposal.sub_org_id == sub_org.id,
-    ).count()
-    if topic_count or proposal_count:
+    _require_sub_org_delete_permission(db, current_user, parent, sub_org)
+    impact = sub_org_deletion_impact(db, sub_org.id)
+    if not impact.can_delete:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Sub-org has {topic_count} topic(s) and {proposal_count} "
-                "proposal(s) scoped to it. Promote, archive, or delete those "
-                "first before deleting the sub-org."
+                f"Sub-org has {impact.topic_count} topic(s) and "
+                f"{impact.proposal_count} proposal(s) scoped to it. "
+                "Scoped topics or proposals must be removed before deleting "
+                "the sub-organization."
             ),
         )
 

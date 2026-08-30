@@ -18,7 +18,9 @@ from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
-from sqlalchemy.orm import Session
+from sqlalchemy import cast, exists, func, select
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Session, load_only
 
 import auth as auth_utils
 import models
@@ -157,6 +159,17 @@ def _resolve_sub_org(
             detail="sub_org_id is not a sub-org of this parent",
         )
     return sub
+
+
+def _exact_polis_link_predicate(db: Session, polis_id: str):
+    """Exact JSON-array membership for PostgreSQL JSON and SQLite JSON1."""
+    column = models.Proposal.linked_polis_ids
+    if db.get_bind().dialect.name == "postgresql":
+        return cast(column, JSONB).contains([polis_id])
+    values = func.json_each(column).table_valued("value").alias("polis_link")
+    return exists(
+        select(1).select_from(values).where(values.c.value == polis_id)
+    )
 
 
 # ============================================================================
@@ -577,6 +590,76 @@ def get_polis(
 
     out = _polis_to_out(polis)
     return {**out.model_dump(), "participation_stats": stats}
+
+
+@router.get(
+    "/{org_slug}/polises/{polis_id}/proposal-links",
+    response_model=schemas.PolisProposalLinksOut,
+)
+def get_polis_proposal_links(
+    org_slug: str,
+    polis_id: str,
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Return an exact, visibility-filtered reverse proposal-link page."""
+    parent = _parent_or_404(db, org_slug)
+    polis = _polis_or_404(db, parent, polis_id)
+    # The membership dependency is the canonical complete access proof for an
+    # org-wide Polis. Sub-org Polises retain their narrower scope resolver.
+    if (
+        polis.sub_org_id is not None
+        and current_user.id not in eligible_viewers_for_polis(db, polis)
+    ):
+        raise HTTPException(status_code=404, detail="Polis not found")
+
+    from org_middleware import membership_role_system_key
+    from proposal_feed import member_visibility
+    from proposal_pagination import (
+        created_after_cursor,
+        decode_created_cursor,
+        encode_created_cursor,
+    )
+    is_parent_admin = membership_role_system_key(membership) in ("admin", "steward")
+    query = db.query(models.Proposal).options(load_only(
+        models.Proposal.id,
+        models.Proposal.title,
+        models.Proposal.status,
+        models.Proposal.created_at,
+    )).filter(
+        member_visibility(
+            db, parent, current_user, is_admin=is_parent_admin,
+        ),
+        _exact_polis_link_predicate(db, polis.id),
+    )
+    if cursor:
+        decoded = decode_created_cursor(
+            cursor,
+            error_code="invalid_polis_proposal_cursor",
+            error_message="Malformed Polis proposal-link cursor",
+        )
+        query = query.filter(created_after_cursor(decoded))
+    rows = query.order_by(
+        models.Proposal.created_at.desc(), models.Proposal.id.asc(),
+    ).limit(limit + 1).all()
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    return schemas.PolisProposalLinksOut(
+        items=[
+            schemas.PolisProposalLinkItemOut(
+                id=proposal.id,
+                title=proposal.title,
+                status=proposal.status,
+                created_at=proposal.created_at,
+            )
+            for proposal in page
+        ],
+        next_cursor=(encode_created_cursor(page[-1]) if has_more and page else None),
+        has_more=has_more,
+    )
 
 
 # ============================================================================

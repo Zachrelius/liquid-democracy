@@ -6,15 +6,11 @@ tallies are not computed here.
 """
 from __future__ import annotations
 
-import base64
-import binascii
-import json
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Iterable, Optional
 
 from fastapi import HTTPException
-from sqlalchemy import and_, case, false, func, or_, true
+from sqlalchemy import and_, false, func, or_, true
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 import models
@@ -26,16 +22,17 @@ from delegation_engine import (
     resolve_vote_pure,
 )
 from org_config import proposal_is_delegation_gated
+from proposal_pagination import (
+    decode_proposal_cursor,
+    encode_proposal_cursor,
+    proposal_after_cursor,
+    proposal_ordering,
+)
 
 
 VALID_STATUSES = frozenset({
     "all", "deliberation", "voting", "unvoted", "passed", "failed", "archived",
 })
-CURSOR_VERSION = 1
-_FUTURE = datetime(9999, 12, 31, 23, 59, 59)
-_EPOCH = datetime(1970, 1, 1)
-
-
 def validate_status(value: str) -> str:
     if value not in VALID_STATUSES:
         raise HTTPException(
@@ -45,81 +42,11 @@ def validate_status(value: str) -> str:
     return value
 
 
-def _expressions():
-    p = models.Proposal
-    group = case(
-        (p.status == "voting", 0),
-        (p.status == "deliberation", 1),
-        (p.status.in_(("passed", "failed", "withdrawn", "unresolved", "expired_unsigned")), 2),
-        else_=3,
-    )
-    asc_key = case(
-        (p.status == "voting", func.coalesce(p.voting_end, _FUTURE)),
-        else_=_FUTURE,
-    )
-    desc_key = case(
-        (p.status == "deliberation", p.created_at),
-        (p.status.in_(("passed", "failed", "withdrawn", "unresolved", "expired_unsigned")),
-         func.coalesce(p.updated_at, p.created_at)),
-        else_=p.created_at,
-    )
-    return group, asc_key, desc_key
-
-
-def _row_key(proposal: models.Proposal) -> tuple[int, datetime, datetime, datetime, str]:
-    status = proposal.status
-    group = 0 if status == "voting" else 1 if status == "deliberation" else (
-        2 if status in {"passed", "failed", "withdrawn", "unresolved", "expired_unsigned"} else 3
-    )
-    asc_key = (proposal.voting_end or _FUTURE) if group == 0 else _FUTURE
-    desc_key = (
-        proposal.created_at if group in {1, 3}
-        else (proposal.updated_at or proposal.created_at) if group == 2
-        else proposal.created_at
-    )
-    return group, asc_key, desc_key, proposal.created_at, proposal.id
-
-
-def encode_cursor(proposal: models.Proposal) -> str:
-    group, asc_key, desc_key, created_at, proposal_id = _row_key(proposal)
-    raw = json.dumps({
-        "v": CURSOR_VERSION, "g": group, "a": asc_key.isoformat(),
-        "d": desc_key.isoformat(), "c": created_at.isoformat(), "i": proposal_id,
-    }, separators=(",", ":")).encode()
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-def decode_cursor(value: str) -> tuple[int, datetime, datetime, datetime, str]:
-    try:
-        raw = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
-        data = json.loads(raw)
-        if data.get("v") != CURSOR_VERSION or not isinstance(data.get("i"), str):
-            raise ValueError
-        group = int(data["g"])
-        if group not in range(4):
-            raise ValueError
-        return (
-            group, datetime.fromisoformat(data["a"]), datetime.fromisoformat(data["d"]),
-            datetime.fromisoformat(data["c"]), data["i"],
-        )
-    except (ValueError, TypeError, KeyError, json.JSONDecodeError, binascii.Error, UnicodeDecodeError):
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "invalid_feed_cursor", "message": "Malformed proposal feed cursor"},
-        ) from None
-
-
-def _after_cursor(cursor: tuple[int, datetime, datetime, datetime, str]):
-    group, asc_key, desc_key, created_at, proposal_id = cursor
-    g, a, d = _expressions()
-    return or_(
-        g > group,
-        and_(g == group, a > asc_key),
-        and_(g == group, a == asc_key, d < desc_key),
-        and_(g == group, a == asc_key, d == desc_key, models.Proposal.created_at < created_at),
-        and_(g == group, a == asc_key, d == desc_key,
-             models.Proposal.created_at == created_at, models.Proposal.id > proposal_id),
-    )
+# Back-compatible aliases retained for Phase 103 tests and operational tooling.
+encode_cursor = encode_proposal_cursor
+decode_cursor = decode_proposal_cursor
+_after_cursor = proposal_after_cursor
+_ordering = proposal_ordering
 
 
 def member_visibility(db: Session, org: models.Organization, viewer: models.User, *, is_admin: bool):
@@ -163,6 +90,13 @@ def global_visibility(db: Session, viewer: models.User):
         models.SubOrgMembership.user_id == viewer.id,
         models.SubOrgMembership.status == "active",
     )
+    parent_admin_orgs = db.query(models.OrgMembership.org_id).join(
+        models.Role, models.OrgMembership.role_id == models.Role.id,
+    ).filter(
+        models.OrgMembership.user_id == viewer.id,
+        models.OrgMembership.status == "active",
+        models.Role.system_key.in_(("admin", "steward")),
+    )
     # Public/non-private sub-org proposals are viewable by every active parent
     # member. Private sub-org proposals additionally require sub membership.
     non_private_sub_orgs = db.query(models.Organization.id).filter(
@@ -172,6 +106,7 @@ def global_visibility(db: Session, viewer: models.User):
     return or_(
         p.org_id.is_(None),
         and_(p.org_id.in_(parent_orgs), p.sub_org_id.is_(None)),
+        and_(p.org_id.in_(parent_admin_orgs), p.sub_org_id.is_not(None)),
         p.sub_org_id.in_(sub_orgs),
         p.sub_org_id.in_(non_private_sub_orgs),
     )
@@ -370,7 +305,7 @@ def build_feed(
     # context builder is called; the batch resolver issues fixed-set queries.
     precomputed = None
     if status == "unvoted":
-        candidates = query.order_by(*_ordering()).all()
+        candidates = query.order_by(*proposal_ordering()).all()
         precomputed = BatchViewerResolver(db, candidates, viewer).resolve()
         unvoted_ids = [p.id for p in candidates if precomputed.get(p.id) is None]
         if not unvoted_ids:
@@ -380,8 +315,8 @@ def build_feed(
         )
 
     if cursor:
-        query = query.filter(_after_cursor(decode_cursor(cursor)))
-    rows = query.order_by(*_ordering()).limit(limit + 1).all()
+        query = query.filter(proposal_after_cursor(decode_proposal_cursor(cursor)))
+    rows = query.order_by(*proposal_ordering()).limit(limit + 1).all()
     has_more = len(rows) > limit
     page = rows[:limit]
     if viewer is not None:
@@ -396,14 +331,6 @@ def build_feed(
     } if user_ids else {}
     return schemas.ProposalFeedOut(
         items=[_serialize(p, page_results.get(p.id), users, public=public) for p in page],
-        next_cursor=encode_cursor(page[-1]) if has_more and page else None,
+        next_cursor=encode_proposal_cursor(page[-1]) if has_more and page else None,
         has_more=has_more,
-    )
-
-
-def _ordering():
-    group, asc_key, desc_key = _expressions()
-    return (
-        group.asc(), asc_key.asc(), desc_key.desc(),
-        models.Proposal.created_at.desc(), models.Proposal.id.asc(),
     )
