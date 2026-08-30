@@ -32,6 +32,18 @@ def _passed_decision(*, region=None, country=None):
     }
 
 
+def _passed_payload(*, region=None, country=None):
+    return {
+        "status": "Approved",
+        "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
+        "decision": {
+            **_passed_decision(region=region, country=country),
+            "liveness_checks": [{"status": "Approved"}],
+            "face_matches": [{"status": "Approved"}],
+        },
+    }
+
+
 def test_extract_country_from_parsed_address():
     assert vp._extract_country(_passed_decision(country="US")) == "US"
     assert vp._extract_country(_passed_decision(country="ca")) == "CA"  # upcased
@@ -54,7 +66,7 @@ def test_extract_country_legacy_paths():
 
 def test_mapper_includes_country_with_us_jurisdiction():
     mapped = vp.map_decision_to_state(
-        _passed_decision(region="Massachusetts", country="US")
+        _passed_payload(region="Massachusetts", country="US")
     )
     assert mapped["verification_state"] == verification.ADDRESS_ON_ID
     assert mapped["verification_jurisdiction"] == "MA"
@@ -66,7 +78,7 @@ def test_mapper_country_without_us_region_stays_identity():
     state stays IDENTITY (the US-centric ladder doesn't escalate) but the
     country is still captured for country-scope gates."""
     mapped = vp.map_decision_to_state(
-        _passed_decision(region="Ontario", country="CA")
+        _passed_payload(region="Ontario", country="CA")
     )
     assert mapped["verification_state"] == verification.IDENTITY
     assert mapped["verification_jurisdiction"] is None

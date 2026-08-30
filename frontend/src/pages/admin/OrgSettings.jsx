@@ -17,6 +17,10 @@ import { getDerivedAccent } from '../../utils/color_derive';
 import renderMarkdown from '../../utils/renderMarkdown';
 // Phase 76c — country picker for residency-scope entries.
 import { COUNTRIES, countryName } from '../../utils/countries';
+import {
+  proposalPolicyErrorsFromApi,
+  validateProposalVerificationPolicy,
+} from '../../utils/proposalVerificationPolicy';
 
 // Phase 14 F3 — public landing page intro text length cap. Matches the
 // backend B4 cap (5000 chars; a longer payload returns 400). Enforcing it
@@ -227,6 +231,9 @@ export default function OrgSettings() {
   const [settings, setSettings] = useState({});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const [proposalPolicyErrors, setProposalPolicyErrors] = useState({});
+  const proposalFloorRef = useRef(null);
+  const proposalJurisdictionRef = useRef(null);
   // Phase 77 — member DM policy save-in-flight flag.
   const [savingDmPolicy, setSavingDmPolicy] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
@@ -473,8 +480,18 @@ export default function OrgSettings() {
   if (!currentOrg) return <div className="text-center py-16 text-gray-400">No organization selected</div>;
 
   async function handleSave() {
+    const policyErrors = validateProposalVerificationPolicy(settings);
+    if (Object.keys(policyErrors).length > 0) {
+      setProposalPolicyErrors(policyErrors);
+      setMsg('Fix the proposal verification policy before saving.');
+      const firstInvalid = policyErrors.verification_proposal_floor
+        ? proposalFloorRef : proposalJurisdictionRef;
+      firstInvalid.current?.focus();
+      return;
+    }
     setSaving(true);
     setMsg('');
+    setProposalPolicyErrors({});
     try {
       // Phase 57 — persist all three access axes alongside the rest of
       // the settings. Backend normalizes hidden+public → hidden+
@@ -492,7 +509,16 @@ export default function OrgSettings() {
       setMsg('Settings saved');
       setTimeout(() => setMsg(''), 3000);
     } catch (e) {
-      setMsg(e.message || 'Failed to save');
+      const backendPolicyErrors = proposalPolicyErrorsFromApi(e);
+      if (Object.keys(backendPolicyErrors).length > 0) {
+        setProposalPolicyErrors(backendPolicyErrors);
+        setMsg('Fix the proposal verification policy before saving.');
+        const firstInvalid = backendPolicyErrors.verification_proposal_floor
+          ? proposalFloorRef : proposalJurisdictionRef;
+        firstInvalid.current?.focus();
+      } else {
+        setMsg(e.message || 'Failed to save');
+      }
     } finally {
       setSaving(false);
     }
@@ -3216,7 +3242,10 @@ export default function OrgSettings() {
               <select
                 id="org-settings-proposal-verification-policy"
                 value={settings.verification_proposal_policy || 'author'}
-                onChange={e => updateSetting('verification_proposal_policy', e.target.value)}
+                onChange={e => {
+                  updateSetting('verification_proposal_policy', e.target.value);
+                  setProposalPolicyErrors({});
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
               >
                 <option value="author">Proposal author chooses</option>
@@ -3231,26 +3260,63 @@ export default function OrgSettings() {
             {settings.verification_proposal_policy === 'always' && (
               <div className="pt-2 space-y-1">
                 <label htmlFor="org-settings-proposal-verification-floor" className="block text-xs font-medium text-gray-700">
-                  Required floor for every proposal
+                  Required floor for every proposal <span aria-hidden="true" className="text-red-600">*</span>
                 </label>
                 <select
+                  ref={proposalFloorRef}
                   id="org-settings-proposal-verification-floor"
                   value={settings.verification_proposal_floor || ''}
-                  onChange={e => updateSetting('verification_proposal_floor', e.target.value || null)}
+                  onChange={e => {
+                    updateSetting('verification_proposal_floor', e.target.value || null);
+                    setProposalPolicyErrors(prev => ({
+                      ...prev,
+                      verification_proposal_floor: undefined,
+                    }));
+                  }}
+                  required
+                  aria-invalid={!!proposalPolicyErrors.verification_proposal_floor}
+                  aria-describedby={proposalPolicyErrors.verification_proposal_floor ? 'proposal-floor-error' : undefined}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
                 >
-                  <option value="">No verification required</option>
+                  <option value="">Select a required floor</option>
                   <option value="identity">Identity verified</option>
                   <option value="address_on_id">Verified resident</option>
+                  <option value="residency_verified">Residency proof verified</option>
                 </select>
-                {(settings.verification_proposal_floor === 'address_on_id') && (
-                  <input
-                    type="text"
-                    value={settings.verification_proposal_jurisdiction || ''}
-                    onChange={e => updateSetting('verification_proposal_jurisdiction', e.target.value || null)}
-                    placeholder="Jurisdiction (e.g. US state code)"
-                    className="mt-2 w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
-                  />
+                {proposalPolicyErrors.verification_proposal_floor && (
+                  <p id="proposal-floor-error" role="alert" className="text-xs text-red-600">
+                    {proposalPolicyErrors.verification_proposal_floor}
+                  </p>
+                )}
+                {(['address_on_id', 'residency_verified'].includes(settings.verification_proposal_floor)) && (
+                  <div className="mt-2 space-y-1">
+                    <label htmlFor="org-settings-proposal-verification-jurisdiction" className="block text-xs font-medium text-gray-700">
+                      Required jurisdiction <span aria-hidden="true" className="text-red-600">*</span>
+                    </label>
+                    <input
+                      ref={proposalJurisdictionRef}
+                      id="org-settings-proposal-verification-jurisdiction"
+                      type="text"
+                      value={settings.verification_proposal_jurisdiction || ''}
+                      onChange={e => {
+                        updateSetting('verification_proposal_jurisdiction', e.target.value || null);
+                        setProposalPolicyErrors(prev => ({
+                          ...prev,
+                          verification_proposal_jurisdiction: undefined,
+                        }));
+                      }}
+                      required
+                      aria-invalid={!!proposalPolicyErrors.verification_proposal_jurisdiction}
+                      aria-describedby={proposalPolicyErrors.verification_proposal_jurisdiction ? 'proposal-jurisdiction-error' : undefined}
+                      placeholder="U.S. state code (for example, MA)"
+                      className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                    />
+                    {proposalPolicyErrors.verification_proposal_jurisdiction && (
+                      <p id="proposal-jurisdiction-error" role="alert" className="text-xs text-red-600">
+                        {proposalPolicyErrors.verification_proposal_jurisdiction}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             )}

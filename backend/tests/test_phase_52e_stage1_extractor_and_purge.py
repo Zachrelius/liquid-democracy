@@ -156,6 +156,7 @@ def _captured_shape_payload(
         },
         "environment": "live",
         "event_id": "evt-uuid",
+        "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH", "IP_ANALYSIS"],
         "session_id": session_id,
         "status": "Approved",
         "vendor_data": "user-uuid",
@@ -317,13 +318,13 @@ class TestMapperOnRealShape:
 
     def test_real_shape_payload_with_region_escalates_to_address_on_id(self):
         payload = _captured_shape_payload(region="Massachusetts")
-        mapped = verification_provider.map_decision_to_state(payload["decision"])
+        mapped = verification_provider.map_decision_to_state(payload)
         assert mapped["verification_state"] == verification.ADDRESS_ON_ID
         assert mapped["verification_jurisdiction"] == "MA"
 
     def test_real_shape_payload_unrecognized_region_stays_at_identity(self):
         payload = _captured_shape_payload(region="Ontario")
-        mapped = verification_provider.map_decision_to_state(payload["decision"])
+        mapped = verification_provider.map_decision_to_state(payload)
         # Region didn't normalize → no jurisdiction; with no
         # IDENTITY_UNIQUE rung, the mapper falls back to IDENTITY.
         assert mapped["verification_state"] == verification.IDENTITY

@@ -431,6 +431,8 @@ def _real_payload(
     return {
         "session_id": session_id,
         "webhook_type": "session.completed",
+        "status": "Approved",
+        "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
         "decision": {
             "session_id": session_id,
             "status": "Approved",
@@ -448,6 +450,8 @@ def _real_payload(
                     "country": "US",
                 },
             }],
+            "liveness_checks": [{"status": "Approved"}],
+            "face_matches": [{"status": "Approved"}],
         },
     }
 

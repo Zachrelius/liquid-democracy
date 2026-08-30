@@ -535,6 +535,66 @@ PROPOSAL_POLICY_NEVER = "never"
 _VALID_PROPOSAL_POLICIES: frozenset[str] = frozenset({
     PROPOSAL_POLICY_AUTHOR, PROPOSAL_POLICY_ALWAYS, PROPOSAL_POLICY_NEVER,
 })
+_VALID_PROPOSAL_JURISDICTIONS = frozenset({
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    "DC",
+})
+
+
+def validate_org_proposal_settings(
+    current_settings: object,
+    patch_settings: object,
+) -> tuple[dict, dict[str, str]]:
+    """Validate the merged org-wide proposal verification policy.
+
+    Phase 102b makes this a write-time invariant. The helper is pure so the
+    canonical PATCH route can reject the whole request before persistence and
+    tests can exercise partial patches against legacy-invalid rows.
+    """
+    current = dict(current_settings) if isinstance(current_settings, dict) else {}
+    patch = dict(patch_settings) if isinstance(patch_settings, dict) else {}
+    merged = {**current, **patch}
+    errors: dict[str, str] = {}
+
+    policy = merged.get(SETTING_PROPOSAL_POLICY, PROPOSAL_POLICY_AUTHOR)
+    if policy not in _VALID_PROPOSAL_POLICIES:
+        errors[SETTING_PROPOSAL_POLICY] = (
+            "Choose author, always, or never."
+        )
+        return merged, errors
+
+    if policy != PROPOSAL_POLICY_ALWAYS:
+        return merged, errors
+
+    floor = merged.get(SETTING_PROPOSAL_FLOOR)
+    if floor not in VALID_STATES or floor == EMAIL_ONLY:
+        errors[SETTING_PROPOSAL_FLOOR] = (
+            "Always-require policy needs a verification floor above email-only."
+        )
+        return merged, errors
+
+    if floor in {ADDRESS_ON_ID, RESIDENCY_VERIFIED}:
+        raw_jurisdiction = merged.get(SETTING_PROPOSAL_JURISDICTION)
+        jurisdiction = (
+            raw_jurisdiction.strip().upper()
+            if isinstance(raw_jurisdiction, str) else ""
+        )
+        if jurisdiction not in _VALID_PROPOSAL_JURISDICTIONS:
+            errors[SETTING_PROPOSAL_JURISDICTION] = (
+                "Choose a valid U.S. state or District of Columbia code."
+            )
+        else:
+            merged[SETTING_PROPOSAL_JURISDICTION] = jurisdiction
+    elif floor == IDENTITY:
+        # Jurisdiction is not meaningful for an identity-only gate. Removing a
+        # stale value prevents a later reader from over-interpreting it.
+        merged[SETTING_PROPOSAL_JURISDICTION] = None
+
+    return merged, errors
 
 
 def get_org_proposal_policy(org) -> str:

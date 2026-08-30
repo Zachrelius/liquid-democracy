@@ -157,7 +157,7 @@ class TestMapDecisionToState:
         })
         assert result["verification_state"] == verification.EMAIL_ONLY
 
-    def test_id_approved_with_address_returns_address_on_id(self):
+    def test_singular_v2_approved_with_address_fails_closed(self):
         result = verification_provider.map_decision_to_state({
             "session_id": "sess_addr",
             "id_verification": {
@@ -165,18 +165,18 @@ class TestMapDecisionToState:
                 "address_state": "CA",
             },
         })
-        assert result["verification_state"] == verification.ADDRESS_ON_ID
-        assert result["verification_jurisdiction"] == "CA"
+        assert result["verification_state"] == verification.EMAIL_ONLY
+        assert result["verification_jurisdiction"] is None
 
-    def test_address_from_nested_address_block(self):
+    def test_singular_v2_nested_address_fails_closed(self):
         result = verification_provider.map_decision_to_state({
             "id_verification": {
                 "status": "Approved",
                 "address": {"state": "ny", "country": "US"},
             },
         })
-        assert result["verification_state"] == verification.ADDRESS_ON_ID
-        assert result["verification_jurisdiction"] == "NY"
+        assert result["verification_state"] == verification.EMAIL_ONLY
+        assert result["verification_jurisdiction"] is None
 
     def test_unrecognized_jurisdiction_does_not_escalate(self):
         # Non-US-state addresses come back as None jurisdiction; the
@@ -184,22 +184,27 @@ class TestMapDecisionToState:
         # less address_on_id record could never satisfy a gate). Without
         # doc_number_unique=True, state stays at IDENTITY.
         result = verification_provider.map_decision_to_state({
-            "id_verification": {
+            "status": "Approved",
+            "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
+            "decision": {
                 "status": "Approved",
-                "address_state": "ontario",
+                "id_verifications": [{
+                    "status": "Approved",
+                    "parsed_address": {"region": "Ontario"},
+                }],
+                "liveness_checks": [{"status": "Approved"}],
+                "face_matches": [{"status": "Approved"}],
             },
         })
         assert result["verification_state"] == verification.IDENTITY
         assert result["verification_jurisdiction"] is None
 
-    def test_overall_approved_back_compat(self):
-        # Workflows lacking the dedicated id_verification block fall
-        # back to the overall status.
+    def test_overall_approved_alone_fails_closed(self):
         result = verification_provider.map_decision_to_state({
             "session_id": "sess_overall",
             "status": "Approved",
         })
-        assert result["verification_state"] == verification.IDENTITY
+        assert result["verification_state"] == verification.EMAIL_ONLY
 
 
 # ===========================================================================
@@ -313,12 +318,17 @@ class TestWebhookReceiver:
         payload = {
             "session_id": "sess_approve",
             "webhook_type": "session.completed",
+            "status": "Approved",
+            "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
             "decision": {
                 "session_id": "sess_approve",
-                "id_verification": {
+                "status": "Approved",
+                "id_verifications": [{
                     "status": "Approved",
-                    "address_state": "CA",
-                },
+                    "parsed_address": {"region": "CA", "country": "US"},
+                }],
+                "liveness_checks": [{"status": "Approved"}],
+                "face_matches": [{"status": "Approved"}],
             },
         }
         body = json.dumps(payload).encode("utf-8")
@@ -360,8 +370,13 @@ class TestWebhookReceiver:
         payload = {
             "session_id": "sess_replay",
             "webhook_type": "session.completed",
+            "status": "Approved",
+            "features": ["ID_VERIFICATION", "LIVENESS", "FACE_MATCH"],
             "decision": {
-                "id_verification": {"status": "Approved"},
+                "status": "Approved",
+                "id_verifications": [{"status": "Approved"}],
+                "liveness_checks": [{"status": "Approved"}],
+                "face_matches": [{"status": "Approved"}],
             },
         }
         body = json.dumps(payload).encode("utf-8")
@@ -369,8 +384,8 @@ class TestWebhookReceiver:
         r1 = client.post("/api/webhooks/didit", content=body, headers=headers)
         assert r1.status_code == 200
         # Re-sign the SAME body fresh so timestamp is current; the
-        # idempotency key is (session_id, webhook_type), not the
-        # signature.
+        # idempotency key is the normalized provider outcome, not the
+        # signature or webhook type.
         headers2 = {**_sign(body), "Content-Type": "application/json"}
         r2 = client.post("/api/webhooks/didit", content=body, headers=headers2)
         assert r2.status_code == 200

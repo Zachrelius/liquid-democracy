@@ -625,6 +625,29 @@ def update_organization(
     # removed; the new control is `settings.allow_cosign_petition`,
     # handled by the generic settings-merge below.
     if body.settings is not None:
+        # Phase 102b — validate the MERGED final proposal-policy settings, not
+        # only keys present in this patch. This prevents a partial settings
+        # update from preserving/bypassing an already-invalid `always` row.
+        from verification import validate_org_proposal_settings
+        _proposal_merged, _proposal_errors = validate_org_proposal_settings(
+            org.settings, body.settings,
+        )
+        if _proposal_errors:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "invalid_proposal_verification_policy",
+                    "fields": _proposal_errors,
+                },
+            )
+        for _proposal_key in (
+            "verification_proposal_policy",
+            "verification_proposal_floor",
+            "verification_proposal_jurisdiction",
+        ):
+            if _proposal_key in _proposal_merged:
+                body.settings[_proposal_key] = _proposal_merged[_proposal_key]
+
         # Phase 46 — validate cosign config shape before merge so a bad
         # value fails the whole PATCH cleanly (matches the existing
         # default-threshold / tie_resolution validators below).
