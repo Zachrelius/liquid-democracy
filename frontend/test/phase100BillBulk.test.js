@@ -181,8 +181,8 @@ test('proposal detail and management source preserve disclosure and bulk UX cont
 
   assert.match(management, /p\.status === 'draft'/);
   assert.match(management, /canAdvancePhase/);
-  assert.match(management, /Select all visible draft proposals/);
-  assert.match(management, /event => event\.stopPropagation\(\)/);
+  assert.match(management, /Select all loaded eligible proposals/);
+  assert.match(management, /aria-expanded=\{expandedId === p\.id\}/);
   assert.match(management, /chunkProposalIds\(snapshot\)/);
   assert.match(management, /bulk-advance-to-deliberation/);
   assert.match(management, /Only proposals that are still drafts will move/);

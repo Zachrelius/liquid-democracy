@@ -978,6 +978,49 @@ class ProposalFeedOut(BaseModel):
     has_more: bool
 
 
+# Phase 104 — compact administration projection. Structural operation
+# eligibility is authoritative for list controls; mutation routes still reload
+# and revalidate every proposal before writing.
+class ProposalManagementItemOut(BaseModel):
+    id: str
+    title: str
+    status: str
+    voting_method: str
+    num_winners: int
+    created_at: datetime
+    sub_org_id: Optional[str] = None
+    deliberation_end: Optional[datetime] = None
+    voting_end_date: Optional[datetime] = None
+    voting_end: Optional[datetime] = None
+    is_cosign_gated: bool = False
+    eligible_operations: list[str] = Field(default_factory=list)
+
+
+class ProposalManagementFeedOut(BaseModel):
+    items: list[ProposalManagementItemOut]
+    next_cursor: Optional[str] = None
+    has_more: bool
+
+
+class SubOrgDeletionImpactOut(BaseModel):
+    topic_count: int
+    proposal_count: int
+    can_delete: bool
+
+
+class PolisProposalLinkItemOut(BaseModel):
+    id: str
+    title: str
+    status: str
+    created_at: datetime
+
+
+class PolisProposalLinksOut(BaseModel):
+    items: list[PolisProposalLinkItemOut]
+    next_cursor: Optional[str] = None
+    has_more: bool
+
+
 class ProposalRevisionOut(BaseModel):
     """Phase 32 E4 — one row in the proposal change log."""
     id: str

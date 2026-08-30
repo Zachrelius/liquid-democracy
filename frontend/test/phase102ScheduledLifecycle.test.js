@@ -25,8 +25,8 @@ test('operation choice owns proposal checkbox eligibility', () => {
   assert.deepEqual(visibleEligibleProposalIds(rows, 'draft_to_deliberation'), ['draft']);
   assert.deepEqual(visibleEligibleProposalIds(rows, 'deliberation_to_voting'), ['ordinary']);
   assert.deepEqual(visibleEligibleProposalIds(rows, 'schedule_start'), ['ordinary']);
-  assert.deepEqual(visibleEligibleProposalIds(rows, 'set_end'), ['ordinary', 'voting']);
-  assert.equal(proposalEligibleForBulkOperation(rows[2], 'set_end'), false);
+  assert.deepEqual(visibleEligibleProposalIds(rows, 'set_end'), ['ordinary', 'cosign', 'voting']);
+  assert.equal(proposalEligibleForBulkOperation(rows[2], 'set_end'), true);
 });
 
 test('bounded deterministic chunks remain capped at 500', () => {

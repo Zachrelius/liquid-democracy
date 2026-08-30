@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
 import { useAuth } from '../../AuthContext';
 import { urlFor } from '../../utils/urls';
@@ -13,6 +13,7 @@ import useSubOrg from '../../useSubOrg';
 import { useHasPermission } from '../../hooks/useHasPermission';
 import SubOrgErrorState from '../../components/SubOrgErrorState';
 import PolisEmbed from '../../components/PolisEmbed';
+import PolisProposalLinks from '../../components/PolisProposalLinks';
 
 /**
  * Phase 9 Session 3 — Polis detail page (admin scope).
@@ -33,7 +34,6 @@ import PolisEmbed from '../../components/PolisEmbed';
  */
 export default function PolisDetail() {
   const params = useParams();
-  const navigate = useNavigate();
   const { user } = useAuth();
   const { currentOrg, userOrgs } = useOrg();
   const toast = useToast();
@@ -64,7 +64,6 @@ export default function PolisDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [creator, setCreator] = useState(null);
-  const [linkedProposals, setLinkedProposals] = useState([]);
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState('');
   const [deanonymize, setDeanonymize] = useState(false);
@@ -91,14 +90,6 @@ export default function PolisDetail() {
         const c = (members || []).find(m => m.user_id === data.created_by);
         setCreator(c || null);
       } catch { /* leave null */ }
-      // Linked-from indicator: pull all proposals and filter by linked_polis_ids.
-      try {
-        const props = await api.get(`/api/orgs/${parentSlug}/proposals`);
-        const linked = (props || []).filter(p =>
-          Array.isArray(p.linked_polis_ids) && p.linked_polis_ids.includes(polisId),
-        );
-        setLinkedProposals(linked);
-      } catch { setLinkedProposals([]); }
     } catch (e) {
       setError(e);
       setPolis(null);
@@ -107,7 +98,11 @@ export default function PolisDetail() {
     }
   }, [parentSlug, polisId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // Existing routed detail load lifecycle.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load();
+  }, [load]);
 
   // Lazy xid request — once per mount per (user, polis). Server idempotently
   // returns the existing xid for (user, org); first call is the only one
@@ -458,26 +453,7 @@ export default function PolisDetail() {
         </section>
       )}
 
-      {/* Linked-from indicator */}
-      {linkedProposals.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            Linked from {linkedProposals.length} proposal{linkedProposals.length === 1 ? '' : 's'}
-          </h2>
-          <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-            {linkedProposals.map(p => (
-              <button
-                key={p.id}
-                onClick={() => navigate(urlFor(parentSlug, 'proposal-detail', p.id))}
-                className="w-full text-left px-4 py-3 hover:bg-gray-50 transition-colors flex items-center justify-between"
-              >
-                <span className="text-sm font-medium text-gray-800 truncate flex-1">{p.title}</span>
-                <span className="text-xs text-gray-400 ml-3">{p.status}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
+      <PolisProposalLinks slug={parentSlug} polisId={polisId} />
 
       {/* Phase 81 — the "Intended seed statements" section was removed. New
           polises link an existing pol.is conversation that already has its own

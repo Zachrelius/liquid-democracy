@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import api from '../../api';
+import api, { isAbortError } from '../../api';
 import useSubOrg from '../../useSubOrg';
 import { urlFor } from '../../utils/urls';
 import { useToast } from '../../components/Toast';
@@ -12,6 +12,11 @@ import { useHasPermission } from '../../hooks/useHasPermission';
 // Phase 56 F3 — markdown renderer reused for the topic-guidance hint in
 // the sub-org proposal-creation topic picker.
 import renderMarkdown from '../../utils/renderMarkdown';
+import {
+  createBoundedCursorFeed,
+  emptyCursorFeedState,
+  managementProposalFeedUrl,
+} from '../../utils/boundedCursorFeed';
 
 /**
  * Phase 8.5 — Sub-Org Proposals admin page.
@@ -31,32 +36,49 @@ export default function SubOrgProposals() {
   // (sub-org-level permissions are out of scope for 12.5).
   const canCreateProposal = useHasPermission('proposal.create');
 
-  const [proposals, setProposals] = useState([]);
+  const [feed, setFeed] = useState(emptyCursorFeedState);
   const [topics, setTopics] = useState([]);
   const [parentSettings, setParentSettings] = useState({});
-  const [loading, setLoading] = useState(true);
+  const [metadataLoading, setMetadataLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
 
-  const load = useCallback(async () => {
+  const feedLoader = useMemo(() => createBoundedCursorFeed({
+    get: (url, options) => api.get(url, options),
+    buildUrl: managementProposalFeedUrl,
+    isAbort: isAbortError,
+    onChange: setFeed,
+  }), []);
+  const feedQuery = useMemo(() => ({
+    slug: parentSlug,
+    scope: subOrg?.id || 'all',
+    limit: 25,
+  }), [parentSlug, subOrg?.id]);
+
+  const loadMetadata = useCallback(async () => {
     if (!parentSlug || !subOrg) return;
-    setLoading(true);
+    setMetadataLoading(true);
     try {
-      const [allProps, allTopics, parentOrg] = await Promise.all([
-        api.get(`/api/orgs/${parentSlug}/proposals`),
+      const [allTopics, parentOrg] = await Promise.all([
         api.get(`/api/orgs/${parentSlug}/topics`),
         api.get(`/api/orgs/${parentSlug}`).catch(() => null),
       ]);
-      setProposals((allProps || []).filter(p => p.sub_org_id === subOrg.id));
       // Topics in scope for sub-org proposals: parent-org-wide (sub_org_id null)
       // OR this sub-org's topics. Decision 3 forbids other sub-orgs' topics.
       setTopics((allTopics || []).filter(t => t.sub_org_id === null || t.sub_org_id === subOrg.id));
       setParentSettings(parentOrg?.settings || {});
     } catch { /* ignore */ } finally {
-      setLoading(false);
+      setMetadataLoading(false);
     }
   }, [parentSlug, subOrg]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!parentSlug || !subOrg) return undefined;
+    feedLoader.reset(feedQuery);
+    // Metadata fetch owns its loading lifecycle for this sub-org scope.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadMetadata();
+    return () => feedLoader.cancel();
+  }, [feedLoader, feedQuery, loadMetadata, parentSlug, subOrg]);
 
   if (subLoading) return (
     <div className="flex justify-center items-center py-20">
@@ -107,7 +129,7 @@ export default function SubOrgProposals() {
           subOrg={subOrg}
           orgSettings={effectiveSettings}
           topics={topics}
-          onCreated={() => { setShowCreate(false); load(); }}
+          onCreated={() => { setShowCreate(false); feedLoader.reset(feedQuery); }}
           onCancel={() => setShowCreate(false)}
         />
       )}
@@ -118,12 +140,14 @@ export default function SubOrgProposals() {
           <span className="w-24">Status</span>
           <span className="w-28">Created</span>
         </div>
-        {loading ? (
+        {feed.loading || metadataLoading ? (
           <div className="px-4 py-8 text-center text-gray-400 text-sm">Loading…</div>
-        ) : proposals.length === 0 ? (
+        ) : feed.error ? (
+          <div className="px-4 py-8 text-center text-red-600 text-sm">{feed.error}</div>
+        ) : feed.items.length === 0 ? (
           <div className="px-4 py-8 text-center text-gray-400 text-sm">No proposals yet</div>
         ) : (
-          proposals.map(p => (
+          feed.items.map(p => (
             <div key={p.id} className="border-t border-gray-100">
               <div className="flex items-center gap-4 px-4 py-3 text-sm">
                 <span className="flex-1 font-medium text-gray-800">
@@ -136,6 +160,17 @@ export default function SubOrgProposals() {
           ))
         )}
       </div>
+      {feed.loadMoreError && <p className="text-sm text-red-600">{feed.loadMoreError}</p>}
+      {feed.hasMore && (
+        <button
+          type="button"
+          disabled={feed.loadingMore}
+          onClick={() => feedLoader.loadMore(feedQuery)}
+          className="min-h-11 rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          {feed.loadingMore ? 'Loading…' : 'Load more proposals'}
+        </button>
+      )}
     </div>
   );
 }

@@ -60,6 +60,59 @@ indexes. No new index or migration was justified. The connection-pool default
 therefore remains 2 + 3; Phase 103 improves bounded work and fail-fast behavior
 without masking the incident by increasing pool size.
 
+## August 2026 admin/secondary closure addendum — Phase 104
+
+Phase 104 removes the remaining internal frontend calls to the three legacy
+full-proposal-array routes. Before this pass, each of Proposal Management,
+the sub-organization proposal/settings surfaces, and the two Polis proposal
+pickers made one unbounded proposal request after their surrounding context
+requests. An isolated 250-proposal SQLite baseline returned all 250 full
+`ProposalOut` rows in an 858,401-byte body, took 344.62 ms, and executed 759
+SQL statements. The new internal surfaces use purpose-built compact keyset
+feeds: Proposal Management, scoped sub-organization pages, and exact Polis
+reverse links each make one bounded initial request and one request per Load
+more action. The old global, organization, and public arrays remain only as
+deprecated compatibility routes, with a default of 25, a maximum of 50,
+stable offset pagination, and explicit next-page headers.
+
+Measured SQLite route counts are seven SQL statements for the default
+management page, eight with all management filters, six for exact
+sub-organization deletion impact, and eight for exact Polis reverse links.
+The compact management first page was 18,391 bytes in the PostgreSQL load
+fixture, below the 150 KB ceiling. The deletion-impact endpoint and DELETE
+share the same conservative proposal/topic predicate, including archived
+proposals, while DELETE rechecks inside its transaction. Polis reverse-link
+membership uses PostgreSQL JSONB containment or SQLite JSON1 equality rather
+than substring matching.
+
+On the required PostgreSQL 16 rerun, all 238 measured mixed-load requests
+returned HTTP 200 with zero unexpected 5xx and zero pool-timeout 503s.
+Management p50/p95/p99 was 106.93/299.72/325.17 ms and health p95 was
+85.38 ms. Pool occupancy moved from 1/5 at baseline to 5/5 at peak and back
+to 1/5 within five seconds, with zero waiting locks and zero sessions idle in
+transaction for more than five seconds. Traversals returned exactly 250
+management rows, 50 scoped sub-organization rows, and 63 exact Polis-linked
+rows, with zero duplicates, missing rows, unexpected rows, or lookalike-ID
+matches. Each legacy route returned at most 50 rows with its deprecation and
+next-page headers.
+
+The first application load run also completed 238/238 measured requests at
+HTTP 200, with management p50/p95/p99 118.08/287.45/339.16 ms and health p95
+85.96 ms. Its separate monitor sampler returned 503 because operational
+monitoring was disabled in that proof process and the synthetic administrator
+used a deliberately invalid alert address; this was a fixture-configuration
+failure, not a pool failure. The required rerun explicitly enabled the monitor
+with a local proof recipient, and the monitor returned 200 before, during, and
+after load.
+
+At 2,500 proposals, EXPLAIN execution times were 1.980 ms for the default
+management query, 0.850 ms with filters, 2.043 ms for a next page, and
+1.186 ms for exact Polis reverse links. The corresponding 250-row figures
+were 0.352/0.081/0.386/0.141 ms. Existing organization/sub-organization
+indexes were used where selective; sorts remained in memory and shared reads
+were zero. The evidence therefore justifies no new index, normalized link
+table, migration, pool increase, or Railway environment change.
+
 ---
 **Methodology:** Measurement-first audit per Phase 35 spec. This pass combines
 (1) instrumentation infrastructure shipped for future load testing, (2) a
