@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
-import api from '../api';
+import api, { isAbortError } from '../api';
 import { useToast } from '../components/Toast';
 import BrandingThemeApplier from '../components/BrandingThemeApplier';
 import PublicLayout from '../components/PublicLayout';
@@ -13,6 +13,7 @@ import MessageButton from '../components/MessageButton';
 import VerificationJoinDialog from '../components/VerificationJoinDialog';
 import renderMarkdown from '../utils/renderMarkdown';
 import { urlFor } from '../utils/urls';
+import { loadPublicProposalPreview } from '../utils/proposalFeed';
 // Phase 52 Stage 1 — structured-403 verification_required handling.
 import { extractVerificationRequiredDetail } from '../verificationLabels';
 
@@ -527,6 +528,7 @@ function PublicProposalsPanel({ slug }) {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    const controller = new AbortController();
     let alive = true;
     Promise.resolve()
       .then(() => {
@@ -534,15 +536,19 @@ function PublicProposalsPanel({ slug }) {
           setLoading(true);
           setError(null);
         }
-        return api.get(`/api/orgs/${slug}/public/proposals`);
+        return loadPublicProposalPreview({
+          get: (path, options) => api.get(path, options),
+          slug,
+          signal: controller.signal,
+        });
       })
       .then(data => {
         if (alive) {
-          setProposals(Array.isArray(data) ? data : []);
+          setProposals(data);
         }
       })
       .catch(err => {
-        if (alive) {
+        if (alive && !isAbortError(err)) {
           setError(err?.message || 'Could not load proposals.');
         }
       })
@@ -551,7 +557,10 @@ function PublicProposalsPanel({ slug }) {
           setLoading(false);
         }
       });
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+      controller.abort();
+    };
   }, [slug]);
 
   return (
