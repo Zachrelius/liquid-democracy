@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
-import api from '../../api';
+import api, { isAbortError } from '../../api';
 import StatusBadge from '../../components/StatusBadge';
 import { useToast } from '../../components/Toast';
 import { useConfirm } from '../../components/ConfirmDialog';
@@ -22,6 +22,15 @@ import {
   proposalImportRateLimitMessage,
   proposalImportSelectionState,
 } from '../../utils/proposalImportBatch';
+import {
+  createBoundedCursorFeed,
+  emptyCursorFeedState,
+  managementProposalFeedUrl,
+  selectionAfterCompletedIds,
+  selectionAfterFilterDecision,
+  selectionRowsForOrg,
+  updateOrgSelection,
+} from '../../utils/boundedCursorFeed';
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
 // Phase 52 Stage 1 — shared verification state label tables.
@@ -2586,95 +2595,109 @@ export default function ProposalManagement() {
   const canCreateProposal = useHasPermission('proposal.create');
   const canAdvancePhase = useHasPermission('proposal.advance_phase');
   const canSetDurations = useHasPermission('proposal.set_durations');
-  const [proposals, setProposals] = useState([]);
+  const [feed, setFeed] = useState(emptyCursorFeedState);
   const [topics, setTopics] = useState([]);
   const [subOrgs, setSubOrgs] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [metadataLoading, setMetadataLoading] = useState(true);
   // Phase 25 F1 — open directly on the create form when the inbound
   // link was /admin/proposals?create=1 (e.g. clicking "Create proposal"
   // on the public Proposals page). Otherwise default to the list view.
   const [searchParams, setSearchParams] = useSearchParams();
   const [showCreate, setShowCreate] = useState(searchParams.get('create') === '1');
   const [expandedId, setExpandedId] = useState(null);
-  const [proposalSelection, setProposalSelection] = useState(
-    () => ({ slug: null, ids: new Set() }),
-  );
+  const [proposalSelection, setProposalSelection] = useState(() => new Map());
   const [bulkAdvanceWorking, setBulkAdvanceWorking] = useState(false);
   const selectAllDraftsRef = useRef(null);
   const [bulkOperation, setBulkOperation] = useState('');
   const [bulkVotingStartsAt, setBulkVotingStartsAt] = useState('');
   const [bulkVotingEndsAt, setBulkVotingEndsAt] = useState('');
   const [bulkScheduleReason, setBulkScheduleReason] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [scopeFilter, setScopeFilter] = useState('all');
+  const [titleQuery, setTitleQuery] = useState('');
+  const [titleDraft, setTitleDraft] = useState('');
+  const [eligibleOnly, setEligibleOnly] = useState(false);
   const [scheduleReferenceMs] = useState(() => Date.now());
   // Phase 72 — when an import file carries 2+ proposals, the create form
   // hands the per-item preview results here and we render the review list.
   const [multiImportItems, setMultiImportItems] = useState(null);
 
   const slug = currentOrg?.slug;
-  const selectedProposalIds = proposalSelection.slug === slug
-    ? proposalSelection.ids
-    : new Set();
-  const updateSelectedProposalIds = useCallback((updater) => {
-    setProposalSelection(previous => {
-      const current = previous.slug === slug ? previous.ids : new Set();
-      const next = typeof updater === 'function' ? updater(current) : updater;
-      return { slug, ids: next };
-    });
+  const proposals = feed.items;
+  const selectedProposalRows = selectionRowsForOrg(proposalSelection, slug);
+  const selectedProposalIds = new Set(selectedProposalRows.keys());
+  const updateSelectedProposalRows = useCallback((updater) => {
+    setProposalSelection(previous => updateOrgSelection(previous, slug, updater));
   }, [slug]);
-  const visibleDraftIds = useMemo(
+  const loadedEligibleIds = useMemo(
     () => visibleEligibleProposalIds(proposals, bulkOperation),
     [proposals, bulkOperation],
   );
   const selectedCount = selectedProposalIds.size;
-  const allVisibleDraftsSelected = visibleDraftIds.length > 0
-    && visibleDraftIds.every(id => selectedProposalIds.has(id));
+  const allLoadedEligibleSelected = loadedEligibleIds.length > 0
+    && loadedEligibleIds.every(id => selectedProposalIds.has(id));
 
   useEffect(() => {
     if (selectAllDraftsRef.current) {
       selectAllDraftsRef.current.indeterminate = selectedCount > 0
-        && !allVisibleDraftsSelected;
+        && !allLoadedEligibleSelected;
     }
-  }, [selectedCount, allVisibleDraftsSelected]);
+  }, [selectedCount, allLoadedEligibleSelected]);
 
-  const load = useCallback(async () => {
-    if (!slug) return;
-    try {
-      const [props, tops] = await Promise.all([
-        api.get(`/api/orgs/${slug}/proposals`),
-        api.get(`/api/orgs/${slug}/topics`),
-      ]);
-      setProposals(props);
-      const eligibleDrafts = new Set(visibleEligibleProposalIds(props, bulkOperation));
-      setProposalSelection(previous => {
-        if (previous.slug !== slug || !canAdvancePhase) {
-          return { slug, ids: new Set() };
-        }
-        return {
-          slug,
-          ids: new Set([...previous.ids].filter(id => eligibleDrafts.has(id))),
-        };
-      });
-      setTopics(tops);
-    } catch { /* ignore */ } finally {
-      setLoading(false);
-    }
-    // Phase 8.5 — fetch sub-orgs only when at parent-org scope.
-    if (currentOrg && !currentOrg.parent_org_id) {
-      try {
-        const subs = await fetchSubOrgsFor(slug);
-        setSubOrgs(subs || []);
-      } catch { setSubOrgs([]); }
-    }
-  }, [slug, currentOrg, fetchSubOrgsFor, canAdvancePhase, bulkOperation]);
+  const feedLoader = useMemo(() => createBoundedCursorFeed({
+    get: (url, options) => api.get(url, options),
+    buildUrl: managementProposalFeedUrl,
+    isAbort: isAbortError,
+    onChange: setFeed,
+  }), []);
+  const feedQuery = useMemo(() => ({
+    slug,
+    status: statusFilter,
+    scope: scopeFilter,
+    q: titleQuery,
+    eligibleFor: eligibleOnly ? bulkOperation : '',
+    limit: 50,
+  }), [slug, statusFilter, scopeFilter, titleQuery, eligibleOnly, bulkOperation]);
+  const load = useCallback(() => {
+    if (slug) return feedLoader.reset(feedQuery);
+    return Promise.resolve();
+  }, [feedLoader, feedQuery, slug]);
 
   useEffect(() => {
-    // Existing page-load synchronization: load owns the loading-state update.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
-  }, [load]);
+    return () => feedLoader.cancel();
+  }, [feedLoader, load]);
+
+  useEffect(() => {
+    if (!slug) return undefined;
+    let cancelled = false;
+    // Metadata is reset when organization scope changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMetadataLoading(true);
+    Promise.all([
+      api.get(`/api/orgs/${slug}/topics`),
+      currentOrg && !currentOrg.parent_org_id ? fetchSubOrgsFor(slug) : Promise.resolve([]),
+    ]).then(([tops, subs]) => {
+      if (!cancelled) {
+        setTopics(tops || []);
+        setSubOrgs(subs || []);
+      }
+    }).catch(() => {
+      if (!cancelled) setSubOrgs([]);
+    }).finally(() => {
+      if (!cancelled) setMetadataLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [slug, currentOrg, fetchSubOrgsFor]);
+
+  useEffect(() => {
+    // Organization changes intentionally discard every prior-org selection.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setProposalSelection(new Map());
+  }, [slug]);
 
   if (!currentOrg) return <div className="text-center py-16 text-gray-400">No organization selected</div>;
-  if (loading) return (
+  if (metadataLoading && feed.loading) return (
     <div className="flex justify-center items-center py-20">
       <div className="animate-spin w-8 h-8 border-4 border-[var(--brand-accent)] border-t-transparent rounded-full"></div>
     </div>
@@ -2710,33 +2733,45 @@ export default function ProposalManagement() {
     }
   }
 
-  function toggleProposalSelection(proposalId) {
-    updateSelectedProposalIds(previous => {
-      const next = new Set(previous);
-      if (next.has(proposalId)) next.delete(proposalId);
-      else next.add(proposalId);
-      return next;
+  async function applyListFilter(apply) {
+    if (selectedCount > 0) {
+      const ok = await confirm({
+        title: 'Change proposal filters?',
+        message: 'Changing filters clears the current proposal selection.',
+      });
+      if (!ok) return false;
+      setProposalSelection(previous => selectionAfterFilterDecision(previous, slug, true));
+    }
+    apply();
+    setExpandedId(null);
+    return true;
+  }
+
+  function toggleProposalSelection(proposal) {
+    updateSelectedProposalRows(previous => {
+      if (previous.has(proposal.id)) previous.delete(proposal.id);
+      else previous.set(proposal.id, proposal);
+      return previous;
     });
   }
 
   function toggleAllVisibleDrafts() {
-    updateSelectedProposalIds(previous => {
-      const next = new Set(previous);
-      if (allVisibleDraftsSelected) {
-        visibleDraftIds.forEach(id => next.delete(id));
+    updateSelectedProposalRows(previous => {
+      if (allLoadedEligibleSelected) {
+        loadedEligibleIds.forEach(id => previous.delete(id));
       } else {
-        visibleDraftIds.forEach(id => next.add(id));
+        proposals
+          .filter(proposal => loadedEligibleIds.includes(proposal.id))
+          .forEach(proposal => previous.set(proposal.id, proposal));
       }
-      return next;
+      return previous;
     });
   }
 
   async function handleBulkAdvanceToDeliberation() {
     if (!canAdvancePhase || bulkAdvanceWorking || selectedCount === 0) return;
     const snapshot = [...selectedProposalIds];
-    const selectedRows = snapshot
-      .map(id => proposals.find(proposal => proposal.id === id))
-      .filter(Boolean);
+    const selectedRows = snapshot.map(id => selectedProposalRows.get(id)).filter(Boolean);
     const shownTitles = selectedRows.slice(0, 5).map(proposal => `“${proposal.title}”`);
     const remainingCount = Math.max(0, selectedRows.length - shownTitles.length);
     const titleList = [
@@ -2766,17 +2801,13 @@ export default function ProposalManagement() {
         (response.results || []).forEach(result => completedIds.add(result.proposal_id));
       }
       const summary = aggregateBulkAdvanceResponses(responses);
-      updateSelectedProposalIds(previous => new Set(
-        [...previous].filter(id => !completedIds.has(id)),
-      ));
+      setProposalSelection(previous => selectionAfterCompletedIds(previous, slug, completedIds));
       const message = bulkAdvanceSummaryMessage(summary);
       if (summary.couldNotAdvance > 0) toast.error(message);
       else toast.success(message);
     } catch (error) {
       const summary = aggregateBulkAdvanceResponses(responses);
-      updateSelectedProposalIds(previous => new Set(
-        [...previous].filter(id => !completedIds.has(id)),
-      ));
+      setProposalSelection(previous => selectionAfterCompletedIds(previous, slug, completedIds));
       const completedMessage = responses.length
         ? `${bulkAdvanceSummaryMessage(summary)} `
         : '';
@@ -2797,8 +2828,9 @@ export default function ProposalManagement() {
       });
       if (!ok) return;
     }
-    updateSelectedProposalIds(new Set());
+    updateSelectedProposalRows(() => new Map());
     setBulkOperation(nextOperation);
+    if (!nextOperation) setEligibleOnly(false);
     setBulkVotingStartsAt('');
     setBulkVotingEndsAt('');
     setBulkScheduleReason('');
@@ -2824,7 +2856,7 @@ export default function ProposalManagement() {
       return;
     }
     const snapshot = [...selectedProposalIds];
-    const selectedRows = snapshot.map(id => proposals.find(p => p.id === id)).filter(Boolean);
+    const selectedRows = snapshot.map(id => selectedProposalRows.get(id)).filter(Boolean);
     const startsIso = bulkVotingStartsAt ? new Date(bulkVotingStartsAt).toISOString() : null;
     const endsIso = bulkVotingEndsAt ? new Date(bulkVotingEndsAt).toISOString() : null;
     const shortensActive = bulkOperation === 'set_end' && selectedRows.some(p => (
@@ -2884,9 +2916,7 @@ export default function ProposalManagement() {
         }
         responses.push(response);
         (response.results || []).forEach(item => {
-          if (['advanced', 'already_in_voting', 'updated', 'unchanged', 'ineligible', 'ineligible_status', 'not_found'].includes(item.result)) {
-            completedIds.add(item.proposal_id);
-          }
+          if (item.proposal_id) completedIds.add(item.proposal_id);
         });
       }
       const totals = responses.reduce((sum, response) => ({
@@ -2896,10 +2926,11 @@ export default function ProposalManagement() {
           + (response.cosign_gate_required || 0) + (response.ineligible_status || 0)
           + (response.ineligible || 0) + (response.not_found || 0),
       }), { success: 0, unchanged: 0, failed: 0 });
-      updateSelectedProposalIds(previous => new Set([...previous].filter(id => !completedIds.has(id))));
+      setProposalSelection(previous => selectionAfterCompletedIds(previous, slug, completedIds));
       const summary = `${totals.success} updated; ${totals.unchanged} unchanged; ${totals.failed} could not be updated.`;
       if (totals.failed) toast.error(summary); else toast.success(summary);
     } catch (error) {
+      setProposalSelection(previous => selectionAfterCompletedIds(previous, slug, completedIds));
       toast.error(`The remaining selected proposals were not submitted. ${error.message || 'Try again.'}`);
     } finally {
       await load();
@@ -2986,6 +3017,78 @@ export default function ProposalManagement() {
         />
       )}
 
+      <form
+        onSubmit={async event => {
+          event.preventDefault();
+          const nextQuery = titleDraft.trim().slice(0, 100);
+          const accepted = await applyListFilter(() => setTitleQuery(nextQuery));
+          if (!accepted) setTitleDraft(titleQuery);
+        }}
+        className="grid gap-3 rounded-xl border border-gray-200 bg-white p-4 sm:grid-cols-2 lg:grid-cols-4"
+      >
+        <label className="text-sm font-medium text-gray-700">
+          Status
+          <select
+            value={statusFilter}
+            onChange={event => {
+              const nextStatus = event.target.value;
+              applyListFilter(() => setStatusFilter(nextStatus));
+            }}
+            className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm"
+          >
+            <option value="all">All statuses</option>
+            {['draft', 'deliberation', 'voting', 'passed', 'failed', 'withdrawn', 'unresolved', 'expired_unsigned'].map(status => (
+              <option key={status} value={status}>{status.replaceAll('_', ' ')}</option>
+            ))}
+          </select>
+        </label>
+        <label className="text-sm font-medium text-gray-700">
+          Scope
+          <select
+            value={scopeFilter}
+            onChange={event => {
+              const nextScope = event.target.value;
+              applyListFilter(() => setScopeFilter(nextScope));
+            }}
+            className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm"
+          >
+            <option value="all">All scopes</option>
+            <option value="parent">Parent organization only</option>
+            {subOrgs.map(subOrg => <option key={subOrg.id} value={subOrg.id}>{subOrg.name}</option>)}
+          </select>
+        </label>
+        <label className="text-sm font-medium text-gray-700 lg:col-span-2">
+          Search proposal titles
+          <span className="mt-1 flex gap-2">
+            <input
+              value={titleDraft}
+              maxLength={100}
+              onChange={event => setTitleDraft(event.target.value)}
+              className="min-h-11 min-w-0 flex-1 rounded-lg border border-gray-300 px-3 text-sm"
+              placeholder="Exact words or phrase"
+            />
+            <button type="submit" className="min-h-11 rounded-lg border border-gray-300 px-4 text-sm hover:bg-gray-50">
+              Search
+            </button>
+          </span>
+        </label>
+        {canAdvancePhase && (
+          <label className="flex min-h-11 items-center gap-2 text-sm text-gray-700 sm:col-span-2 lg:col-span-4">
+            <input
+              type="checkbox"
+              checked={eligibleOnly}
+              disabled={!bulkOperation}
+              onChange={event => {
+                const nextEligibleOnly = event.target.checked;
+                applyListFilter(() => setEligibleOnly(nextEligibleOnly));
+              }}
+              className="h-5 w-5 accent-[var(--brand-primary)]"
+            />
+            Show only proposals eligible for the selected bulk operation
+          </label>
+        )}
+      </form>
+
       {canAdvancePhase && (
         <div className="sticky top-2 z-10 grid gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm sm:grid-cols-2">
           <label className="text-sm font-medium text-blue-950">
@@ -3043,7 +3146,7 @@ export default function ProposalManagement() {
           <button
             type="button"
             disabled={bulkAdvanceWorking}
-            onClick={() => updateSelectedProposalIds(new Set())}
+            onClick={() => updateSelectedProposalRows(() => new Map())}
             className="min-h-11 rounded-lg border border-blue-300 px-3 py-2 text-sm text-blue-800 hover:bg-blue-100 disabled:opacity-50"
           >
             Clear selection
@@ -3068,12 +3171,10 @@ export default function ProposalManagement() {
               <input
                 ref={selectAllDraftsRef}
                 type="checkbox"
-                checked={allVisibleDraftsSelected}
-                disabled={bulkAdvanceWorking || visibleDraftIds.length === 0}
+                checked={allLoadedEligibleSelected}
+                disabled={bulkAdvanceWorking || loadedEligibleIds.length === 0}
                 onChange={toggleAllVisibleDrafts}
-                aria-label={bulkOperation === 'draft_to_deliberation'
-                  ? 'Select all visible draft proposals'
-                  : 'Select all visible eligible proposals'}
+                aria-label="Select all loaded eligible proposals"
                 className="h-6 w-6 rounded border-gray-300 accent-[var(--brand-primary)] disabled:opacity-50"
               />
             </span>
@@ -3083,15 +3184,19 @@ export default function ProposalManagement() {
           <span className="hidden w-28 sm:block">Created</span>
           <span className="w-4" />
         </div>
-        {proposals.length === 0 ? (
+        {feed.loading ? (
+          <div className="px-4 py-8 text-center text-gray-400 text-sm">Loading proposals…</div>
+        ) : feed.error ? (
+          <div className="px-4 py-8 text-center text-red-600 text-sm">
+            {feed.error}
+            <button type="button" onClick={load} className="ml-2 underline">Retry</button>
+          </div>
+        ) : proposals.length === 0 ? (
           <div className="px-4 py-8 text-center text-gray-400 text-sm">No proposals yet</div>
         ) : (
           proposals.map(p => (
             <div key={p.id} className="border-t border-gray-100">
-              <div
-                onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
-                className="flex items-center gap-4 px-4 py-3 text-sm cursor-pointer hover:bg-gray-50 transition-colors"
-              >
+              <div className="flex items-center gap-4 px-4 py-3 text-sm hover:bg-gray-50 transition-colors">
                 {canAdvancePhase && (
                   <span className="flex w-11 shrink-0 items-center justify-center">
                     {proposalEligibleForBulkOperation(p, bulkOperation) && (
@@ -3099,33 +3204,40 @@ export default function ProposalManagement() {
                         type="checkbox"
                         checked={selectedProposalIds.has(p.id)}
                         disabled={bulkAdvanceWorking}
-                        onClick={event => event.stopPropagation()}
-                        onChange={() => toggleProposalSelection(p.id)}
+                        onChange={() => toggleProposalSelection(p)}
                         aria-label={`Select for ${bulkOperation}: ${p.title}`}
                         className="h-6 w-6 rounded border-gray-300 accent-[var(--brand-primary)] disabled:opacity-50"
                       />
                     )}
                   </span>
                 )}
-                <span className="flex-1 font-medium text-gray-800">
-                  {p.title}
-                  {p.voting_method === 'approval' && (
-                    <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Approval</span>
-                  )}
-                  {p.voting_method === 'ranked_choice' && (
-                    <span className="ml-2 text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">
-                      {(p.num_winners ?? 1) > 1 ? `STV (${p.num_winners})` : 'IRV'}
-                    </span>
-                  )}
-                </span>
-                <span className="w-24"><StatusBadge status={p.status} /></span>
-                <span className="hidden w-28 text-xs text-gray-400 sm:block">{new Date(p.created_at).toLocaleDateString()}</span>
-                <svg className={`w-4 h-4 text-gray-400 transition-transform ${expandedId === p.id ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
+                <button
+                  type="button"
+                  onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
+                  aria-expanded={expandedId === p.id}
+                  aria-controls={`proposal-management-row-${p.id}`}
+                  className="flex min-w-0 flex-1 items-center gap-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand-accent)]"
+                >
+                  <span className="flex-1 font-medium text-gray-800">
+                    {p.title}
+                    {p.voting_method === 'approval' && (
+                      <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Approval</span>
+                    )}
+                    {p.voting_method === 'ranked_choice' && (
+                      <span className="ml-2 text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">
+                        {(p.num_winners ?? 1) > 1 ? `STV (${p.num_winners})` : 'IRV'}
+                      </span>
+                    )}
+                  </span>
+                  <span className="w-24"><StatusBadge status={p.status} /></span>
+                  <span className="hidden w-28 text-xs text-gray-400 sm:block">{new Date(p.created_at).toLocaleDateString()}</span>
+                  <svg className={`w-4 h-4 text-gray-400 transition-transform ${expandedId === p.id ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
               </div>
               {expandedId === p.id && (
-                <div className="px-4 py-3 bg-gray-50 flex items-center flex-wrap gap-3">
+                <div id={`proposal-management-row-${p.id}`} className="px-4 py-3 bg-gray-50 flex items-center flex-wrap gap-3">
                   <p className="w-full text-xs text-gray-600">
                     {p.status === 'deliberation' && p.deliberation_end
                       ? `Voting begins ${new Date(p.deliberation_end).toLocaleString()}${new Date(p.deliberation_end).getTime() < scheduleReferenceMs - 11 * 60 * 1000 ? ' · automatic transition delayed' : ''}`
@@ -3213,6 +3325,17 @@ export default function ProposalManagement() {
           ))
         )}
       </div>
+      {feed.loadMoreError && <p className="text-sm text-red-600">{feed.loadMoreError}</p>}
+      {feed.hasMore && (
+        <button
+          type="button"
+          disabled={feed.loadingMore}
+          onClick={() => feedLoader.loadMore(feedQuery)}
+          className="min-h-11 rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          {feed.loadingMore ? 'Loading…' : 'Load more proposals'}
+        </button>
+      )}
     </div>
   );
 }

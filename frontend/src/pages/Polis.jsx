@@ -5,6 +5,7 @@ import { useOrg } from '../OrgContext';
 import { urlFor } from '../utils/urls';
 import api from '../api';
 import PolisEmbed from '../components/PolisEmbed';
+import PolisProposalLinks from '../components/PolisProposalLinks';
 import { polisTopicLabel } from '../utils/polis';
 
 /**
@@ -44,7 +45,6 @@ export default function Polis() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [creator, setCreator] = useState(null);
-  const [linkedProposals, setLinkedProposals] = useState([]);
   const [polisXid, setPolisXid] = useState(null);
   const [readOnlyReason, setReadOnlyReason] = useState(null);
   const xidRequested = useRef(false);
@@ -76,15 +76,6 @@ export default function Polis() {
         const c = (members || []).find(m => m.user_id === data.created_by);
         setCreator(c || null);
       } catch { /* leave null */ }
-      // Linked-from: pull proposals visible to the viewer and filter by
-      // linked_polis_ids inclusion.
-      try {
-        const props = await api.get(`/api/orgs/${parentSlug}/proposals`);
-        const linked = (props || []).filter(p =>
-          Array.isArray(p.linked_polis_ids) && p.linked_polis_ids.includes(polisId),
-        );
-        setLinkedProposals(linked);
-      } catch { setLinkedProposals([]); }
     } catch (e) {
       // 403 with a sub-org-scoped Polis: try to surface read-only treatment
       // (Decision 7 default visibility for parent-org members of a sub-org
@@ -102,7 +93,11 @@ export default function Polis() {
     }
   }, [parentSlug, polisId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    // Existing routed detail load lifecycle.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load();
+  }, [load]);
 
   // xid request — lazy on mount; backend is idempotent so re-renders don't
   // proliferate xid_generated audit events.
@@ -292,26 +287,7 @@ export default function Polis() {
         )}
       </section>
 
-      {/* Linked-from (read-only list of proposals that reference this Polis) */}
-      {linkedProposals.length > 0 && (
-        <section className="space-y-2">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">
-            Referenced from {linkedProposals.length} proposal{linkedProposals.length === 1 ? '' : 's'}
-          </h2>
-          <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-            {linkedProposals.map(p => (
-              <Link
-                key={p.id}
-                to={urlFor(parentSlug, 'proposal-detail', p.id)}
-                className="flex items-center justify-between px-4 py-3 text-sm hover:bg-gray-50 transition-colors"
-              >
-                <span className="font-medium text-gray-800 truncate flex-1">{p.title}</span>
-                <span className="text-xs text-gray-400 ml-3">{p.status}</span>
-              </Link>
-            ))}
-          </div>
-        </section>
-      )}
+      <PolisProposalLinks slug={parentSlug} polisId={polisId} />
     </div>
   );
 }

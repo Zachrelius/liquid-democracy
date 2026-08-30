@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import api from '../../api';
+import api, { isAbortError } from '../../api';
 import useSubOrg from '../../useSubOrg';
 import { useOrg } from '../../OrgContext';
 import { urlFor } from '../../utils/urls';
@@ -65,16 +65,24 @@ export default function SubOrgSettings() {
   const [srOverrides, setSrOverrides] = useState({}); // {key: bool}
   const [srValues, setSrValues] = useState({}); // {key: value}
 
-  // Topic/proposal counts for delete gating
+  // Authoritative deletion impact; fetched only when this control is visible.
   const [topicCount, setTopicCount] = useState(0);
   const [proposalCount, setProposalCount] = useState(0);
+  const [canDeleteContent, setCanDeleteContent] = useState(false);
+  const [impactLoading, setImpactLoading] = useState(false);
+  const [impactError, setImpactError] = useState('');
   const [saving, setSaving] = useState(false);
 
   // Parent settings (for "inherit" placeholder display)
   const [parentSettings, setParentSettings] = useState({});
+  const subPerms = subOrg?.user_permissions || [];
+  const canEditSubOrg = subPerms.includes('sub_org.edit_settings');
+  const canDeleteSubOrg = subPerms.includes('sub_org.delete');
 
   useEffect(() => {
     if (!subOrg) return;
+    // Existing settings form synchronization when the routed sub-org changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setName(subOrg.name);
     setDescription(subOrg.description || '');
     const s = subOrg.settings || {};
@@ -114,23 +122,35 @@ export default function SubOrgSettings() {
     }
   }, [subOrg]);
 
-  // Fetch topic/proposal counts under this sub-org (for delete gate).
+  // Fetch the backend's authoritative deletion blockers only for viewers who
+  // can see the danger zone. This replaces two unbounded client-side scans.
   useEffect(() => {
-    if (!parentSlug || !subOrg) return;
-    let cancelled = false;
+    if (!parentSlug || !subOrg || !canDeleteSubOrg) return undefined;
+    const controller = new AbortController();
+    // The impact request begins a new routed danger-zone lifecycle.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setImpactLoading(true);
+    setImpactError('');
     (async () => {
       try {
-        const [topics, props] = await Promise.all([
-          api.get(`/api/orgs/${parentSlug}/topics`),
-          api.get(`/api/orgs/${parentSlug}/proposals`),
-        ]);
-        if (cancelled) return;
-        setTopicCount((topics || []).filter(t => t.sub_org_id === subOrg.id).length);
-        setProposalCount((props || []).filter(p => p.sub_org_id === subOrg.id).length);
-      } catch { /* leave as 0 */ }
+        const impact = await api.get(
+          `/api/orgs/${parentSlug}/sub-orgs/${subSlug}/deletion-impact`,
+          { signal: controller.signal },
+        );
+        setTopicCount(impact?.topic_count || 0);
+        setProposalCount(impact?.proposal_count || 0);
+        setCanDeleteContent(impact?.can_delete === true);
+      } catch (requestError) {
+        if (!isAbortError(requestError)) {
+          setImpactError(requestError?.message || 'Could not check deletion blockers.');
+          setCanDeleteContent(false);
+        }
+      } finally {
+        if (!controller.signal.aborted) setImpactLoading(false);
+      }
     })();
-    return () => { cancelled = true; };
-  }, [parentSlug, subOrg]);
+    return () => controller.abort();
+  }, [parentSlug, subSlug, subOrg, canDeleteSubOrg]);
 
   // Pull parent settings for inherited-value placeholders. Only attempts when
   // the user has at least read access to the parent (which they must, since
@@ -244,7 +264,7 @@ export default function SubOrgSettings() {
     }
   }
 
-  const deleteBlocked = topicCount > 0 || proposalCount > 0;
+  const deleteBlocked = impactLoading || !!impactError || !canDeleteContent;
 
   // Phase 71c — control gates use the SUB-ORG's OWN permission set (resolved
   // server-side via has_permission_on_sub_org and surfaced on the sub-org
@@ -254,10 +274,6 @@ export default function SubOrgSettings() {
   // correct UX; the real boundary is the backend (Phase 71b made sub_org.*
   // config-authoritative) and the page already 403/404s non-members via
   // SubOrgErrorState above.
-  const subPerms = subOrg?.user_permissions || [];
-  const canEditSubOrg = subPerms.includes('sub_org.edit_settings');
-  const canDeleteSubOrg = subPerms.includes('sub_org.delete');
-
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-10">
       <div>
@@ -510,23 +526,32 @@ export default function SubOrgSettings() {
           <h2 className="text-sm font-semibold text-red-500 uppercase tracking-wide">Danger Zone</h2>
           <div className="bg-white border border-red-200 rounded-xl p-5 space-y-3">
             <div className="text-xs text-gray-500">
-              <p>Topics scoped to this sub-org: <strong>{topicCount}</strong></p>
-              <p>Proposals scoped to this sub-org: <strong>{proposalCount}</strong></p>
+              {impactLoading ? (
+                <p>Checking deletion blockers…</p>
+              ) : (
+                <>
+                  <p>Topics scoped to this sub-org: <strong>{topicCount}</strong></p>
+                  <p>Proposals scoped to this sub-org: <strong>{proposalCount}</strong></p>
+                </>
+              )}
             </div>
             <button
               onClick={handleDelete}
               disabled={deleteBlocked}
-              title={deleteBlocked
-                ? 'Move or delete all sub-org-scoped topics and proposals first.'
-                : 'Permanently delete this sub-organization.'}
+              title={impactLoading
+                ? 'Checking deletion blockers.'
+                : impactError
+                  ? 'Deletion availability could not be checked.'
+                  : deleteBlocked
+                    ? 'This sub-organization cannot be deleted while scoped topics or proposals remain.'
+                    : 'Permanently delete this sub-organization.'}
               className="text-sm px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               Delete Sub-Organization
             </button>
-            {deleteBlocked && (
+            {deleteBlocked && !impactLoading && (
               <p className="text-xs text-amber-600">
-                This sub-org has scoped content. Promote scoped topics to org-wide, or
-                archive scoped proposals, before deleting.
+                {impactError || 'This sub-organization cannot be deleted while scoped topics or proposals remain.'}
               </p>
             )}
           </div>
@@ -539,7 +564,7 @@ export default function SubOrgSettings() {
 // Phase 20 — Renamed from SmRow. Failure-mode kind removed (no more
 // failure_mode key); percent kind accepts optional min/max props for the
 // stable_window_fraction (5-50) vs max_extension_fraction (0-100) ranges.
-function SrRow({ label, keyName, kind, override, value, inherited, setOverride, setValue, min, max }) {
+function SrRow({ label, kind, override, value, inherited, setOverride, setValue, min, max }) {
   const pctMin = typeof min === 'number' ? min : 0;
   const pctMax = typeof max === 'number' ? max : 100;
   return (

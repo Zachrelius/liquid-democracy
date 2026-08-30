@@ -8,13 +8,15 @@ export function visibleDraftProposalIds(proposals) {
 
 export function proposalEligibleForBulkOperation(proposal, operation) {
   if (!proposal || !operation) return false;
+  if (Array.isArray(proposal.eligible_operations)) {
+    return proposal.eligible_operations.includes(operation);
+  }
   if (operation === 'draft_to_deliberation') return proposal.status === 'draft';
   if (operation === 'deliberation_to_voting' || operation === 'schedule_start') {
     return proposal.status === 'deliberation' && !proposal.is_cosign_gated;
   }
   if (operation === 'set_end') {
-    return ['deliberation', 'voting'].includes(proposal.status)
-      && !proposal.is_cosign_gated;
+    return ['deliberation', 'voting'].includes(proposal.status);
   }
   return false;
 }
