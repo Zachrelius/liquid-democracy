@@ -1,6 +1,6 @@
 # Phase 104 — Admin and Secondary Proposal Pagination
 
-**Status:** LOCAL IMPLEMENTATION VERIFIED / DEPLOYMENT PENDING
+**Status:** COMPLETE / DEPLOYED
 
 **Written:** 2026-08-30, after Phase 103 production verification and Z's manual browser smoke
 
@@ -40,8 +40,28 @@ was disabled in that proof process and its synthetic administrator used an
 invalid alert address; the required corrected rerun returned monitor 200
 before, during, and after load.
 
-Merge, CI, Railway deployment, and production HTTP/rendered-browser QA remain
-pending and are not claimed by this local result.
+The initial no-fast-forward merge `ffc1096` deployed successfully. Production
+HTTP smoke then caught a proxy-authority leak in the deprecated routes' `Link`
+header. Hotfix `b52f8f1`, merged as `c138c99`, changed the header to an
+origin-relative URI while preserving filters and pagination; focused 9/9 and
+affected 174/174 backend gates passed again. Final backend deployment
+`4416ee1a-57d3-41dc-8596-0c20da38bb6f` is successful. Frontend deployment
+`024379e4-dea8-423d-bdc0-1803fcb2c6a1` serves `index-B7Px6sck.js`; the backend-
+only hotfix correctly required no frontend rebuild.
+
+Production homepage, health, readiness, and monitor return 200. The monitor is
+`ok` with zero issues, zero rolling 5xx, zero pool timeouts, and pool occupancy
+1/5. The public compact feed returns five bounded rows plus a cursor. The
+deprecated public route returns exactly 50 rows with `Deprecation: true`,
+`X-Has-More: true`, `X-Next-Offset: 50`, and the public-safe relative next
+link `</api/orgs/ma-legislature/public/proposals?limit=50&offset=50>;
+rel="next"`. No production mutation or synthetic load was performed.
+
+Rendered browser QA is blocked and not claimed. The mandated Chrome runtime
+fails before browser binding because `browser-service.mjs` does not resolve
+within a configured trusted code path; runtime initialization therefore never
+creates `agent`, making the prescribed in-client troubleshooting document
+unreachable. No substitute browser was used.
 
 ## Goal
 
