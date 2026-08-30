@@ -20,12 +20,41 @@ _engine_kwargs: dict = {
 if "sqlite" not in settings.database_url:
     _engine_kwargs["pool_size"] = int(__import__("os").environ.get("DB_POOL_SIZE", "2"))
     _engine_kwargs["max_overflow"] = int(__import__("os").environ.get("DB_MAX_OVERFLOW", "3"))
+    _engine_kwargs["pool_timeout"] = settings.db_pool_timeout_seconds
     _engine_kwargs["pool_recycle"] = 1800  # 30 min — drop idle connections to free memory
     _engine_kwargs["pool_pre_ping"] = True  # tolerate Railway's idle connection drops
 
 engine = create_engine(settings.database_url, **_engine_kwargs)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def pool_snapshot() -> dict:
+    """Return coarse QueuePool counters without connection identities."""
+    pool = engine.pool
+    required = ("size", "checkedout", "overflow")
+    if not all(callable(getattr(pool, name, None)) for name in required):
+        return {
+            "supported": False, "size": None, "max_overflow": None,
+            "capacity": None, "checked_out": None, "current_overflow": None,
+            "utilization_percent": None,
+            "pool_timeout_seconds": settings.db_pool_timeout_seconds,
+        }
+    size = int(pool.size())
+    checked_out = int(pool.checkedout())
+    current_overflow = max(0, int(pool.overflow()))
+    max_overflow = int(_engine_kwargs.get("max_overflow", 0))
+    capacity = max(1, size + max_overflow)
+    return {
+        "supported": True,
+        "size": size,
+        "max_overflow": max_overflow,
+        "capacity": capacity,
+        "checked_out": checked_out,
+        "current_overflow": current_overflow,
+        "utilization_percent": round(100 * checked_out / capacity, 2),
+        "pool_timeout_seconds": settings.db_pool_timeout_seconds,
+    }
 
 
 class Base(DeclarativeBase):
@@ -37,6 +66,13 @@ def get_db() -> Generator[Session, None, None]:
     try:
         yield db
     finally:
+        # Explicit rollback makes the transaction boundary auditable and
+        # guarantees pool-timeout/error paths never return an open transaction
+        # to the pool. Session.close() also rolls back, but keeping it explicit
+        # protects this load-bearing cleanup contract from future Session
+        # configuration changes.
+        if db.in_transaction():
+            db.rollback()
         db.close()
 
 
