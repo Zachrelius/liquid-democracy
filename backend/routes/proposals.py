@@ -44,6 +44,29 @@ from proposal_lifecycle import (
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/proposals", tags=["proposals"])
+feed_router = APIRouter(prefix="/api", tags=["proposal-feed"])
+
+
+@feed_router.get("/proposal-feed", response_model=schemas.ProposalFeedOut)
+def global_proposal_feed(
+    status_filter: str = Query("all", alias="status"),
+    topic_id: Optional[str] = Query(None),
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """Bounded global compatibility feed with Phase 38 viewer visibility."""
+    from proposal_feed import build_feed, global_visibility
+    return build_feed(
+        db,
+        visibility=global_visibility(db, current_user),
+        status=status_filter,
+        topic_id=topic_id,
+        cursor=cursor,
+        limit=limit,
+        viewer=current_user,
+    )
 
 STATUS_TRANSITIONS = {
     "draft": "deliberation",

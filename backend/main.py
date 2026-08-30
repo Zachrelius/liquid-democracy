@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import sys
@@ -13,6 +14,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address  # noqa: F401  (kept for tests that may import)
 from rate_limit_utils import bypass_or_remote_address
 from sqlalchemy import text
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from database import create_tables, get_db, SessionLocal
@@ -78,6 +80,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         request_id = str(uuid.uuid4())
+        request.state.request_id = request_id
         start = time.perf_counter()
         try:
             response = await call_next(request)
@@ -231,6 +234,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(topics.router)
 app.include_router(proposals.router)
+app.include_router(proposals.feed_router)
 app.include_router(delegations.router)
 app.include_router(votes.router)
 app.include_router(admin.router)
@@ -537,8 +541,34 @@ async def startup() -> None:
 # Health check endpoints
 # ---------------------------------------------------------------------------
 
+@app.exception_handler(SQLAlchemyTimeoutError)
+async def database_busy_handler(request: Request, exc: SQLAlchemyTimeoutError):
+    """Narrow QueuePool exhaustion response; unrelated exceptions stay 500."""
+    from database import pool_snapshot
+    from ops_monitoring import record_pool_timeout, sanitize_path
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    counters = pool_snapshot()
+    record_pool_timeout()
+    log.warning(
+        "database pool timeout request_id=%s route=%s checked_out=%s capacity=%s",
+        request_id,
+        sanitize_path(request.url.path),
+        counters.get("checked_out"),
+        counters.get("capacity"),
+    )
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "The database is temporarily busy. Please try again.",
+            "code": "database_busy",
+            "request_id": request_id,
+        },
+        headers={"Retry-After": "2", "Cache-Control": "no-store"},
+    )
+
+
 @app.get("/api/health")
-def health():
+async def health():
     return {"status": "ok", "version": "0.1.0"}
 
 
@@ -557,16 +587,22 @@ def public_config():
     }
 
 
+def _database_ready_check() -> bool:
+    db = SessionLocal()
+    try:
+        db.execute(text("SELECT 1"))
+        return True
+    finally:
+        db.close()
+
+
 @app.get("/api/health/ready")
-def health_ready():
+async def health_ready():
     """Readiness probe — verifies database connectivity."""
     try:
-        db = SessionLocal()
-        try:
-            db.execute(text("SELECT 1"))
-            return {"status": "ok", "database": "connected"}
-        finally:
-            db.close()
+        timeout = max(0.1, float(settings.db_pool_timeout_seconds) + 0.1)
+        await asyncio.wait_for(asyncio.to_thread(_database_ready_check), timeout=timeout)
+        return {"status": "ok", "database": "connected"}
     except Exception:
         return JSONResponse(
             status_code=503,

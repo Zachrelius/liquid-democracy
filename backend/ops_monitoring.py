@@ -40,6 +40,7 @@ PROPOSAL_LIFECYCLE_GRACE_SECONDS = 11 * 60
 
 _STARTED_AT = datetime.now(timezone.utc)
 _REQUEST_FAILURES: deque[dict[str, Any]] = deque(maxlen=200)
+_POOL_TIMEOUTS: deque[datetime] = deque(maxlen=200)
 _EMAIL_STATE: dict[str, Any] = {
     "consecutive_failures": 0,
     "last_failure_at": None,
@@ -104,6 +105,7 @@ def reset_runtime_state_for_tests() -> None:
     """Test-only helper; production never calls this."""
     with _STATE_LOCK:
         _REQUEST_FAILURES.clear()
+        _POOL_TIMEOUTS.clear()
         _EMAIL_STATE.update({
             "consecutive_failures": 0,
             "last_failure_at": None,
@@ -126,6 +128,40 @@ def record_http_failure(
             "request_id": (request_id or "")[:64],
             "status_code": int(status_code),
         })
+
+
+def record_pool_timeout(*, now: Optional[datetime] = None) -> None:
+    """Record occurrence only; never retain route/user/SQL details."""
+    with _STATE_LOCK:
+        _POOL_TIMEOUTS.append(now or _utcnow())
+
+
+def _database_pool_component(now: datetime) -> dict[str, Any]:
+    from database import pool_snapshot
+    counters = pool_snapshot()
+    cutoff = now.timestamp() - REQUEST_WINDOW_SECONDS
+    with _STATE_LOCK:
+        while _POOL_TIMEOUTS and _POOL_TIMEOUTS[0].timestamp() < cutoff:
+            _POOL_TIMEOUTS.popleft()
+        timeout_count = len(_POOL_TIMEOUTS)
+    if not counters["supported"]:
+        return {
+            "status": "unsupported",
+            **counters,
+            "timeout_count_15m": timeout_count,
+            "guidance": "Pool counters are unavailable for this database pool implementation.",
+        }
+    utilization = float(counters["utilization_percent"] or 0)
+    status = "error" if timeout_count or utilization >= 80 else "warning" if utilization >= 60 else "ok"
+    return {
+        "status": status,
+        **counters,
+        "timeout_count_15m": timeout_count,
+        "guidance": (
+            "Inspect request fan-out, slow requests, and pool checkout duration before raising pool size."
+            if status in {"warning", "error"} else "No action required."
+        ),
+    }
 
 
 def record_email_result(success: bool, *, now: Optional[datetime] = None) -> None:
@@ -460,6 +496,7 @@ def build_snapshot(
     )
 
     components["http_5xx"] = _request_component(now)
+    components["database_pool"] = _database_pool_component(now)
     components["email_delivery"] = _email_component()
 
     try:

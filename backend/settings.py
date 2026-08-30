@@ -11,6 +11,9 @@ from typing import Optional
 class Settings(BaseSettings):
     # Database — SQLite default for local dev; set DATABASE_URL for PostgreSQL in production
     database_url: str = "sqlite:///./liquid_democracy.db"
+    # Phase 103 — fail fast under checkout contention.  Pool size/overflow
+    # remain environment-driven in database.py; this is the bounded wait.
+    db_pool_timeout_seconds: float = 5.0
 
     # Auth
     secret_key: str = "change-me-in-production-use-a-long-random-string"

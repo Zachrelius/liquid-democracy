@@ -13,7 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_ as sa_or
+from sqlalchemy import and_ as sa_and, func, or_ as sa_or
 
 import auth as auth_utils
 import models
@@ -3361,6 +3361,35 @@ def _public_activity_org_or_404(
 
 
 @public_org_router.get(
+    "/{org_slug}/public/proposal-feed",
+    response_model=schemas.ProposalFeedOut,
+)
+def public_org_proposal_feed(
+    org_slug: str,
+    status_filter: str = Query("all", alias="status"),
+    topic_id: Optional[str] = Query(None),
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Anonymous bounded feed for a discoverable public-activity org."""
+    org = _public_activity_org_or_404(db, org_slug)
+    from proposal_feed import build_feed
+    return build_feed(
+        db,
+        visibility=sa_and(
+            models.Proposal.org_id == org.id,
+            models.Proposal.sub_org_id.is_(None),
+        ),
+        status=status_filter,
+        topic_id=topic_id,
+        cursor=cursor,
+        limit=limit,
+        public=True,
+    )
+
+
+@public_org_router.get(
     "/{org_slug}/public/proposals",
     response_model=list[schemas.ProposalOut],
 )
@@ -4762,6 +4791,31 @@ def delete_org_topic(
 # ============================================================================
 # Proposals (org-scoped)
 # ============================================================================
+
+@router.get("/{org_slug}/proposal-feed", response_model=schemas.ProposalFeedOut)
+def org_proposal_feed(
+    org_slug: str,
+    status_filter: str = Query("all", alias="status"),
+    topic_id: Optional[str] = Query(None),
+    cursor: Optional[str] = Query(None),
+    limit: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth_utils.get_current_user),
+    membership: models.OrgMembership = Depends(require_org_membership),
+):
+    """Compact member feed; visibility is applied in SQL before keyset limit."""
+    org = db.query(models.Organization).filter(models.Organization.slug == org_slug).first()
+    from proposal_feed import build_feed, member_visibility
+    parent_admin = membership_role_system_key(membership) in ("admin", "steward")
+    return build_feed(
+        db,
+        visibility=member_visibility(db, org, current_user, is_admin=parent_admin),
+        status=status_filter,
+        topic_id=topic_id,
+        cursor=cursor,
+        limit=limit,
+        viewer=current_user,
+    )
 
 @router.get("/{org_slug}/proposals", response_model=list[schemas.ProposalOut])
 def list_org_proposals(

@@ -18,6 +18,48 @@ deliverables shipped this pass:
 
 The load-test sections (§4-§6) remain in their Phase 35 code-review-derived state. When Z runs the runbook, those sections get updated with measured numbers in place of estimates.
 
+## August 2026 incident addendum — Phase 103
+
+The Phase 35 conclusion that a single worker with five possible database
+connections was sufficient at projected 5x scale is superseded for proposal
+browsing. On 2026-08-30, `ma-legislature` had 225 active voting proposals.
+One member proposal-page load made one unbounded list request and then one
+`/results` plus one `/my-vote` request per active proposal: 451 proposal-data
+requests (453 page-component API calls after including topics and sub-org
+metadata). The browser launched the 450 child requests concurrently. Railway
+captured QueuePool timeout failures at the configured 2 base + 3 overflow
+connections, while PostgreSQL itself had no waiting locks, ample connection
+capacity, and healthy storage. The primary fault was application-side
+request/connection amplification, not Railway capacity or a PostgreSQL lock.
+
+Phase 103 replaces the proposal browser's raw-array/fan-out path with compact
+cursor-paginated feeds (25 default, 100 maximum), eager card projection, and
+page-batched canonical vote resolution. Aggregate result computation moved off
+list cards and remains on proposal detail. The normal member first render now
+makes three API calls after org context (feed, topics, sub-org metadata), with
+zero per-proposal result or vote calls. Each Load more action makes one feed
+request. Public landing preview requests exactly five items.
+
+Measured route-level SQLite statement counts were 18 for a 25-item member
+page, 5 public, 13 global, and 25 for first-page `unvoted` across 250 voting
+proposals. A disposable PostgreSQL 16 proof on Windows 10 build 19045,
+Python 3.12.13, and 8 logical CPUs completed 158/158 requests at HTTP 200 with
+zero pool timeouts or unexpected 5xx. The required rerun measured feed p50
+492.84 ms, p95 1,168.47 ms, p99 1,189.03 ms; health p95 225.32 ms; and a
+20,746-byte largest feed payload. The first run's health p95 was 378.15 ms and
+missed the 250 ms gate; the mandated rerun passed and is reported rather than
+silently waiving the miss. Peak server pool occupancy reached 5/5, returned
+from baseline 1/5 to 1/5 within five seconds, and left zero connections idle in
+transaction for more than five seconds and zero waiting locks.
+
+EXPLAIN (ANALYZE, BUFFERS) on 250 and 2,500 proposal fixtures found bounded
+in-memory top-N sorts with zero shared reads. At 2,500 rows, default/voting/
+cursor queries executed in 2.905/2.748/2.764 ms and the topic query in
+5.492 ms, using the existing `org_id` and `proposal_topics` primary-key
+indexes. No new index or migration was justified. The connection-pool default
+therefore remains 2 + 3; Phase 103 improves bounded work and fail-fast behavior
+without masking the incident by increasing pool size.
+
 ---
 **Methodology:** Measurement-first audit per Phase 35 spec. This pass combines
 (1) instrumentation infrastructure shipped for future load testing, (2) a

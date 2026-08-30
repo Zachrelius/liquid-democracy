@@ -878,6 +878,8 @@ class ProposalOut(BaseModel):
     # proposals — non-election callers see byte-identical responses.
     is_election: bool = False
     election_title_id: Optional[str] = None
+
+
     election_title_name: Optional[str] = None
     election_candidates: list[str] = []
     # True iff the requesting viewer has signed (FE renders Sign vs
@@ -928,6 +930,52 @@ class ProposalOut(BaseModel):
     next_status: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+# Phase 103 — intentionally compact proposal-feed projection.  Keep this
+# separate from ProposalOut: list browsing must not accidentally grow back
+# body/revision/result/eligibility payloads as detail surfaces evolve.
+class ProposalFeedAuthorOut(BaseModel):
+    id: str
+    display_name: str
+
+
+class ProposalFeedProposalOut(BaseModel):
+    id: str
+    title: str
+    author: ProposalFeedAuthorOut
+    status: str
+    voting_method: str
+    count_mode: Optional[str] = None
+    stable_result_required: Optional[bool] = None
+    sub_org_id: Optional[str] = None
+    topics: list[ProposalTopicOut] = []
+    created_at: datetime
+    voting_start: Optional[datetime] = None
+    voting_end: Optional[datetime] = None
+    is_election: bool = False
+    option_count: int = 0
+
+
+class ProposalFeedViewerVoteOut(BaseModel):
+    has_effective_vote: bool
+    is_direct: Optional[bool] = None
+    binary_value: Optional[str] = None
+    selection_count: Optional[int] = None
+    cast_by_display_name: Optional[str] = None
+
+
+class ProposalFeedItemOut(BaseModel):
+    proposal: ProposalFeedProposalOut
+    # Public feeds serialize this consistently as null.  Authenticated feeds
+    # populate it even when no ballot exists (`has_effective_vote=false`).
+    viewer_vote: Optional[ProposalFeedViewerVoteOut] = None
+
+
+class ProposalFeedOut(BaseModel):
+    items: list[ProposalFeedItemOut]
+    next_cursor: Optional[str] = None
+    has_more: bool
 
 
 class ProposalRevisionOut(BaseModel):
