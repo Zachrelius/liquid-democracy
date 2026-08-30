@@ -6,13 +6,11 @@ import inspect
 import time
 
 import pytest
-from fastapi import Depends
+from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import OperationalError, TimeoutError as SQLAlchemyTimeoutError
 
 import database
-from database import get_db
-from main import app
 import main
 import ops_monitoring
 from settings import settings
@@ -83,14 +81,16 @@ def test_queuepool_timeout_is_json_503_and_dependency_cleanup_runs(monkeypatch):
         raise SQLAlchemyTimeoutError("QueuePool limit reached; secret sql must not leak")
 
     path = "/api/_phase103-test-pool-timeout"
-    if not any(route.path == path for route in app.routes):
-        app.add_api_route(path, busy_route, methods=["GET"])
+    test_app = FastAPI()
+    test_app.add_exception_handler(SQLAlchemyTimeoutError, main.database_busy_handler)
+    test_app.add_middleware(main.RequestLoggingMiddleware)
+    test_app.add_api_route(path, busy_route, methods=["GET"])
     monkeypatch.setattr(database, "pool_snapshot", lambda: {
         "supported": True, "size": 2, "max_overflow": 3, "capacity": 5,
         "checked_out": 5, "current_overflow": 3, "utilization_percent": 100.0,
         "pool_timeout_seconds": 5.0,
     })
-    response = TestClient(app, raise_server_exceptions=False).get(path)
+    response = TestClient(test_app, raise_server_exceptions=False).get(path)
     assert response.status_code == 503
     assert response.headers["Retry-After"] == "2"
     assert response.headers["Cache-Control"] == "no-store"
@@ -106,9 +106,11 @@ def test_unrelated_sqlalchemy_error_is_not_reclassified_as_database_busy():
         raise OperationalError("SELECT hidden", {}, Exception("boom"))
 
     path = "/api/_phase103-test-unrelated-error"
-    if not any(route.path == path for route in app.routes):
-        app.add_api_route(path, broken_route, methods=["GET"])
-    response = TestClient(app, raise_server_exceptions=False).get(path)
+    test_app = FastAPI()
+    test_app.add_exception_handler(SQLAlchemyTimeoutError, main.database_busy_handler)
+    test_app.add_middleware(main.RequestLoggingMiddleware)
+    test_app.add_api_route(path, broken_route, methods=["GET"])
+    response = TestClient(test_app, raise_server_exceptions=False).get(path)
     assert response.status_code == 500
     assert response.headers.get("Retry-After") is None
     assert "database_busy" not in response.text
