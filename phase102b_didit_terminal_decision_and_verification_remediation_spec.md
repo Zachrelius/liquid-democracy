@@ -1,6 +1,6 @@
 # Phase 102b — Didit Terminal-Decision Enforcement and Verification Remediation
 
-**Status:** SPEC READY / IMPLEMENTATION NOT STARTED. Written August 27, 2026 after a production investigation confirmed that a Didit session with overall status `Abandoned`, an approved ID-document step, and no completed liveness or face-match result was incorrectly promoted by Liquid Democracy to `address_on_id`.
+**Status:** COMPLETE / DEPLOYED August 30, 2026. Written August 27, 2026 after a production investigation confirmed that a Didit session with overall status `Abandoned`, an approved ID-document step, and no completed liveness or face-match result was incorrectly promoted by Liquid Democracy to `address_on_id`.
 
 ## Goal
 
