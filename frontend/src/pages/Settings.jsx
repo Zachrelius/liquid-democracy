@@ -3,7 +3,7 @@ import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 import api from '../api';
 import { resizeImageFile } from '../utils/imageResize';
-import { createDisplayNameSaveCoordinator } from '../utils/displayNameEditor';
+import { createDisplayNameSaveCoordinator, displayNameTargetFromSearch } from '../utils/displayNameEditor';
 import { labelForState, VERIFICATION_PROVENANCE_LABELS, UP_FRONT_ONE_IDENTITY_COPY, copyForNameMatchRequired, extractNameMatchRequiredDetail } from '../verificationLabels';
 import Avatar from '../components/Avatar';
 import { useToast } from '../components/Toast';
@@ -237,26 +237,32 @@ export default function Settings() {
     .filter(org => !org.parent_org_id)
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name)), [userOrgs]);
+  const effectiveNameTarget = useMemo(() => {
+    if (nameTarget === 'default' || topLevelOrgs.some(org => org.slug === nameTarget)) {
+      return nameTarget;
+    }
+    return displayNameTargetFromSearch(window.location.search, topLevelOrgs);
+  }, [nameTarget, topLevelOrgs]);
 
   useEffect(() => {
-    nameSaveCoordinator.cancel(nameTarget);
+    nameSaveCoordinator.cancel(effectiveNameTarget);
     const frame = window.requestAnimationFrame(() => {
       setSavingName(false);
       setProfileMsg('');
       setNameErrorDetail(null);
-      if (nameTarget === 'default') setDisplayName(user?.display_name || '');
+      if (effectiveNameTarget === 'default') setDisplayName(user?.display_name || '');
       else {
-        const org = topLevelOrgs.find(item => item.slug === nameTarget);
+        const org = topLevelOrgs.find(item => item.slug === effectiveNameTarget);
         setDisplayName(org?.my_display_name_override ?? org?.my_display_name ?? user?.display_name ?? '');
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [nameTarget, user, topLevelOrgs, nameSaveCoordinator]);
+  }, [effectiveNameTarget, user, topLevelOrgs, nameSaveCoordinator]);
 
   useEffect(() => () => nameSaveCoordinator.cancel(), [nameSaveCoordinator]);
 
   async function saveProfile({ reset = false } = {}) {
-    const target = nameTarget;
+    const target = effectiveNameTarget;
     const request = nameSaveCoordinator.begin(target);
     setProfileMsg('');
     setNameErrorDetail(null);
@@ -266,7 +272,7 @@ export default function Settings() {
       const response = target === 'default'
         ? await api.patch('/api/auth/me', { display_name: bodyName }, { signal: request.signal })
         : await api.patch(`/api/orgs/${target}/me/display-name`, { display_name: bodyName }, { signal: request.signal });
-      if (!request.isCurrent() || target !== nameTarget) return;
+      if (!request.isCurrent() || target !== effectiveNameTarget) return;
       if (target === 'default') {
         setUser(prev => ({ ...prev, display_name: response.display_name }));
         setDisplayName(response.display_name);
@@ -275,6 +281,7 @@ export default function Settings() {
         setDisplayName(response.my_display_name);
         await refreshOrgs();
       }
+      if (!request.isCurrent() || target !== effectiveNameTarget) return;
       setProfileMsg('Saved');
       setTimeout(() => setProfileMsg(''), 2000);
     } catch (e) {
@@ -460,7 +467,7 @@ export default function Settings() {
             <label htmlFor="display-name-target" className="block text-xs text-gray-500 mb-1">Name to edit</label>
             <select
               id="display-name-target"
-              value={nameTarget}
+              value={effectiveNameTarget}
               onChange={e => {
                 const nextTarget = e.target.value;
                 nameSaveCoordinator.cancel(nextTarget);
@@ -481,10 +488,10 @@ export default function Settings() {
               onChange={e => setDisplayName(e.target.value)}
               className="w-full max-w-xs px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
             />
-            {nameTarget === 'default' ? (
+            {effectiveNameTarget === 'default' ? (
               <p className="text-xs text-gray-500 mt-2">Used on platform-level surfaces and in organizations where you have not set a custom name. Existing organization names are not overwritten.</p>
             ) : (() => {
-              const org = topLevelOrgs.find(item => item.slug === nameTarget);
+              const org = topLevelOrgs.find(item => item.slug === effectiveNameTarget);
               return (
                 <div className="text-xs text-gray-500 mt-2 space-y-1">
                   <p>{org?.my_display_name_override ? 'Customized for this organization.' : 'Using your default name.'} Current effective name: <span className="font-medium text-gray-700">{org?.my_display_name || user?.display_name}</span></p>
@@ -501,15 +508,15 @@ export default function Settings() {
             <button
               onClick={() => saveProfile()}
               disabled={savingName || !displayName.trim() || (
-                nameTarget === 'default'
+                effectiveNameTarget === 'default'
                   ? displayName.trim() === user?.display_name
-                  : displayName.trim() === (topLevelOrgs.find(org => org.slug === nameTarget)?.my_display_name_override || '')
+                  : displayName.trim() === (topLevelOrgs.find(org => org.slug === effectiveNameTarget)?.my_display_name_override || '')
               )}
               className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
             >
-              {savingName ? 'Saving…' : nameTarget === 'default' ? 'Save default name' : 'Save for this organization'}
+              {savingName ? 'Saving…' : effectiveNameTarget === 'default' ? 'Save default name' : 'Save for this organization'}
             </button>
-            {nameTarget !== 'default' && topLevelOrgs.find(org => org.slug === nameTarget)?.my_display_name_override != null && (
+            {effectiveNameTarget !== 'default' && topLevelOrgs.find(org => org.slug === effectiveNameTarget)?.my_display_name_override != null && (
               <button
                 type="button"
                 onClick={() => saveProfile({ reset: true })}

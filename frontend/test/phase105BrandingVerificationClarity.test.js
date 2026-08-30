@@ -108,12 +108,14 @@ test('settings uses the org list once, typed writes, deep link, reset, and selec
   const settings = source('pages/Settings.jsx');
   assert.match(settings, /id="display-names"/);
   assert.match(settings, /displayNameOrg/);
+  assert.match(settings, /displayNameTargetFromSearch\(window\.location\.search, topLevelOrgs\)/);
   assert.match(settings, /userOrgs[\s\S]*sort\(\(a, b\) => a\.name\.localeCompare/);
   assert.match(settings, /\/me\/display-name`/);
   assert.match(settings, /display_name: bodyName/);
   assert.match(settings, /saveProfile\(\{ reset: true \}\)/);
-  assert.match(settings, /nameSaveCoordinator\.cancel\(nameTarget\)/);
+  assert.match(settings, /nameSaveCoordinator\.cancel\(effectiveNameTarget\)/);
   assert.match(settings, /nameSaveCoordinator\.begin\(target\)/);
+  assert.match(settings, /await refreshOrgs\(\);[\s\S]*?if \(!request\.isCurrent\(\)/);
   assert.doesNotMatch(settings, /api\.get\(`\/api\/orgs\/\$\{[^}]+\}`/);
 });
 
