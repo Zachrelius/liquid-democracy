@@ -17,9 +17,16 @@ import { getDerivedAccent } from '../../utils/color_derive';
 import renderMarkdown from '../../utils/renderMarkdown';
 // Phase 76c — country picker for residency-scope entries.
 import { COUNTRIES, countryName } from '../../utils/countries';
+import { contrastRatio, normalizeHexColor } from '../../utils/colorContrast';
 import {
   proposalPolicyErrorsFromApi,
+  proposalPolicyChoice,
+  proposalPolicyStorage,
+  requirementStorage,
+  storedRequirementChoice,
+  VISIBLE_REQUIREMENT_OPTIONS,
   validateProposalVerificationPolicy,
+  verificationSettingsErrorFromApi,
 } from '../../utils/proposalVerificationPolicy';
 
 // Phase 14 F3 — public landing page intro text length cap. Matches the
@@ -89,6 +96,7 @@ function formatDuration(seconds) {
 // rendering" before any explicit pick.
 const PLATFORM_PRIMARY_DEFAULT = '#1B3A5C';
 const PLATFORM_ACCENT_DEFAULT = '#2E75B6';
+const PLATFORM_HEADER_TEXT_DEFAULT = '#FFFFFF';
 
 // Phase 12.7 F4 — basic hex validator for the synced hex text inputs.
 // The native <input type="color"> always emits a valid #RRGGBB so the
@@ -233,7 +241,11 @@ export default function OrgSettings() {
   const [msg, setMsg] = useState('');
   const [proposalPolicyErrors, setProposalPolicyErrors] = useState({});
   const proposalFloorRef = useRef(null);
-  const proposalJurisdictionRef = useRef(null);
+  const membershipFloorRef = useRef(null);
+  const residencyScopeRef = useRef(null);
+  const roleFloorRef = useRef(null);
+  const nameMatchRef = useRef(null);
+  const [namePolicyConflict, setNamePolicyConflict] = useState(null);
   // Phase 77 — member DM policy save-in-flight flag.
   const [savingDmPolicy, setSavingDmPolicy] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
@@ -264,6 +276,11 @@ export default function OrgSettings() {
   const [savingDelegation, setSavingDelegation] = useState(false);
   // Phase 88a — Weighted-voting section saving state.
   const [savingWeightedVoting, setSavingWeightedVoting] = useState(false);
+  const nameMatchEnabled = !!settings.verification_require_name_match
+    && settings.verification_require_name_match !== 'off';
+  const nameMatchScope = nameMatchEnabled
+    ? (settings.verification_name_match_scope || 'all_verified_members')
+    : 'off';
 
   // Phase 12.7 F4 — Branding section local state.
   //
@@ -279,6 +296,8 @@ export default function OrgSettings() {
   // OFF, the steward picks the accent freely.
   const [primaryColor, setPrimaryColor] = useState(PLATFORM_PRIMARY_DEFAULT);
   const [accentColor, setAccentColor] = useState(PLATFORM_ACCENT_DEFAULT);
+  const [headerTextColor, setHeaderTextColor] = useState(null);
+  const [customHeaderTextColor, setCustomHeaderTextColor] = useState(PLATFORM_HEADER_TEXT_DEFAULT);
   const [autoDeriveAccent, setAutoDeriveAccent] = useState(true);
   const [savingBranding, setSavingBranding] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -368,6 +387,8 @@ export default function OrgSettings() {
 
   useEffect(() => {
     if (currentOrg) {
+      // Existing form hydration intentionally mirrors the selected org.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setName(currentOrg.name);
       setDescription(currentOrg.description || '');
       // Phase 14 F3 — the join_policy enum expanded from {invite_only,
@@ -429,6 +450,9 @@ export default function OrgSettings() {
       } else {
         setAccentColor(b.accent_color || PLATFORM_ACCENT_DEFAULT);
       }
+      const configuredHeader = normalizeHexColor(b.header_text_color);
+      setHeaderTextColor(configuredHeader);
+      setCustomHeaderTextColor(configuredHeader || PLATFORM_HEADER_TEXT_DEFAULT);
       // Phase 14 F3 — intro_text lives in settings JSON (B1 doesn't add a
       // schema column, just a documented key). Backend's get_intro_text
       // helper treats empty string as null, so we hydrate empty when the
@@ -473,25 +497,30 @@ export default function OrgSettings() {
   // edits also recompute accent live.
   useEffect(() => {
     if (autoDeriveAccent) {
+      // Picker display follows the primary while auto-derive is selected.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setAccentColor(getDerivedAccent(primaryColor));
     }
   }, [primaryColor, autoDeriveAccent]);
 
   if (!currentOrg) return <div className="text-center py-16 text-gray-400">No organization selected</div>;
 
+  const previewHeaderText = normalizeHexColor(headerTextColor) || PLATFORM_HEADER_TEXT_DEFAULT;
+  const headerContrast = contrastRatio(previewHeaderText, primaryColor);
+  const headerContrastPasses = headerContrast != null && headerContrast >= 4.5;
+
   async function handleSave() {
     const policyErrors = validateProposalVerificationPolicy(settings);
     if (Object.keys(policyErrors).length > 0) {
       setProposalPolicyErrors(policyErrors);
       setMsg('Fix the proposal verification policy before saving.');
-      const firstInvalid = policyErrors.verification_proposal_floor
-        ? proposalFloorRef : proposalJurisdictionRef;
-      firstInvalid.current?.focus();
+      proposalFloorRef.current?.focus();
       return;
     }
     setSaving(true);
     setMsg('');
     setProposalPolicyErrors({});
+    setNamePolicyConflict(null);
     try {
       // Phase 57 — persist all three access axes alongside the rest of
       // the settings. Backend normalizes hidden+public → hidden+
@@ -509,13 +538,27 @@ export default function OrgSettings() {
       setMsg('Settings saved');
       setTimeout(() => setMsg(''), 3000);
     } catch (e) {
+      const verificationError = verificationSettingsErrorFromApi(e);
+      if (verificationError) {
+        setProposalPolicyErrors(verificationError.fields);
+        setNamePolicyConflict(verificationError.conflict);
+        setMsg(verificationError.conflict
+          ? 'Existing public delegates must resolve these requirements before this rule can be enabled.'
+          : 'Fix the highlighted verification settings before saving.');
+        const firstKey = Object.keys(verificationError.fields)[0] || '';
+        const focusRef = firstKey.includes('membership') ? membershipFloorRef
+          : firstKey.includes('role') ? roleFloorRef
+            : firstKey.includes('residency_scope') ? residencyScopeRef
+              : firstKey.includes('name_match') ? nameMatchRef
+                : proposalFloorRef;
+        focusRef.current?.focus();
+        return;
+      }
       const backendPolicyErrors = proposalPolicyErrorsFromApi(e);
       if (Object.keys(backendPolicyErrors).length > 0) {
         setProposalPolicyErrors(backendPolicyErrors);
         setMsg('Fix the proposal verification policy before saving.');
-        const firstInvalid = backendPolicyErrors.verification_proposal_floor
-          ? proposalFloorRef : proposalJurisdictionRef;
-        firstInvalid.current?.focus();
+        proposalFloorRef.current?.focus();
       } else {
         setMsg(e.message || 'Failed to save');
       }
@@ -663,7 +706,7 @@ export default function OrgSettings() {
       setLeaveTransferMembers(
         list.filter(m => m.status !== 'pending' && m.user_id !== currentOrg?.user_id),
       );
-    } catch (e) {
+    } catch {
       toast.error('Failed to load members for handoff');
     }
   }
@@ -752,6 +795,39 @@ export default function OrgSettings() {
     setSettings(prev => ({ ...prev, [key]: value }));
   }
 
+  function updateMembershipRequirement(choice) {
+    const next = requirementStorage(choice);
+    if (!next) return;
+    setSettings(prev => ({
+      ...prev,
+      verification_membership_floor: next.floor,
+      verification_membership_require_residency: next.requireResidency,
+    }));
+  }
+
+  function updateRoleRequirement(roleKey, choice) {
+    const next = requirementStorage(choice);
+    if (!next) return;
+    setSettings(prev => ({
+      ...prev,
+      verification_role_floors: {
+        ...(prev.verification_role_floors || {}),
+        [roleKey]: next.floor || undefined,
+      },
+      verification_role_require_residency: {
+        ...(prev.verification_role_require_residency || {}),
+        [roleKey]: next.requireResidency || undefined,
+      },
+    }));
+  }
+
+  function updateProposalPolicy(choice) {
+    const next = proposalPolicyStorage(choice);
+    if (!next) return;
+    setSettings(prev => ({ ...prev, ...next }));
+    setProposalPolicyErrors({});
+  }
+
   // Phase 77 — member-to-member DM policy. Save-on-change (mirrors the
   // topic-categories toggle pattern). Persists settings.member_dm_policy.
   async function handleSaveMemberDmPolicy(value) {
@@ -815,7 +891,7 @@ export default function OrgSettings() {
   }
 
   async function handleSaveBranding() {
-    if (!isValidHex(primaryColor) || !isValidHex(accentColor)) {
+    if (!isValidHex(primaryColor) || !isValidHex(accentColor) || (headerTextColor && !normalizeHexColor(headerTextColor))) {
       toast.error('Colors must be a 6-digit hex like #1B3A5C');
       return;
     }
@@ -828,6 +904,7 @@ export default function OrgSettings() {
         primary_color: primaryColor,
         accent_color: accentColor,
         accent_auto_derived: autoDeriveAccent,
+        header_text_color: headerTextColor,
       });
       await refreshOrgs();
       toast.success('Branding saved');
@@ -1182,6 +1259,7 @@ export default function OrgSettings() {
         primary_color: null,
         accent_color: null,
         accent_auto_derived: true,
+        header_text_color: null,
       });
       await refreshOrgs();
       toast.success('Branding reset to platform defaults');
@@ -1535,6 +1613,85 @@ export default function OrgSettings() {
                 {autoDeriveAccent && ' Auto-derived as a lighter shade of the primary color.'}
               </p>
             </div>
+
+            {/* Phase 105 — explicit text color for every control rendered on
+                the branded header. Null keeps the exact legacy palette. */}
+            <fieldset className="space-y-3 pt-4 border-t border-gray-100">
+              <legend className="block text-sm font-medium text-gray-700">Header text color</legend>
+              <div className="flex flex-wrap gap-4">
+                {[
+                  { value: '#FFFFFF', label: 'White' },
+                  { value: '#000000', label: 'Black' },
+                  { value: 'custom', label: 'Custom' },
+                  { value: 'default', label: 'Platform default' },
+                ].map(option => {
+                  const selected = option.value === 'custom'
+                    ? !!headerTextColor && !['#FFFFFF', '#000000'].includes(headerTextColor.toUpperCase())
+                    : option.value === 'default'
+                      ? headerTextColor == null
+                      : headerTextColor?.toUpperCase() === option.value;
+                  return (
+                    <label key={option.value} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="header-text-color"
+                        checked={selected}
+                        onChange={() => {
+                          if (option.value === 'default') setHeaderTextColor(null);
+                          else if (option.value === 'custom') setHeaderTextColor(customHeaderTextColor);
+                          else setHeaderTextColor(option.value);
+                        }}
+                        className="accent-[var(--brand-accent)]"
+                      />
+                      {option.label}
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="flex items-center gap-3">
+                <input
+                  type="color"
+                  value={normalizeHexColor(customHeaderTextColor) || PLATFORM_HEADER_TEXT_DEFAULT}
+                  onChange={e => {
+                    setCustomHeaderTextColor(e.target.value.toUpperCase());
+                    setHeaderTextColor(e.target.value.toUpperCase());
+                  }}
+                  className="h-10 w-14 border border-gray-300 rounded cursor-pointer p-0"
+                  aria-label="Custom header text color picker"
+                />
+                <input
+                  type="text"
+                  value={customHeaderTextColor}
+                  onChange={e => {
+                    setCustomHeaderTextColor(e.target.value);
+                    setHeaderTextColor(e.target.value);
+                  }}
+                  className={`px-3 py-2 border rounded-lg text-sm font-mono w-32 focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] ${
+                    normalizeHexColor(customHeaderTextColor) ? 'border-gray-300' : 'border-red-400'
+                  }`}
+                  aria-label="Custom header text color hex"
+                />
+              </div>
+              <div
+                className="rounded-lg px-4 py-3 text-sm"
+                style={{ backgroundColor: primaryColor, color: previewHeaderText }}
+                aria-label="Header color preview"
+              >
+                <span className="font-semibold">{currentOrg.name}</span>
+                <span style={{ opacity: 0.78 }} className="ml-5">Proposals</span>
+                <span style={{ opacity: 0.62 }} className="ml-5">Account</span>
+              </div>
+              {headerContrast != null && (
+                <p className={`text-xs ${headerContrastPasses ? 'text-green-700' : 'text-amber-700'}`} role="status">
+                  Contrast ratio {headerContrast.toFixed(2)}:1 — {headerContrastPasses
+                    ? 'passes WCAG AA for normal text.'
+                    : 'warning: below WCAG AA for normal text. You can still save this color.'}
+                </p>
+              )}
+              <p className="text-xs text-gray-500">
+                Platform default preserves the existing white, blue-muted header palette.
+              </p>
+            </fieldset>
 
             {/* Save / Reset */}
             <div className="flex items-center gap-3 pt-4 border-t border-gray-100">
@@ -2474,6 +2631,28 @@ export default function OrgSettings() {
             Proposal creation
           </h2>
           <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-4">
+            {Object.keys(proposalPolicyErrors).length > 0 && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800" role="alert">
+                <p className="font-medium">Some verification settings need attention:</p>
+                <ul className="list-disc pl-5 mt-1">
+                  {Object.entries(proposalPolicyErrors).map(([field, error]) => (
+                    <li key={field}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {namePolicyConflict && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900" role="alert">
+                <p className="font-medium">{namePolicyConflict.total} public delegate{namePolicyConflict.total === 1 ? '' : 's'} must verify or change their display name before this rule can be enabled.</p>
+                {namePolicyConflict.items.length > 0 && (
+                  <ul className="list-disc pl-5 mt-1">
+                    {namePolicyConflict.items.map(item => (
+                      <li key={item.user_id}>{item.display_name} — {item.reason_code === 'verification_required' ? 'identity verification required' : 'display name does not match'}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
             <p className="text-sm text-gray-600">
               Who can create a proposal depends on the <em>Create proposals</em> permission in your role matrix. The toggle below opens an alternative path for everyone else: a petition that goes live once enough members co-sign.
             </p>
@@ -2916,30 +3095,26 @@ export default function OrgSettings() {
             <label className="text-sm space-y-1 block">
               <span className="block text-xs text-gray-600">Required to join this organization</span>
               <select
-                value={settings.verification_membership_floor || ''}
-                onChange={e => updateSetting('verification_membership_floor', e.target.value || null)}
+                ref={membershipFloorRef}
+                value={storedRequirementChoice(
+                  settings.verification_membership_floor,
+                  settings.verification_membership_require_residency,
+                )}
+                onChange={e => updateMembershipRequirement(e.target.value)}
                 className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
               >
-                <option value="">No verification required (default)</option>
-                <option value="identity">Identity verified</option>
-                <option value="address_on_id">Verified resident</option>
+                {storedRequirementChoice(
+                  settings.verification_membership_floor,
+                  settings.verification_membership_require_residency,
+                ) === 'legacy' && (
+                  <option value="legacy" disabled>Legacy: verified ID address requirement</option>
+                )}
+                {VISIBLE_REQUIREMENT_OPTIONS.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
               </select>
-              {/* Phase 52j J2 — "Verified resident" now reveals the
-                  org-level residency scope editor (J1). Toggling on
-                  "require residency" for membership opts this gate
-                  into the org-wide scope. */}
-              {settings.verification_membership_floor === 'address_on_id' && (
-                <label className="flex items-start gap-3 cursor-pointer pt-2">
-                  <input
-                    type="checkbox"
-                    checked={!!settings.verification_membership_require_residency}
-                    onChange={e => updateSetting('verification_membership_require_residency', e.target.checked)}
-                    className="mt-0.5 accent-[var(--brand-accent)]"
-                  />
-                  <span className="text-xs text-gray-600">
-                    Also require the member to live inside this organization's residency scope (defined below). When off, "Verified resident" requires only that the member's ID has a verified address.
-                  </span>
-                </label>
+              {storedRequirementChoice(settings.verification_membership_floor, settings.verification_membership_require_residency) === 'legacy' && (
+                <span className="block text-xs text-amber-700">Changing this setting requires choosing identity or verified resident. Unrelated saves preserve the legacy rule.</span>
               )}
             </label>
 
@@ -2948,12 +3123,12 @@ export default function OrgSettings() {
                 toggles a "require residency" boolean to reference it.
                 Each entry is a (state, optional city) pair; a user
                 satisfies the scope by matching ANY entry. */}
-            <div className="pt-3 border-t border-gray-200 space-y-2">
+            <div ref={residencyScopeRef} tabIndex={-1} className="pt-3 border-t border-gray-200 space-y-2 focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)] rounded">
               <label htmlFor="org-settings-high-confidence-action" className="block text-xs font-medium text-gray-700">
-                Residency scope (where members must live, when a gate requires it)
+                Allowed residency locations
               </label>
               <p className="text-xs text-gray-500">
-                Add one or more allowed locations; a member qualifies by matching any of them. Pick a country first. For the United States you can narrow to a two-letter state code (MA, NH, CA — leave it blank to match anyone in the US) and an optional city. City entries are hashed with the state, so "Springfield, MA" and "Springfield, IL" are treated as different places. For other countries, matching is at the country level for now (state/province + city within non-US countries is coming soon).
+                Every “Verified resident” requirement uses this one shared list. A member qualifies by matching any allowed location.
               </p>
               <div className="space-y-2">
                 {(settings.verification_residency_scope || []).map((entry, idx) => {
@@ -3053,32 +3228,25 @@ export default function OrgSettings() {
                   <label className="text-sm flex items-center gap-3">
                     <span className="capitalize text-xs text-gray-600 w-20">{roleKey}</span>
                     <select
-                      value={(settings.verification_role_floors || {})[roleKey] || ''}
-                      onChange={e => updateSetting('verification_role_floors', {
-                        ...(settings.verification_role_floors || {}),
-                        [roleKey]: e.target.value || undefined,
-                      })}
+                      ref={roleKey === 'admin' ? roleFloorRef : undefined}
+                      value={storedRequirementChoice(
+                        (settings.verification_role_floors || {})[roleKey],
+                        (settings.verification_role_require_residency || {})[roleKey],
+                      )}
+                      onChange={e => updateRoleRequirement(roleKey, e.target.value)}
                       className="flex-1 max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
                     >
-                      <option value="">No verification required</option>
-                      <option value="identity">Identity verified</option>
-                      <option value="address_on_id">Verified resident</option>
+                      {storedRequirementChoice(
+                        (settings.verification_role_floors || {})[roleKey],
+                        (settings.verification_role_require_residency || {})[roleKey],
+                      ) === 'legacy' && (
+                        <option value="legacy" disabled>Legacy: verified ID address requirement</option>
+                      )}
+                      {VISIBLE_REQUIREMENT_OPTIONS.map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
                     </select>
                   </label>
-                  {((settings.verification_role_floors || {})[roleKey] === 'address_on_id') && (
-                    <label className="flex items-center gap-3 cursor-pointer pl-20">
-                      <input
-                        type="checkbox"
-                        checked={!!((settings.verification_role_require_residency || {})[roleKey])}
-                        onChange={e => updateSetting('verification_role_require_residency', {
-                          ...(settings.verification_role_require_residency || {}),
-                          [roleKey]: e.target.checked ? true : undefined,
-                        })}
-                        className="accent-[var(--brand-accent)]"
-                      />
-                      <span className="text-xs text-gray-600">Also require residency scope match for this role</span>
-                    </label>
-                  )}
                 </div>
               ))}
             </div>
@@ -3104,14 +3272,16 @@ export default function OrgSettings() {
             <label className="flex items-start gap-3 cursor-pointer pt-2 border-t border-gray-200">
               <input
                 type="checkbox"
-                checked={!!settings.verification_required_for_public_delegate}
+                checked={nameMatchScope === 'public_delegates' || !!settings.verification_required_for_public_delegate}
+                disabled={nameMatchScope === 'public_delegates'}
                 onChange={e => updateSetting('verification_required_for_public_delegate', e.target.checked)}
                 className="mt-0.5 accent-[var(--brand-accent)]"
               />
               <div>
                 <p className="text-sm text-gray-700">Require verification to become a public delegate</p>
                 <p className="text-xs text-gray-500">
-                  Default (off): any member can submit for public-delegate promotion. When on, only members who satisfy this org's membership verification floor AND aren't currently flagged as a possible duplicate of another member can request public-delegate status.
+                  When on, public delegates must have at least identity verification, satisfy any stronger membership/residency rule, and have no unresolved duplicate flag.
+                  {nameMatchScope === 'public_delegates' && ' This is required by the legal-name rule below.'}
                 </p>
               </div>
             </label>
@@ -3163,28 +3333,53 @@ export default function OrgSettings() {
                 must match; action picks block vs. flag on a non-match
                 (Z's locked decision: both options offered per org). */}
             <div className="pt-2 border-t border-gray-200 space-y-1">
-              <label htmlFor="org-settings-name-match" className="block text-xs font-medium text-gray-700">
-                Require display name to match legal name
+              <label htmlFor="org-settings-name-match-scope" className="block text-xs font-medium text-gray-700">
+                Legal-name display rule
               </label>
               <select
-                id="org-settings-name-match"
-                value={settings.verification_require_name_match || 'off'}
-                onChange={e => updateSetting('verification_require_name_match', e.target.value)}
+                ref={nameMatchRef}
+                id="org-settings-name-match-scope"
+                value={nameMatchScope}
+                onChange={e => {
+                  const scope = e.target.value;
+                  setSettings(prev => ({
+                    ...prev,
+                    verification_name_match_scope: scope === 'off' ? null : scope,
+                    verification_require_name_match: scope === 'off'
+                      ? 'off'
+                      : (prev.verification_require_name_match === 'off' || !prev.verification_require_name_match
+                        ? 'either' : prev.verification_require_name_match),
+                  }));
+                }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
               >
-                <option value="off">Off (any display name allowed)</option>
-                <option value="first">First name must match ID</option>
-                <option value="last">Last name must match ID</option>
-                <option value="either">Either first or last name must match ID</option>
-                <option value="full">Full name must match ID</option>
+                <option value="off">Off</option>
+                <option value="public_delegates">Public delegates only (recommended)</option>
+                <option value="all_verified_members">All verified members</option>
               </select>
               <p className="text-xs text-gray-500">
-                When set, a verified member's display name in this org is checked against the legal name on their ID (case-insensitive, punctuation-stripped). Unverified members are unconstrained — the membership verification floor is what forces them to verify first.
+                Public-delegate rules are blocking and apply to both public and public-accepting profiles. Members can set a compliant name for this organization without changing their account default.
               </p>
             </div>
 
-            {(settings.verification_require_name_match
-                && settings.verification_require_name_match !== 'off') && (
+            {nameMatchEnabled && (
+              <div className="pt-2 space-y-1">
+                <label htmlFor="org-settings-name-match" className="block text-xs font-medium text-gray-700">Required name match</label>
+                <select
+                  id="org-settings-name-match"
+                  value={settings.verification_require_name_match}
+                  onChange={e => updateSetting('verification_require_name_match', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
+                >
+                  <option value="first">First name must match ID</option>
+                  <option value="last">Last name must match ID</option>
+                  <option value="either">Either first or last name must match ID</option>
+                  <option value="full">Full name must match ID</option>
+                </select>
+              </div>
+            )}
+
+            {nameMatchEnabled && nameMatchScope === 'all_verified_members' && (
               <div className="pt-2 space-y-1">
                 <label htmlFor="org-settings-name-match-action" className="block text-xs font-medium text-gray-700">
                   Action on non-matching display name
@@ -3237,89 +3432,34 @@ export default function OrgSettings() {
                 proposal floor at vote time and is the fresh-org default. */}
             <div className="pt-2 border-t border-gray-200 space-y-1">
               <label htmlFor="org-settings-proposal-verification-policy" className="block text-xs font-medium text-gray-700">
-                Proposal verification policy
+                Who must verify to vote on proposals?
               </label>
               <select
+                ref={proposalFloorRef}
                 id="org-settings-proposal-verification-policy"
-                value={settings.verification_proposal_policy || 'author'}
-                onChange={e => {
-                  updateSetting('verification_proposal_policy', e.target.value);
-                  setProposalPolicyErrors({});
-                }}
+                value={proposalPolicyChoice(settings)}
+                onChange={e => updateProposalPolicy(e.target.value)}
+                aria-invalid={Object.keys(proposalPolicyErrors).length > 0}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
               >
+                {proposalPolicyChoice(settings) === 'legacy' && (
+                  <option value="legacy" disabled>Legacy proposal verification requirement</option>
+                )}
+                <option value="never">No proposal-level verification</option>
                 <option value="author">Proposal author chooses</option>
-                <option value="always">Always require verification on every proposal</option>
-                <option value="never">Never require verification on proposals (new organization default)</option>
+                <option value="always_identity">Identity verified for every proposal</option>
+                <option value="always_resident">Verified resident for every proposal</option>
               </select>
               <p className="text-xs text-gray-500">
-                Controls how the per-proposal verification gate is set. "Author chooses" lets each proposal add a requirement. "Always" applies the org-wide floor below to every proposal's vote. "Never" prevents one proposal from unexpectedly requiring verification when the organization is not using it.
+                Resident requirements use the allowed residency locations above. Proposal authors can choose only the same three supported levels.
               </p>
+              {Object.values(proposalPolicyErrors).filter(Boolean).map((error, index) => (
+                <p key={index} role="alert" className="text-xs text-red-600">{error}</p>
+              ))}
+              {proposalPolicyChoice(settings) === 'legacy' && (
+                <p className="text-xs text-amber-700">Changing this policy requires choosing one of the supported options. Unrelated saves preserve its legacy behavior.</p>
+              )}
             </div>
-
-            {settings.verification_proposal_policy === 'always' && (
-              <div className="pt-2 space-y-1">
-                <label htmlFor="org-settings-proposal-verification-floor" className="block text-xs font-medium text-gray-700">
-                  Required floor for every proposal <span aria-hidden="true" className="text-red-600">*</span>
-                </label>
-                <select
-                  ref={proposalFloorRef}
-                  id="org-settings-proposal-verification-floor"
-                  value={settings.verification_proposal_floor || ''}
-                  onChange={e => {
-                    updateSetting('verification_proposal_floor', e.target.value || null);
-                    setProposalPolicyErrors(prev => ({
-                      ...prev,
-                      verification_proposal_floor: undefined,
-                    }));
-                  }}
-                  required
-                  aria-invalid={!!proposalPolicyErrors.verification_proposal_floor}
-                  aria-describedby={proposalPolicyErrors.verification_proposal_floor ? 'proposal-floor-error' : undefined}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
-                >
-                  <option value="">Select a required floor</option>
-                  <option value="identity">Identity verified</option>
-                  <option value="address_on_id">Verified resident</option>
-                  <option value="residency_verified">Residency proof verified</option>
-                </select>
-                {proposalPolicyErrors.verification_proposal_floor && (
-                  <p id="proposal-floor-error" role="alert" className="text-xs text-red-600">
-                    {proposalPolicyErrors.verification_proposal_floor}
-                  </p>
-                )}
-                {(['address_on_id', 'residency_verified'].includes(settings.verification_proposal_floor)) && (
-                  <div className="mt-2 space-y-1">
-                    <label htmlFor="org-settings-proposal-verification-jurisdiction" className="block text-xs font-medium text-gray-700">
-                      Required jurisdiction <span aria-hidden="true" className="text-red-600">*</span>
-                    </label>
-                    <input
-                      ref={proposalJurisdictionRef}
-                      id="org-settings-proposal-verification-jurisdiction"
-                      type="text"
-                      value={settings.verification_proposal_jurisdiction || ''}
-                      onChange={e => {
-                        updateSetting('verification_proposal_jurisdiction', e.target.value || null);
-                        setProposalPolicyErrors(prev => ({
-                          ...prev,
-                          verification_proposal_jurisdiction: undefined,
-                        }));
-                      }}
-                      required
-                      aria-invalid={!!proposalPolicyErrors.verification_proposal_jurisdiction}
-                      aria-describedby={proposalPolicyErrors.verification_proposal_jurisdiction ? 'proposal-jurisdiction-error' : undefined}
-                      placeholder="U.S. state code (for example, MA)"
-                      className="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
-                    />
-                    {proposalPolicyErrors.verification_proposal_jurisdiction && (
-                      <p id="proposal-jurisdiction-error" role="alert" className="text-xs text-red-600">
-                        {proposalPolicyErrors.verification_proposal_jurisdiction}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         </section>
       )}

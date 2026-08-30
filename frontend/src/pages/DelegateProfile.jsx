@@ -38,6 +38,11 @@ import { useAuth } from '../AuthContext';
 import { useOrg } from '../OrgContext';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/ConfirmDialog';
+import {
+  copyForNameMatchRequired,
+  extractNameMatchRequiredDetail,
+  extractVerificationRequiredDetail,
+} from '../verificationLabels';
 import Avatar from '../components/Avatar';
 import TopicBadge from '../components/TopicBadge';
 import renderMarkdown from '../utils/renderMarkdown';
@@ -77,9 +82,6 @@ function HardRevertDialog({
   const typedOk = !requireType || typed.trim() === displayName;
   const showSoft = fromVisibility === 'public_accepting';
   // Phase 30.3 — softer copy when reverting to followers_only vs private.
-  const targetLabel = targetVisibility === 'followers_only'
-    ? 'restrict to approved followers'
-    : 'make private';
   const targetHeading = targetVisibility === 'followers_only'
     ? `Restrict "${displayName}" to approved followers?`
     : `Make "${displayName}" private?`;
@@ -209,6 +211,28 @@ function TopicRow({
     topicProfile?.position_statement || ''
   );
   const [busy, setBusy] = useState(false);
+  const [visibilityGate, setVisibilityGate] = useState(null);
+
+  function handleVisibilityError(error, fallback) {
+    const verification = extractVerificationRequiredDetail(error);
+    const nameMatch = extractNameMatchRequiredDetail(error);
+    if (verification) {
+      setVisibilityGate({
+        message: 'Identity verification is required before this delegate profile can be public.',
+        to: '/settings#identity-verification',
+        label: 'Open identity verification',
+      });
+    } else if (nameMatch) {
+      setVisibilityGate({
+        message: copyForNameMatchRequired(nameMatch),
+        to: nameMatch.settings_path || `/settings?displayNameOrg=${encodeURIComponent(slug)}#display-names`,
+        label: `Edit your name for ${nameMatch.org_name || 'this organization'}`,
+      });
+    } else {
+      setVisibilityGate(null);
+      toast.error(error.message || fallback);
+    }
+  }
 
   // Phase 31 D1: default radio selection mirrors the backend's row default
   // (Phase 30.3 D2). Was 'private' — that was inconsistent with the row that
@@ -225,12 +249,15 @@ function TopicRow({
 
   // Reset locals if backend topicProfile changes (e.g. after save).
   useEffect(() => {
+    // Existing prop-to-editor synchronization; intentional for this form.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setBio(topicProfile?.bio || '');
     setPositionStatement(topicProfile?.position_statement || '');
   }, [topicProfile?.id, topicProfile?.bio, topicProfile?.position_statement]);
 
   async function patchTopic(patch) {
     setBusy(true);
+    setVisibilityGate(null);
     try {
       const res = await api.patch(
         `/api/orgs/${slug}/delegate-profile/topics/${topic.id}`,
@@ -238,7 +265,7 @@ function TopicRow({
       );
       onChanged?.(res);
     } catch (e) {
-      toast.error(e.message || 'Save failed');
+      handleVisibilityError(e, 'Save failed');
     } finally {
       setBusy(false);
     }
@@ -268,6 +295,7 @@ function TopicRow({
       && (visibility === 'private' || visibility === 'followers_only')
     ) {
       setBusy(true);
+      setVisibilityGate(null);
       try {
         await api.patch(
           `/api/orgs/${slug}/delegate-profile/topics/${topic.id}`,
@@ -284,7 +312,7 @@ function TopicRow({
           toast.success('Submitted for approval — pending review by org administrators');
         }
       } catch (e) {
-        toast.error(e.message || 'Failed to register as public delegate');
+        handleVisibilityError(e, 'Failed to register as public delegate');
       } finally {
         setBusy(false);
       }
@@ -293,6 +321,7 @@ function TopicRow({
     // Backend rejects direct public_accepting on PATCH — use submit endpoint.
     if (newVis === 'public_accepting' && visibility === 'public') {
       setBusy(true);
+      setVisibilityGate(null);
       try {
         const res = await api.post(
           `/api/orgs/${slug}/delegate-profile/topics/${topic.id}/submit-public-accepting`
@@ -300,7 +329,7 @@ function TopicRow({
         onChanged?.(res);
         toast.success('Submitted for approval (or auto-approved if no approvers)');
       } catch (e) {
-        toast.error(e.message || 'Submit failed');
+        handleVisibilityError(e, 'Submit failed');
       } finally {
         setBusy(false);
       }
@@ -379,6 +408,15 @@ function TopicRow({
           </label>
         ))}
       </fieldset>
+
+      {visibilityGate && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900" role="alert">
+          <p>{visibilityGate.message}</p>
+          <Link className="inline-block mt-2 font-medium text-[var(--brand-accent-text)] underline" to={visibilityGate.to}>
+            {visibilityGate.label}
+          </Link>
+        </div>
+      )}
 
       {visibility === 'public' && !pendingApproval && (
         <button
@@ -476,7 +514,7 @@ function TopicRow({
 // --------------------------------------------------------------------------
 // Per-vote rationale composer
 // --------------------------------------------------------------------------
-function VoteRationaleEditor({ vote, slug }) {
+function VoteRationaleEditor({ vote }) {
   const toast = useToast();
   const confirm = useConfirm();
   const [content, setContent] = useState('');
@@ -625,7 +663,7 @@ export default function DelegateProfile() {
   const [profile, setProfile] = useState(null); // OrgDelegateProfileOut
   const [topics, setTopics] = useState([]);
   const [votes, setVotes] = useState([]);
-  const [followerCount, setFollowerCount] = useState(null);
+  const [, setFollowerCount] = useState(null);
   const [delegatorsByTopic, setDelegatorsByTopic] = useState({});
   const [privateDelegatorCountByTopic, setPrivateDelegatorCountByTopic] = useState({});
   const [loading, setLoading] = useState(true);
@@ -710,9 +748,12 @@ export default function DelegateProfile() {
     } finally {
       setLoading(false);
     }
-  }, [slug, currentUser?.id]);
+  }, [slug, currentUser]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const request = Promise.resolve().then(load);
+    return () => { void request; };
+  }, [load]);
 
   // Topic + topicProfile rows.
   const topicRows = useMemo(() => {
@@ -926,7 +967,7 @@ export default function DelegateProfile() {
                     {v.vote_value ? v.vote_value.toUpperCase() : 'Voted'}
                   </span>
                 </div>
-                <VoteRationaleEditor vote={v} slug={slug} />
+                <VoteRationaleEditor vote={v} />
               </div>
             ))}
             {votes.length > 30 && (

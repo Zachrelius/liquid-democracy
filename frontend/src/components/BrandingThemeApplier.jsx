@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { deriveDarker } from '../utils/color_derive';
-import { accessibleAccentTextColor } from '../utils/colorContrast';
+import { accessibleAccentTextColor, hexWithAlpha, normalizeHexColor } from '../utils/colorContrast';
 
 /**
  * Phase 14 F2 — standalone branding theme applier.
@@ -24,6 +24,7 @@ import { accessibleAccentTextColor } from '../utils/colorContrast';
 export default function BrandingThemeApplier({ branding }) {
   const primary = branding?.primary_color || null;
   const accent = branding?.accent_color || null;
+  const headerText = normalizeHexColor(branding?.header_text_color);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -41,13 +42,25 @@ export default function BrandingThemeApplier({ branding }) {
       root.style.removeProperty('--brand-accent');
       root.style.removeProperty('--brand-accent-text');
     }
+    if (headerText) {
+      root.style.setProperty('--brand-header-text', headerText);
+      root.style.setProperty('--brand-header-text-muted', hexWithAlpha(headerText, 0.78));
+      root.style.setProperty('--brand-header-text-subtle', hexWithAlpha(headerText, 0.62));
+    } else {
+      root.style.removeProperty('--brand-header-text');
+      root.style.removeProperty('--brand-header-text-muted');
+      root.style.removeProperty('--brand-header-text-subtle');
+    }
     return () => {
       root.style.removeProperty('--brand-primary');
       root.style.removeProperty('--brand-primary-dark');
       root.style.removeProperty('--brand-accent');
       root.style.removeProperty('--brand-accent-text');
+      root.style.removeProperty('--brand-header-text');
+      root.style.removeProperty('--brand-header-text-muted');
+      root.style.removeProperty('--brand-header-text-subtle');
     };
-  }, [primary, accent]);
+  }, [primary, accent, headerText]);
 
   return null;
 }

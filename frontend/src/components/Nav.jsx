@@ -67,8 +67,8 @@ function OrgSwitcher() {
       ? currentOrg.weighted_voting : parent?.weighted_voting;
     labelNode = (
       <span className="flex items-center gap-1">
-        {parent ? <span className="text-blue-300">{parent.name}</span> : null}
-        <span className="text-blue-400">/</span>
+        {parent ? <span className="text-[var(--brand-header-text-subtle)]">{parent.name}</span> : null}
+        <span className="text-[var(--brand-header-text-subtle)]">/</span>
         <span>{currentOrg.name}</span>
         <VotingModelBadge weightedVoting={subWv} className="ml-1" />
       </span>
@@ -115,7 +115,7 @@ function OrgSwitcher() {
     <div ref={ref} className="hidden sm:block relative">
       <button
         onClick={() => setOpen(!open)}
-        className="text-xs text-blue-200 hover:text-white transition-colors flex items-center gap-2"
+        className="brand-header-focus text-xs text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)] transition-colors flex items-center gap-2"
       >
         {logoUrl && (
           <img
@@ -369,7 +369,7 @@ export default function Nav() {
   }, []);
 
   return (
-    <nav className="bg-[var(--brand-primary)] text-white">
+    <nav className="bg-[var(--brand-primary)] text-[var(--brand-header-text)]">
       <div className="max-w-6xl mx-auto px-4 flex items-center justify-between h-14">
         <div className="flex items-center gap-6">
           {/* Phase 34.4 B1 — brand link nested URL emission. When navOrg
@@ -383,7 +383,7 @@ export default function Nav() {
               switcher to the right. */}
           <Link
             to="/"
-            className="font-semibold text-sm tracking-wide hover:text-blue-100 transition-colors"
+            className="brand-header-focus font-semibold text-sm tracking-wide text-[var(--brand-header-text)] transition-colors"
           >
             Liquid Democracy
           </Link>
@@ -419,7 +419,7 @@ export default function Nav() {
                 }
                 end
                 className={({ isActive }) =>
-                  `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                  `brand-header-focus text-sm transition-colors ${isActive ? 'text-[var(--brand-header-text)] font-medium' : 'text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]'}`
                 }
               >
                 Proposals
@@ -431,7 +431,7 @@ export default function Nav() {
                     : urlFor(navOrg, 'delegations')
                 }
                 className={({ isActive }) =>
-                  `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                  `brand-header-focus text-sm transition-colors ${isActive ? 'text-[var(--brand-header-text)] font-medium' : 'text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]'}`
                 }
               >
                 My Delegations
@@ -444,7 +444,7 @@ export default function Nav() {
                     : urlFor(navOrg, 'delegates')
                 }
                 className={({ isActive }) =>
-                  `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                  `brand-header-focus text-sm transition-colors ${isActive ? 'text-[var(--brand-header-text)] font-medium' : 'text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]'}`
                 }
               >
                 Delegates
@@ -455,7 +455,7 @@ export default function Nav() {
                 <NavLink
                   to={urlFor(messagesSlug, 'deliberations')}
                   className={({ isActive }) =>
-                    `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                    `brand-header-focus text-sm transition-colors ${isActive ? 'text-[var(--brand-header-text)] font-medium' : 'text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]'}`
                   }
                 >
                   Deliberations
@@ -468,7 +468,7 @@ export default function Nav() {
                 <NavLink
                   to={urlFor(messagesSlug, 'messages')}
                   className={({ isActive }) =>
-                    `text-sm transition-colors flex items-center gap-1.5 ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                    `brand-header-focus text-sm transition-colors flex items-center gap-1.5 ${isActive ? 'text-[var(--brand-header-text)] font-medium' : 'text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]'}`
                   }
                 >
                   Messages
@@ -485,7 +485,7 @@ export default function Nav() {
                 <NavLink
                   to={urlFor(currentOrg.slug, 'shares')}
                   className={({ isActive }) =>
-                    `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                    `brand-header-focus text-sm transition-colors ${isActive ? 'text-[var(--brand-header-text)] font-medium' : 'text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]'}`
                   }
                 >
                   Share activity
@@ -498,7 +498,7 @@ export default function Nav() {
               <NavLink
                 to="/help"
                 className={({ isActive }) =>
-                  `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                  `brand-header-focus text-sm transition-colors ${isActive ? 'text-[var(--brand-header-text)] font-medium' : 'text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]'}`
                 }
               >
                 Help
@@ -509,8 +509,8 @@ export default function Nav() {
                 <div ref={adminRef} className="relative">
                   <button
                     onClick={() => setAdminOpen(!adminOpen)}
-                    className={`text-sm transition-colors flex items-center gap-1 ${
-                      adminOpen ? 'text-white font-medium' : 'text-blue-200 hover:text-white'
+                    className={`brand-header-focus text-sm transition-colors flex items-center gap-1 ${
+                      adminOpen ? 'text-[var(--brand-header-text)] font-medium' : 'text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]'
                     }`}
                   >
                     Admin
@@ -567,7 +567,7 @@ export default function Nav() {
                 <NavLink
                   to={urlFor(parentSlugForLinks, 'admin-sub-org-settings', currentOrg.slug)}
                   className={({ isActive }) =>
-                    `text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                    `brand-header-focus text-sm transition-colors ${isActive ? 'text-[var(--brand-header-text)] font-medium' : 'text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]'}`
                   }
                 >
                   Manage Sub-Org
@@ -589,7 +589,7 @@ export default function Nav() {
             <NavLink
               to="/notifications"
               className={({ isActive }) =>
-                `hidden md:inline text-sm transition-colors ${isActive ? 'text-white font-medium' : 'text-blue-200 hover:text-white'}`
+                `brand-header-focus hidden md:inline text-sm transition-colors ${isActive ? 'text-[var(--brand-header-text)] font-medium' : 'text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]'}`
               }
             >
               Notifications
@@ -601,7 +601,7 @@ export default function Nav() {
             <div ref={menuRef} className="relative hidden md:block">
               <button
                 onClick={() => setMenuOpen(!menuOpen)}
-                className="text-blue-200 hover:text-white text-sm flex items-center gap-2 transition-colors"
+                className="brand-header-focus text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)] text-sm flex items-center gap-2 transition-colors"
               >
                 <Avatar user={user} size="sm" />
                 <span>{user.display_name}</span>
@@ -699,7 +699,7 @@ export default function Nav() {
           {/* Mobile hamburger */}
           <button
             onClick={() => setMobileOpen(!mobileOpen)}
-            className="md:hidden text-blue-200 hover:text-white p-1"
+            className="brand-header-focus md:hidden text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)] p-1"
             aria-label="Toggle menu"
           >
             {mobileOpen ? (
@@ -717,9 +717,9 @@ export default function Nav() {
 
       {/* Mobile menu */}
       {mobileOpen && (
-        <div className="md:hidden bg-[var(--brand-primary-dark)] border-t border-blue-900 px-4 py-3 space-y-1">
+        <div className="md:hidden bg-[var(--brand-primary-dark)] border-t border-[var(--brand-header-text-subtle)] px-4 py-3 space-y-1">
           {currentOrg && (
-            <p className="text-xs text-blue-300 mb-2 pb-2 border-b border-blue-900">
+            <p className="text-xs text-[var(--brand-header-text-subtle)] mb-2 pb-2 border-b border-[var(--brand-header-text-subtle)]">
               {currentOrg.parent_org_id
                 ? `${userOrgs.find(o => o.id === currentOrg.parent_org_id)?.name || 'Org'} / ${currentOrg.name}`
                 : currentOrg.name}
@@ -733,14 +733,14 @@ export default function Nav() {
               <Link
                 to={urlFor(navOrg, 'proposals')}
                 onClick={() => setMobileOpen(false)}
-                className="block py-2 text-sm text-blue-200 hover:text-white"
+                className="brand-header-focus block py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
               >
                 Proposals
               </Link>
               <Link
                 to={urlFor(navOrg, 'delegations')}
                 onClick={() => setMobileOpen(false)}
-                className="block py-2 text-sm text-blue-200 hover:text-white"
+                className="brand-header-focus block py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
               >
                 My Delegations
               </Link>
@@ -748,7 +748,7 @@ export default function Nav() {
               <Link
                 to={urlFor(navOrg, 'delegates')}
                 onClick={() => setMobileOpen(false)}
-                className="block py-2 text-sm text-blue-200 hover:text-white"
+                className="brand-header-focus block py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
               >
                 Delegates
               </Link>
@@ -757,7 +757,7 @@ export default function Nav() {
                 <Link
                   to={urlFor(messagesSlug, 'deliberations')}
                   onClick={() => setMobileOpen(false)}
-                  className="block py-2 text-sm text-blue-200 hover:text-white"
+                  className="brand-header-focus block py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
                 >
                   Deliberations
                 </Link>
@@ -767,7 +767,7 @@ export default function Nav() {
                 <Link
                   to={urlFor(messagesSlug, 'messages')}
                   onClick={() => setMobileOpen(false)}
-                  className="flex items-center gap-2 py-2 text-sm text-blue-200 hover:text-white"
+                  className="brand-header-focus flex items-center gap-2 py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
                 >
                   Messages
                   {unreadMessages.count > 0 && (
@@ -781,7 +781,7 @@ export default function Nav() {
               <Link
                 to="/help"
                 onClick={() => setMobileOpen(false)}
-                className="block py-2 text-sm text-blue-200 hover:text-white"
+                className="brand-header-focus block py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
               >
                 Help
               </Link>
@@ -792,15 +792,15 @@ export default function Nav() {
             <Link
               to="/notifications"
               onClick={() => setMobileOpen(false)}
-              className="block py-2 text-sm text-blue-200 hover:text-white"
+              className="brand-header-focus block py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
             >
               Notifications
             </Link>
           )}
           {showLegacyAdminDropdown && parentSlugForLinks && (
             <>
-              <div className="pt-2 mt-2 border-t border-blue-900">
-                <p className="text-xs text-blue-300 mb-1">Admin</p>
+              <div className="pt-2 mt-2 border-t border-[var(--brand-header-text-subtle)]">
+                <p className="text-xs text-[var(--brand-header-text-subtle)] mb-1">Admin</p>
               </div>
               {[
                 // Phase 12.5 F1 — mobile mirror of the desktop dropdown,
@@ -825,7 +825,7 @@ export default function Nav() {
                   key={item.to}
                   to={item.to}
                   onClick={() => setMobileOpen(false)}
-                  className="flex items-center justify-between py-2 text-sm text-blue-200 hover:text-white pl-3 pr-2"
+                  className="brand-header-focus flex items-center justify-between py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)] pl-3 pr-2"
                 >
                   <span>{item.label}</span>
                   {item.badge != null && item.badge > 0 && (
@@ -841,22 +841,22 @@ export default function Nav() {
             <Link
               to={urlFor(parentSlugForLinks, 'admin-sub-org-settings', currentOrg.slug)}
               onClick={() => setMobileOpen(false)}
-              className="block py-2 text-sm text-blue-200 hover:text-white"
+              className="brand-header-focus block py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
             >
               Manage Sub-Org
             </Link>
           )}
           {user && (
             <>
-              <div className="pt-2 mt-2 border-t border-blue-900 flex items-center gap-2">
+              <div className="pt-2 mt-2 border-t border-[var(--brand-header-text-subtle)] flex items-center gap-2">
                 <Avatar user={user} size="sm" />
-                <p className="text-xs text-blue-300">{user.display_name}</p>
+                <p className="text-xs text-[var(--brand-header-text-subtle)]">{user.display_name}</p>
               </div>
               {currentOrg && (
                 <Link
                   to={urlFor(currentOrg, 'user-profile', user.id)}
                   onClick={() => setMobileOpen(false)}
-                  className="block py-2 text-sm text-blue-200 hover:text-white"
+                  className="brand-header-focus block py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
                 >
                   My Profile
                 </Link>
@@ -866,7 +866,7 @@ export default function Nav() {
                 <Link
                   to={urlFor(currentOrg, 'delegate-profile')}
                   onClick={() => setMobileOpen(false)}
-                  className="block py-2 text-sm text-blue-200 hover:text-white"
+                  className="brand-header-focus block py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
                 >
                   My Delegate Page
                 </Link>
@@ -874,7 +874,7 @@ export default function Nav() {
               <Link
                 to="/settings"
                 onClick={() => setMobileOpen(false)}
-                className="block py-2 text-sm text-blue-200 hover:text-white"
+                className="brand-header-focus block py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
               >
                 Account Settings
               </Link>
@@ -883,7 +883,7 @@ export default function Nav() {
                 <Link
                   to="/platform-admin"
                   onClick={() => setMobileOpen(false)}
-                  className="block py-2 text-sm text-blue-200 hover:text-white"
+                  className="brand-header-focus block py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
                 >
                   Platform
                 </Link>
@@ -892,22 +892,22 @@ export default function Nav() {
                 <Link
                   to="/orgs"
                   onClick={() => setMobileOpen(false)}
-                  className="block py-2 text-sm text-blue-200 hover:text-white"
+                  className="brand-header-focus block py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
                 >
                   Switch Org
                 </Link>
               )}
               <button
                 onClick={() => { setMobileOpen(false); logout(); }}
-                className="block w-full text-left py-2 text-sm text-blue-200 hover:text-white"
+                className="brand-header-focus block w-full text-left py-2 text-sm text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)]"
               >
                 Sign out
               </button>
             </>
           )}
-          <div className="pt-2 mt-2 border-t border-blue-900 flex gap-4">
-            <Link to="/privacy" onClick={() => setMobileOpen(false)} className="text-xs text-blue-300 hover:text-white">Privacy</Link>
-            <Link to="/terms" onClick={() => setMobileOpen(false)} className="text-xs text-blue-300 hover:text-white">Terms</Link>
+          <div className="pt-2 mt-2 border-t border-[var(--brand-header-text-subtle)] flex gap-4">
+            <Link to="/privacy" onClick={() => setMobileOpen(false)} className="brand-header-focus text-xs text-[var(--brand-header-text-subtle)] hover:text-[var(--brand-header-text)]">Privacy</Link>
+            <Link to="/terms" onClick={() => setMobileOpen(false)} className="brand-header-focus text-xs text-[var(--brand-header-text-subtle)] hover:text-[var(--brand-header-text)]">Terms</Link>
           </div>
         </div>
       )}

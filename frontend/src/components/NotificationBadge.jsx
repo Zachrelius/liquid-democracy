@@ -92,7 +92,8 @@ export default function NotificationBadge() {
   }, []);
 
   useEffect(() => {
-    load();
+    const request = Promise.resolve().then(load);
+    return () => { void request; };
   }, [load, location.pathname]);
 
   // Pull the intro-dismissed flag once on mount. Cheap; the preferences
@@ -169,7 +170,7 @@ export default function NotificationBadge() {
       <button
         ref={buttonRef}
         onClick={() => setOpen(!open)}
-        className="relative text-blue-200 hover:text-white transition-colors p-1"
+        className="brand-header-focus relative text-[var(--brand-header-text-muted)] hover:text-[var(--brand-header-text)] transition-colors p-1"
         aria-label="Open notifications panel"
         aria-expanded={open}
         aria-controls="notifications-panel"

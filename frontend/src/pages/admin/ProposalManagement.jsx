@@ -34,7 +34,11 @@ import {
 // Phase 12.5 F2 — per-control permission gating.
 import { useHasPermission } from '../../hooks/useHasPermission';
 // Phase 52 Stage 1 — shared verification state label tables.
-import { VERIFICATION_STATE_OPTIONS } from '../../verificationLabels';
+import {
+  requirementStorage,
+  storedRequirementChoice,
+  VISIBLE_REQUIREMENT_OPTIONS,
+} from '../../utils/proposalVerificationPolicy';
 // Multi-winner approval selection — shared preset detection, payload
 // builder, validation, and plain-language phrasing (also used by the
 // results panel so the copy matches end to end).
@@ -681,6 +685,8 @@ function CreateProposalForm({
   // server-side via `get_org_config`; for parent-org-wide proposals the
   // value lives on `currentOrg.settings`.
   const requirePolis = orgSettings?.require_polis_for_new_proposals === true;
+  const authorChoosesVerification = !orgSettings?.verification_proposal_policy
+    || orgSettings.verification_proposal_policy === 'author';
   const [linkedPolisIds, setLinkedPolisIds] = useState(() => (
     isEditMode && Array.isArray(editingProposal.linked_polis_ids)
       ? editingProposal.linked_polis_ids
@@ -688,12 +694,27 @@ function CreateProposalForm({
   ));
   // Phase 52 Stage 1 — per-proposal verification floor. Default
   // empty → backend serializes as NULL → ungated (today's behavior).
-  const [verificationFloor, setVerificationFloor] = useState(() => (
-    isEditMode ? (editingProposal.verification_floor ?? '') : ''
+  const [verificationChoice, setVerificationChoice] = useState(() => (
+    isEditMode
+      ? storedRequirementChoice(
+        editingProposal.verification_floor,
+        editingProposal.verification_require_residency,
+      )
+      : 'none'
   ));
-  const [verificationJurisdiction, setVerificationJurisdiction] = useState(() => (
-    isEditMode ? (editingProposal.verification_jurisdiction ?? '') : ''
+  const [legacyVerification, setLegacyVerification] = useState(() => (
+    isEditMode && storedRequirementChoice(
+      editingProposal.verification_floor,
+      editingProposal.verification_require_residency,
+    ) === 'legacy'
+      ? {
+        floor: editingProposal.verification_floor,
+        jurisdiction: editingProposal.verification_jurisdiction ?? null,
+        requireResidency: editingProposal.verification_require_residency ?? null,
+      }
+      : null
   ));
+  const [legacyVerificationToken, setLegacyVerificationToken] = useState(null);
   // Phase 32.2 F1 — three new deliberation-engagement override toggles,
   // now mode-aware. The Phase 32.2 migration replaced the four boolean
   // default fields with enum modes (`always_off` / `default_off` /
@@ -1001,18 +1022,19 @@ function CreateProposalForm({
       // always send the field (including explicit null) so the user can
       // clear a previously-set gate; the backend reads model_fields_set
       // to distinguish "not editing this" from "editing this to null".
-      if (isEditMode) {
-        payload.verification_floor = verificationFloor || null;
-        payload.verification_jurisdiction = (
-          verificationFloor && verificationJurisdiction.trim()
-            ? verificationJurisdiction.trim()
-            : null
-        );
-      } else if (verificationFloor) {
-        payload.verification_floor = verificationFloor;
-        if (verificationJurisdiction.trim()) {
-          payload.verification_jurisdiction = verificationJurisdiction.trim();
-        }
+      const verificationStorage = requirementStorage(verificationChoice);
+      if (verificationStorage) {
+        payload.verification_floor = verificationStorage.floor;
+        payload.verification_require_residency = verificationStorage.requireResidency;
+        payload.verification_jurisdiction = null;
+      } else if (!isEditMode && verificationChoice === 'legacy' && legacyVerification) {
+        // Reviewed legacy imports retain their exact old gate. The regular
+        // form cannot create this state; selecting any supported choice
+        // atomically replaces it with the Phase 105 representation.
+        payload.verification_floor = legacyVerification.floor;
+        payload.verification_jurisdiction = legacyVerification.jurisdiction;
+        payload.verification_require_residency = legacyVerification.requireResidency;
+        payload.verification_legacy_import_token = legacyVerificationToken;
       }
       // Phase 20 — only send the override when org allows it AND the choice
       // diverges from the org default; otherwise let null inherit. The wire
@@ -1125,8 +1147,21 @@ function CreateProposalForm({
     if (p.voting_end_date != null) setVotingEndDate(String(p.voting_end_date).slice(0, 16));
     if (p.stable_result_required != null) setSmEnabled(p.stable_result_required);
     if (Array.isArray(p.linked_polis_ids)) setLinkedPolisIds(p.linked_polis_ids);
-    if (p.verification_floor != null) setVerificationFloor(p.verification_floor || '');
-    if (p.verification_jurisdiction != null) setVerificationJurisdiction(p.verification_jurisdiction || '');
+    if (p.verification_floor != null || p.verification_require_residency != null) {
+      const importedChoice = storedRequirementChoice(
+        p.verification_floor,
+        p.verification_require_residency,
+      );
+      setVerificationChoice(importedChoice);
+      setLegacyVerification(importedChoice === 'legacy' ? {
+        floor: p.verification_floor,
+        jurisdiction: p.verification_jurisdiction ?? null,
+        requireResidency: p.verification_require_residency ?? null,
+      } : null);
+      setLegacyVerificationToken(importedChoice === 'legacy'
+        ? (p.verification_legacy_import_token || null)
+        : null);
+    }
     if (p.allow_write_in_options != null) setAllowWriteIns(p.allow_write_in_options);
     if (p.allow_write_ins_during_voting != null) setAllowWriteInsDuringVoting(p.allow_write_ins_during_voting);
     if (p.max_write_ins != null) setMaxWriteIns(p.max_write_ins);
@@ -1877,6 +1912,7 @@ function CreateProposalForm({
           a non-empty floor gates the vote at cast-time; delegated weight
           from voters who don't meet the floor is also dropped unless the
           org's "delegation carries unverified weight" setting is on. */}
+      {authorChoosesVerification && (
       <div className="border border-gray-200 rounded-lg p-4 bg-gray-50/50 space-y-3">
         <div>
           <label htmlFor="proposal-verification-floor" className="block text-xs font-medium text-gray-700 mb-1">
@@ -1884,41 +1920,30 @@ function CreateProposalForm({
           </label>
           <select
             id="proposal-verification-floor"
-            value={verificationFloor}
-            onChange={e => setVerificationFloor(e.target.value)}
+            value={verificationChoice}
+            onChange={e => {
+              setVerificationChoice(e.target.value);
+              setLegacyVerification(null);
+              setLegacyVerificationToken(null);
+            }}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
           >
-            {VERIFICATION_STATE_OPTIONS.map(opt => (
-              <option key={opt.value || 'none'} value={opt.value}>{opt.label}</option>
+            {verificationChoice === 'legacy' && (
+              <option value="legacy" disabled>Legacy: verified ID address requirement</option>
+            )}
+            {VISIBLE_REQUIREMENT_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
           <p className="text-xs text-gray-500 mt-1">
-            Leave default to keep this proposal open to all members. A
-            higher floor restricts who can cast a vote (or delegate
-            weight that counts) on this proposal.
+            A verified-resident requirement uses this organization&apos;s shared allowed residency locations.
           </p>
+          {verificationChoice === 'legacy' && (
+            <p className="text-xs text-amber-700 mt-1">Choose identity or verified resident to replace this legacy requirement. Other proposal edits preserve it.</p>
+          )}
         </div>
-        {(verificationFloor === 'address_on_id' || verificationFloor === 'residency_verified') && (
-          <div>
-            <label htmlFor="proposal-verification-jurisdiction" className="block text-xs text-gray-500 mb-1">
-              Jurisdiction (optional)
-            </label>
-            <input
-              id="proposal-verification-jurisdiction"
-              type="text"
-              value={verificationJurisdiction}
-              onChange={e => setVerificationJurisdiction(e.target.value)}
-              placeholder="e.g. US-CA, GB-LND"
-              maxLength={16}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Restrict to voters whose verified address matches this
-              jurisdiction. Leave blank to accept any verified address.
-            </p>
-          </div>
-        )}
       </div>
+      )}
 
       {inScopeTopics.length > 0 && (
         <fieldset>

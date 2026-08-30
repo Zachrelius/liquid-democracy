@@ -15,6 +15,15 @@
   --brand-primary-dark: #152d4a;
   --brand-accent: #2E75B6;
   --brand-accent-text: #25639b;
+  /* Exact legacy nav colors when an org has no header-text override. */
+  --brand-header-text: #ffffff;
+  --brand-header-text-muted: rgb(191 219 254);
+  --brand-header-text-subtle: rgb(147 197 253);
+}
+
+.brand-header-focus:focus-visible {
+  outline: 2px solid var(--brand-header-text);
+  outline-offset: 3px;
 }
 
 body {
