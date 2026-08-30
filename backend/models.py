@@ -1069,6 +1069,13 @@ class Proposal(Base):
     verification_jurisdiction: Mapped[Optional[str]] = mapped_column(
         String(length=16), nullable=True,
     )
+    # Phase 105 — nullable to preserve the exact interpretation of legacy
+    # floor/jurisdiction rows. True means the proposal uses the owning
+    # organization's shared residency scope; False explicitly disables that
+    # scope; NULL keeps the pre-105 jurisdiction semantics.
+    verification_require_residency: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True,
+    )
     # Phase 52g — per-proposal minimum age. NULL = no age gate
     # (the default; matches the ``verification_floor`` precedent).
     # Validated against ``verification.SUPPORTED_AGE_THRESHOLDS`` at

@@ -501,6 +501,9 @@ def _build_proposal_out(
         # ungated; non-null = floor required to cast direct vote.
         verification_floor=getattr(proposal, "verification_floor", None),
         verification_jurisdiction=getattr(proposal, "verification_jurisdiction", None),
+        verification_require_residency=getattr(
+            proposal, "verification_require_residency", None,
+        ),
         # Phase 65 — direct-vote-only indicator (org master switch off OR
         # any attached topic disallows delegation).
         delegation_gated=_delegation_gated,
@@ -1349,6 +1352,24 @@ def create_proposal(
         datetime.now(timezone.utc).replace(tzinfo=None) if skip_deliberation else None
     )
 
+    from verification import normalize_proposal_requirement_write
+    try:
+        verification_requirement = normalize_proposal_requirement_write(
+            body.verification_floor,
+            body.verification_jurisdiction,
+            body.verification_require_residency,
+            residency_explicit=(
+                "verification_require_residency" in body.model_fields_set
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if verification_requirement.require_residency:
+        raise HTTPException(
+            status_code=400,
+            detail="Global proposals cannot use an organization residency scope.",
+        )
+
     proposal = models.Proposal(
         title=body.title,
         body=body.body,
@@ -1378,6 +1399,9 @@ def create_proposal(
         allow_pre_voting=body.allow_pre_voting,
         show_votes_during_deliberation=body.show_votes_during_deliberation,
         edit_lockout_fraction=body.edit_lockout_fraction,
+        verification_floor=verification_requirement.floor,
+        verification_jurisdiction=verification_requirement.jurisdiction,
+        verification_require_residency=verification_requirement.require_residency,
         # Phase 66 — multi-winner approval config. Validated for shape
         # at the Pydantic layer + method-compatibility in
         # _validate_proposal_creation above. NULL = legacy single-winner.
@@ -1610,7 +1634,10 @@ def update_proposal(
     # any jurisdiction). Sending only `verification_jurisdiction`
     # without `verification_floor` is a no-op (matches the create
     # path which only acts when floor is non-null).
-    if "verification_floor" in body.model_fields_set:
+    if (
+        "verification_floor" in body.model_fields_set
+        or "verification_require_residency" in body.model_fields_set
+    ):
         if proposal.status != "draft":
             raise HTTPException(
                 status_code=400,
@@ -1619,51 +1646,56 @@ def update_proposal(
                     "only be changed while the proposal is in draft status."
                 ),
             )
-        if body.verification_floor is not None:
-            from verification import (
-                VALID_STATES,
-                ORDER,
-                jurisdiction_required_for,
-                EMAIL_ONLY,
+        from verification import (
+            has_valid_residency_scope,
+            normalize_proposal_requirement_write,
+        )
+        floor_input = (
+            body.verification_floor
+            if "verification_floor" in body.model_fields_set
+            else proposal.verification_floor
+        )
+        jurisdiction_input = (
+            body.verification_jurisdiction
+            if "verification_jurisdiction" in body.model_fields_set
+            else proposal.verification_jurisdiction
+        )
+        residency_explicit = "verification_require_residency" in body.model_fields_set
+        residency_input = (
+            body.verification_require_residency
+            if "verification_require_residency" in body.model_fields_set
+            else proposal.verification_require_residency
+        )
+        try:
+            requirement = normalize_proposal_requirement_write(
+                floor_input,
+                jurisdiction_input,
+                residency_input,
+                residency_explicit=residency_explicit,
             )
-            if body.verification_floor not in VALID_STATES:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"Unknown verification_floor "
-                        f"{body.verification_floor!r}. "
-                        f"Allowed: {list(ORDER)}."
-                    ),
-                )
-            _jur = body.verification_jurisdiction
-            _jur = _jur.strip() if isinstance(_jur, str) else None
-            if _jur == "":
-                _jur = None
-            if jurisdiction_required_for(body.verification_floor) and not _jur:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"verification_floor {body.verification_floor!r} "
-                        "requires a non-empty verification_jurisdiction."
-                    ),
-                )
-            if (
-                not jurisdiction_required_for(body.verification_floor)
-                and _jur
-            ):
-                body.verification_jurisdiction = None
-            else:
-                body.verification_jurisdiction = _jur
-            if body.verification_floor == EMAIL_ONLY:
-                body.verification_floor = None
-                body.verification_jurisdiction = None
-            proposal.verification_floor = body.verification_floor
-            proposal.verification_jurisdiction = body.verification_jurisdiction
-        else:
-            # Explicit NULL → clear the gate. Jurisdiction is cleared
-            # alongside so the column pair stays consistent.
-            proposal.verification_floor = None
-            proposal.verification_jurisdiction = None
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        org_for_requirement = (
+            db.get(models.Organization, proposal.org_id) if proposal.org_id else None
+        )
+        if requirement.require_residency and (
+            org_for_requirement is None
+            or not has_valid_residency_scope(org_for_requirement)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "invalid_verification_requirement",
+                    "fields": {
+                        "verification_require_residency": (
+                            "The organization needs at least one allowed residency location."
+                        ),
+                    },
+                },
+            )
+        proposal.verification_floor = requirement.floor
+        proposal.verification_jurisdiction = requirement.jurisdiction
+        proposal.verification_require_residency = requirement.require_residency
 
     if body.title is not None:
         proposal.title = body.title
@@ -3828,12 +3860,13 @@ def my_verification_weight(
     proposal = _proposal_or_404(proposal_id, db)
     _require_proposal_viewer(db, proposal, current_user)
     org_id = getattr(proposal, "org_id", None)
-    floor = getattr(proposal, "verification_floor", None)
-    jurisdiction = getattr(proposal, "verification_jurisdiction", None)
     org = db.get(models.Organization, org_id) if org_id else None
     from verification import (
-        delegation_carries_unverified_weight, user_satisfies_floor,
+        delegation_carries_unverified_weight,
+        effective_proposal_requirement,
+        user_satisfies_requirement,
     )
+    requirement = effective_proposal_requirement(proposal, org)
     org_carries = (
         delegation_carries_unverified_weight(org) if org is not None else False
     )
@@ -3853,6 +3886,7 @@ def my_verification_weight(
             "delegation_carries_unverified_weight": False,
             "floor": None,
             "jurisdiction": None,
+            "requires_residency": False,
         }
 
     proposal_topic_ids = [
@@ -3878,7 +3912,7 @@ def my_verification_weight(
     delegator_ids = {d.delegator_id for d in delegations}
 
     headline = len(delegator_ids)
-    if not floor or org_carries or not delegator_ids:
+    if not requirement.enabled or org_carries or not delegator_ids:
         effective = headline
         gated_out = 0
     else:
@@ -3887,7 +3921,7 @@ def my_verification_weight(
         ).all()
         passing = {
             u.id for u in users
-            if user_satisfies_floor(u, floor, jurisdiction)
+            if user_satisfies_requirement(u, requirement, org)
         }
         effective = len(passing)
         gated_out = headline - effective
@@ -3896,10 +3930,11 @@ def my_verification_weight(
         "headline_delegated_count": headline,
         "effective_delegated_count": effective,
         "gated_out_count": gated_out,
-        "proposal_is_gated": bool(floor),
+        "proposal_is_gated": requirement.enabled,
         "delegation_carries_unverified_weight": bool(org_carries),
-        "floor": floor,
-        "jurisdiction": jurisdiction,
+        "floor": requirement.floor,
+        "jurisdiction": requirement.jurisdiction,
+        "requires_residency": requirement.require_residency,
     }
 
 

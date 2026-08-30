@@ -28,7 +28,13 @@ durations.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional, Tuple
+import base64
+import hashlib
+import hmac
+import json
+import time
 
 # ---------------------------------------------------------------------------
 # Verification states (ordered, weakest → strongest)
@@ -151,6 +157,7 @@ SETTING_REQUIRE_NAME_MATCH = "verification_require_name_match"
 # (hard-reject the write) or ``flag`` (allow + audit-log + admin
 # sees it). Per Z's locked decision, both are offered per-org.
 SETTING_NAME_MATCH_ACTION = "verification_name_match_action"
+SETTING_NAME_MATCH_SCOPE = "verification_name_match_scope"
 # Phase 52g — minimum age to join the org. Integer ∈
 # ``SUPPORTED_AGE_THRESHOLDS`` or NULL/None for no age gate.
 SETTING_MEMBERSHIP_MIN_AGE = "verification_membership_min_age"
@@ -203,6 +210,11 @@ NAME_MATCH_ACTION_BLOCK = "block"
 NAME_MATCH_ACTION_FLAG = "flag"
 _VALID_NAME_MATCH_ACTIONS: frozenset[str] = frozenset({
     NAME_MATCH_ACTION_BLOCK, NAME_MATCH_ACTION_FLAG,
+})
+NAME_MATCH_SCOPE_PUBLIC_DELEGATES = "public_delegates"
+NAME_MATCH_SCOPE_ALL_VERIFIED = "all_verified_members"
+_VALID_NAME_MATCH_SCOPES: frozenset[str] = frozenset({
+    NAME_MATCH_SCOPE_PUBLIC_DELEGATES, NAME_MATCH_SCOPE_ALL_VERIFIED,
 })
 
 # Phase 52g — supported age thresholds. Orgs may gate on any of
@@ -528,6 +540,7 @@ def ensure_can_join_real_org(user, org) -> None:
 SETTING_PROPOSAL_POLICY = "verification_proposal_policy"
 SETTING_PROPOSAL_FLOOR = "verification_proposal_floor"
 SETTING_PROPOSAL_JURISDICTION = "verification_proposal_jurisdiction"
+SETTING_PROPOSAL_REQUIRE_RESIDENCY = "verification_proposal_require_residency"
 
 PROPOSAL_POLICY_AUTHOR = "author"
 PROPOSAL_POLICY_ALWAYS = "always"
@@ -543,6 +556,18 @@ _VALID_PROPOSAL_JURISDICTIONS = frozenset({
     "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
     "DC",
 })
+_VALID_COUNTRY_CODES = frozenset("""
+AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ
+BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR
+CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR
+GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU
+ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ
+LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ
+MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF
+PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI
+SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR
+TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW
+""".split())
 
 
 def validate_org_proposal_settings(
@@ -577,6 +602,32 @@ def validate_org_proposal_settings(
         )
         return merged, errors
 
+    require_residency = merged.get(SETTING_PROPOSAL_REQUIRE_RESIDENCY)
+    if require_residency is not None and not isinstance(require_residency, bool):
+        errors[SETTING_PROPOSAL_REQUIRE_RESIDENCY] = "Choose a valid residency requirement."
+        return merged, errors
+    if require_residency is True:
+        if floor != ADDRESS_ON_ID:
+            errors[SETTING_PROPOSAL_FLOOR] = (
+                "Verified resident policy must use the address-on-ID evidence floor."
+            )
+        merged[SETTING_PROPOSAL_JURISDICTION] = None
+        if not _residency_scope_entries_from_settings(merged):
+            errors[SETTING_RESIDENCY_SCOPE] = (
+                "Add at least one valid allowed residency location."
+            )
+        return merged, errors
+
+    if floor in {ADDRESS_ON_ID, RESIDENCY_VERIFIED} and (
+        SETTING_PROPOSAL_FLOOR in patch
+        or SETTING_PROPOSAL_POLICY in patch
+        or SETTING_PROPOSAL_REQUIRE_RESIDENCY in patch
+    ):
+        errors[SETTING_PROPOSAL_FLOOR] = (
+            "Choose identity verified or verified resident; address-only is legacy-only."
+        )
+        return merged, errors
+
     if floor in {ADDRESS_ON_ID, RESIDENCY_VERIFIED}:
         raw_jurisdiction = merged.get(SETTING_PROPOSAL_JURISDICTION)
         jurisdiction = (
@@ -597,6 +648,103 @@ def validate_org_proposal_settings(
     return merged, errors
 
 
+def validate_org_verification_settings(
+    current_settings: object,
+    patch_settings: object,
+) -> tuple[dict, dict[str, str]]:
+    """Validate all interdependent Phase 105 verification settings atomically."""
+    current = dict(current_settings) if isinstance(current_settings, dict) else {}
+    patch = dict(patch_settings) if isinstance(patch_settings, dict) else {}
+    merged = {**current, **patch}
+    errors: dict[str, str] = {}
+    proposal_keys = {
+        SETTING_PROPOSAL_POLICY, SETTING_PROPOSAL_FLOOR,
+        SETTING_PROPOSAL_JURISDICTION, SETTING_PROPOSAL_REQUIRE_RESIDENCY,
+    }
+    proposal_dependency_touched = (
+        SETTING_RESIDENCY_SCOPE in patch
+        and merged.get(SETTING_PROPOSAL_REQUIRE_RESIDENCY) is True
+    )
+    if proposal_keys & patch.keys() or proposal_dependency_touched:
+        merged, errors = validate_org_proposal_settings(current, patch)
+
+    mode = merged.get(SETTING_REQUIRE_NAME_MATCH, NAME_MATCH_OFF)
+    if mode not in _VALID_NAME_MATCH_MODES:
+        errors[SETTING_REQUIRE_NAME_MATCH] = "Choose a supported legal-name match mode."
+    scope = merged.get(SETTING_NAME_MATCH_SCOPE)
+    if scope is not None and scope not in _VALID_NAME_MATCH_SCOPES:
+        errors[SETTING_NAME_MATCH_SCOPE] = "Choose public delegates or all verified members."
+    action = merged.get(SETTING_NAME_MATCH_ACTION, NAME_MATCH_ACTION_BLOCK)
+    if action not in _VALID_NAME_MATCH_ACTIONS:
+        errors[SETTING_NAME_MATCH_ACTION] = "Choose block or flag."
+    if mode != NAME_MATCH_OFF and scope == NAME_MATCH_SCOPE_PUBLIC_DELEGATES:
+        # Public identity promises are necessarily blocking.
+        merged[SETTING_NAME_MATCH_ACTION] = NAME_MATCH_ACTION_BLOCK
+
+    role_floors = merged.get(SETTING_ROLE_FLOORS, {})
+    role_residency = merged.get(SETTING_ROLE_REQUIRE_RESIDENCY, {})
+    role_keys = {"member", "moderator", "admin", "steward"}
+    if not isinstance(role_floors, dict) or any(key not in role_keys for key in role_floors):
+        errors[SETTING_ROLE_FLOORS] = "Role verification floors contain an unsupported role."
+        role_floors = {}
+    if (
+        not isinstance(role_residency, dict)
+        or any(key not in role_keys for key in role_residency)
+        or any(not isinstance(value, bool) for value in role_residency.values())
+    ):
+        errors[SETTING_ROLE_REQUIRE_RESIDENCY] = (
+            "Role residency requirements must be booleans for supported roles."
+        )
+        role_residency = {}
+
+    membership_residency = merged.get(SETTING_MEMBERSHIP_REQUIRE_RESIDENCY, False)
+    if not isinstance(membership_residency, bool):
+        errors[SETTING_MEMBERSHIP_REQUIRE_RESIDENCY] = "Choose a valid residency requirement."
+        membership_residency = False
+
+    # Apply new-write coherence only when a paired gate key is being changed;
+    # untouched address-only/dead-rung legacy rows remain readable/enforceable.
+    membership_touched = bool({
+        SETTING_MEMBERSHIP_FLOOR, SETTING_MEMBERSHIP_REQUIRE_RESIDENCY,
+    } & patch.keys())
+    if membership_touched and membership_residency:
+        if merged.get(SETTING_MEMBERSHIP_FLOOR) != ADDRESS_ON_ID:
+            errors[SETTING_MEMBERSHIP_FLOOR] = (
+                "Verified resident membership must use the address-on-ID evidence floor."
+            )
+    elif membership_touched and merged.get(SETTING_MEMBERSHIP_FLOOR) in {
+        ADDRESS_ON_ID, RESIDENCY_VERIFIED,
+    }:
+        errors[SETTING_MEMBERSHIP_FLOOR] = (
+            "Choose identity verified or verified resident; address-only is legacy-only."
+        )
+
+    role_touched = bool({SETTING_ROLE_FLOORS, SETTING_ROLE_REQUIRE_RESIDENCY} & patch.keys())
+    if role_touched:
+        for role_key, requires in role_residency.items():
+            if requires and role_floors.get(role_key) != ADDRESS_ON_ID:
+                errors[f"{SETTING_ROLE_FLOORS}.{role_key}"] = (
+                    "Verified resident roles must use the address-on-ID evidence floor."
+                )
+            elif not requires and role_floors.get(role_key) in {
+                ADDRESS_ON_ID, RESIDENCY_VERIFIED,
+            }:
+                errors[f"{SETTING_ROLE_FLOORS}.{role_key}"] = (
+                    "Choose identity verified or verified resident; address-only is legacy-only."
+                )
+
+    any_resident = bool(
+        membership_residency
+        or any(role_residency.values())
+        or merged.get(SETTING_PROPOSAL_REQUIRE_RESIDENCY) is True
+    )
+    if any_resident and not _residency_scope_entries_from_settings(merged):
+        errors[SETTING_RESIDENCY_SCOPE] = (
+            "Add at least one valid allowed residency location before requiring residency."
+        )
+    return merged, errors
+
+
 def get_org_proposal_policy(org) -> str:
     """Phase 52j J3 — returns one of ``author`` / ``always`` /
     ``never``. Defaults to ``author`` (today's behavior — author sets
@@ -611,44 +759,175 @@ def get_org_proposal_policy(org) -> str:
     return PROPOSAL_POLICY_AUTHOR
 
 
-def effective_proposal_floor(
-    proposal, org,
-) -> tuple[Optional[str], Optional[str]]:
-    """Phase 52j J3 — resolves the EFFECTIVE (floor, jurisdiction)
-    for a proposal under the org's policy. One helper so the vote
-    path + the FE proposal-creation form agree.
+@dataclass(frozen=True)
+class VerificationRequirement:
+    """Typed effective requirement shared by vote and eligibility paths."""
 
-      * ``author`` → ``(proposal.verification_floor, proposal.
-        verification_jurisdiction)`` (today's behavior).
-      * ``always`` → the org's chosen floor + jurisdiction. Applies
-        to EVERY proposal in the org, regardless of any author-set
-        value on the proposal.
-      * ``never`` → ``(None, None)``. Any stored proposal floor is
-        ignored at enforcement.
-    """
+    floor: Optional[str]
+    jurisdiction: Optional[str] = None
+    require_residency: bool = False
+    legacy: bool = False
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.floor and self.floor != EMAIL_ONLY)
+
+
+def visible_requirement(choice: str) -> VerificationRequirement:
+    """Canonical three-choice administrator mapping for new writes."""
+    if choice == "none":
+        return VerificationRequirement(None, None, False, False)
+    if choice == "identity":
+        return VerificationRequirement(IDENTITY, None, False, False)
+    if choice == "resident":
+        return VerificationRequirement(ADDRESS_ON_ID, None, True, False)
+    raise ValueError("requirement must be none, identity, or resident")
+
+
+def normalize_proposal_requirement_write(
+    floor: Optional[str],
+    jurisdiction: Optional[str],
+    require_residency: Optional[bool],
+    *,
+    residency_explicit: bool,
+    allow_legacy: bool = False,
+) -> VerificationRequirement:
+    """Normalize a proposal API write while retaining legacy import shape."""
+    jurisdiction = jurisdiction.strip() if isinstance(jurisdiction, str) else None
+    jurisdiction = jurisdiction or None
+    if residency_explicit:
+        if require_residency is True:
+            if floor != ADDRESS_ON_ID:
+                raise ValueError("Verified resident proposals must use address_on_id.")
+            return visible_requirement("resident")
+        if floor in (None, "", EMAIL_ONLY):
+            return visible_requirement("none")
+        if floor == IDENTITY:
+            return visible_requirement("identity")
+        raise ValueError("New proposal requirements may be none, identity, or resident.")
+    if not allow_legacy:
+        if floor in (None, "", EMAIL_ONLY):
+            return visible_requirement("none")
+        if floor == IDENTITY:
+            return visible_requirement("identity")
+        raise ValueError("New proposal requirements may be none, identity, or resident.")
+    # Import compatibility: preserve the historical jurisdiction semantics.
+    if floor is None or floor == EMAIL_ONLY:
+        return VerificationRequirement(None, None, False, True)
+    if floor not in VALID_STATES:
+        raise ValueError(f"Unknown verification_floor {floor!r}. Allowed: {list(ORDER)}.")
+    if jurisdiction_required_for(floor) and not jurisdiction:
+        raise ValueError(
+            f"verification_floor {floor!r} requires a non-empty verification_jurisdiction."
+        )
+    if not jurisdiction_required_for(floor):
+        jurisdiction = None
+    return VerificationRequirement(floor, jurisdiction, False, True)
+
+
+def has_valid_residency_scope(org) -> bool:
+    settings = getattr(org, "settings", None) or {}
+    return bool(_residency_scope_entries_from_settings(settings))
+
+
+def make_legacy_proposal_import_token(
+    org_id: str, floor: str, jurisdiction: Optional[str],
+) -> str:
+    """Sign a one-hour legacy import grant; no user data is embedded."""
+    from settings import settings
+    payload = {
+        "org_id": org_id,
+        "floor": floor,
+        "jurisdiction": jurisdiction,
+        "expires": int(time.time()) + 3600,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    encoded = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    signature = hmac.new(
+        settings.secret_key.encode(), encoded.encode(), hashlib.sha256,
+    ).hexdigest()
+    return f"{encoded}.{signature}"
+
+
+def valid_legacy_proposal_import_token(
+    token: Optional[str], org_id: str, floor: Optional[str],
+    jurisdiction: Optional[str],
+) -> bool:
+    if not isinstance(token, str) or "." not in token:
+        return False
+    from settings import settings
+    encoded, supplied = token.rsplit(".", 1)
+    expected = hmac.new(
+        settings.secret_key.encode(), encoded.encode(), hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(supplied, expected):
+        return False
+    try:
+        padded = encoded + "=" * (-len(encoded) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode())
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return False
+    normalized_jurisdiction = (
+        jurisdiction.strip() if isinstance(jurisdiction, str) else None
+    ) or None
+    return (
+        payload.get("org_id") == org_id
+        and payload.get("floor") == floor
+        and payload.get("jurisdiction") == normalized_jurisdiction
+        and isinstance(payload.get("expires"), int)
+        and payload["expires"] >= int(time.time())
+    )
+
+
+def effective_proposal_requirement(proposal, org) -> VerificationRequirement:
+    """Resolve policy while distinguishing shared-scope and legacy gates."""
     policy = get_org_proposal_policy(org) if org is not None else PROPOSAL_POLICY_AUTHOR
 
     if policy == PROPOSAL_POLICY_NEVER:
-        return (None, None)
+        return VerificationRequirement(None)
 
     if policy == PROPOSAL_POLICY_ALWAYS:
         settings = getattr(org, "settings", None) or {}
         if not isinstance(settings, dict):
-            return (None, None)
+            return VerificationRequirement(None)
         floor = settings.get(SETTING_PROPOSAL_FLOOR)
         if not isinstance(floor, str) or floor not in VALID_STATES:
-            return (None, None)
+            return VerificationRequirement(None)
+        if SETTING_PROPOSAL_REQUIRE_RESIDENCY in settings:
+            return VerificationRequirement(
+                floor=floor,
+                jurisdiction=None,
+                require_residency=bool(settings.get(SETTING_PROPOSAL_REQUIRE_RESIDENCY)),
+                legacy=False,
+            )
         jurisdiction = settings.get(SETTING_PROPOSAL_JURISDICTION)
         if not isinstance(jurisdiction, str) or not jurisdiction.strip():
             jurisdiction = None
-        return (floor, jurisdiction)
+        return VerificationRequirement(floor, jurisdiction, False, True)
 
     # author (default)
     floor = getattr(proposal, "verification_floor", None)
     jurisdiction = getattr(proposal, "verification_jurisdiction", None)
     if not floor:
-        return (None, None)
-    return (floor, jurisdiction)
+        return VerificationRequirement(None)
+    residency_value = getattr(proposal, "verification_require_residency", None)
+    if residency_value is not None:
+        return VerificationRequirement(floor, None, bool(residency_value), False)
+    return VerificationRequirement(floor, jurisdiction, False, True)
+
+
+def effective_proposal_floor(proposal, org) -> tuple[Optional[str], Optional[str]]:
+    """Deprecated tuple adapter retained for external compatibility."""
+    requirement = effective_proposal_requirement(proposal, org)
+    return requirement.floor, requirement.jurisdiction
+
+
+def user_satisfies_requirement(user, requirement: VerificationRequirement, org=None) -> bool:
+    if not user_satisfies_floor(user, requirement.floor, requirement.jurisdiction):
+        return False
+    if requirement.require_residency:
+        return org is not None and user_satisfies_residency_scope(user, org)
+    return True
 
 
 def check_vote_floor_for_proposal(user, proposal, org=None) -> None:
@@ -663,16 +942,22 @@ def check_vote_floor_for_proposal(user, proposal, org=None) -> None:
     resolution applies. Phase 52j J3.
     """
     from fastapi import HTTPException
-    floor, jurisdiction = effective_proposal_floor(proposal, org)
-    if not floor:
+    requirement = effective_proposal_requirement(proposal, org)
+    if not requirement.enabled:
         return
-    if user_satisfies_floor(user, floor, jurisdiction):
+    if user_satisfies_requirement(user, requirement, org):
         return
+    detail = verification_required_payload(
+        floor=requirement.floor or IDENTITY,
+        jurisdiction=requirement.jurisdiction,
+        scope="vote",
+    )
+    detail["requires_residency"] = requirement.require_residency
+    if requirement.require_residency and org is not None:
+        detail["residency_scope"] = _residency_payload(org)["residency_scope"]
     raise HTTPException(
         status_code=403,
-        detail=verification_required_payload(
-            floor=floor, jurisdiction=jurisdiction, scope="vote",
-        ),
+        detail=detail,
     )
 
 
@@ -934,6 +1219,190 @@ def get_org_name_match_action(org) -> str:
     return NAME_MATCH_ACTION_BLOCK
 
 
+def get_org_name_match_scope(org) -> str:
+    """Resolve the legal-name policy scope with legacy compatibility."""
+    settings = getattr(org, "settings", None) or {}
+    if not isinstance(settings, dict):
+        return NAME_MATCH_SCOPE_ALL_VERIFIED
+    value = settings.get(SETTING_NAME_MATCH_SCOPE)
+    if value in _VALID_NAME_MATCH_SCOPES:
+        return value
+    # Existing non-off configurations predate the scope key and retain the
+    # original all-verified-member behavior.
+    return NAME_MATCH_SCOPE_ALL_VERIFIED
+
+
+def is_org_public_delegate(db, user_id: str, org_id: str) -> bool:
+    """Canonical tenant-scoped public/public-accepting profile predicate."""
+    import models
+    return db.query(models.DelegateProfile.id).filter(
+        models.DelegateProfile.user_id == user_id,
+        models.DelegateProfile.org_id == org_id,
+        models.DelegateProfile.visibility.in_(("public", "public_accepting")),
+    ).first() is not None
+
+
+def _has_usable_legal_name(user) -> bool:
+    first = _normalize_name_for_match(getattr(user, "legal_first_name", None))
+    last = _normalize_name_for_match(getattr(user, "legal_last_name", None))
+    full = _normalize_name_for_match(getattr(user, "legal_full_name", None))
+    return bool((first and last) or full)
+
+
+def has_usable_legal_name(user) -> bool:
+    """Public predicate; never returns or serializes legal-name material."""
+    return _has_usable_legal_name(user)
+
+
+def public_delegate_compliance_reason(
+    db, user, org, *, candidate_display_name: Optional[str] = None,
+) -> Optional[str]:
+    """Return a privacy-safe reason code, or None when fully compliant."""
+    # Strict public identity must come from a genuine provider and include
+    # usable legal-name material. Ops backdoors and demo stubs cannot make a
+    # public legal-identity claim.
+    if (
+        not user_satisfies_floor(user, IDENTITY)
+        or getattr(user, "verification_provenance", None) not in {PROV_DIDIT, PROV_PERSONA}
+        or not _has_usable_legal_name(user)
+    ):
+        return "verification_required"
+    import verification_flags
+    if verification_flags.has_open_flag(db, user_id=user.id, org_id=org.id):
+        return "verification_required"
+    if verification_flags.is_demoted_in_resolved_same(
+        db, user_id=user.id, org_id=org.id,
+    ):
+        return "verification_required"
+    if candidate_display_name is None:
+        candidate_display_name = display_name_for(user, org)
+    if not display_name_matches_legal(candidate_display_name, user, org):
+        return "name_mismatch"
+    return None
+
+
+def name_match_required_detail(org) -> dict:
+    return {
+        "error": "name_match_required",
+        "mode": get_org_name_match_mode(org),
+        "org_slug": getattr(org, "slug", None),
+        "org_name": getattr(org, "name", None),
+        "settings_path": (
+            f"/settings?displayNameOrg={getattr(org, 'slug', '')}#display-names"
+        ),
+    }
+
+
+def enforce_public_delegate_eligibility(db, user, org) -> None:
+    """Canonical pre-mutation gate for public delegate exposure."""
+    from fastapi import HTTPException
+    import verification_flags
+
+    mode = get_org_name_match_mode(org)
+    public_scope = (
+        mode != NAME_MATCH_OFF
+        and get_org_name_match_scope(org) == NAME_MATCH_SCOPE_PUBLIC_DELEGATES
+    )
+    if public_scope:
+        reason = public_delegate_compliance_reason(db, user, org)
+        if reason == "name_mismatch":
+            raise HTTPException(status_code=422, detail=name_match_required_detail(org))
+        if reason:
+            raise HTTPException(
+                status_code=403,
+                detail=verification_required_payload(
+                    floor=IDENTITY, jurisdiction=None, scope="delegate",
+                ),
+            )
+
+    if not verification_flags.verification_required_for_public_delegate(org):
+        return
+    floor, jurisdiction = get_org_verification_floor(org, "membership")
+    stronger_floor = floor if rank(floor) > rank(IDENTITY) else IDENTITY
+    if not user_satisfies_floor(user, stronger_floor, jurisdiction):
+        raise HTTPException(
+            status_code=403,
+            detail=verification_required_payload(
+                floor=stronger_floor, jurisdiction=jurisdiction, scope="delegate",
+            ),
+        )
+    if membership_requires_residency(org) and not user_satisfies_residency_scope(user, org):
+        detail = _residency_payload(org)
+        detail["scope"] = "delegate"
+        raise HTTPException(status_code=403, detail=detail)
+    if (
+        verification_flags.has_open_flag(db, user_id=user.id, org_id=org.id)
+        or verification_flags.is_demoted_in_resolved_same(
+            db, user_id=user.id, org_id=org.id,
+        )
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=verification_required_payload(
+                floor=stronger_floor, jurisdiction=jurisdiction, scope="delegate",
+            ),
+        )
+
+
+def public_delegate_activation_failures(db, org, *, limit: int = 20) -> tuple[int, list[dict]]:
+    """Bounded, legal-name-free preflight for enabling/tightening a rule."""
+    import models
+    user_ids = {
+        row.user_id for row in db.query(models.DelegateProfile.user_id).filter(
+            models.DelegateProfile.org_id == org.id,
+            models.DelegateProfile.visibility.in_(("public", "public_accepting")),
+        ).all()
+    }
+    if not user_ids:
+        return 0, []
+    users = db.query(models.User).filter(models.User.id.in_(user_ids)).all()
+    memberships = {
+        row.user_id: row for row in db.query(models.OrgMembership).filter(
+            models.OrgMembership.org_id == org.id,
+            models.OrgMembership.user_id.in_(user_ids),
+            models.OrgMembership.status == "active",
+        ).all()
+    }
+    blocked_ids: set[str] = set()
+    for flag in db.query(models.OrgDuplicateFlag).filter(
+        models.OrgDuplicateFlag.org_id == org.id,
+        (
+            (models.OrgDuplicateFlag.status == "open")
+            | (
+                (models.OrgDuplicateFlag.status == "resolved_same")
+                & (models.OrgDuplicateFlag.demoted_user_id.isnot(None))
+            )
+        ),
+    ).all():
+        if flag.status == "open":
+            blocked_ids.update((flag.user_a_id, flag.user_b_id))
+        elif flag.demoted_user_id:
+            blocked_ids.add(flag.demoted_user_id)
+    failures: list[dict] = []
+    for user in users:
+        display_name = display_name_for(user, org, membership=memberships.get(user.id))
+        if (
+            user.id in blocked_ids
+            or not user_satisfies_floor(user, IDENTITY)
+            or getattr(user, "verification_provenance", None)
+            not in {PROV_DIDIT, PROV_PERSONA}
+            or not _has_usable_legal_name(user)
+        ):
+            reason = "verification_required"
+        elif not display_name_matches_legal(display_name, user, org):
+            reason = "name_mismatch"
+        else:
+            reason = None
+        if reason:
+            failures.append({
+                "user_id": user.id,
+                "display_name": display_name,
+                "reason_code": reason,
+            })
+    failures.sort(key=lambda row: (row["display_name"].casefold(), row["user_id"]))
+    return len(failures), failures[:limit]
+
+
 def display_name_matches_legal(
     candidate_display_name: str | None,
     user,
@@ -1020,6 +1489,53 @@ def display_name_matches_legal(
 # Each is an exact match on its own level.
 
 
+def _residency_scope_entries_from_settings(settings: object) -> list[dict]:
+    """Normalize only valid, matchable shared-residency entries."""
+    if not isinstance(settings, dict):
+        return []
+    raw = settings.get(SETTING_RESIDENCY_SCOPE)
+    if not isinstance(raw, list):
+        return []
+    normalized: list[dict] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        country_raw = entry.get("country")
+        country = (
+            country_raw.strip().upper()
+            if isinstance(country_raw, str) and country_raw.strip() else None
+        )
+        state_raw = entry.get("state")
+        state = (
+            state_raw.strip().upper()
+            if isinstance(state_raw, str) and state_raw.strip() else None
+        )
+        city_raw = entry.get("city")
+        city = city_raw.strip() if isinstance(city_raw, str) and city_raw.strip() else None
+        if country is not None and country not in _VALID_COUNTRY_CODES:
+            continue
+        if state is not None and state not in _VALID_PROPOSAL_JURISDICTIONS:
+            continue
+        if state and country not in (None, "US"):
+            continue
+        if city and not state:
+            # City matching is US-state-hash based.  Keep a valid country
+            # gate while discarding only its unusable city refinement; a
+            # city with neither country nor state remains inert below.
+            city = None
+        if not country and not state:
+            continue
+        normalized.append({
+            # Preserve the legacy public shape for state-only entries; a
+            # missing country is implicitly US for validation/matching but
+            # remains null in structured requirement payloads.
+            "country": country,
+            "state": state,
+            "city": city,
+        })
+    return normalized
+
+
 def _residency_scope_entries(org) -> list[dict]:
     """Phase 52j J1 — read + normalize the org's residency-scope
     entries. Returns ``[]`` on absent / malformed config (which the
@@ -1045,40 +1561,7 @@ def _residency_scope_entries(org) -> list[dict]:
         return []
     raw = settings.get(SETTING_RESIDENCY_SCOPE)
     if isinstance(raw, list):
-        normalized: list[dict] = []
-        for entry in raw:
-            if not isinstance(entry, dict):
-                continue
-            state = entry.get("state")
-            state_clean: Optional[str] = (
-                state.strip().upper()
-                if isinstance(state, str) and state.strip() else None
-            )
-            # Phase 76c — optional ISO 3166-1 alpha-2 country. An entry
-            # is kept if it carries a state (US state/city entry, the
-            # existing shape) OR a country (country-level entry). An
-            # entry with neither is ambiguous and dropped.
-            country = entry.get("country")
-            country_clean: Optional[str] = (
-                country.strip().upper()
-                if isinstance(country, str) and country.strip() else None
-            )
-            if not state_clean and not country_clean:
-                continue
-            city = entry.get("city")
-            city_clean: Optional[str] = None
-            if isinstance(city, str) and city.strip():
-                city_clean = city.strip()
-            # City is hashed with its state (US-only for now); a city
-            # without a state can't be matched, so drop it.
-            if city_clean and not state_clean:
-                city_clean = None
-            normalized.append({
-                "country": country_clean,
-                "state": state_clean,
-                "city": city_clean,
-            })
-        return normalized
+        return _residency_scope_entries_from_settings(settings)
 
     # Back-compat: synthesize from old 52i single-value keys.
     old_state = settings.get(SETTING_MEMBERSHIP_JURISDICTION)

@@ -975,10 +975,131 @@ def me(current_user: models.User = Depends(auth_utils.get_current_user)):
 @router.patch("/me", response_model=schemas.UserOut)
 def update_me(
     body: schemas.UserUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
-    if body.display_name is not None:
+    if body.display_name is not None and body.display_name != current_user.display_name:
+        import verification
+        membership_org_rows = db.query(
+            models.OrgMembership, models.Organization,
+        ).join(
+            models.Organization,
+            models.Organization.id == models.OrgMembership.org_id,
+        ).filter(
+            models.OrgMembership.user_id == current_user.id,
+            models.OrgMembership.status == "active",
+            models.OrgMembership.display_name.is_(None),
+            models.Organization.parent_org_id.is_(None),
+        ).all()
+        org_ids = [org.id for _membership, org in membership_org_rows]
+        public_org_ids = {
+            row.org_id for row in db.query(models.DelegateProfile.org_id).filter(
+                models.DelegateProfile.user_id == current_user.id,
+                models.DelegateProfile.org_id.in_(org_ids),
+                models.DelegateProfile.visibility.in_(("public", "public_accepting")),
+            ).distinct().all()
+        } if org_ids else set()
+        blocked_org_ids: set[str] = set()
+        if org_ids:
+            duplicate_rows = db.query(models.OrgDuplicateFlag).filter(
+                models.OrgDuplicateFlag.org_id.in_(org_ids),
+                or_(
+                    (
+                        (models.OrgDuplicateFlag.status == "open")
+                        & or_(
+                            models.OrgDuplicateFlag.user_a_id == current_user.id,
+                            models.OrgDuplicateFlag.user_b_id == current_user.id,
+                        )
+                    ),
+                    (
+                        (models.OrgDuplicateFlag.status == "resolved_same")
+                        & (
+                            models.OrgDuplicateFlag.demoted_user_id
+                            == current_user.id
+                        )
+                    ),
+                ),
+            ).all()
+            blocked_org_ids = {row.org_id for row in duplicate_rows}
+        affected: list[dict] = []
+        flag_orgs: list[models.Organization] = []
+        for membership, org in membership_org_rows:
+            mode = verification.get_org_name_match_mode(org)
+            if mode == verification.NAME_MATCH_OFF:
+                continue
+            scope = verification.get_org_name_match_scope(org)
+            settings_path = (
+                f"/settings?displayNameOrg={org.slug}#display-names"
+            )
+            if scope == verification.NAME_MATCH_SCOPE_PUBLIC_DELEGATES:
+                if org.id not in public_org_ids:
+                    continue
+                if (
+                    org.id in blocked_org_ids
+                    or not verification.user_satisfies_floor(
+                        current_user, verification.IDENTITY,
+                    )
+                    or current_user.verification_provenance
+                    not in {verification.PROV_DIDIT, verification.PROV_PERSONA}
+                    or not verification.has_usable_legal_name(current_user)
+                ):
+                    reason = "verification_required"
+                elif not verification.display_name_matches_legal(
+                    body.display_name, current_user, org,
+                ):
+                    reason = "name_mismatch"
+                else:
+                    reason = None
+                if reason:
+                    affected.append({
+                        "org_slug": org.slug,
+                        "org_name": org.name,
+                        "mode": mode,
+                        "settings_path": settings_path,
+                    })
+                continue
+            if verification.display_name_matches_legal(
+                body.display_name, current_user, org,
+            ):
+                continue
+            if (
+                verification.get_org_name_match_action(org)
+                == verification.NAME_MATCH_ACTION_FLAG
+            ):
+                flag_orgs.append(org)
+            else:
+                affected.append({
+                    "org_slug": org.slug,
+                    "org_name": org.name,
+                    "mode": mode,
+                    "settings_path": settings_path,
+                })
+        if affected:
+            affected.sort(key=lambda item: (item["org_name"].casefold(), item["org_slug"]))
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "name_match_required",
+                    "affected_orgs": affected[:20],
+                    "total": len(affected),
+                },
+            )
+        for org in flag_orgs:
+            log_audit_event(
+                db,
+                action="org.display_name_mismatch",
+                target_type="organization",
+                target_id=org.id,
+                actor_id=current_user.id,
+                details={
+                    "org_id": org.id,
+                    "user_id": current_user.id,
+                    "mode": verification.get_org_name_match_mode(org),
+                    "candidate_display_name": body.display_name,
+                },
+                ip_address=request.client.host if request.client else None,
+            )
         current_user.display_name = body.display_name
     if body.default_follow_policy is not None:
         current_user.default_follow_policy = body.default_follow_policy

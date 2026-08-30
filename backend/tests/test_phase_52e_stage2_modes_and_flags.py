@@ -395,7 +395,7 @@ class TestPublicDelegateGate:
         # Structured 403 detail body for FE rendering.
         detail = r.json()["detail"]
         assert detail.get("error") == "verification_required"
-        assert detail.get("scope") == "role"
+        assert detail.get("scope") == "delegate"
 
     def test_verified_user_passes_gate(self, client: TestClient, db: Session):
         org = _make_org(

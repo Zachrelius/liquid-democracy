@@ -545,6 +545,7 @@ def test_card_surfaces_branding_and_governance_type(client, db_session):
     assert card["branding"] == {
         "primary_color": "#1B3A5C",
         "accent_color": "#2E75B6",
+        "header_text_color": None,
     }
 
 
@@ -561,5 +562,6 @@ def test_card_omits_branding_keys_when_unset(client, db_session):
     assert card["branding"] == {
         "primary_color": None,
         "accent_color": None,
+        "header_text_color": None,
     }
     assert card["governance_type"] is None

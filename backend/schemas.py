@@ -640,6 +640,10 @@ class ProposalCreate(BaseModel):
     # ``verification_delegation_carries_weight`` setting.
     verification_floor: Optional[str] = None
     verification_jurisdiction: Optional[str] = None
+    verification_require_residency: Optional[bool] = None
+    # Server-signed, short-lived marker returned only by the import preview
+    # when an existing file carries a legacy floor/jurisdiction combination.
+    verification_legacy_import_token: Optional[str] = None
     # Phase 66 — multi-winner approval selection config. NULL = legacy
     # single-winner behavior. Approval voting_method only (route layer
     # 400s on other methods + on elections). Shape validated below.
@@ -738,6 +742,7 @@ class ProposalUpdate(BaseModel):
     # Outside draft these are rejected.
     verification_floor: Optional[str] = Field(default=None)
     verification_jurisdiction: Optional[str] = Field(default=None)
+    verification_require_residency: Optional[bool] = Field(default=None)
     # Phase 66 — multi-winner approval selection config, editable while
     # status='draft' ONLY (mirrors num_winners / voting_method — the
     # winner-selection rule changes outcome semantics, so it's frozen
@@ -894,6 +899,7 @@ class ProposalOut(BaseModel):
     # didn't carry" surface on these two fields.
     verification_floor: Optional[str] = None
     verification_jurisdiction: Optional[str] = None
+    verification_require_residency: Optional[bool] = None
 
     # Phase 65 — True when the proposal is direct-vote-only (org master
     # delegation switch off OR any attached topic disallows delegation).
@@ -2210,6 +2216,7 @@ class BrandingOut(BaseModel):
     logo_url: Optional[str] = None
     primary_color: Optional[str] = None
     accent_color: Optional[str] = None
+    header_text_color: Optional[str] = None
     accent_auto_derived: bool = False
 
 
@@ -2234,6 +2241,7 @@ class BrandingUpdate(BaseModel):
     """
     primary_color: Optional[str] = None
     accent_color: Optional[str] = None
+    header_text_color: Optional[str] = None
     accent_auto_derived: Optional[bool] = None
     # Phase 14 B4 — empty string is allowed and treated as "clear" by the
     # endpoint (settings.intro_text set to "" so get_intro_text returns
@@ -2248,6 +2256,11 @@ class BrandingUpdate(BaseModel):
     @field_validator("accent_color")
     @classmethod
     def validate_accent(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_hex_color(v)
+
+    @field_validator("header_text_color")
+    @classmethod
+    def validate_header_text(cls, v: Optional[str]) -> Optional[str]:
         return _validate_hex_color(v)
 
     @field_validator("intro_text")
@@ -2270,12 +2283,13 @@ class BrandingUpdate(BaseModel):
 
 class OrgPublicBrandingOut(BaseModel):
     """Phase 14 B2 — public-shape branding object on the public landing
-    page endpoint. Exposes ONLY primary_color and accent_color (no
+    page endpoint. Exposes only the three public colors (no
     accent_auto_derived flag, no logo_url — logo_url is on the parent
     response). Smaller surface than internal BrandingOut.
     """
     primary_color: Optional[str] = None
     accent_color: Optional[str] = None
+    header_text_color: Optional[str] = None
 
 
 class OrgPublicOut(BaseModel):
@@ -2404,7 +2418,20 @@ class OrgOut(BaseModel):
     # Every member may see this (it's already implicit in tally denominators);
     # the FE renders "N of M total <unit>". None when weighted voting is off.
     total_voting_weight: Optional[int] = None
+    # Phase 105 — current-user-only convenience fields.  Public org/card
+    # schemas remain deliberately unchanged except for public-safe branding.
+    my_display_name: Optional[str] = None
+    my_display_name_override: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+class OrgDisplayNameUpdate(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=80)
+
+
+class OrgDisplayNameOut(BaseModel):
+    my_display_name: str
+    my_display_name_override: Optional[str] = None
 
 
 class OrgMemberOut(BaseModel):

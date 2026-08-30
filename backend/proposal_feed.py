@@ -189,17 +189,24 @@ class BatchViewerResolver:
             votes_by_proposal.setdefault(vote.proposal_id, []).append(vote)
 
         results: dict[str, object] = {}
-        from verification import effective_proposal_floor, user_satisfies_floor
+        from verification import (
+            effective_proposal_requirement,
+            user_satisfies_requirement,
+        )
         for proposal in self.proposals:
             eligible = set(sub_members.get(proposal.sub_org_id, ())) if proposal.sub_org_id else set(
                 parent_members.get(proposal.org_id, ())
             )
             org = organizations.get(proposal.org_id)
-            floor, jurisdiction = effective_proposal_floor(proposal, org)
-            if floor:
+            requirement = effective_proposal_requirement(proposal, org)
+            if requirement.enabled:
                 from verification import delegation_carries_unverified_weight
                 if not (org and delegation_carries_unverified_weight(org)):
-                    eligible = {uid for uid in eligible if uid in users and user_satisfies_floor(users[uid], floor, jurisdiction)}
+                    eligible = {
+                        uid for uid in eligible
+                        if uid in users
+                        and user_satisfies_requirement(users[uid], requirement, org)
+                    }
             if self.viewer.id not in eligible:
                 results[proposal.id] = None
                 continue

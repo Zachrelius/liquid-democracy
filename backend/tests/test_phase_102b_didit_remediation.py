@@ -218,8 +218,8 @@ def test_merged_proposal_policy_validation_matrix():
     invalid_cases = [
         ({"verification_proposal_policy": "always"}, "verification_proposal_floor"),
         ({"verification_proposal_policy": "always", "verification_proposal_floor": "email_only"}, "verification_proposal_floor"),
-        ({"verification_proposal_policy": "always", "verification_proposal_floor": "address_on_id"}, "verification_proposal_jurisdiction"),
-        ({"verification_proposal_policy": "always", "verification_proposal_floor": "residency_verified", "verification_proposal_jurisdiction": "XX"}, "verification_proposal_jurisdiction"),
+        ({"verification_proposal_policy": "always", "verification_proposal_floor": "address_on_id"}, "verification_proposal_floor"),
+        ({"verification_proposal_policy": "always", "verification_proposal_floor": "residency_verified", "verification_proposal_jurisdiction": "XX"}, "verification_proposal_floor"),
     ]
     for settings, expected_field in invalid_cases:
         _, errors = verification.validate_org_proposal_settings({}, settings)
@@ -233,7 +233,7 @@ def test_merged_proposal_policy_validation_matrix():
     assert merged["verification_proposal_jurisdiction"] is None
 
 
-def test_canonical_patch_rejects_partial_update_against_invalid_persisted_row(db):
+def test_canonical_patch_preserves_untouched_legacy_invalid_row(db):
     user = make_user(db, "settings_steward")
     org = models.Organization(
         name="Invalid Legacy", slug="invalid-legacy", description="",
@@ -255,12 +255,10 @@ def test_canonical_patch_rejects_partial_update_against_invalid_persisted_row(db
         )
     finally:
         app.dependency_overrides.pop(get_db, None)
-    assert response.status_code == 422
-    detail = response.json()["detail"]
-    assert detail["error"] == "invalid_proposal_verification_policy"
-    assert "verification_proposal_floor" in detail["fields"]
+    assert response.status_code == 200
     db.refresh(org)
-    assert "topic_categories_enabled" not in org.settings
+    assert org.settings["topic_categories_enabled"] is True
+    assert org.settings["verification_proposal_floor"] == "email_only"
 
 
 def test_audit_classifier_categories_are_deterministic():

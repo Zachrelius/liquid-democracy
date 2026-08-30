@@ -333,6 +333,7 @@ def open_election(
         # Phase 66a — NULL for non-approval methods (enforced above);
         # NULL = legacy single-winner election behavior.
         approval_winner_config=body.approval_winner_config,
+        verification_require_residency=False,
     )
     db.add(proposal)
     db.flush()
