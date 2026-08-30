@@ -433,6 +433,18 @@ def test_legacy_arrays_are_bounded_stable_deprecated_and_visibility_first(client
     assert first.headers["x-has-more"] == "true"
     assert first.headers["x-next-offset"] == "50"
     assert 'rel="next"' in first.headers["link"]
+    internal_host_page = client.get(
+        (
+            "http://backend.railway.internal:8000"
+            f"/api/orgs/{org.slug}/public/proposals?status=draft&limit=50&offset=0"
+        ),
+    )
+    assert internal_host_page.status_code == 200
+    assert internal_host_page.headers["link"] == (
+        f'</api/orgs/{org.slug}/public/proposals?status=draft&limit=50&offset=50>; '
+        'rel="next"'
+    )
+    assert "backend.railway.internal" not in internal_host_page.headers["link"]
     second = client.get(
         f"/api/orgs/{org.slug}/proposals?limit=50&offset=50",
         headers=_headers(admin),

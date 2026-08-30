@@ -11,6 +11,7 @@ import base64
 import binascii
 import json
 from datetime import datetime
+from urllib.parse import urlencode
 
 from fastapi import HTTPException
 from sqlalchemy import and_, case, func, or_
@@ -214,7 +215,15 @@ def set_legacy_pagination_headers(
         return
     next_offset = offset + limit
     response.headers["X-Next-Offset"] = str(next_offset)
-    next_url = request.url.include_query_params(
-        limit=str(limit), offset=str(next_offset),
-    )
-    response.headers["Link"] = f'<{next_url}>; rel="next"'
+    # Emit an origin-relative target.  Reusing ``request.url`` would trust
+    # the proxy-supplied authority and can expose an internal Railway host in
+    # a public response. Preserve every filter (including repeated values),
+    # replacing only the pagination controls owned by this helper.
+    query_items = [
+        (key, value)
+        for key, value in request.query_params.multi_items()
+        if key not in {"limit", "offset"}
+    ]
+    query_items.extend((("limit", str(limit)), ("offset", str(next_offset))))
+    relative_target = f"{request.url.path}?{urlencode(query_items)}"
+    response.headers["Link"] = f'<{relative_target}>; rel="next"'
