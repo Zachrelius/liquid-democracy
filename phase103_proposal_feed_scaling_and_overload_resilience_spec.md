@@ -1,6 +1,6 @@
 # Phase 103 — Proposal Feed Scaling and Overload Resilience
 
-**Status:** IMPLEMENTATION COMPLETE / LOCAL GATES PASSED / DEPLOY PENDING
+**Status:** DEPLOYED / HTTP VERIFIED / RENDERED CHROME QA BLOCKED
 
 **Written:** 2026-08-30, after the Massachusetts Legislature production stress-test incident
 
@@ -529,9 +529,41 @@ required. No Railway environment variable or pool-size change was made.
 Local verification is green: backend 3,131 passed / 20 environment skips / 0
 failed across 3,151 cases (+17 passes/cases from the Phase 102b baseline),
 frontend 62/62, changed-file lint, production build, Python compile, focused
-compatibility, and diff checks. Production merge/deploy/HTTP/browser evidence
-is intentionally pending and will be recorded after rollout; no production
-load test will be run.
+compatibility, and diff checks. No production load test was run.
+
+## Production execution result — 2026-08-30
+
+Implementation commits `d98c709`, `00521e2`, and `497d3a0`, followed by the
+local-proof/documentation commit `de40345`, were merged to `master` with the
+required no-fast-forward merge `ecfed3103eeb9cbf340cd71573cac3bf35c4ab70`.
+Railway backend deployment `bc8a19f7-2eab-4ef9-b5eb-d2fdcd97eed6` and
+frontend deployment `cbf3c86a-92c4-42e0-8e9e-2d1ab2332002` both succeeded for
+that exact merge. GitHub Actions run `33323266143` is fully green: the
+frontend job completed in 17 seconds and the backend job completed in 23m36s.
+Production serves `index-BvlqA3hN.js`.
+
+Post-rollout bounded HTTP verification passed without production mutation or
+load. Homepage, liveness, readiness, and monitoring returned 200; readiness
+reported the database connected, and the monitor reported `ok`, no issues,
+pool capacity 5 with one checkout, zero overflow, a five-second timeout, and
+zero pool timeouts in the rolling 15-minute window. The anonymous public feed
+returned five compact rows with nullable viewer votes and a cursor. A second
+page returned five more rows with no cross-page duplicates. The member feed
+returned the expected 401 while logged out.
+
+Rendered desktop, approximately 380px, keyboard, focus, filter-reset, and
+in-browser error-state QA is **BLOCKED / not claimed**. The required Chrome
+client failed before an agent existed because its trusted RPC dependency
+resolved outside the configured Chrome-plugin trust path:
+`Trusted RPC dependency must resolve within a configured trusted code path`.
+That startup failure also made the prescribed in-client troubleshooting
+document unreachable. Per the Chrome skill and `AGENTS.md`, no substitute
+browser was used. Source tests, build verification, live bundle activation,
+and production HTTP/cursor checks pass but do not replace the rendered gate.
+
+No migration, index, Railway environment-variable change, pool-size change,
+production load, or production data mutation was made. The recommended admin
+and secondary raw-list pagination pass remains **NOT STARTED**.
 
 ## Expected file set
 
