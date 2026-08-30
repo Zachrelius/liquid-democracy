@@ -269,8 +269,18 @@ def _org_to_out(
         logo_url=_inherit("logo_url"),
         primary_color=_inherit("primary_color"),
         accent_color=_inherit("accent_color"),
+        header_text_color=_inherit("header_text_color"),
         accent_auto_derived=bool(branding_dict.get("accent_auto_derived", False)),
     )
+
+    my_display_name = None
+    my_display_name_override = None
+    if membership is not None:
+        from verification import display_name_for
+        user = db.get(models.User, user_id)
+        if user is not None:
+            my_display_name = display_name_for(user, org, membership=membership)
+            my_display_name_override = membership.display_name
 
     return schemas.OrgOut(
         id=org.id,
@@ -313,6 +323,8 @@ def _org_to_out(
         weighted_voting=_wv_cfg,
         # Phase 88c — org total outstanding weight (member-visible).
         total_voting_weight=total_voting_weight,
+        my_display_name=my_display_name,
+        my_display_name_override=my_display_name_override,
     )
 
 
@@ -625,25 +637,74 @@ def update_organization(
     # removed; the new control is `settings.allow_cosign_petition`,
     # handled by the generic settings-merge below.
     if body.settings is not None:
-        # Phase 102b — validate the MERGED final proposal-policy settings, not
-        # only keys present in this patch. This prevents a partial settings
-        # update from preserving/bypassing an already-invalid `always` row.
-        from verification import validate_org_proposal_settings
-        _proposal_merged, _proposal_errors = validate_org_proposal_settings(
+        # Phase 105 — validate the complete interdependent verification state
+        # before assigning any JSON. This includes residency dependencies,
+        # coherent proposal policy, and legal-name scope/action.
+        from verification import (
+            NAME_MATCH_OFF,
+            NAME_MATCH_SCOPE_PUBLIC_DELEGATES,
+            get_org_name_match_mode,
+            get_org_name_match_scope,
+            public_delegate_activation_failures,
+            validate_org_verification_settings,
+        )
+        _proposal_merged, _proposal_errors = validate_org_verification_settings(
             org.settings, body.settings,
         )
         if _proposal_errors:
             raise HTTPException(
                 status_code=422,
                 detail={
-                    "error": "invalid_proposal_verification_policy",
+                    "error": "invalid_verification_settings",
                     "fields": _proposal_errors,
                 },
             )
+
+        # Enabling public-delegate scope or changing its match mode cannot
+        # silently strand already-public profiles. Evaluate against the
+        # proposed settings, returning only public names + reason codes.
+        from types import SimpleNamespace
+        proposed_org = SimpleNamespace(
+            id=org.id, slug=org.slug, name=org.name,
+            settings=_proposal_merged,
+        )
+        old_mode = get_org_name_match_mode(org)
+        old_scope = get_org_name_match_scope(org)
+        new_mode = get_org_name_match_mode(proposed_org)
+        new_scope = get_org_name_match_scope(proposed_org)
+        public_rule_changed = (
+            new_mode != NAME_MATCH_OFF
+            and new_scope == NAME_MATCH_SCOPE_PUBLIC_DELEGATES
+            and (
+                old_mode == NAME_MATCH_OFF
+                or old_scope != NAME_MATCH_SCOPE_PUBLIC_DELEGATES
+                or old_mode != new_mode
+            )
+        )
+        if public_rule_changed:
+            total, items = public_delegate_activation_failures(db, proposed_org)
+            if total:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "error": "public_delegate_name_policy_conflict",
+                        "total": total,
+                        "items": items,
+                    },
+                )
         for _proposal_key in (
             "verification_proposal_policy",
             "verification_proposal_floor",
             "verification_proposal_jurisdiction",
+            "verification_proposal_require_residency",
+            "verification_membership_floor",
+            "verification_membership_require_residency",
+            "verification_role_floors",
+            "verification_role_require_residency",
+            "verification_residency_scope",
+            "verification_require_name_match",
+            "verification_name_match_scope",
+            "verification_name_match_action",
         ):
             if _proposal_key in _proposal_merged:
                 body.settings[_proposal_key] = _proposal_merged[_proposal_key]
@@ -1519,11 +1580,11 @@ def list_members(
 
 @router.patch(
     "/{org_slug}/me/display-name",
-    response_model=dict,
+    response_model=schemas.OrgDisplayNameOut,
 )
 def set_my_org_display_name(
     org_slug: str,
-    body: dict,
+    body: schemas.OrgDisplayNameUpdate,
     request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth_utils.get_current_user),
@@ -1555,7 +1616,7 @@ def set_my_org_display_name(
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    raw = body.get("display_name") if isinstance(body, dict) else None
+    raw = body.display_name
     new_name: Optional[str]
     if raw is None or (isinstance(raw, str) and not raw.strip()):
         new_name = None
@@ -1569,10 +1630,48 @@ def set_my_org_display_name(
     else:
         raise HTTPException(status_code=400, detail="Invalid display_name")
 
+    candidate = new_name or current_user.display_name
+    old_name = membership.display_name
+    if old_name == new_name:
+        return schemas.OrgDisplayNameOut(
+            my_display_name=_verification.display_name_for(
+                current_user, org, membership=membership,
+            ),
+            my_display_name_override=membership.display_name,
+        )
     mode = _verification.get_org_name_match_mode(org)
-    if mode != _verification.NAME_MATCH_OFF and new_name is not None:
+    scope = _verification.get_org_name_match_scope(org)
+    is_public_delegate = _verification.is_org_public_delegate(
+        db, current_user.id, org.id,
+    )
+    if (
+        mode != _verification.NAME_MATCH_OFF
+        and scope == _verification.NAME_MATCH_SCOPE_PUBLIC_DELEGATES
+        and is_public_delegate
+    ):
+        reason = _verification.public_delegate_compliance_reason(
+            db, current_user, org, candidate_display_name=candidate,
+        )
+        if reason == "verification_required":
+            raise HTTPException(
+                status_code=403,
+                detail=_verification.verification_required_payload(
+                    floor=_verification.IDENTITY,
+                    jurisdiction=None,
+                    scope="delegate",
+                ),
+            )
+        if reason == "name_mismatch":
+            raise HTTPException(
+                status_code=422,
+                detail=_verification.name_match_required_detail(org),
+            )
+    elif (
+        mode != _verification.NAME_MATCH_OFF
+        and scope == _verification.NAME_MATCH_SCOPE_ALL_VERIFIED
+    ):
         passes = _verification.display_name_matches_legal(
-            new_name, current_user, org,
+            candidate, current_user, org,
         )
         if not passes:
             action = _verification.get_org_name_match_action(org)
@@ -1581,7 +1680,7 @@ def set_my_org_display_name(
                     status_code=422,
                     detail={
                         "error": "name_match_required",
-                        "mode": mode,
+                        **_verification.name_match_required_detail(org),
                     },
                 )
             # flag mode — allow + audit
@@ -1595,19 +1694,34 @@ def set_my_org_display_name(
                     "org_id": org.id,
                     "user_id": current_user.id,
                     "mode": mode,
-                    "candidate_display_name": new_name,
+                        "candidate_display_name": candidate,
                 },
                 ip_address=request.client.host if request.client else None,
             )
 
     membership.display_name = new_name
+    log_audit_event(
+        db,
+        action="org.display_name_changed",
+        target_type="organization",
+        target_id=org.id,
+        actor_id=current_user.id,
+        details={
+            "org_id": org.id,
+            "user_id": current_user.id,
+            "old_display_name": old_name,
+            "new_display_name": new_name,
+            "effective_display_name": candidate,
+        },
+        ip_address=request.client.host if request.client else None,
+    )
     db.commit()
-    return {
-        "display_name": _verification.display_name_for(
+    return schemas.OrgDisplayNameOut(
+        my_display_name=_verification.display_name_for(
             current_user, org, membership=membership,
         ),
-        "override_set": new_name is not None,
-    }
+        my_display_name_override=membership.display_name,
+    )
 
 
 @router.patch("/{org_slug}/members/{user_id}", response_model=schemas.OrgMemberOut)
@@ -2823,6 +2937,7 @@ def create_issuance_proposal(
         voting_end=(now_at + timedelta(days=float(eff_vote)) if skip_delib else None),
         deliberation_days=eff_delib, voting_days=eff_vote,
         pass_threshold=0.5, quorum_threshold=0.0,
+        verification_require_residency=False,
     )
     db.add(proposal)
     db.flush()
@@ -2899,6 +3014,7 @@ def get_public_org(
         branding=schemas.OrgPublicBrandingOut(
             primary_color=branding_dict.get("primary_color"),
             accent_color=branding_dict.get("accent_color"),
+            header_text_color=branding_dict.get("header_text_color"),
         ),
         intro_text=(org.settings or {}).get("intro_text") or None,
         join_policy=org.join_policy,
@@ -3316,6 +3432,7 @@ def get_explore_orgs(
             branding=schemas.OrgPublicBrandingOut(
                 primary_color=branding_dict.get("primary_color"),
                 accent_color=branding_dict.get("accent_color"),
+                header_text_color=branding_dict.get("header_text_color"),
             ),
             # Phase 88c — voting model on each discovery card (anti-stealth).
             weighted_voting=get_weighted_voting_config(org),
@@ -5184,50 +5301,41 @@ def create_org_proposal(
         initial_status = "draft"
         now_at_create = None
 
-    # Phase 52 Stage 1 — validate the per-proposal verification gate
-    # inputs against the shipped Phase 51 state list + the
-    # jurisdiction-presence consistency rule. Done HERE (at proposal
-    # creation) so a malformed gate fails the whole POST cleanly
-    # rather than being a silent NULL at write time.
-    if body.verification_floor is not None:
-        from verification import (
-            VALID_STATES, ORDER, jurisdiction_required_for, EMAIL_ONLY,
+    from verification import (
+        has_valid_residency_scope,
+        normalize_proposal_requirement_write,
+        valid_legacy_proposal_import_token,
+    )
+    legacy_import_grant = valid_legacy_proposal_import_token(
+        body.verification_legacy_import_token,
+        org.id,
+        body.verification_floor,
+        body.verification_jurisdiction,
+    )
+    try:
+        verification_requirement = normalize_proposal_requirement_write(
+            body.verification_floor,
+            body.verification_jurisdiction,
+            body.verification_require_residency,
+            residency_explicit=(
+                "verification_require_residency" in body.model_fields_set
+            ),
+            allow_legacy=legacy_import_grant,
         )
-        if body.verification_floor not in VALID_STATES:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Unknown verification_floor {body.verification_floor!r}. "
-                    f"Allowed: {list(ORDER)}."
-                ),
-            )
-        # Normalize blank jurisdiction → None for the
-        # presence-consistency check.
-        _jur = body.verification_jurisdiction
-        _jur = _jur.strip() if isinstance(_jur, str) else None
-        if _jur == "":
-            _jur = None
-        if jurisdiction_required_for(body.verification_floor) and not _jur:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"verification_floor {body.verification_floor!r} "
-                    "requires a non-empty verification_jurisdiction."
-                ),
-            )
-        if not jurisdiction_required_for(body.verification_floor) and _jur:
-            # Drop misleading input (mirrors the backdoor setter's
-            # behavior — lower-tier floors don't carry a
-            # jurisdiction claim).
-            body.verification_jurisdiction = None
-        else:
-            body.verification_jurisdiction = _jur
-        # ``email_only`` as a floor is a no-op (the gate predicate
-        # returns True for everyone). Normalize to NULL so the
-        # ungated path is the canonical "no gate" representation.
-        if body.verification_floor == EMAIL_ONLY:
-            body.verification_floor = None
-            body.verification_jurisdiction = None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if verification_requirement.require_residency and not has_valid_residency_scope(org):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "invalid_verification_requirement",
+                "fields": {
+                    "verification_require_residency": (
+                        "The organization needs at least one allowed residency location."
+                    ),
+                },
+            },
+        )
 
     # Phase 90c — per-proposal count_mode. Only meaningful in weighted orgs;
     # normalized to None elsewhere so unweighted proposals never carry a stray
@@ -5291,8 +5399,12 @@ def create_org_proposal(
         # Phase 52 Stage 1 — per-proposal verification gate. Validated
         # against ``VALID_STATES`` + jurisdiction-presence consistency
         # right above ``models.Proposal(...)``.
-        verification_floor=body.verification_floor,
-        verification_jurisdiction=body.verification_jurisdiction,
+        verification_floor=verification_requirement.floor,
+        verification_jurisdiction=verification_requirement.jurisdiction,
+        verification_require_residency=(
+            None if legacy_import_grant
+            else verification_requirement.require_residency
+        ),
         # Phase 66 — multi-winner approval config. Shape validated at
         # the Pydantic layer; method-compatibility (approval only)
         # enforced by _validate_proposal_creation above. NULL = legacy
@@ -5477,7 +5589,9 @@ _IMPORT_TEMPLATE_BASE: dict = {
         "omit them to use the organization's defaults. Set 'voting_end_date' "
         "to an ISO datetime to specify an absolute voting deadline (e.g. a "
         "meeting date); omit it to use voting_days or org defaults. Fields you "
-        "don't have permission to set are omitted from this template."
+        "don't have permission to set are omitted from this template. "
+        "Proposal verification supports only none (null/false), identity "
+        "(identity/false), or verified resident (address_on_id/true)."
     ),
     "title": "Example: Adopt a community garden policy",
     "body": "Markdown body explaining the proposal goes here.",
@@ -5490,6 +5604,8 @@ _IMPORT_TEMPLATE_BASE: dict = {
     "topics": [
         {"topic_name": "Parks & Recreation", "relevance": 1.0},
     ],
+    "verification_floor": None,
+    "verification_require_residency": False,
 }
 
 # ProposalCreate fields the importer accepts. Computed from the schema so
@@ -5711,21 +5827,29 @@ def _preview_one_proposal(
             add_error("deliberation_days", "Deliberation duration cannot be negative.")
 
         if proposal_model.verification_floor is not None:
-            from verification import VALID_STATES, ORDER, jurisdiction_required_for
-            floor = proposal_model.verification_floor
-            jur = proposal_model.verification_jurisdiction
-            jur = jur.strip() if isinstance(jur, str) else None
-            if floor not in VALID_STATES:
-                add_error(
-                    "verification_floor",
-                    f"Unknown verification_floor {floor!r}. Allowed: {list(ORDER)}.",
+            from verification import (
+                has_valid_residency_scope,
+                normalize_proposal_requirement_write,
+            )
+            try:
+                requirement = normalize_proposal_requirement_write(
+                    proposal_model.verification_floor,
+                    proposal_model.verification_jurisdiction,
+                    proposal_model.verification_require_residency,
+                    residency_explicit=(
+                        "verification_require_residency"
+                        in proposal_model.model_fields_set
+                    ),
+                    allow_legacy=True,
                 )
-            elif jurisdiction_required_for(floor) and not jur:
-                add_error(
-                    "verification_jurisdiction",
-                    f"verification_floor {floor!r} requires a non-empty "
-                    "verification_jurisdiction.",
-                )
+            except ValueError as exc:
+                add_error("verification_floor", str(exc))
+            else:
+                if requirement.require_residency and not has_valid_residency_scope(org):
+                    add_error(
+                        "verification_require_residency",
+                        "The organization needs at least one allowed residency location.",
+                    )
 
     if errors or proposal_model is None:
         return {
@@ -5736,6 +5860,18 @@ def _preview_one_proposal(
         }
 
     proposal_dict = proposal_model.model_dump(mode="json")
+    if (
+        "verification_require_residency" not in proposal_model.model_fields_set
+        and proposal_model.verification_floor not in (None, "email_only", "identity")
+    ):
+        from verification import make_legacy_proposal_import_token
+        proposal_dict["verification_legacy_import_token"] = (
+            make_legacy_proposal_import_token(
+                org.id,
+                proposal_model.verification_floor,
+                proposal_model.verification_jurisdiction,
+            )
+        )
 
     # --- Section B: permission-aware threshold/duration handling ---
     # Two jobs, both keyed on model_fields_set (the SAME mechanism the create

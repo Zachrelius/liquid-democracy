@@ -446,6 +446,11 @@ def _approve_profile(
         the route to serialize.
     """
     applicant_id = dp.user_id
+    applicant = db.get(models.User, applicant_id)
+    if applicant is None:
+        raise HTTPException(status_code=404, detail="Applicant not found")
+    from verification import enforce_public_delegate_eligibility
+    enforce_public_delegate_eligibility(db, applicant, org)
     dp.visibility = "public_accepting"
     dp.public_accepting_approved_at = _now()
     dp.public_accepting_approved_by_id = actor.id
@@ -717,6 +722,9 @@ def patch_my_topic_profile(
     if body.visibility is not None:
         new_v = body.visibility
         old_v = dp.visibility
+        if new_v == "public" and old_v not in ("public", "public_accepting"):
+            from verification import enforce_public_delegate_eligibility
+            enforce_public_delegate_eligibility(db, current_user, org)
         if new_v == "public" and old_v == "public_accepting":
             # public_accepting -> public is the SOFT revert; route caller
             # through the dedicated endpoint so the audit trail captures
@@ -802,30 +810,8 @@ def submit_public_accepting(
     if org is None:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    # Phase 52e Stage 2 E3 — verification-to-act gate for the
-    # public_delegate capability. When the org has enabled
-    # ``verification_required_for_public_delegate``, the candidate
-    # must satisfy the derived ``is_org_verified`` predicate
-    # (membership floor satisfied AND not currently the subject of
-    # an open high-confidence duplicate flag in this org). The
-    # check fires at submit-time, before any state mutation. Returns
-    # a structured 403 the FE renders as the verification-required
-    # prompt — same shape as the proposal-floor / role-grant gates.
-    import verification_flags
-    if verification_flags.verification_required_for_public_delegate(org):
-        if not verification_flags.is_org_verified(current_user, org, db):
-            from verification import (
-                get_org_verification_floor, verification_required_payload,
-            )
-            floor, jurisdiction = get_org_verification_floor(org, "membership")
-            raise HTTPException(
-                status_code=403,
-                detail=verification_required_payload(
-                    floor=floor or "identity",
-                    jurisdiction=jurisdiction,
-                    scope="role",
-                ),
-            )
+    from verification import enforce_public_delegate_eligibility
+    enforce_public_delegate_eligibility(db, current_user, org)
 
     topic = _topic_in_org_or_404(db, topic_id, membership.org_id)
     dp = _get_or_create_delegate_profile(
@@ -1405,6 +1391,9 @@ def revert_to_public(
                 "'public'; currently '" + dp.visibility + "'"
             ),
         )
+
+    from verification import enforce_public_delegate_eligibility
+    enforce_public_delegate_eligibility(db, current_user, org)
 
     dp.visibility = "public"
     # Clear pending markers — the topic isn't accepting anymore so any

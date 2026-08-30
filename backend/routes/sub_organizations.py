@@ -256,6 +256,7 @@ def _sub_org_to_out(
         logo_url=_inherit("logo_url"),
         primary_color=_inherit("primary_color"),
         accent_color=_inherit("accent_color"),
+        header_text_color=_inherit("header_text_color"),
         accent_auto_derived=bool(branding_dict.get("accent_auto_derived", False)),
     )
 

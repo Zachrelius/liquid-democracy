@@ -89,6 +89,7 @@ def _make_org(
         join_policy="open",
         settings={
             "allowed_voting_methods": ["binary", "approval", "ranked_choice"],
+            "verification_residency_scope": [{"state": "CA"}],
         },
     )
     db.add(o)
@@ -162,13 +163,14 @@ def test_verification_floor_set_in_draft_persists(client, db_session):
         headers=_auth(steward.id),
         json={
             "verification_floor": "address_on_id",
-            "verification_jurisdiction": "US-CA",
+            "verification_require_residency": True,
         },
     )
     assert r.status_code == 200, r.text
     db_session.refresh(p)
     assert p.verification_floor == "address_on_id"
-    assert p.verification_jurisdiction == "US-CA"
+    assert p.verification_jurisdiction is None
+    assert p.verification_require_residency is True
 
 
 def test_verification_floor_clear_in_draft_via_explicit_null(client, db_session):
@@ -188,6 +190,7 @@ def test_verification_floor_clear_in_draft_via_explicit_null(client, db_session)
         json={
             "verification_floor": None,
             "verification_jurisdiction": None,
+            "verification_require_residency": False,
         },
     )
     assert r.status_code == 200, r.text
@@ -231,12 +234,11 @@ def test_verification_floor_unknown_value_rejected_400(client, db_session):
         json={"verification_floor": "definitely_not_a_state"},
     )
     assert r.status_code == 400, r.text
-    assert "Unknown verification_floor" in r.json()["detail"]
+    assert "none, identity, or resident" in r.json()["detail"]
 
 
-def test_verification_floor_state_id_without_jurisdiction_rejected(client, db_session):
-    """state_id (and any jurisdiction-required floor) requires a
-    non-empty jurisdiction. Mirrors the create-path validator."""
+def test_verification_floor_address_only_without_residency_rejected(client, db_session):
+    """New address-only writes are rejected; resident must be explicit."""
     org = _make_org(db_session)
     steward = _make_user(db_session, "stew")
     _add_member(db_session, org, steward)
@@ -249,13 +251,11 @@ def test_verification_floor_state_id_without_jurisdiction_rejected(client, db_se
         json={"verification_floor": "address_on_id"},  # no jurisdiction
     )
     assert r.status_code == 400, r.text
-    assert "verification_jurisdiction" in r.json()["detail"]
+    assert "none, identity, or resident" in r.json()["detail"]
 
 
-def test_verification_floor_non_jurisdiction_drops_jurisdiction(client, db_session):
-    """Lower-tier floors (e.g. 'country' which doesn't require
-    jurisdiction) drop a stray jurisdiction so the column pair stays
-    consistent. Mirrors the create-path normalization."""
+def test_verification_floor_dead_rung_rejected_for_new_write(client, db_session):
+    """The legacy identity_unique rung remains enforceable but not selectable."""
     org = _make_org(db_session)
     steward = _make_user(db_session, "stew")
     _add_member(db_session, org, steward)
@@ -272,9 +272,9 @@ def test_verification_floor_non_jurisdiction_drops_jurisdiction(client, db_sessi
             "verification_jurisdiction": "US",  # would be dropped
         },
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code == 400, r.text
     db_session.refresh(p)
-    assert p.verification_floor == "identity_unique"
+    assert p.verification_floor is None
     assert p.verification_jurisdiction is None
 
 
@@ -368,7 +368,7 @@ def test_full_field_round_trip_in_draft(client, db_session):
         "allow_pre_voting": True,
         "edit_lockout_fraction": 0.80,
         "verification_floor": "address_on_id",
-        "verification_jurisdiction": "US-CA",
+        "verification_require_residency": True,
     }
     r = client.patch(
         f"/api/proposals/{p.id}",
@@ -391,7 +391,8 @@ def test_full_field_round_trip_in_draft(client, db_session):
     assert p.allow_pre_voting is True
     assert p.edit_lockout_fraction == 0.80
     assert p.verification_floor == "address_on_id"
-    assert p.verification_jurisdiction == "US-CA"
+    assert p.verification_jurisdiction is None
+    assert p.verification_require_residency is True
 
     # Topics replaced wholesale.
     pt_rows = (

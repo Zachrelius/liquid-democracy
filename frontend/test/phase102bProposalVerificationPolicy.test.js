@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
+  proposalPolicyChoice,
+  proposalPolicyStorage,
   proposalPolicyErrorsFromApi,
   validateProposalVerificationPolicy,
 } from '../src/utils/proposalVerificationPolicy.js';
@@ -11,27 +13,31 @@ const settingsSource = readFileSync(
   new URL('../src/pages/admin/OrgSettings.jsx', import.meta.url), 'utf8',
 );
 
-test('always policy requires a real floor and jurisdiction for address gates', () => {
+test('Phase 105 proposal policy maps coherent choices and validates shared residency', () => {
+  assert.deepEqual(proposalPolicyStorage('always_identity'), {
+    verification_proposal_policy: 'always',
+    verification_proposal_floor: 'identity',
+    verification_proposal_require_residency: false,
+    verification_proposal_jurisdiction: null,
+  });
+  const resident = {
+    ...proposalPolicyStorage('always_resident'),
+    verification_residency_scope: [{ country: 'US', state: 'MA' }],
+  };
+  assert.equal(proposalPolicyChoice(resident), 'always_resident');
+  assert.deepEqual(validateProposalVerificationPolicy(resident), {});
   assert.ok(validateProposalVerificationPolicy({
-    verification_proposal_policy: 'always',
-  }).verification_proposal_floor);
-  assert.ok(validateProposalVerificationPolicy({
-    verification_proposal_policy: 'always',
-    verification_proposal_floor: 'email_only',
-  }).verification_proposal_floor);
-  assert.ok(validateProposalVerificationPolicy({
-    verification_proposal_policy: 'always',
-    verification_proposal_floor: 'address_on_id',
-  }).verification_proposal_jurisdiction);
-  assert.deepEqual(validateProposalVerificationPolicy({
-    verification_proposal_policy: 'always',
-    verification_proposal_floor: 'address_on_id',
-    verification_proposal_jurisdiction: 'ma',
-  }), {});
+    ...resident, verification_residency_scope: [{ country: 'ZZ' }],
+  }).verification_residency_scope);
   assert.deepEqual(validateProposalVerificationPolicy({
     verification_proposal_policy: 'always',
     verification_proposal_floor: 'identity',
   }), {});
+  assert.equal(proposalPolicyChoice({
+    verification_proposal_policy: 'always',
+    verification_proposal_floor: 'address_on_id',
+    verification_proposal_jurisdiction: 'MA',
+  }), 'legacy');
 });
 
 test('structured backend policy errors are extracted without assuming shape', () => {
@@ -49,12 +55,12 @@ test('organization settings blocks save, focuses first error, and exposes access
     settingsSource.indexOf('Multi-Admin Approval — Phase 44'),
   );
   assert.match(settingsSource, /validateProposalVerificationPolicy\(settings\)/);
-  assert.match(settingsSource, /firstInvalid\.current\?\.focus\(\)/);
+  assert.match(settingsSource, /focusRef\.current\?\.focus\(\)/);
   assert.match(settingsSource, /proposalPolicyErrorsFromApi\(e\)/);
-  assert.match(proposalPolicySection, /Required floor for every proposal/);
-  assert.match(proposalPolicySection, /Required jurisdiction/);
+  assert.match(proposalPolicySection, /Who must verify to vote on proposals/);
+  assert.match(proposalPolicySection, /Verified resident for every proposal/);
   assert.match(proposalPolicySection, /aria-invalid=/);
   assert.match(proposalPolicySection, /role="alert"/);
-  assert.match(proposalPolicySection, /Select a required floor/);
-  assert.doesNotMatch(proposalPolicySection, /No verification required<\/option>/);
+  assert.match(proposalPolicySection, /No proposal-level verification/);
+  assert.doesNotMatch(proposalPolicySection, /Required jurisdiction/);
 });

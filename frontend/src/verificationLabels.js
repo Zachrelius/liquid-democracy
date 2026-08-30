@@ -13,9 +13,8 @@ import { countryName } from './utils/countries.js';
 
 // Long labels intentionally spell out what was verified (a government
 // ID was confirmed for the account) so the badge doesn't overclaim —
-// we don't currently check that the user's display name matches the
-// ID name, only that the ID is valid + linked to this account. A
-// future phase may add a display-name-match option (see backlog).
+// Verification confirms the ID; organizations may separately require a
+// public display name to match selected legal-name components.
 export const VERIFICATION_STATE_LABELS = {
   email_only: 'Email only (no extra verification)',
   identity: 'Identity verified — a government ID was confirmed for this account',
@@ -218,9 +217,27 @@ export function copyForNameMatchRequired(detail) {
   const part = {
     first: 'first name',
     last: 'last name',
+    either: 'first or last name',
     full: 'full name',
   }[detail.mode] || 'name';
-  return `This organization requires your display name to match the ${part} on your ID.`;
+  const org = detail.org_name || detail.organization_name || 'This organization';
+  return `${org} requires your display name to match the ${part} on your ID.`;
+}
+
+/** Extract a privacy-safe structured name-match error from any API wrapper. */
+export function extractNameMatchRequiredDetail(error) {
+  if (!error) return null;
+  const candidates = [
+    error?.raw?.detail,
+    error.detail,
+    error?.response?.data?.detail,
+    error?.body?.detail,
+  ];
+  return candidates.find(candidate => (
+    candidate && typeof candidate === 'object'
+      && (candidate.error === 'name_match_required'
+        || candidate.error === 'name_match_conflicts')
+  )) || null;
 }
 
 /**

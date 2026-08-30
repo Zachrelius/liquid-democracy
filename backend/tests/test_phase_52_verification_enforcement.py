@@ -177,13 +177,15 @@ class TestProposalVerificationFields:
             json={
                 "title": "Verified-only vote",
                 "voting_method": "binary",
-                "verification_floor": "identity_unique",
+                "verification_floor": "identity",
+                "verification_require_residency": False,
             },
         )
         assert r.status_code == 201, r.text
         body = r.json()
-        assert body["verification_floor"] == "identity_unique"
+        assert body["verification_floor"] == "identity"
         assert body["verification_jurisdiction"] is None
+        assert body["verification_require_residency"] is False
 
     def test_create_proposal_jurisdiction_required_at_address_on_id(
         self, client: TestClient, db: Session, auth_for,
@@ -201,7 +203,7 @@ class TestProposalVerificationFields:
             },
         )
         assert r.status_code == 400
-        assert "jurisdiction" in r.json()["detail"].lower()
+        assert "none, identity, or resident" in r.json()["detail"].lower()
 
     def test_unknown_floor_rejected(
         self, client: TestClient, db: Session, auth_for,

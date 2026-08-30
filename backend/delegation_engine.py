@@ -1605,9 +1605,9 @@ def eligible_voter_ids_for_proposal(
         db.get(models.Organization, org_id_for_setting)
         if org_id_for_setting else None
     )
-    from verification import effective_proposal_floor
-    floor, jurisdiction = effective_proposal_floor(proposal, org_row)
-    if floor:
+    from verification import effective_proposal_requirement
+    requirement = effective_proposal_requirement(proposal, org_row)
+    if requirement.enabled:
         carries = False
         if org_row is not None:
             from verification import (
@@ -1615,13 +1615,13 @@ def eligible_voter_ids_for_proposal(
             )
             carries = delegation_carries_unverified_weight(org_row)
         if not carries and ids:
-            from verification import user_satisfies_floor
+            from verification import user_satisfies_requirement
             users = db.query(models.User).filter(
                 models.User.id.in_(ids),
             ).all()
             ids = {
                 u.id for u in users
-                if user_satisfies_floor(u, floor, jurisdiction)
+                if user_satisfies_requirement(u, requirement, org_row)
             }
     return ids
 

@@ -724,6 +724,7 @@ def test_get_org_branding_field_present_with_all_nulls_when_unconfigured(
         "logo_url": None,
         "primary_color": None,
         "accent_color": None,
+        "header_text_color": None,
         "accent_auto_derived": False,
     }
 

@@ -1190,6 +1190,7 @@ def _seed_sub_org(
             voting_end=vote_end,
             pass_threshold=0.50,
             quorum_threshold=0.35,
+            verification_require_residency=False,
         )
         db.add(proposal)
         db.flush()
@@ -1816,6 +1817,7 @@ def seed_org_from_bible(
                     voting_days=7,
                     pass_threshold=0.50,
                     quorum_threshold=0.40,
+                    verification_require_residency=False,
                     is_cosign_gated=True,
                     cosign_threshold_snapshot=cosign_seed.cosign_threshold,
                     cosign_expires_at=now + timedelta(hours=cosign_seed.cosign_expiry_hours),
@@ -1909,6 +1911,7 @@ def seed_org_from_bible(
             voting_end=vote_end,
             pass_threshold=0.50,
             quorum_threshold=bible.quorum_threshold_default,
+            verification_require_residency=False,
             # Phase 32 — per-proposal overrides for the deliberation-
             # engagement features. Bible entries leave these None unless
             # the proposal explicitly exercises a feature (D23 demo).
