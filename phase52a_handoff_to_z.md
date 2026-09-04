@@ -37,7 +37,7 @@ and let Railway redeploy in between — either works.
 
 | Variable | Value | Source |
 |---|---|---|
-| `DIDIT_API_KEY` | `HITnnCYceNguO9VueGDOYKvx54lCej2wt_6x3fEJc08` | The workspace key you sent in the dispatch |
+| `DIDIT_API_KEY` | `<REDACTED: use the authorized secret store>` | Historical literal removed in Phase 107; revocation status unknown. See `docs/phase107_credential_remediation.md`. |
 | `DIDIT_WORKFLOW_ID` | `44826819-aa15-4473-b208-d60f8b504bd3` | The Custom KYC workflow id you sent in the dispatch |
 | `DIDIT_WEBHOOK_SECRET` | (Didit gives this when you create the destination above) | Generated per-destination on creation |
 
