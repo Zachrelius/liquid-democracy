@@ -540,7 +540,7 @@ async def cast_vote(
     # Materialize before releasing the read transaction: socket authorization
     # must be able to acquire a fresh connection even in a one-slot pool.
     response = schemas.VoteOut.model_validate(vote)
-    db.close()
+    db.rollback()
     await ws_manager.broadcast_tally(proposal_id, tally)
     return response
 
@@ -593,7 +593,7 @@ async def retract_vote(
     db.commit()
 
     tally = delegation_engine.compute_tally(proposal, db)
-    db.close()
+    db.rollback()
     await ws_manager.broadcast_tally(proposal_id, tally)
 
 
