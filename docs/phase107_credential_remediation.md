@@ -4,8 +4,13 @@
 
 September 4, 2026: historical source exposure confirmed; provider-side revocation
 status **UNKNOWN**. Z reports being "95% confident" it was rotated previously,
-but does not recall the details. Confirm that recollection using provider-side
-metadata before deciding whether another rotation is needed. No suspected
+but does not recall the details. A September 4 read-only in-memory comparison
+confirmed that the current Railway backend `DIDIT_API_KEY` is present and differs
+from the historical handoff value. Only presence and equality booleans were
+reported; neither value, prefix, nor fingerprint was displayed or persisted.
+This confirms the configured key was replaced, but does not establish that the
+old key was revoked at Didit. Confirm revocation using provider-side metadata
+before deciding whether another rotation is needed. No suspected
 credential was printed, invoked, rotated, or
 tested. Current-source removal is complete in this pass; old Git commits and
 existing copies may still contain the value. Removal does not revoke a key.
