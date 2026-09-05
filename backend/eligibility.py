@@ -24,9 +24,11 @@ _ADMIN_TIER_SYSTEM_KEYS = ("admin", "steward")
 
 
 def eligible_viewers_for_proposal(
-    db: Session, proposal: models.Proposal,
+    db: Session, proposal: models.Proposal, *, user_id: str | None = None,
 ) -> set[str]:
     """Return the set of user IDs who can VIEW a proposal (and its comments).
+
+    Optional ``user_id`` narrows SQL to one viewer without duplicating policy.
 
     Mirrors ``polis_engine.eligible_viewers_for_polis`` for the Proposal
     artifact. Phase 8.5 Decisions 3, 6, 7 apply identically:
@@ -48,7 +50,9 @@ def eligible_viewers_for_proposal(
 
     if sub_org_id is None and org_id is None:
         # Defensive: pre-multi-tenancy / unit-test fixture path.
-        rows = db.query(models.User.id).all()
+        rows = db.query(models.User.id).filter(
+            models.User.id == user_id if user_id is not None else True,
+        ).all()
         return {r.id for r in rows}
 
     if sub_org_id is None:
@@ -56,6 +60,7 @@ def eligible_viewers_for_proposal(
         rows = db.query(models.OrgMembership.user_id).filter(
             models.OrgMembership.org_id == org_id,
             models.OrgMembership.status == "active",
+            models.OrgMembership.user_id == user_id if user_id is not None else True,
         ).all()
         return {r.user_id for r in rows}
 
@@ -65,6 +70,7 @@ def eligible_viewers_for_proposal(
     sub_rows = db.query(models.SubOrgMembership.user_id).filter(
         models.SubOrgMembership.sub_org_id == sub_org_id,
         models.SubOrgMembership.status == "active",
+        models.SubOrgMembership.user_id == user_id if user_id is not None else True,
     ).all()
     visible.update(r.user_id for r in sub_rows)
 
@@ -77,6 +83,7 @@ def eligible_viewers_for_proposal(
             .filter(
                 models.OrgMembership.org_id == org_id,
                 models.OrgMembership.status == "active",
+                models.OrgMembership.user_id == user_id if user_id is not None else True,
                 models.Role.system_key.in_(_ADMIN_TIER_SYSTEM_KEYS),
             )
             .all()
@@ -92,6 +99,7 @@ def eligible_viewers_for_proposal(
         parent_members = db.query(models.OrgMembership.user_id).filter(
             models.OrgMembership.org_id == org_id,
             models.OrgMembership.status == "active",
+            models.OrgMembership.user_id == user_id if user_id is not None else True,
         ).all()
         visible.update(r.user_id for r in parent_members)
 

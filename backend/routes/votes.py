@@ -465,7 +465,6 @@ async def cast_vote(
 
     # Broadcast updated tally via WebSocket
     tally = delegation_engine.compute_tally(proposal, db)
-    await ws_manager.broadcast_tally(proposal_id, tally)
 
     # Phase 21 (D2/D3/D14/D15) — fire delegate.voted (initial cast) or
     # delegate.vote_changed (subsequent updates) to the delegators of
@@ -538,7 +537,12 @@ async def cast_vote(
         except Exception:  # noqa: BLE001
             pass
 
-    return vote
+    # Materialize before releasing the read transaction: socket authorization
+    # must be able to acquire a fresh connection even in a one-slot pool.
+    response = schemas.VoteOut.model_validate(vote)
+    db.rollback()
+    await ws_manager.broadcast_tally(proposal_id, tally)
+    return response
 
 
 @router.delete("/{proposal_id}/vote", status_code=status.HTTP_204_NO_CONTENT)
@@ -589,6 +593,7 @@ async def retract_vote(
     db.commit()
 
     tally = delegation_engine.compute_tally(proposal, db)
+    db.rollback()
     await ws_manager.broadcast_tally(proposal_id, tally)
 
 

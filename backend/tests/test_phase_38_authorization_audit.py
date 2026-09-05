@@ -52,6 +52,8 @@ def test_db():
 
 @pytest.fixture(scope="function")
 def client(test_db):
+    from websocket import get_websocket_session_factory
+    app.dependency_overrides[get_websocket_session_factory] = lambda: sessionmaker(bind=test_db.get_bind())
     def override_get_db():
         try:
             yield test_db

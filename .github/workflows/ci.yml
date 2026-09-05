@@ -9,6 +9,18 @@ permissions:
   contents: read
 
 jobs:
+  didit-secret-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Test focused Didit assignment guard
+        run: python -m unittest discover -s scripts/tests -p 'test_check_didit_secrets.py'
+      - name: Check tracked text for literal Didit credentials
+        run: python scripts/check_didit_secrets.py
+
   backend:
     runs-on: ubuntu-latest
     defaults:
