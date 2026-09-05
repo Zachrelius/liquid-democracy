@@ -35,7 +35,7 @@ Lead coordinates specification, review, validation and closeout. Backend develop
 
 ## Status and locked decisions
 
-Status: IMPLEMENTATION IN PROGRESS.
+Status: DEPLOYED. Automated verification and production protocol smoke PASS; required Chrome MCP unavailable, so rendered QA is not claimed. Provider-side revocation of the historical Didit key remains unverified. See `docs/phase107_closeout.md` for evidence.
 
 - Preserve the existing `/ws/proposals/{proposal_id}` route and initial JSON auth message. Do not put tokens in URLs or logs.
 - Database sessions are short-lived and closed before socket waits or network sends. Never retain a checked-out connection for the socket lifetime. Keep dependency injection testable; update existing fixture overrides explicitly if the session boundary changes.
