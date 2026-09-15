@@ -24,6 +24,7 @@ import asyncio
 import html
 import logging
 import re
+from email.utils import parseaddr
 from pathlib import Path
 from string import Template
 from typing import Any, Optional
@@ -112,7 +113,18 @@ _SUBJECTS: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 async def send_email(to: str, subject: str, html_body: str) -> bool:
-    """Send an email via Resend (preferred), SMTP (fallback), or console."""
+    """Send via the configured transport, or handle a fictional demo recipient.
+
+    True means handled without retry, including intentional demo suppression.
+    Suppression is not a provider success/failure and must not clear a real
+    delivery-failure streak in monitoring.
+    """
+    mailbox = parseaddr(to.strip())[1]
+    local, separator, domain = mailbox.rpartition("@")
+    if local and separator and domain.removesuffix(".").lower() == "demo.example":
+        log.info("Email suppressed: fictional demo.example recipient")
+        return True
+
     if settings.resend_api_key:
         sent = await _send_via_resend(to, subject, html_body)
     elif settings.smtp_host:

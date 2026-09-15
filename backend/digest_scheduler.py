@@ -303,7 +303,7 @@ async def render_and_send_digest(
 ) -> bool:
     """Render the digest HTML + dispatch via send_email.
 
-    Returns True iff the email was sent. Atomically claims the included
+    Returns True when handled (sent or intentionally demo-suppressed). Claims the included
     rows BEFORE sending (Phase 13.2 W-DEPLOY-3 Option C), so multi-worker
     scheduler launches can't double-send the same digest. On send failure
     after a successful claim, the rows stay marked-delivered and the
