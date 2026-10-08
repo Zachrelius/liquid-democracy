@@ -81,6 +81,10 @@ class ConnectionManager:
             msg["winners"] = list(getattr(tally, "winners", []) or [])
         if hasattr(tally, "tied"):
             msg["tied"] = bool(getattr(tally, "tied", False))
+        if hasattr(tally, "method_result"):
+            from experimental_voting import decimal_counts
+            msg["method_result"] = tally.method_result
+            msg = decimal_counts(msg)
 
         payload = json.dumps(msg)
 
@@ -172,6 +176,11 @@ def check_access(session_factory, proposal_id, token=None):
             if not user.is_admin and user.id not in eligible_viewers_for_proposal(
                 db, proposal, user_id=user.id,
             ):
+                return 4403, 0
+            from experimental_voting import require_results_visible
+            try:
+                require_results_visible(proposal, db)
+            except HTTPException:
                 return 4403, 0
             return (0, expires) if expires > time.time() else (4401, 0)
     except Exception:

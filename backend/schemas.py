@@ -688,6 +688,7 @@ class ProposalCreate(BaseModel):
 
 
 class ProposalUpdate(BaseModel):
+    confirm_ballot_reset: bool = False
     title: Optional[str] = Field(default=None, min_length=1, max_length=500)
     body: Optional[str] = Field(default=None, max_length=50000)
     topics: Optional[list[Any]] = None
@@ -799,6 +800,15 @@ class ProposalUpdate(BaseModel):
 
 
 class ProposalOut(BaseModel):
+    voting_rules: Optional[dict] = None
+
+    @field_validator("voting_rules", mode="before")
+    @classmethod
+    def project_voting_rules(cls, value):
+        if value is not None and "tie_seed" in value:
+            from voting_methods import public_voting_rules
+            return public_voting_rules(value)
+        return value
     id: str
     title: str
     body: str
@@ -1391,6 +1401,10 @@ class VoteOut(BaseModel):
 class MyVoteStatus(BaseModel):
     """How the current user's vote is being cast on a proposal."""
     vote_value: Optional[str] = None       # None if not cast (binary)
+    scores: Optional[dict[str, int]] = None
+    grades: Optional[dict[str, int]] = None
+    rank_groups: Optional[list[list[str]]] = None
+    abstain: bool = False
     approvals: Optional[list[str]] = None  # option IDs approved (approval)
     ranking: Optional[list[str]] = None    # option IDs ordered (ranked_choice)
     # Phase 73 — budget_allocation: {option_id: amount}. Phase 89: may be a
@@ -1436,18 +1450,19 @@ class RCVRoundOut(BaseModel):
 
 
 class ProposalResults(BaseModel):
+    method_result: Optional[dict] = None
     proposal_id: str
     voting_method: str = "binary"
     yes: int = 0
     no: int = 0
     abstain: int = 0
-    not_cast: int = 0
-    total_eligible: int = 0
+    not_cast: int | str = 0
+    total_eligible: int | str = 0
     # Total ballots cast on the proposal regardless of voting method —
     # populated for binary/approval/ranked_choice so the proposal-list counter
     # works uniformly. (Phase 7B fix: previously the list page showed
     # "0 of N" for ranked_choice because it summed yes+no+abstain.)
-    votes_cast: int = 0
+    votes_cast: int | str = 0
     yes_pct: float = 0.0
     no_pct: float = 0.0
     abstain_pct: float = 0.0
@@ -1464,8 +1479,8 @@ class ProposalResults(BaseModel):
     # Approval-voting fields (populated only when voting_method == "approval")
     option_approvals: Optional[dict[str, int]] = None
     option_labels: Optional[dict[str, str]] = None
-    total_ballots_cast: Optional[int] = None
-    total_abstain: Optional[int] = None
+    total_ballots_cast: Optional[int | str] = None
+    total_abstain: Optional[int | str] = None
     winners: Optional[list[str]] = None
     tied: Optional[bool] = None
     tie_resolution: Optional[dict] = None
@@ -1563,6 +1578,8 @@ class VoteFlowBallot(BaseModel):
     vote_value: Optional[str] = None       # binary: "yes" / "no" / "abstain"
     approvals: Optional[list[str]] = None  # approval: option_ids
     ranking: Optional[list[str]] = None    # ranked_choice: option_ids in rank order
+    scores: Optional[dict[str, int]] = None
+    abstain: bool = False
 
 
 class VoteFlowOption(BaseModel):

@@ -11,6 +11,9 @@ from sqlalchemy.orm import Session
 import auth as auth_utils
 import models
 import schemas
+from experimental_voting import (is_experimental, initialize_rules, lock_proposal,
+                                 require_mutable, finalize_result, result_response)
+from voting_methods import EXPERIMENTAL_VOTING_METHODS, public_voting_rules
 from audit_utils import log_audit_event
 from database import get_db
 from delegation_engine import (
@@ -430,6 +433,7 @@ def _build_proposal_out(
         author=proposal.author,
         status=proposal.status,
         voting_method=proposal.voting_method,
+        voting_rules=public_voting_rules(proposal.voting_rules),
         num_winners=proposal.num_winners,
         count_mode=getattr(proposal, "count_mode", None),
         is_issuance=bool(getattr(proposal, "is_issuance", False)),
@@ -775,6 +779,16 @@ def _collect_proposal_creation_errors(
     at once instead of one-at-a-time round trips.
     """
     errors: list[tuple[str, int, str]] = []
+    from voting_methods import EXPERIMENTAL_VOTING_METHODS
+    if body.voting_method in EXPERIMENTAL_VOTING_METHODS:
+        if org is None:
+            errors.append(("voting_method", 400, "Experimental methods require an organization opt-in"))
+        if body.num_winners != 1:
+            errors.append(("num_winners", 400, "Experimental methods select exactly one winner"))
+        if not 2 <= len(body.options) <= 20:
+            errors.append(("options", 400, "Provide between 2 and 20 options"))
+        if len({opt.label.strip().casefold() for opt in body.options}) != len(body.options):
+            errors.append(("options", 400, "Option labels must be unique"))
     # Check org allowed_voting_methods. Ranked-choice in particular is
     # opt-in per org — surface as 403 (not 400) when the method is not
     # enabled, matching the Phase 7 spec.
@@ -1193,6 +1207,8 @@ def _validate_and_update_options(
             raise HTTPException(status_code=400, detail=f"Duplicate option label: {opt.label}")
         seen_labels.add(lower)
     # Delete existing options
+    if is_experimental(proposal) and db.query(models.Vote.id).filter(models.Vote.proposal_id == proposal.id).first():
+        raise HTTPException(status_code=409, detail="Use individual option edits or retract preliminary ballots before replacing the option list")
     for existing_opt in list(proposal.options):
         db.delete(existing_opt)
     db.flush()
@@ -1413,6 +1429,7 @@ def create_proposal(
     )
     db.add(proposal)
     db.flush()
+    initialize_rules(proposal)
 
     if skip_deliberation:
         log_audit_event(
@@ -1436,7 +1453,7 @@ def create_proposal(
         ))
     db.flush()
 
-    if body.voting_method in ("approval", "ranked_choice", "budget_allocation", "budget_project") and body.options:
+    if body.voting_method != "binary" and body.options:
         _create_proposal_options(db, proposal.id, body.options)
 
     log_audit_event(
@@ -1481,6 +1498,7 @@ def update_proposal(
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
     proposal = _proposal_or_404(proposal_id, db)
+    lock_proposal(db, proposal)
     _require_proposal_viewer(db, proposal, current_user)
 
     if proposal.status not in ("draft", "deliberation"):
@@ -1765,15 +1783,17 @@ def update_proposal(
                 ),
             )
         new_method = body.voting_method
+        if new_method in EXPERIMENTAL_VOTING_METHODS and (not proposal.org_id or proposal.is_election):
+            raise HTTPException(status_code=400, detail="Experimental methods require an ordinary organization proposal")
         # Validate against org's allowed_voting_methods (mirrors the
         # _validate_voting_method check on create).
         from routes.organizations import LEGACY_UNCONFIGURED_VOTING_METHODS
         org_for_method = (
-            db.get(models.Organization, proposal.org_id)
+            db.get(models.Organization, proposal.sub_org_id or proposal.org_id)
             if proposal.org_id else None
         )
         if org_for_method is not None:
-            allowed = (org_for_method.settings or {}).get(
+            allowed = get_org_config(org_for_method,
                 "allowed_voting_methods",
                 LEGACY_UNCONFIGURED_VOTING_METHODS,
             )
@@ -1788,6 +1808,17 @@ def update_proposal(
                     ),
                 )
         old_method = proposal.voting_method
+        if new_method in EXPERIMENTAL_VOTING_METHODS or old_method in EXPERIMENTAL_VOTING_METHODS:
+            if db.query(models.Vote.id).filter(models.Vote.proposal_id == proposal.id).first():
+                if not body.confirm_ballot_reset:
+                    raise HTTPException(status_code=409, detail="Confirm discarding preliminary ballots before changing voting method")
+                removed = db.query(models.Vote).filter(models.Vote.proposal_id == proposal.id).delete(synchronize_session=False)
+                db.query(models.VoteSnapshot).filter(models.VoteSnapshot.proposal_id == proposal.id).delete(synchronize_session=False)
+                log_audit_event(db, action="proposal.preliminary_ballots_reset", target_type="proposal",
+                                target_id=proposal.id, actor_id=current_user.id,
+                                details={"old_method": old_method, "new_method": new_method, "ballots_removed": removed})
+            if (body.num_winners if body.num_winners is not None else proposal.num_winners) != 1:
+                raise HTTPException(status_code=400, detail="Experimental methods select exactly one winner")
         # When the new method is binary, drop any existing options.
         if new_method == "binary":
             for opt in list(proposal.options or []):
@@ -1806,6 +1837,7 @@ def update_proposal(
         ):
             proposal.approval_winner_config = None
         proposal.voting_method = new_method
+        initialize_rules(proposal)
     # num_winners change (independent of method change — RCV proposals
     # can adjust num_winners while in draft).
     if "num_winners" in body.model_fields_set and body.num_winners is not None:
@@ -1818,6 +1850,8 @@ def update_proposal(
                 ),
             )
         proposal.num_winners = body.num_winners
+        if is_experimental(proposal) and proposal.num_winners != 1:
+            raise HTTPException(status_code=400, detail="Experimental methods select exactly one winner")
 
     # Phase 90c — count_mode change (draft-only; changing it after draft is
     # rejected because it flips outcome semantics on a proposal that already
@@ -1943,7 +1977,7 @@ def update_proposal(
         proposal.budget_config = body.budget_config
 
     if body.options is not None:
-        if proposal.voting_method not in ("approval", "ranked_choice", "budget_allocation", "budget_project"):
+        if proposal.voting_method not in ("approval", "ranked_choice", "budget_allocation", "budget_project", *EXPERIMENTAL_VOTING_METHODS):
             raise HTTPException(
                 status_code=400,
                 detail="Options can only be set on approval, ranked-choice, or budget proposals",
@@ -2462,6 +2496,8 @@ def add_write_in_option(
     )
 
     proposal = _proposal_or_404(proposal_id, db)
+    lock_proposal(db, proposal)
+    require_mutable(proposal)
     _require_proposal_viewer(db, proposal, current_user)
     org = (
         db.get(models.Organization, proposal.org_id)
@@ -2491,7 +2527,7 @@ def add_write_in_option(
                 detail="Not a member of this proposal's organization",
             )
 
-    if proposal.voting_method not in ("approval", "ranked_choice"):
+    if proposal.voting_method not in ("approval", "ranked_choice", *EXPERIMENTAL_VOTING_METHODS):
         raise HTTPException(
             status_code=400,
             detail="Write-in options are only allowed on multi-option proposals",
@@ -2569,6 +2605,10 @@ def add_write_in_option(
     )
     db.add(option)
     db.flush()
+    if is_experimental(proposal):
+        db.expire(proposal, ["options"])
+        from sustained_majority_service import capture_snapshot
+        capture_snapshot(db, proposal)
 
     log_audit_event(
         db,
@@ -2643,6 +2683,8 @@ def delete_write_in_option(
     Document choice in closeout.
     """
     proposal = _proposal_or_404(proposal_id, db)
+    lock_proposal(db, proposal)
+    require_mutable(proposal)
     _require_proposal_viewer(db, proposal, current_user)
     option = db.get(models.ProposalOption, option_id)
     if option is None or option.proposal_id != proposal.id:
@@ -2677,10 +2719,18 @@ def delete_write_in_option(
         .all()
     )
     for v in votes:
-        ballot = v.ballot
+        ballot = dict(v.ballot) if isinstance(v.ballot, dict) else v.ballot
         if not isinstance(ballot, dict):
             continue
         changed = False
+        for field in ("scores", "grades"):
+            if field in ballot and option_id in ballot[field]:
+                ballot[field] = {k: value for k, value in ballot[field].items() if k != option_id}
+                changed = True
+        if "rank_groups" in ballot:
+            groups = [[oid for oid in group if oid != option_id] for group in ballot["rank_groups"]]
+            ballot["rank_groups"] = [group for group in groups if group]
+            changed = True
         if "approvals" in ballot and isinstance(ballot["approvals"], list):
             if option_id in ballot["approvals"]:
                 ballot["approvals"] = [
@@ -2711,6 +2761,11 @@ def delete_write_in_option(
     )
 
     db.delete(option)
+    if is_experimental(proposal):
+        db.flush()
+        db.expire(proposal, ["options"])
+        from sustained_majority_service import capture_snapshot
+        capture_snapshot(db, proposal)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -2771,6 +2826,8 @@ def update_option_text(
     deliberation only; the deliberation edit-lockout window applies.
     """
     proposal = _proposal_or_404(proposal_id, db)
+    lock_proposal(db, proposal)
+    require_mutable(proposal)
     _require_proposal_viewer(db, proposal, current_user)
     option = db.get(models.ProposalOption, option_id)
     if option is None or option.proposal_id != proposal.id:
@@ -3187,6 +3244,7 @@ def advance_proposal(
                 )
         raise HTTPException(status_code=403, detail="Not the proposal author or admin")
 
+    lock_proposal(db, proposal)
     next_status = STATUS_TRANSITIONS.get(proposal.status)
     if next_status is None:
         raise HTTPException(status_code=400, detail=f"Cannot advance from status '{proposal.status}'")
@@ -3221,7 +3279,9 @@ def advance_proposal(
         )
     elif next_status == "passed":
         tally = delegation_engine.compute_tally(proposal, db)
-        if getattr(proposal, "is_election", False):
+        if is_experimental(proposal):
+            next_status = finalize_result(proposal, tally, db)
+        elif getattr(proposal, "is_election", False):
             # Phase 67 W1 — elections: quorum is the ONLY pass/fail
             # gate. Winner determination (tally winners, uncontested
             # auto-win, zero-candidate hold-over) belongs to
@@ -3634,6 +3694,8 @@ def get_results(
         if current_user.id not in _eligible_viewers_for_proposal(db, proposal):
             raise HTTPException(status_code=404, detail="Proposal not found")
     tally = delegation_engine.compute_tally(proposal, db)
+    if is_experimental(proposal):
+        return result_response(proposal, tally, db)
     org = (
         db.get(models.Organization, proposal.org_id)
         if proposal.org_id else None
@@ -4011,10 +4073,16 @@ def my_vote_status(
         return " -> ".join(names)
 
     approvals = None
+    scores = None
+    abstain = False
     ranking = None
     allocations = None
     ranked = None
-    if proposal.voting_method == "approval":
+    if is_experimental(proposal):
+        scores = result.ballot.scores
+        abstain = result.ballot.abstain or result.vote_value == "abstain"
+        msg = ("You abstained." if abstain else "Your rating ballot is recorded.") if result.is_direct else "Your whole ballot follows your delegate."
+    elif proposal.voting_method == "approval":
         approvals = result.ballot.approvals if result.ballot.approvals else []
         n_approved = len(approvals)
         if result.is_direct:
@@ -4057,6 +4125,8 @@ def my_vote_status(
 
     return schemas.MyVoteStatus(
         vote_value=result.vote_value,
+        scores=scores,
+        abstain=abstain,
         approvals=approvals,
         ranking=ranking,
         allocations=allocations,
@@ -4085,6 +4155,8 @@ def get_vote_graph(
     render the option-attractor visualization for approval and RCV.
     """
     proposal = _proposal_or_404(proposal_id, db)
+    from experimental_voting import require_results_visible
+    require_results_visible(proposal, db)
     # Phase 63 (security): same viewer-eligibility gate as get_proposal /
     # get_results / get_trajectory. Pre-fix this endpoint required only
     # authentication, so any logged-in user — including non-members of a
@@ -4256,7 +4328,7 @@ def get_vote_graph(
     # Build options list (approval / ranked_choice) and option-level
     # aggregates that feed both per-node ballots and the clusters block.
     # ------------------------------------------------------------------
-    proposal_options = list(proposal.options) if voting_method in ("approval", "ranked_choice") else []
+    proposal_options = list(proposal.options) if voting_method in ("approval", "ranked_choice", *EXPERIMENTAL_VOTING_METHODS) else []
     proposal_options.sort(key=lambda o: o.display_order)
     option_id_set = {opt.id for opt in proposal_options}
 
@@ -4335,7 +4407,13 @@ def get_vote_graph(
         # the aggregate population view; only identity stays redacted.
         ballot_obj: Optional[schemas.VoteFlowBallot] = None
         if result is not None and result.ballot is not None:
-            if voting_method == "binary":
+            if voting_method in EXPERIMENTAL_VOTING_METHODS:
+                # Rich individual ratings follow ballot-visibility rules;
+                # identity disclosure alone does not authorize their release.
+                if can_see_votes(db, current_user.id, uid, proposal_topic_ids, org_id=proposal.org_id):
+                    ballot_obj = schemas.VoteFlowBallot(scores=result.ballot.scores,
+                                                       abstain=result.ballot.abstain)
+            elif voting_method == "binary":
                 ballot_obj = schemas.VoteFlowBallot(vote_value=result.ballot.vote_value)
             elif voting_method == "approval":
                 ballot_obj = schemas.VoteFlowBallot(
@@ -4475,6 +4553,7 @@ TRAJECTORY_MAX_POINTS = 500
 
 
 class TrajectorySnapshotOut(BaseModel):
+    method_result: Optional[dict] = None
     """One snapshot point in the trajectory response.
 
     Binary fields (``support_fraction``) and multi-option fields
@@ -4487,7 +4566,7 @@ class TrajectorySnapshotOut(BaseModel):
     gracefully (winner bar still renders from ``winners``).
     """
     captured_at: datetime
-    votes_cast: int
+    votes_cast: int | str
     # Binary-only:
     support_fraction: Optional[float] = None
     # Multi-option only:
@@ -4618,6 +4697,13 @@ def _build_snapshot_out(
     voting_method: str,
 ) -> TrajectorySnapshotOut:
     """Translate one VoteSnapshot row into the API response shape."""
+    if voting_method in EXPERIMENTAL_VOTING_METHODS:
+        from experimental_voting import decimal_counts
+        data = snap.multi_option_winners or {}
+        return TrajectorySnapshotOut(captured_at=snap.simulated_time,
+                                     votes_cast=str(data.get("total_ballots_cast", 0)),
+                                     winners=data.get("winners", []),
+                                     method_result=decimal_counts(data.get("method_result")))
     if voting_method == "binary":
         return TrajectorySnapshotOut(
             captured_at=snap.simulated_time,
@@ -4772,6 +4858,8 @@ def get_trajectory(
     """
     proposal = _proposal_or_404(proposal_id, db)
     _require_proposal_viewer(db, proposal, current_user)
+    from experimental_voting import require_results_visible
+    require_results_visible(proposal, db)
 
     # D4 — org-scoped access. Platform admins bypass; org members of the
     # proposal's org pass; everyone else gets 403.

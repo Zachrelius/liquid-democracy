@@ -18,6 +18,8 @@ from sqlalchemy import and_ as sa_and, func, or_ as sa_or
 import auth as auth_utils
 import models
 import schemas
+from experimental_voting import (is_experimental, initialize_rules, lock_proposal,
+                                 finalize_result, result_response)
 from audit_utils import log_audit_event
 from database import get_db
 from email_service import send_invitation_email
@@ -3603,6 +3605,8 @@ def get_public_org_proposal_results(
     import delegation_engine
     from delegation_engine import ApprovalTally, RCVTally
     tally = delegation_engine.compute_tally(proposal, db)
+    if is_experimental(proposal):
+        return result_response(proposal, tally, db)
     from sustained_majority_service import build_status as _sm_build_status
     sm_status = _sm_build_status(db, proposal, org)
     snapshots = (
@@ -5417,6 +5421,7 @@ def create_org_proposal(
     db.add(proposal)
     db.flush()
 
+    initialize_rules(proposal)
     # Phase 46 B3 — stamp cosign markers + insert author's implicit first
     # signature (D3) when the proposal entered gathering state.
     if cosign_decision == "cosign_gated":
@@ -5480,7 +5485,7 @@ def create_org_proposal(
         ))
     db.flush()
 
-    if body.voting_method in ("approval", "ranked_choice", "budget_allocation", "budget_project") and body.options:
+    if body.voting_method != "binary" and body.options:
         _create_proposal_options(db, proposal.id, body.options)
 
     proposal_created_details = {
@@ -6689,6 +6694,7 @@ def advance_org_proposal(
     ):
         raise HTTPException(status_code=403, detail="Moderators can only advance proposals they created")
 
+    lock_proposal(db, proposal)
     from routes.proposals import STATUS_TRANSITIONS
     next_status = STATUS_TRANSITIONS.get(proposal.status)
     if next_status is None:
@@ -6714,7 +6720,9 @@ def advance_org_proposal(
         from delegation_engine import engine as delegation_engine, ApprovalTally, RCVTally
         from routes.proposals import _maybe_resolve_tie
         tally = delegation_engine.compute_tally(proposal, db)
-        if getattr(proposal, "is_election", False):
+        if is_experimental(proposal):
+            next_status = finalize_result(proposal, tally, db)
+        elif getattr(proposal, "is_election", False):
             # Phase 67 W1 — elections: quorum is the ONLY pass/fail
             # gate (mirrors routes/proposals.py). Winner determination
             # belongs to finalize_election, fired on the "passed"

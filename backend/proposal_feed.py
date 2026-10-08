@@ -219,7 +219,11 @@ class BatchViewerResolver:
                 if row.user_id not in eligible:
                     continue
                 ballot = row.ballot or {}
-                if proposal.voting_method == "approval":
+                if proposal.voting_method == "star":
+                    from experimental_ballots import validate_ballot
+                    value = validate_ballot("star", ballot)
+                    direct_ballots[row.user_id] = Ballot(method="star", scores=value.get("scores"), abstain=value.get("abstain", False))
+                elif proposal.voting_method == "approval":
                     direct_ballots[row.user_id] = Ballot(approvals=ballot.get("approvals", []))
                 elif proposal.voting_method == "ranked_choice":
                     direct_ballots[row.user_id] = Ballot(ranking=ballot.get("ranking", []))
@@ -252,7 +256,9 @@ def _viewer_out(result, users: dict[str, models.User], proposal: models.Proposal
         return schemas.ProposalFeedViewerVoteOut(has_effective_vote=False)
     selection_count = None
     ballot = result.ballot
-    if ballot.approvals is not None:
+    if ballot.scores is not None:
+        selection_count = len(ballot.scores)
+    elif ballot.approvals is not None:
         selection_count = len(ballot.approvals)
     elif ballot.ranking is not None:
         selection_count = len(ballot.ranking)

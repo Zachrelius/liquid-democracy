@@ -1897,6 +1897,13 @@ def seed_org_from_bible(
         else:
             db_voting_method = bible_method  # 'binary' or 'approval' pass through
 
+        from voting_methods import EXPERIMENTAL_VOTING_METHODS, available_voting_methods
+        if db_voting_method in EXPERIMENTAL_VOTING_METHODS:
+            from org_config import get_org_config
+            if (db_voting_method not in available_voting_methods() or
+                    db_voting_method not in get_org_config(org, "allowed_voting_methods", [])):
+                raise ValueError("Seed voting method must be released and explicitly enabled")
+
         proposal = models.Proposal(
             title=bp.title,
             body=bp.body,
@@ -1930,6 +1937,8 @@ def seed_org_from_bible(
         )
         db.add(proposal)
         db.flush()
+        from experimental_voting import initialize_rules
+        initialize_rules(proposal)
         proposals_by_bible_id[bp.proposal_id] = proposal
         counts["proposals_created"] += 1
 
