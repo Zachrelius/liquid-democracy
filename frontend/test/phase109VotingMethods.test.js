@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   VOTING_METHODS, FALLBACK_ENABLED_METHODS, MAJORITY_JUDGMENT_GRADES,
-  selectableVotingMethods, toggleAllowedVotingMethod, votingMethodLabel,
+  selectableVotingMethods, toggleAllowedVotingMethod, votingMethodLabel, draftMethodResetFields, unchangedOptionText,
 } from '../src/utils/votingMethods.js';
 
 test('legacy defaults remain binary and method labels remain unchanged', () => {
@@ -12,6 +12,22 @@ test('legacy defaults remain binary and method labels remain unchanged', () => {
     .map(votingMethodLabel), ['Yes / No', 'Approval', 'Ranked choice', 'Budget allocation', 'Ranked projects']);
   assert.equal(votingMethodLabel('future_method'), 'future method');
   assert.equal(votingMethodLabel(null), 'Vote');
+});
+
+test('destructive reset authorization is scoped to an explicitly confirmed method change', () => {
+  assert.deepEqual(draftMethodResetFields('star', 'star', false), {});
+  assert.deepEqual(draftMethodResetFields(null, 'star', false), {});
+  assert.deepEqual(draftMethodResetFields('approval', 'ranked_choice', false), {});
+  assert.throws(() => draftMethodResetFields('binary', 'star', false), /Confirm/);
+  assert.deepEqual(draftMethodResetFields('binary', 'star', true), { confirm_ballot_reset: true });
+  assert.deepEqual(draftMethodResetFields('star', 'approval', true), { confirm_ballot_reset: true });
+});
+
+test('ordinary edits distinguish unchanged option text from replacements', () => {
+  const existing = [{ id: 'a', label: 'A', description: null }, { id: 'b', label: 'B', description: 'detail' }];
+  assert.equal(unchangedOptionText(existing, [{ label: 'A', description: '' }, { label: 'B', description: 'detail' }]), true);
+  assert.equal(unchangedOptionText(existing, [{ label: 'B', description: 'detail' }, { label: 'A', description: '' }]), false);
+  assert.equal(unchangedOptionText(existing, [{ label: 'A', description: 'new' }, { label: 'B', description: 'detail' }]), false);
 });
 
 test('explicit legacy organization methods are retained without adding others', () => {

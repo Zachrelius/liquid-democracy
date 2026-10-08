@@ -1,4 +1,4 @@
-import { VOTING_METHODS } from '../../utils/votingMethods';
+import { VOTING_METHODS, draftMethodResetFields, unchangedOptionText } from '../../utils/votingMethods';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
@@ -886,6 +886,7 @@ function CreateProposalForm({
   // closing the editor (which onCreated does). The advance handler invokes
   // this via the onAdvance(saveChanges) wiring.
   async function saveChanges() {
+    let confirmedBallotReset = false;
     // Phase 9 — block submission when require_polis_for_new_proposals is
     // true and the picker is empty. Server enforces this too; we surface
     // it inline so the operator doesn't round-trip a 400.
@@ -900,8 +901,6 @@ function CreateProposalForm({
     if (
       isEditMode
       && votingMethod !== (editingProposal.voting_method ?? 'binary')
-      && Array.isArray(editingProposal.options)
-      && editingProposal.options.length > 0
     ) {
       const ok = await confirm({
         title: 'Change voting method?',
@@ -913,6 +912,7 @@ function CreateProposalForm({
         destructive: true,
       });
       if (!ok) return false;
+      confirmedBallotReset = true;
     }
     setSaving(true);
     setError('');
@@ -922,6 +922,7 @@ function CreateProposalForm({
         body,
         topics: selectedTopics,
         voting_method: votingMethod,
+        ...draftMethodResetFields(editingProposal?.voting_method, votingMethod, confirmedBallotReset),
       };
       // Phase 12.5 F3 — only include thresholds when the user has the
       // `proposal.set_thresholds` permission. Backend (B3) applies org
@@ -952,7 +953,8 @@ function CreateProposalForm({
       // the proposal's existing scope; the PATCH endpoint does not accept
       // a scope change.
       if (!isEditMode && scope) payload.sub_org_id = scope;
-      if (isMultiOption) {
+      if (isMultiOption && !(isEditMode && votingMethod === 'star'
+          && editingProposal.voting_method === 'star' && unchangedOptionText(editingProposal.options, options))) {
         payload.options = options.map(o => ({
           label: o.label.trim(),
           description: o.description.trim(),
@@ -965,6 +967,8 @@ function CreateProposalForm({
       }
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
+      } else if (votingMethod === 'star') {
+        payload.num_winners = 1;
       }
       // Phase 90c — per-proposal count mode (weighted orgs that allow it). Send
       // 'one_per_member' when chosen; otherwise omit so the org default (weighted)

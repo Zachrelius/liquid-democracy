@@ -2584,7 +2584,7 @@ export default function ProposalDetail() {
           )}
 
           {/* Results (desktop: shown inline; mobile: shown below vote panel) */}
-          {(isVoting || isClosed) && tally && (
+          {(isVoting || isClosed || (proposal.voting_method === 'star' && isDeliberation && proposal.effective_show_votes_during_deliberation === true)) && tally && (
             <div className="lg:hidden bg-white border border-gray-200 rounded-xl p-5">
               {proposal.voting_method === 'star' ? (
                 <StarResultsPanel tally={tally} proposal={proposal} />
@@ -2852,7 +2852,7 @@ export default function ProposalDetail() {
           )}
 
           {/* Results (desktop sidebar) */}
-          {(isVoting || isClosed) && tally && (
+          {(isVoting || isClosed || (proposal.voting_method === 'star' && isDeliberation && proposal.effective_show_votes_during_deliberation === true)) && tally && (
             <div className="hidden lg:block bg-white border border-gray-200 rounded-xl p-5">
               {proposal.voting_method === 'star' ? (
                 <StarResultsPanel tally={tally} proposal={proposal} />

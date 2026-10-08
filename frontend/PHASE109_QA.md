@@ -13,10 +13,11 @@ paths, write-in controls, history, profile summaries and method help. STAR's
 frontend release gate is enabled only after the backend core integration
 tests passed; Score, Ranked Pairs and Majority Judgment remain unavailable.
 
-90 Node tests pass, including four payload/numeric tests and four tests of
+92 Node tests pass, including four payload/numeric tests and four tests of
 actual React-rendered components via Vite SSR. These cover immutable result
 labels, runoff winner versus score leader, exact large counts, tie disclosure,
-neutral versus abstention ballots, and no-meaningful-result presentation.
+neutral versus abstention ballots, no-meaningful-result presentation, scoped
+destructive-change authorization, and unchanged option-list preservation.
 SSR does **not** substitute for interactive browser verification.
 
 Production build passes with the pre-existing large bundle warning. New files

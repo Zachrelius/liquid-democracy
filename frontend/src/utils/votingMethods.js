@@ -49,3 +49,16 @@ export function toggleAllowedVotingMethod(allowed, method, enabled) {
   if (!capability?.available || method === 'binary') return [...current];
   return enabled ? [...new Set([...current, method])] : current.filter(id => id !== method);
 }
+
+export function draftMethodResetFields(previous, next, confirmed) {
+  if (!previous || previous === next
+    || !(VOTING_METHODS[previous]?.experimental || VOTING_METHODS[next]?.experimental)) return {};
+  if (!confirmed) throw new Error('Confirm the voting-method change before discarding preliminary ballots.');
+  return { confirm_ballot_reset: true };
+}
+
+export function unchangedOptionText(existing = [], edited = []) {
+  return existing.length === edited.length && existing.every((option, index) =>
+    (option.label || '').trim() === (edited[index].label || '').trim()
+    && (option.description || '').trim() === (edited[index].description || '').trim());
+}
