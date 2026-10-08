@@ -184,6 +184,20 @@ def _snapshot_points_for(
             payload = r.multi_option_winners or {}
             winners = tuple(payload.get("winners", []) or [])
             total_cast = int(payload.get("total_ballots_cast", 0) or 0)
+            if proposal.voting_method == "star":
+                from sustained_majority import ExperimentalSnapshotPoint
+                result = payload.get("method_result") or {}
+                compatible = result.get("rule_id") == "star_0_5_v1" and result.get("method") == "star"
+                points.append(ExperimentalSnapshotPoint(
+                    simulated_time=r.simulated_time, winners=winners,
+                    total_ballots_cast=total_cast,
+                    total_eligible=int(payload.get("total_eligible", 0)),
+                    option_set_version=payload.get("option_set_version") if compatible else None,
+                    quorum_met=payload.get("quorum_met") is True,
+                    meaningful=payload.get("meaningful") is True,
+                    priority_used=payload.get("priority_used") is not False,
+                ))
+                continue
             points.append(MultiOptionSnapshotPoint(
                 simulated_time=r.simulated_time,
                 winners=winners,
@@ -338,6 +352,10 @@ def _build_outcome_detail(
     if new_status == "failed" and not quorum_met:
         return "failed (quorum not met)"
 
+    if proposal.voting_method == "star":
+        # Keep rich aggregates/labels on the permissioned result surface.
+        return "passed (STAR result available)" if new_status == "passed" else "failed (no STAR winner)"
+
     if proposal.voting_method == "approval" and isinstance(tally, ApprovalTally):
         if new_status == "passed" and tally.winners:
             labels = [opt.label for opt in proposal.options if opt.id in tally.winners]
@@ -448,13 +466,23 @@ def _close_proposal_now(
     )
     from audit_utils import log_audit_event
 
+    from experimental_voting import is_experimental, lock_proposal, finalize_result
+    if is_experimental(proposal):
+        lock_proposal(db, proposal)
+        if proposal.status != "voting":
+            return proposal.status
+        if proposal.is_election:
+            raise ValueError("Experimental officeholder elections are not supported")
+
     if update_voting_end:
         proposal.voting_end = _now_naive()
 
     old_status = proposal.status
     tally = delegation_engine.compute_tally(proposal, db)
 
-    if getattr(proposal, "is_election", False):
+    if is_experimental(proposal):
+        new_status = finalize_result(proposal, tally, db)
+    elif getattr(proposal, "is_election", False):
         # Phase 67 W1 — elections: quorum is the ONLY pass/fail gate
         # (mirrors the route-layer close branches). Winner
         # determination belongs to finalize_election, fired on the
@@ -578,6 +606,11 @@ def evaluate_proposal(
     """
     if proposal.org_id is None:
         return None  # global proposals don't have org config; skip
+    from experimental_voting import is_experimental, lock_proposal
+    if is_experimental(proposal):
+        lock_proposal(db, proposal)
+        if proposal.status != "voting":
+            return None
     org = db.get(models.Organization, proposal.org_id)
     if org is None:
         return None

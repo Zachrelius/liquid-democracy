@@ -28,3 +28,6 @@ jtok.txt
 *token*.txt
 janet*.json
 *.tokens.json
+
+# Isolated pinned voting-method validation packages (not runtime dependencies)
+backend/.reference-*/
