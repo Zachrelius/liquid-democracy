@@ -683,6 +683,8 @@ def compute_tally_pure(
         return _compute_allocation_tally_pure(user_ids, ctx)
     if ctx.voting_method == "budget_project":
         return _compute_project_tally_pure(user_ids, ctx)
+    if ctx.voting_method != "binary":
+        raise ValueError(f"No tally handler for voting method: {ctx.voting_method}")
     return _compute_binary_tally_pure(user_ids, ctx)
 
 

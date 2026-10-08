@@ -195,6 +195,11 @@ async def cast_vote(
         )
 
     # -- Method-specific validation --
+    # Until an experimental method's complete handler is released, preference
+    # fields must not silently disappear into an existing method's ballot.
+    if (body.scores is not None or body.grades is not None
+            or body.rank_groups is not None or body.abstain):
+        raise HTTPException(status_code=400, detail="This voting method does not accept this ballot")
     if proposal.voting_method == "binary":
         if body.approvals is not None or body.ranking is not None:
             raise HTTPException(status_code=400, detail="Use vote_value for binary proposals")

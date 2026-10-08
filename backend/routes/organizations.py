@@ -127,13 +127,9 @@ def _now() -> datetime:
 
 
 LEGACY_UNCONFIGURED_VOTING_METHODS = ["binary", "approval"]
-ALL_SUPPORTED_VOTING_METHODS = [
-    "binary",
-    "approval",
-    "ranked_choice",
-    "budget_allocation",
-    "budget_project",
-]
+from voting_methods import DEFAULT_ENABLED_VOTING_METHODS, available_voting_methods
+
+ALL_SUPPORTED_VOTING_METHODS = list(available_voting_methods())
 
 
 DEFAULT_ORG_SETTINGS = {
@@ -144,9 +140,8 @@ DEFAULT_ORG_SETTINGS = {
     "allow_public_delegates": True,
     "public_delegate_policy": "admin_approval",
     "require_email_verification": True,
-    # Phase 95 — fresh organizations expose every supported proposal type.
-    # Stewards can still narrow this list later in Organization Settings.
-    "allowed_voting_methods": ALL_SUPPORTED_VOTING_METHODS,
+    # Experimental methods are available only by explicit organization opt-in.
+    "allowed_voting_methods": list(DEFAULT_ENABLED_VOTING_METHODS),
     # Phase 95 — do not let an individual proposal author unexpectedly add
     # identity verification to an organization that has not adopted it.
     # Legacy orgs without this key retain the `author` read-time fallback in

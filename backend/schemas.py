@@ -656,7 +656,8 @@ class ProposalCreate(BaseModel):
     @field_validator("voting_method")
     @classmethod
     def validate_voting_method(cls, v: str) -> str:
-        if v not in _VOTING_METHODS:
+        from voting_methods import available_voting_methods
+        if v not in available_voting_methods():
             raise ValueError(
                 "voting_method must be binary, approval, ranked_choice, or "
                 "budget_allocation"
@@ -788,7 +789,8 @@ class ProposalUpdate(BaseModel):
         # Phase 59 A4 — same value set as ProposalCreate.
         if v is None:
             return v
-        if v not in _VOTING_METHODS:
+        from voting_methods import available_voting_methods
+        if v not in available_voting_methods():
             raise ValueError(
                 "voting_method must be binary, approval, ranked_choice, or "
                 "budget_allocation"
@@ -1263,6 +1265,41 @@ class TopicPrecedenceOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 class VoteCast(BaseModel):
+    # Phase 109: raw validation must precede Pydantic's integer coercion.
+    scores: Optional[dict[str, int]] = None
+    grades: Optional[dict[str, int]] = None
+    rank_groups: Optional[list[list[str]]] = None
+    abstain: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_experimental_expression(cls, data):
+        if not isinstance(data, dict):
+            return data
+        new_fields = ("scores", "grades", "rank_groups")
+        present = [key for key in new_fields if data.get(key) is not None]
+        if "abstain" in data and type(data["abstain"]) is not bool:
+            raise ValueError("abstain must be a boolean")
+        if present or data.get("abstain"):
+            if any(data.get(key) is not None for key in
+                   ("vote_value", "approvals", "ranking", "allocations", "ranked")):
+                raise ValueError("Cannot mix ballot methods")
+            if len(present) > 1 or (data.get("abstain") and present):
+                raise ValueError("Submit one preference field or explicit abstention")
+            from experimental_ballots import validate_ballot
+            method = {"scores": "star", "grades": "majority_judgment",
+                      "rank_groups": "ranked_pairs"}.get(present[0] if present else None, "star")
+            expression = {key: data[key] for key in present}
+            if data.get("abstain"):
+                expression["abstain"] = True
+            validated = validate_ballot(method, expression)
+            for key in present:
+                ids = ([oid for group in validated[key] for oid in group]
+                       if key == "rank_groups" else validated[key].keys())
+                for oid in ids:
+                    _validate_uuid(oid)
+        return data
+
     vote_value: Optional[str] = None
     approvals: Optional[list[str]] = None
     ranking: Optional[list[str]] = None
