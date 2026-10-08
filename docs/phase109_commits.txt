@@ -44,3 +44,5 @@ a9913d5 Phase 109 W5: preserve finalized results after archive
 09b9da0 Phase 109: release opt-in STAR, Score, Ranked Pairs and Majority Judgment
 c754834 Phase 109 W5: flush worker QA audit before assertion
 550a521 Phase 109 W5: integrate production worker QA flush fix
+792c291 Phase 109 W5: record verified production release closeout
+b71581f Phase 109 W5: integrate verified release closeout
