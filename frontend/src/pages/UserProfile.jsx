@@ -29,7 +29,7 @@ function VoteRecordCell({ vote }) {
 
   if (vote.ballot.abstain === true) return <span className="text-sm text-gray-500">Abstained</span>;
   if (vote.ballot.scores != null) return <div className="text-sm">
-    <span>Rated ballot (0–5 stars)</span>
+    <span>{vote.voting_method === 'score' ? 'Score ballot (0–5 points)' : 'STAR ballot (0–5 stars)'}</span>
     <details><summary className="cursor-pointer">View ratings</summary><ul>{Object.entries(vote.ballot.scores).map(([id, score]) => <li key={id}>{vote.option_labels?.[id] || id}: {score}/5</li>)}</ul><p className="text-xs">Unrated options receive zero, including later additions.</p></details>
   </div>;
 

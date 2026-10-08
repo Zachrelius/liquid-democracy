@@ -30,7 +30,7 @@ export default function VoteFlowGraph({ data, onNodeClick, proposal, tally }) {
   if (!data) return null;
 
   const method = data.voting_method || 'binary';
-  if (method === 'star') return <div className="p-4 space-y-2 text-sm"><p>Network positions do not represent STAR preferences. See the results panel for scores and the automatic runoff.</p>{tally?.method_result && <p className="text-gray-600">{formatExactCount(tally.method_result.total_ballots_cast)} ballot units cast · {formatExactCount(tally.method_result.total_abstain)} abstaining units</p>}</div>;
+  if (['star', 'score'].includes(method)) return <div className="p-4 space-y-2 text-sm"><p>Network positions do not represent {method === 'score' ? 'Score' : 'STAR'} preferences. See the results panel for {method === 'score' ? 'total points' : 'scores and the automatic runoff'}.</p>{tally?.method_result && <p className="text-gray-600">{formatExactCount(tally.method_result.total_ballots_cast)} ballot units cast · {formatExactCount(tally.method_result.total_abstain)} abstaining units</p>}</div>;
 
   return (
     <div className="space-y-3">

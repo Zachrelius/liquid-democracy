@@ -22,7 +22,7 @@ const SR_DEFAULTS = {
 
 const SR_KEYS = Object.keys(SR_DEFAULTS);
 
-const VOTING_METHODS = ['binary', 'approval', 'ranked_choice', ...(METHOD_CAPABILITIES.star.available ? ['star'] : [])];
+const VOTING_METHODS = ['binary', 'approval', 'ranked_choice', ...['star', 'score'].filter(method => METHOD_CAPABILITIES[method].available)];
 
 /**
  * Phase 8.5 — Sub-Org Settings page.

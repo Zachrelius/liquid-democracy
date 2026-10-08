@@ -335,10 +335,11 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
   const [error, setError] = useState('');
 
   const allowedMethods = orgSettings?.allowed_voting_methods || ['binary'];
+  const scoreAllowed = VOTING_METHODS.score.available && allowedMethods.includes('score');
   const starAllowed = VOTING_METHODS.star.available && allowedMethods.includes('star');
   const approvalAllowed = allowedMethods.includes('approval');
   const rcAllowed = allowedMethods.includes('ranked_choice');
-  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || votingMethod === 'star';
+  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score'].includes(votingMethod);
 
   function toggleTopic(id) {
     setSelectedTopics(prev => {
@@ -416,6 +417,10 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
             <span className="text-sm text-gray-700">Ranked Choice</span>
             {!rcAllowed && <span className="text-xs text-amber-600">(not enabled)</span>}
           </label>
+          {scoreAllowed && <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="vm" value="score" checked={votingMethod === 'score'} onChange={() => setVotingMethod('score')} className="accent-[var(--brand-accent)]" />
+            <span className="text-sm text-gray-700">Score (0–5 points, highest total wins)</span>
+          </label>}
           {starAllowed && <label className="flex items-center gap-2 cursor-pointer">
             <input type="radio" name="vm" value="star" checked={votingMethod === 'star'} onChange={() => setVotingMethod('star')} className="accent-[var(--brand-accent)]" />
             <span className="text-sm text-gray-700">STAR (0–5 stars, automatic runoff)</span>
@@ -491,7 +496,7 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
       {/* Phase 12.5 F3 — threshold sliders gated on `proposal.set_thresholds`. */}
       {canSetThresholds ? (
         <div className="grid grid-cols-2 gap-4">
-          {votingMethod !== 'star' && <div>
+          {!['star', 'score'].includes(votingMethod) && <div>
             <label className="block text-xs text-gray-500 mb-1">Pass Threshold: {Math.round(passThreshold * 100)}%</label>
             <input type="range" min={0} max={100} value={Math.round(passThreshold * 100)} onChange={e => setPassThreshold(parseInt(e.target.value, 10) / 100)} className="w-full accent-[var(--brand-accent)]" />
           </div>}
@@ -506,11 +511,11 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
         // walks the parent chain (per get_org_config), so the displayed
         // numbers are whatever applies to this sub-org's proposals.
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">{votingMethod === 'star' ? 'Participation requirement' : 'Approval thresholds'}</p>
+          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">{['star', 'score'].includes(votingMethod) ? 'Participation requirement' : 'Approval thresholds'}</p>
           <p className="text-sm text-[#2C3E50]">
             This proposal will use the organization's defaults:{' '}
-            {votingMethod !== 'star' && <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>}
-            {votingMethod !== 'star' && ' / '}
+            {!['star', 'score'].includes(votingMethod) && <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>}
+            {!['star', 'score'].includes(votingMethod) && ' / '}
             <strong>{Math.round((orgSettings?.default_quorum_threshold ?? 0.40) * 100)}% quorum</strong>.
           </p>
         </div>

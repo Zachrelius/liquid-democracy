@@ -2206,7 +2206,12 @@ export default function OrgSettings() {
                 onChange={e => updateSetting('allowed_voting_methods', toggleAllowedVotingMethod(settings.allowed_voting_methods, 'star', e.target.checked))} className="mt-1 accent-[var(--brand-accent)]" />
               <span className="text-sm">STAR — rate options 0–5; the top two enter an automatic runoff.</span>
             </label>
-            <p className="text-xs text-gray-500">Off by default. Disabling prevents new STAR proposals; existing proposals remain usable. Single-winner proposals only, excluding officeholder elections.</p>
+            {VOTING_METHODS.score.available && <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" checked={(settings.allowed_voting_methods || ['binary']).includes('score')}
+                onChange={e => updateSetting('allowed_voting_methods', toggleAllowedVotingMethod(settings.allowed_voting_methods, 'score', e.target.checked))} className="mt-1 accent-[var(--brand-accent)]" />
+              <span className="text-sm">Score — rate options 0–5 points; the highest total wins.</span>
+            </label>}
+            <p className="text-xs text-gray-500">Off by default. Disabling a method prevents new proposals using it; existing proposals remain usable. Single-winner proposals only, excluding officeholder elections.</p>
           </div>}
           {/* Phase 34 F1 — per-section save button. */}
           <button

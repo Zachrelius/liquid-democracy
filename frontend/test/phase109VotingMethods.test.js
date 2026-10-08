@@ -39,12 +39,12 @@ test('explicit legacy organization methods are retained without adding others', 
 test('unfinished experimental methods cannot appear even in an opted-in organization', () => {
   const settings = { allowed_voting_methods: Object.keys(VOTING_METHODS) };
   assert.deepEqual(selectableVotingMethods(settings, { hasOrg: true }),
-    ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project', 'star']);
+    ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project', 'star', 'score']);
   for (const context of [{ hasOrg: false }, { hasOrg: true, election: true }]) {
     assert.deepEqual(selectableVotingMethods(settings, context),
       ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project']);
   }
-  assert.deepEqual(toggleAllowedVotingMethod(['binary'], 'score', true), ['binary']);
+  assert.deepEqual(toggleAllowedVotingMethod(['binary'], 'ranked_pairs', true), ['binary']);
 });
 
 test('settings edits preserve unrelated and future method choices', () => {
@@ -61,4 +61,14 @@ test('rated ballot contracts preserve distinct methods and grade ordering', () =
   assert.notEqual(VOTING_METHODS.star.ruleId, VOTING_METHODS.score.ruleId);
   assert.equal(VOTING_METHODS.ranked_pairs.ballotField, 'rank_groups');
   assert.deepEqual(MAJORITY_JUDGMENT_GRADES, ['Reject', 'Poor', 'Acceptable', 'Good', 'Very good', 'Excellent']);
+});
+
+
+test('Score remains an independent opt-in and draft switching requires explicit reset', () => {
+  assert.deepEqual(selectableVotingMethods({ allowed_voting_methods: ['binary', 'star'] }, { hasOrg: true }), ['binary', 'star']);
+  assert.deepEqual(selectableVotingMethods({ allowed_voting_methods: ['binary', 'score'] }, { hasOrg: true }), ['binary', 'score']);
+  assert.deepEqual(toggleAllowedVotingMethod(['binary', 'star'], 'score', true), ['binary', 'star', 'score']);
+  assert.deepEqual(toggleAllowedVotingMethod(['binary', 'star', 'score'], 'score', false), ['binary', 'star']);
+  assert.throws(() => draftMethodResetFields('star', 'score', false), /Confirm/);
+  assert.deepEqual(draftMethodResetFields('star', 'score', true), { confirm_ballot_reset: true });
 });

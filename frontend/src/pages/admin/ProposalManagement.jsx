@@ -784,6 +784,7 @@ function CreateProposalForm({
 
   const scopeSettings = subOrgs?.find(org => org.id === scope)?.settings;
   const allowedMethods = scopeSettings?.allowed_voting_methods ?? orgSettings?.allowed_voting_methods ?? ['binary'];
+  const scoreAllowed = VOTING_METHODS.score.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('score');
   const starAllowed = VOTING_METHODS.star.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('star');
   const approvalAllowed = allowedMethods.includes('approval');
   const rankedChoiceAllowed = allowedMethods.includes('ranked_choice');
@@ -794,7 +795,7 @@ function CreateProposalForm({
   const isProjectBudget = votingMethod === 'budget_project';
   // Budget-allocation buckets are options too, so they share the multi-option
   // editor. Project budget uses its own ProjectItemsEditor (kind + tiers).
-  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || votingMethod === 'star' || isBudget;
+  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score'].includes(votingMethod) || isBudget;
 
   // Phase 90c — the per-proposal count-mode toggle is offered only in weighted
   // orgs that allow the override (weighted_voting.allow_per_member_proposals,
@@ -953,8 +954,8 @@ function CreateProposalForm({
       // the proposal's existing scope; the PATCH endpoint does not accept
       // a scope change.
       if (!isEditMode && scope) payload.sub_org_id = scope;
-      if (isMultiOption && !(isEditMode && votingMethod === 'star'
-          && editingProposal.voting_method === 'star' && unchangedOptionText(editingProposal.options, options))) {
+      if (isMultiOption && !(isEditMode && ['star', 'score'].includes(votingMethod)
+          && editingProposal.voting_method === votingMethod && unchangedOptionText(editingProposal.options, options))) {
         payload.options = options.map(o => ({
           label: o.label.trim(),
           description: o.description.trim(),
@@ -967,7 +968,7 @@ function CreateProposalForm({
       }
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
-      } else if (votingMethod === 'star') {
+      } else if (['star', 'score'].includes(votingMethod)) {
         payload.num_winners = 1;
       }
       // Phase 90c — per-proposal count mode (weighted orgs that allow it). Send
@@ -1054,7 +1055,7 @@ function CreateProposalForm({
       // diverged from the mode default. For `always_*` modes the
       // toggle isn't rendered, so we keep the field null to inherit
       // (the backend resolver will return the always-locked value).
-      const isMultiOptionM = votingMethod === 'approval' || votingMethod === 'ranked_choice' || votingMethod === 'star';
+      const isMultiOptionM = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score'].includes(votingMethod);
       if (isMultiOptionM && writeInsOverridable && allowWriteIns !== orgWriteInsAllowed) {
         payload.allow_write_in_options = allowWriteIns;
       }
@@ -1602,6 +1603,12 @@ function CreateProposalForm({
               <span className="text-sm text-gray-700">STAR (0–5 stars, then automatic runoff)</span>
             </label>
           )}
+          {(scoreAllowed || (isEditMode && editingProposal.voting_method === 'score')) && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="votingMethod" value="score" checked={votingMethod === 'score'} onChange={() => setVotingMethod('score')} className="accent-[var(--brand-accent)]" />
+              <span className="text-sm text-gray-700">Score (0–5 points, highest total wins)</span>
+            </label>
+          )}
           {/* Phase 73 — allocation budget (opt-in per org). */}
           {budgetAllowed && (
             <label className="flex items-center gap-2 cursor-pointer">
@@ -1983,7 +1990,7 @@ function CreateProposalForm({
           notice in lieu of the inputs; backend uses the org defaults. */}
       {canSetThresholds ? (
         <div className="grid grid-cols-2 gap-4">
-          {votingMethod !== 'star' && <div>
+          {!['star', 'score'].includes(votingMethod) && <div>
             <label htmlFor="proposal-pass-threshold" className="block text-xs text-gray-500 mb-1">
               Pass Threshold: {Math.round(passThreshold * 100)}%
             </label>
@@ -2017,11 +2024,11 @@ function CreateProposalForm({
         // of the prior "ask an Admin" copy. Numbers from the orgSettings
         // prop (= currentOrg.settings, 12.5 B2) with fallback to 0.50/0.40.
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">{votingMethod === 'star' ? 'Participation requirement' : 'Approval thresholds'}</p>
+          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">{['star', 'score'].includes(votingMethod) ? 'Participation requirement' : 'Approval thresholds'}</p>
           <p className="text-sm text-[#2C3E50]">
             This proposal will use the organization's defaults:{' '}
-            {votingMethod !== 'star' && <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>}
-            {votingMethod !== 'star' && ' / '}
+            {!['star', 'score'].includes(votingMethod) && <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>}
+            {!['star', 'score'].includes(votingMethod) && ' / '}
             <strong>{Math.round((orgSettings?.default_quorum_threshold ?? 0.40) * 100)}% quorum</strong>.
           </p>
         </div>
