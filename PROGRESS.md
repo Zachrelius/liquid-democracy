@@ -4638,22 +4638,31 @@ Railway backend deployment `00fa12d4-4fba-4fd2-b2f3-fd38f8784243` is **SUCCESS**
 
 ---
 
-## Phase 109 — Experimental Single Winner Methods — W1 browser gate blocked (2026-10-08)
+## Phase 109 — Experimental Single Winner Methods — W4 in progress (2026-10-08)
 
 Approved spec: `phase109_experimental_single_winner_methods_spec.md`. Isolated branch
 `phase-109/experimental-single-winner-methods` from refreshed `0096997`; original
 dirty planning checkout preserved. **Not merged, pushed or deployed.** W0 shared
-foundation is done. W1 STAR implementation and automated review are complete;
-required rendered QA is blocked by Chrome reporting another extension UI open
-while filling synthetic local login. W2 Score, W3 Ranked Pairs, W4 Majority
-Judgment and W5 deployment are **NOT STARTED**, respecting sequential gates.
+foundation is done. Z resolved the Chrome password-manager popup by completing
+local login. W1 STAR, W2 Score and W3 Ranked Pairs now passed their sequential
+automated and local rendered browser gates. W4 Majority Judgment is active;
+W5 final regression, integration and deployment are **NOT STARTED**.
 
 Evidence and restart context: `docs/phase109_execution.md`,
 `docs/phase109_star_backend_evidence.md`, `frontend/PHASE109_QA.md`.
-Full backend run: 3,379 passed / 21 skipped before final review additions;
+Earlier full backend run: 3,379 passed / 21 skipped before W2/W3 additions;
 latest focused regression 178 passed / 1 optional oracle skip, with isolated
 2,000-profile pinned oracle subsequently passing. Phase 109 adds 160 collected
-backend tests. Frontend 92 tests and production build pass. SQLite migration
+backend tests at that checkpoint. W3 adds independent 1,000-profile reference
+agreement, 206 focused backend checks plus six real-storage scope checks, and
+110 passing frontend tests/build. Current all-phase totals await W5. SQLite migration
 cycle and PostgreSQL fresh/upgrade smoke pass for `a109b0c1d2e3`; prior head
 `f8a9b0c1d2e3`. Forty synthetic PostgreSQL concurrent operations pass without
 pool timeouts. No production data, secrets or infrastructure changed.
+
+STAR, Score and Ranked Pairs each passed desktop and 380px browser checks for
+keyboard controls, cast/change/retract, delegated ballots, write-ins, early
+privacy and admin close/frozen results. STAR browser review found and fixed
+duplicate results, preliminary-ballot refresh and close-date display issues.
+Evidence and screenshots are recorded in `docs/phase109_execution.md` and
+`test_results/phase109/`. Latest completed-stage checkpoint: `051823b`.

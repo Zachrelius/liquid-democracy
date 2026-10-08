@@ -4094,6 +4094,7 @@ def my_vote_status(
 
     approvals = None
     scores = None
+    grades = None
     rank_groups = None
     abstain = False
     ranking = None
@@ -4101,6 +4102,7 @@ def my_vote_status(
     ranked = None
     if is_experimental(proposal):
         scores = result.ballot.scores
+        grades = result.ballot.grades
         rank_groups = result.ballot.rank_groups
         abstain = result.ballot.abstain or result.vote_value == "abstain"
         description = "Your ranked ballot is recorded." if proposal.voting_method == "ranked_pairs" else "Your rating ballot is recorded."
@@ -4149,6 +4151,7 @@ def my_vote_status(
     return schemas.MyVoteStatus(
         vote_value=result.vote_value,
         scores=scores,
+        grades=grades,
         rank_groups=rank_groups,
         abstain=abstain,
         approvals=approvals,
@@ -4436,6 +4439,7 @@ def get_vote_graph(
                 # identity disclosure alone does not authorize their release.
                 if can_see_votes(db, current_user.id, uid, proposal_topic_ids, org_id=proposal.org_id):
                     ballot_obj = schemas.VoteFlowBallot(scores=result.ballot.scores,
+                                                       grades=result.ballot.grades,
                                                        rank_groups=result.ballot.rank_groups,
                                                        abstain=result.ballot.abstain)
             elif voting_method == "binary":

@@ -79,7 +79,10 @@ def decimal_counts(value):
     if type(value) is int:
         return str(value)
     if isinstance(value, dict):
-        return {k: decimal_counts(v) for k, v in value.items()}
+        # Majority grades are ordered identifiers, not potentially large counts.
+        # Preserve their numeric type in both the result and tie-removal trace.
+        return {k: deepcopy(v) if k == "majority_grades" else decimal_counts(v)
+                for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [decimal_counts(v) for v in value]
     return value
