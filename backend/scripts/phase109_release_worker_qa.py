@@ -80,6 +80,9 @@ def close_exact_fixtures(db, proposal_ids):
                     "Worker did not freeze the result")
             require(proposal.final_method_result.get("notification_intent_staged") is True,
                     "Notification staging marker is missing")
+            # Production SessionLocal disables autoflush. Persist pending audit
+            # and notification intents within this transaction before querying.
+            db.flush()
             count = db.query(models.AuditLog).filter_by(target_id=proposal.id, action="proposal.status_changed").count()
             require(count == baseline + 1, "Expected exactly one new closure status audit")
             audit_counts[method] = count
