@@ -1,4 +1,4 @@
-import { VOTING_METHODS, draftMethodResetFields, unchangedOptionText } from '../../utils/votingMethods';
+import { VOTING_METHODS, votingMethodLabel, draftMethodResetFields, unchangedOptionText } from '../../utils/votingMethods';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
@@ -2585,7 +2585,7 @@ function MultiImportReview({ items, slug, onDone, onCancel }) {
 
             {expanded === row.id && row.payload && (
               <div className="mt-2 ml-7 text-xs text-gray-600 bg-gray-50 border border-gray-100 rounded p-2 space-y-1">
-                <div><span className="font-medium">Method:</span> {row.payload.voting_method}</div>
+                <div><span className="font-medium">Method:</span> {votingMethodLabel(row.payload.voting_method)}</div>
                 {row.payload.body && (
                   <div><span className="font-medium">Body:</span> {String(row.payload.body).slice(0, 200)}{String(row.payload.body).length > 200 ? '…' : ''}</div>
                 )}
@@ -3275,6 +3275,7 @@ export default function ProposalManagement() {
                 >
                   <span className="flex-1 font-medium text-gray-800">
                     {p.title}
+                    {VOTING_METHODS[p.voting_method]?.experimental && <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">{votingMethodLabel(p.voting_method)}</span>}
                     {p.voting_method === 'approval' && (
                       <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Approval</span>
                     )}

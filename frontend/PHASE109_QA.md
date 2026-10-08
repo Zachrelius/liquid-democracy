@@ -161,7 +161,7 @@ Evidence in `test_results/phase109/`: `ranked-pairs-mobile-ballot.jpg`,
 `ranked-pairs-early-private.jpg`, `ranked-pairs-final-desktop.jpg`.
 The lead owned the browser; the frontend agent did not perform these steps.
 
-## W4 Majority Judgment, in progress
+## W4 Majority Judgment, local rendered gate passed
 
 The shared rating controls now support six verbal grades: Reject, Poor,
 Acceptable, Good, Very good, Excellent. Grade codes are transport identifiers;
@@ -191,5 +191,49 @@ The idempotent `backend/scripts/phase109_majority_judgment_localqa.py` creates
 fixtures only in the exact local SQLite test database, preserving prior
 ballots/statuses. Voting: `1f2506dc-ee6d-483b-ae81-d867a7a81065`; early:
 `e978e4f0-e5ad-4265-a766-4c8193d411d2`. The existing delegate has Playground
-Excellent, Community center Acceptable, Parking Reject. W4 interactive
-verification is pending with the implementation lead.
+Excellent, Community center Acceptable, Parking Reject. The later successful lead verification below supersedes the initial pending state.
+
+
+### W4 successful browser verification, reported by the implementation lead
+
+The lead reported PASS for desktop and approximately 380px mobile, verbal
+grade selection by keyboard, cast/change, late write-in Reject, abstain,
+retract restoring delegation, neutral private early ballot, and close with
+frozen majority grades/distributions/winner/seed. Evidence in
+`test_results/phase109/`: `majority-judgment-mobile-ballot.jpg`,
+`majority-judgment-early-private.jpg`, `majority-judgment-final-desktop.jpg`.
+The lead owned the browser; the frontend agent did not perform these steps.
+
+## W5 frontend integration review
+
+Reviewed all four methods across opt-in/defaults, global/election exclusions,
+sub-org authoring, independent payloads, preliminary visibility, neutral versus
+abstention, late options, result units, frozen labels/date/result handling,
+profiles, admin/import labels, graph fallback, and history.
+
+Fixed an integration issue: archiving an already-finalized proposal must not
+relabel its recorded winner as provisional. All four result panels now honor
+the server's frozen `finalized` flag; the archive banner explains that the
+final result is preserved. Four rendered regression cases cover this.
+Cleared optional graph state at initial refetch so a failed reload cannot
+retain an older graph. Cleaned method labels in admin/import summaries and
+Majority Judgment grade/abstention copy. These are source-reviewed display
+and state fixes; no new interaction is claimed.
+
+Final frontend checks: **123 tests passed**, production build passed,
+`index-C2fK2G26.js` with `index-DQcWNiPm.css`. The existing large bundle and
+stale Browserslist-data warnings remain. Changed JavaScript lint found
+**10 errors and 1 warning**, all reproduced from baseline `0096997`:
+
+- `SupportTrajectoryChart.jsx`: 1 existing set-state-in-effect finding.
+- `ProposalDetail.jsx`: 6 existing set-state-in-effect findings and 1
+  exhaustive-deps warning.
+- `UserProfile.jsx`: 1 existing set-state-in-effect finding.
+- `DelegatePublic.jsx`: 1 existing unused import and 1 existing
+  set-state-in-effect finding.
+
+The earlier count of 8 errors/1 warning covered the first three files; the
+whole-phase check additionally includes DelegatePublic's two baseline
+findings. All other changed/new JavaScript files lint clean, including the
+new final-result regression. Diff whitespace checks pass. This records local
+verification only; production deployment/sanity remains the lead's W5 gate.

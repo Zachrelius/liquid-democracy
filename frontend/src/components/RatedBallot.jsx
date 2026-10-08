@@ -72,12 +72,12 @@ export default function RatedBallot({ proposal, proposalId, myVote, onVoteChange
   return <section className="space-y-3" aria-label={`Your ${methodName} ballot`}>
     <h3 className="text-sm font-semibold">Your {methodName} ballot</h3>
     <p id={`${id}-instructions`} className="text-sm text-gray-600">{isGrade ? 'Grade each option from Reject to Excellent. Grades are ordered descriptions, not points. The highest majority grade leads; tied grades use repeated median comparison.' : <>Rate each option from 0 to 5 {ratingUnit}. Equal ratings are allowed. {isScore ? 'The option with the highest total points wins. Equal highest totals use the committed draw order.' : 'The two highest total scores reach a runoff; your ballot supports whichever finalist you rated higher.'}</>}</p>
-    <p className="text-xs text-gray-600">{isGrade ? 'Ungraded options receive Reject, including write-ins added after you vote.' : <>Unrated options receive 0 {ratingUnit}, including write-ins added after you vote.</>} You may change your ballot while voting is permitted. Selecting a rating does not submit your vote.</p>
+    <p className="text-xs text-gray-600">{isGrade ? 'Ungraded options receive Reject, including write-ins added after you vote.' : <>Unrated options receive 0 {ratingUnit}, including write-ins added after you vote.</>} You may change your ballot while voting is permitted. Selecting {isGrade ? 'a grade' : 'a rating'} does not submit your vote.</p>
     {!emailVerified && <VerifyEmailInlineNote action="vote" />}
     {!editing && <>
       {hasVote ? <div className="text-sm">
         <p>{myVote.is_direct ? 'Your submitted ballot' : <>Via {myVote.cast_by ? <UserLink user={myVote.cast_by} /> : 'delegate'}</>}</p>
-        {myVote.abstain ? <p>You abstained. This overrides delegation and contributes no ratings or grades.</p> : <>
+        {myVote.abstain ? <p>You abstained. This overrides delegation and contributes no {isGrade ? 'grades' : 'ratings'}.</p> : <>
           <ul className="space-y-1 mt-2">{options.map(o => <li key={o.id}>{o.label}: <strong>{isGrade ? gradeLabel(savedRatings[o.id] ?? 0) : `${savedRatings[o.id] ?? 0}/5`}</strong>{!Object.hasOwn(savedRatings, o.id) && (isGrade ? ' (ungraded)' : ' (unrated)')}</li>)}</ul>
           {options.some(o => !Object.hasOwn(savedRatings, o.id)) && <p className="mt-2 text-xs text-amber-800">Options absent from this ballot—including any added later—receive {isGrade ? 'Reject' : 'zero'} until you change your ballot.</p>}
         </>}

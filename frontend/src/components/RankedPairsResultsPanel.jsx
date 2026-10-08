@@ -13,7 +13,7 @@ export default function RankedPairsResultsPanel({ tally, proposal }) {
   const labels = result.option_labels || Object.fromEntries((proposal.options || []).map(option => [option.id, option.label]));
   const label = id => labels[id] || id;
   const ids = Object.keys(result.pairwise || {});
-  const closed = ['passed', 'failed', 'closed'].includes(proposal.status);
+  const closed = result.finalized === true || ['passed', 'failed', 'closed'].includes(proposal.status);
   const unit = tally.weighted ? tally.unit_label || 'voting shares' : 'votes';
   const locked = new Set((result.locked_edges || []).map(edge => `${edge.winner}:${edge.loser}`));
   return <section className="space-y-4" aria-label="Ranked Pairs results">

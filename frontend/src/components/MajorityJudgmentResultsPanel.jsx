@@ -33,7 +33,7 @@ export default function MajorityJudgmentResultsPanel({ tally, proposal }) {
   if (!result) return <p className="text-sm text-gray-500">Majority Judgment results are not available.</p>;
   const labels = result.option_labels || Object.fromEntries((proposal.options || []).map(option => [option.id, option.label]));
   const label = id => labels[id] || id;
-  const closed = ['passed', 'failed', 'closed'].includes(proposal.status);
+  const closed = result.finalized === true || ['passed', 'failed', 'closed'].includes(proposal.status);
   const unit = tally.weighted ? tally.unit_label || 'voting shares' : 'votes';
   return <section className="space-y-4" aria-label="Majority Judgment results">
     <h3 className="text-sm font-semibold uppercase tracking-wide">Majority Judgment results</h3>

@@ -12,7 +12,7 @@ export default function ScoreResultsPanel({ tally, proposal }) {
   if (!result) return <p className="text-sm text-gray-500">Score results are not available.</p>;
   const labels = result.option_labels || Object.fromEntries((proposal.options || []).map(o => [o.id, o.label]));
   const label = id => labels[id] || id;
-  const closed = ['passed', 'failed', 'closed'].includes(proposal.status);
+  const closed = result.finalized === true || ['passed', 'failed', 'closed'].includes(proposal.status);
   const unit = tally.weighted ? tally.unit_label || 'voting shares' : 'votes';
   const entries = Object.entries(result.scores || {});
   const maximum = entries.reduce((max, [, value]) => BigInt(value) > max ? BigInt(value) : max, 0n);

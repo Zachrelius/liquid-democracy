@@ -1657,6 +1657,7 @@ export default function ProposalDetail() {
     // button on ErrorMessage actually exits the error UI on a
     // successful refetch (same pattern as Delegations.jsx).
     setError('');
+    setVoteGraph(null);
     // Phase 80 — read-only viewers fetch the anon /public endpoints only
     // (detail + aggregate results). All the member-gated extras (my-vote,
     // vote-graph, delegations, verification-weight) are skipped — a stray
@@ -2909,7 +2910,7 @@ export default function ProposalDetail() {
           )}
 
           {isClosed && (() => {
-            if (['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method)) return <p className="rounded-xl border p-4 text-center font-semibold">{proposal.status === 'passed' ? `${votingMethodLabel(proposal.voting_method)} decision finalized` : 'Closed without a finalized winner'}</p>;
+            if (['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method)) return <p className="rounded-xl border p-4 text-center font-semibold">{proposal.status === 'withdrawn' ? tally?.method_result?.finalized ? 'Archived — final result preserved' : 'Archived without a finalized decision' : proposal.status === 'passed' ? `${votingMethodLabel(proposal.voting_method)} decision finalized` : 'Closed without a finalized winner'}</p>;
             // Phase 67 W1 — election close banners. Quorum gates seat
             // installation: a passed election seated its winners
             // (announce them by display name); a failed election under
