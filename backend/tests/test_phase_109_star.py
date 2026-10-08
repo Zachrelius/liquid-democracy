@@ -191,3 +191,32 @@ def test_corrupt_final_records_never_silently_recompute():
     record["tally"]["method_result"]["scores"]["a"] = 123
     with pytest.raises(ValueError, match="histogram"):
         ExperimentalTally.from_record(record)
+
+
+def test_quorum_never_rounds_almost_met_large_integer_up():
+    result = tally([({"scores": {"a": 5}}, 1)], ["a", "b"])
+    result.total_eligible = 10**30 + 1
+    result.total_ballots_cast = 5 * 10**29
+    assert result.quorum_met(0.5) is False
+    result.total_ballots_cast += 1
+    assert result.quorum_met(0.5) is True
+
+
+@pytest.mark.parametrize("field,value", [
+    ("winner", "b"), ("five_star_counts", {"a": 0, "b": 0}),
+    ("option_set_version", "incorrect"),
+])
+def test_frozen_record_rejects_contradictory_winner_and_tie_metadata(field, value):
+    original = tally([({"scores": {"a": 5, "b": 1}}, 7)], ["a", "b"])
+    record = {"tally": original.to_record()}
+    record["tally"]["method_result"][field] = value
+    with pytest.raises(ValueError):
+        ExperimentalTally.from_record(record)
+
+
+def test_frozen_record_rejects_invented_no_result():
+    original = tally([({"scores": {"a": 5}}, 7)], ["a", "b"])
+    record = {"tally": original.to_record()}
+    record["tally"]["method_result"].update(winner=None, no_result_reason="all_bottom_ratings")
+    with pytest.raises(ValueError, match="contradicts"):
+        ExperimentalTally.from_record(record)

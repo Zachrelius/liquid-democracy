@@ -5,7 +5,7 @@ No reference package is imported by production and no shares are expanded.
 """
 from copy import deepcopy
 from dataclasses import asdict, dataclass
-from decimal import Decimal
+from fractions import Fraction
 
 from experimental_ballots import MAX_BALLOT_OPTIONS, validate_ballot
 from voting_methods import candidate_priority, option_set_version, validate_voting_rules
@@ -35,7 +35,11 @@ class ExperimentalTally:
         return self.method_result["priority_used"]
 
     def quorum_met(self, threshold):
-        return self.total_eligible > 0 and Decimal(self.total_ballots_cast) >= Decimal(str(threshold)) * self.total_eligible
+        # Fraction cross-products stay exact beyond Decimal's default 28-digit
+        # context and never round an almost-met quorum up to the threshold.
+        ratio = Fraction(str(threshold))
+        return (self.total_eligible > 0 and
+                self.total_ballots_cast * ratio.denominator >= self.total_eligible * ratio.numerator)
 
     def to_record(self):
         return asdict(self)
@@ -64,22 +68,27 @@ class ExperimentalTally:
             raise ValueError("Inconsistent persisted abstention count")
         scores = result.get("scores")
         histograms = result.get("score_histograms")
+        five = result.get("five_star_counts")
         finalists = result.get("finalists")
         runoff = result.get("runoff")
         preference_weight = value["total_ballots_cast"] - value["total_abstain"]
         if (not isinstance(scores, dict) or len(scores) > MAX_BALLOT_OPTIONS
                 or not isinstance(histograms, dict) or set(histograms) != set(scores)
+                or not isinstance(five, dict) or set(five) != set(scores)
                 or not isinstance(finalists, list) or len(finalists) != len(set(finalists))
                 or any(oid not in scores for oid in finalists)
                 or not isinstance(runoff, dict) or set(runoff) != set(finalists)
                 or result.get("preference_weight") != preference_weight
                 or not isinstance(result.get("tie_trace"), list)):
             raise ValueError("Inconsistent persisted STAR aggregates")
+        if result.get("option_set_version") != option_set_version(scores):
+            raise ValueError("Invalid persisted option set version")
         for oid, score in scores.items():
             histogram = histograms[oid]
             if (type(score) is not int or score < 0 or not isinstance(histogram, list)
                     or len(histogram) != 6 or any(type(n) is not int or n < 0 for n in histogram)
                     or sum(histogram) != preference_weight
+                    or type(five[oid]) is not int or five[oid] != histogram[5]
                     or sum(grade * n for grade, n in enumerate(histogram)) != score):
                 raise ValueError("Invalid persisted STAR score histogram")
         if result["winner"] is not None:
@@ -90,9 +99,23 @@ class ExperimentalTally:
                     or result["equal_preference"] < 0
                     or sum(runoff.values()) + result["equal_preference"] != preference_weight):
                 raise ValueError("Invalid persisted STAR runoff")
+            possible = finalists
+            for values in (runoff, scores, five):
+                highest = max(values[oid] for oid in possible)
+                possible = [oid for oid in possible if values[oid] == highest]
+                if len(possible) == 1:
+                    break
+            if result["winner"] not in possible:
+                raise ValueError("Persisted winner contradicts STAR runoff")
+            if len(possible) > 1 and not result["priority_used"]:
+                raise ValueError("Persisted STAR tie omitted priority use")
         elif result["no_result_reason"] not in (
                 "fewer_than_two_options", "no_positive_weight_preferences", "all_bottom_ratings"):
             raise ValueError("Missing persisted no-result reason")
+        if (result["no_result_reason"] == "all_bottom_ratings" and any(scores.values())
+                or result["no_result_reason"] == "no_positive_weight_preferences" and preference_weight != 0
+                or result["no_result_reason"] == "fewer_than_two_options" and len(scores) >= 2):
+            raise ValueError("Persisted no-result reason contradicts aggregates")
         return cls(**value)
 
 
