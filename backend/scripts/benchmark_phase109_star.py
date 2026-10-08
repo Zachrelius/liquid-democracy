@@ -14,13 +14,13 @@ import time
 import tracemalloc
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from experimental_tally import count_star, count_score
+from experimental_tally import count_star, count_score, count_ranked_pairs
 from voting_methods import new_voting_rules
 
 
 def main():
     method = sys.argv[1] if len(sys.argv) > 1 else "star"
-    counter = {"star": count_star, "score": count_score}[method]
+    counter = {"star": count_star, "score": count_score, "ranked_pairs": count_ranked_pairs}[method]
     results = []
     cases = [(1000, 20, 1, "random"), (10000, 20, 1, "random"),
              (1000, 120, 1, "random"), (1000, 120, 10**9, "all_tie"),
@@ -30,6 +30,11 @@ def main():
         ids = [str(i) for i in range(c)]
         ballots = [({"scores": {oid: (5 if profile == "all_tie" else rng.randrange(6))
                                for oid in ids}}, weight) for _ in range(n)]
+        if method == "ranked_pairs":
+            ballots = [({"rank_groups": [[oid] for oid in ids]} if profile == "all_tie" else
+                        {"rank_groups": [[oid for oid in ids if payload["scores"][oid] == rank]
+                                         for rank in range(5, -1, -1) if any(payload["scores"][oid] == rank for oid in ids)]}, weight)
+                       for payload, weight in ballots]
         rules = new_voting_rules(method, "benchmark")
         started = time.perf_counter()
         counter(ids, ballots, rules, "benchmark")

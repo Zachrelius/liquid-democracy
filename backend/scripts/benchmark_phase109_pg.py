@@ -41,7 +41,7 @@ def child():
     from voting_methods import new_voting_rules
 
     method = os.environ.get("PHASE109_BENCHMARK_METHOD", "star")
-    if method not in ("star", "score"):
+    if method not in ("star", "score", "ranked_pairs"):
         raise ValueError("Unsupported benchmark method")
     logging.disable(logging.CRITICAL)
     Base.metadata.create_all(engine)
@@ -70,7 +70,8 @@ def child():
             db.add(models.Delegation(org_id=org.id, delegator_id=users[i].id,
                                      delegate_id=users[i+1].id, chain_behavior="accept_sub"))
         db.add_all([models.Vote(proposal_id=proposal.id, user_id=u.id, cast_by_id=u.id,
-                               is_direct=True, ballot={"scores": {oid: rng.randrange(6) for oid in option_ids}})
+                               is_direct=True, ballot=({"rank_groups": [[oid] for oid in rng.sample(option_ids, len(option_ids))]}
+                                                      if method == "ranked_pairs" else {"scores": {oid: rng.randrange(6) for oid in option_ids}}))
                     for i, u in enumerate(users) if not 100 <= i < 200])
         proposal_id = proposal.id
         token = auth.create_access_token(users[0].id)
@@ -105,7 +106,9 @@ def child():
                     path = f"/api/proposals/{proposal_id}"
                     try:
                         if kind == "vote":
-                            response = await client.post(path+"/vote", json={"scores": {option_ids[0]: 5, option_ids[1]: i % 5}})
+                            payload = ({"rank_groups": [[option_ids[i % 2]], [option_ids[1 - i % 2]]]}
+                                       if method == "ranked_pairs" else {"scores": {option_ids[0]: 5, option_ids[1]: i % 5}})
+                            response = await client.post(path+"/vote", json=payload)
                         else:
                             response = await client.get(path+"/results")
                         metrics.append(dict(kind=kind, seconds=time.perf_counter()-start,
