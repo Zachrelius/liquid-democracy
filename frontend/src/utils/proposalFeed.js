@@ -1,3 +1,5 @@
+export { votingMethodLabel } from './votingMethods.js';
+
 export const PROPOSAL_FEED_PAGE_SIZE = 25;
 
 /**
@@ -129,14 +131,4 @@ export function formatViewerVote(proposal, viewerVote) {
     return `Your vote: ${count} option${count === 1 ? '' : 's'} approved${via}`;
   }
   return `Your vote is recorded${via}`;
-}
-
-export function votingMethodLabel(method) {
-  return {
-    binary: 'Yes / No',
-    approval: 'Approval',
-    ranked_choice: 'Ranked choice',
-    budget_allocation: 'Budget allocation',
-    budget_project: 'Ranked projects',
-  }[method] || method?.replaceAll('_', ' ') || 'Vote';
 }
