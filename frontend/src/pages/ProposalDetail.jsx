@@ -1664,7 +1664,7 @@ export default function ProposalDetail() {
         ]);
         if (p.status === 'fulfilled') setProposal(p.value);
         else throw p.reason;
-        if (t.status === 'fulfilled') setTally(t.value);
+        setTally(t.status === 'fulfilled' ? t.value : null);
         setMyVote(null);
         setVoteGraph(null);
         setDelegations([]);
@@ -1684,8 +1684,8 @@ export default function ProposalDetail() {
       ]);
       if (p.status === 'fulfilled') setProposal(p.value);
       else throw p.reason;
-      if (t.status === 'fulfilled') setTally(t.value);
-      if (mv.status === 'fulfilled') setMyVote(mv.value);
+      setTally(t.status === 'fulfilled' ? t.value : null);
+      setMyVote(mv.status === 'fulfilled' ? mv.value : null);
 
       // Fetch vote graph for voting/passed/failed
       const prop = p.status === 'fulfilled' ? p.value : null;

@@ -907,8 +907,8 @@ function CreateProposalForm({
         title: 'Change voting method?',
         message: (
           'Changing the voting method on this draft will discard the '
-          + 'existing options. New options can be added if the new method '
-          + 'is approval or ranked-choice. Continue?'
+          + 'existing options and any preliminary ballots. New options can be '
+          + 'added for methods that use them. Continue?'
         ),
         destructive: true,
       });

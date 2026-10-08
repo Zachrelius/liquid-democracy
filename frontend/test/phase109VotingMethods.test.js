@@ -22,11 +22,13 @@ test('explicit legacy organization methods are retained without adding others', 
 
 test('unfinished experimental methods cannot appear even in an opted-in organization', () => {
   const settings = { allowed_voting_methods: Object.keys(VOTING_METHODS) };
-  for (const context of [{ hasOrg: true }, { hasOrg: false }, { hasOrg: true, election: true }]) {
+  assert.deepEqual(selectableVotingMethods(settings, { hasOrg: true }),
+    ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project', 'star']);
+  for (const context of [{ hasOrg: false }, { hasOrg: true, election: true }]) {
     assert.deepEqual(selectableVotingMethods(settings, context),
       ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project']);
   }
-  assert.deepEqual(toggleAllowedVotingMethod(['binary'], 'star', true), ['binary']);
+  assert.deepEqual(toggleAllowedVotingMethod(['binary'], 'score', true), ['binary']);
 });
 
 test('settings edits preserve unrelated and future method choices', () => {
