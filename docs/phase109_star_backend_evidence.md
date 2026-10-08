@@ -111,3 +111,24 @@ identity-provider calls, production load, infrastructure changes, or secrets.
 
 These bounded local results do not establish internet latency, Railway capacity,
 multi-instance safety, or an indefinite sustained-load guarantee.
+
+## Worker close follow-up review
+
+Missing STAR snapshot evidence now reaches the bounded extension/close evaluator
+instead of the legacy empty-history early return. Tests cover exactly two capped
+extensions, eventual all-bottom/abstaining/no-ballot failure, unmet quorum,
+committed-priority tie closure, and retry without duplicate close side effects.
+Counting exceptions still propagate and leave the vote unfinalized on rollback.
+
+STAR close notification rows are staged with final result/status/audit in the
+same transaction. Notification staging failures propagate; an injected failure
+after row insertion rolls back everything, and a retry commits one notice and
+one status audit. Historical voters lacking current view permission and inactive
+accounts are excluded. Preferences are preserved, and no forced notification is
+introduced. Final metadata records successful staging even when nobody opted in.
+
+Existing deferred limitation: immediate email tasks use nondurable
+`BackgroundTasks`; the worker has no HTTP response cycle to run them. This pass
+does not introduce a durable email outbox or guarantee immediate email delivery
+across process crashes. Atomicity here covers the existing persisted opted-in
+in-app/digest intent. No out-of-transaction email is sent during finalization.

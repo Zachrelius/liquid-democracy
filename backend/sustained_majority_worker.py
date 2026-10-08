@@ -278,6 +278,8 @@ def _emit_proposal_closed_for_stability(
     """Emit ``proposal.closed`` with ``trigger: stable_result_achieved`` when
     the worker closes a proposal early because sliding-window stability
     succeeded during an extension."""
+    if proposal.voting_method == "star":
+        return  # staged atomically inside _close_proposal_now
     if not NOTIFICATION_EMIT_AVAILABLE:
         return
     try:
@@ -393,6 +395,8 @@ def _emit_proposal_closed_natural(
     ``_emit_proposal_closed_for_stability`` but with a different trigger
     string + an ``outcome_detail`` field carrying per-method outcome copy.
     """
+    if proposal.voting_method == "star":
+        return  # staged atomically inside _close_proposal_now
     if not NOTIFICATION_EMIT_AVAILABLE:
         return
     try:
@@ -433,6 +437,38 @@ def _emit_proposal_closed_natural(
         log.warning(
             "proposal.closed (voting_end_reached) emit failed for %s: %s: %s",
             proposal.id, type(e).__name__, e,
+        )
+
+
+def _stage_experimental_closed(db, proposal, *, old_status, new_status, trigger):
+    """Stage opted-in notification rows in the finalization transaction.
+
+    No best-effort exception boundary here: caller rollback must cover status,
+    final record, audit AND notification intent. Row locking and final status
+    make a successful retry a no-op. Existing worker immediate-email delivery
+    remains subject to the platform's BackgroundTasks limitation.
+    """
+    if not NOTIFICATION_EMIT_AVAILABLE:
+        raise RuntimeError("Notification emission unavailable for experimental close")
+    recipients = {proposal.author_id} if proposal.author_id else set()
+    recipients.update(uid for (uid,) in db.query(models.Vote.user_id).filter(
+        models.Vote.proposal_id == proposal.id,
+    ).all())
+    from eligibility import eligible_viewers_for_proposal
+    recipients &= eligible_viewers_for_proposal(db, proposal)
+    recipients &= {uid for (uid,) in db.query(models.User.id).filter(
+        models.User.id.in_(recipients), models.User.is_active.is_(True),
+    ).all()}
+    background_tasks = BackgroundTasks()
+    for uid in sorted(recipients):
+        emit_notification(
+            db, background_tasks, event_type="proposal.closed", user_id=uid,
+            org_id=proposal.org_id, actor_id=None, target_type="proposal",
+            target_id=proposal.id,
+            payload={"proposal_id": proposal.id, "proposal_title": proposal.title,
+                     "org_id": proposal.org_id, "old_status": old_status,
+                     "new_status": new_status, "outcome": new_status,
+                     "trigger": trigger},
         )
 
 
@@ -582,6 +618,12 @@ def _close_proposal_now(
             "trigger": trigger,
         },
     )
+    if proposal.voting_method == "star":
+        _stage_experimental_closed(db, proposal, old_status=old_status,
+                                   new_status=new_status, trigger=trigger)
+        proposal.final_method_result = {
+            **proposal.final_method_result, "notification_intent_staged": True,
+        }
     return new_status
 
 

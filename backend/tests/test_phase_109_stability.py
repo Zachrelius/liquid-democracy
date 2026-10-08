@@ -131,7 +131,7 @@ def test_missing_snapshot_evidence_exhausts_bounded_extensions_then_closes(
     monkeypatch.setattr(worker, "capture_snapshot", lambda *args: None)
     notification_calls = []
     monkeypatch.setattr(worker, "_emit_extended_by_stability", lambda *args, **kwargs: None)
-    monkeypatch.setattr(worker, "_emit_proposal_closed_natural", lambda *args, **kwargs: notification_calls.append(kwargs))
+    monkeypatch.setattr(worker, "_stage_experimental_closed", lambda *args, **kwargs: notification_calls.append(kwargs))
     for offset in (0, 1):
         monkeypatch.setattr(worker, "_now_naive", lambda offset=offset: NOW+timedelta(hours=offset))
         assert worker.evaluate_proposal(db, proposal) == "extended"
@@ -176,3 +176,60 @@ def test_capture_software_failure_propagates_without_fabricated_final_result(db,
         worker.evaluate_proposal(db, proposal)
     db.rollback()
     assert proposal.status == "voting" and proposal.final_method_result is None
+
+
+def test_worker_notification_failure_rolls_back_close_then_retry_once(db, monkeypatch):
+    import models
+    import sustained_majority_worker as worker
+    from tests.conftest import make_user, make_org_membership
+    from voting_methods import new_voting_rules
+    user = make_user(db, "atomic-close-notice")
+    org = models.Organization(name="Atomic close", slug="atomic-close", settings={})
+    db.add(org); db.flush()
+    make_org_membership(db, org_id=org.id, user_id=user.id)
+    proposal = models.Proposal(title="Atomic close", body="", org_id=org.id, author_id=user.id,
+                               voting_method="star", status="voting", stable_result_required=False,
+                               voting_start=NOW-timedelta(hours=1), voting_end=NOW)
+    db.add(proposal); db.flush()
+    proposal.voting_rules = new_voting_rules("star", proposal.id)
+    options = [models.ProposalOption(proposal_id=proposal.id, label=name) for name in ("A", "B")]
+    db.add_all(options); db.flush()
+    db.add(models.Vote(proposal_id=proposal.id, user_id=user.id, cast_by_id=user.id,
+                       is_direct=True, ballot={"scores": {options[0].id: 5}}))
+    db.add(models.NotificationPreference(user_id=user.id, event_type="proposal.closed",
+                                         channel="in_app", enabled=True))
+    # Historical voters who have lost visibility or account access must not
+    # receive the private proposal title through the close notification.
+    for name, inactive in (("removed-voter", False), ("inactive-voter", True)):
+        former = make_user(db, name)
+        former.is_active = not inactive
+        if inactive:
+            make_org_membership(db, org_id=org.id, user_id=former.id)
+        db.add(models.Vote(proposal_id=proposal.id, user_id=former.id, cast_by_id=former.id,
+                           is_direct=True, ballot={"scores": {options[0].id: 5}}))
+        db.add(models.NotificationPreference(user_id=former.id, event_type="proposal.closed",
+                                             channel="in_app", enabled=True))
+    db.commit()
+    monkeypatch.setattr(worker, "_now_naive", lambda: NOW)
+    real_emit = worker.emit_notification
+    def fail_after_row(*args, **kwargs):
+        real_emit(*args, **kwargs)
+        raise RuntimeError("Injected durable notification failure")
+    monkeypatch.setattr(worker, "emit_notification", fail_after_row)
+    with pytest.raises(RuntimeError, match="Injected durable"):
+        worker.evaluate_proposal(db, proposal)
+    db.rollback()
+    assert proposal.status == "voting" and proposal.final_method_result is None
+    assert db.query(models.Notification).filter_by(target_id=proposal.id).count() == 0
+    assert db.query(models.AuditLog).filter_by(target_id=proposal.id).count() == 0
+    monkeypatch.setattr(worker, "emit_notification", real_emit)
+    assert worker.evaluate_proposal(db, proposal) == "closed_on_time"
+    db.commit()
+    assert proposal.status == "passed" and proposal.final_method_result is not None
+    assert proposal.final_method_result["notification_intent_staged"] is True
+    assert db.query(models.Notification).filter_by(target_id=proposal.id, event_type="proposal.closed").count() == 1
+    assert db.query(models.AuditLog).filter_by(target_id=proposal.id, action="proposal.status_changed").count() == 1
+    assert worker.evaluate_proposal(db, proposal) is None
+    db.commit()
+    assert db.query(models.Notification).filter_by(target_id=proposal.id, event_type="proposal.closed").count() == 1
+    assert db.query(models.AuditLog).filter_by(target_id=proposal.id, action="proposal.status_changed").count() == 1
