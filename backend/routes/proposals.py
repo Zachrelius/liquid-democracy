@@ -1817,7 +1817,9 @@ def update_proposal(
                 log_audit_event(db, action="proposal.preliminary_ballots_reset", target_type="proposal",
                                 target_id=proposal.id, actor_id=current_user.id,
                                 details={"old_method": old_method, "new_method": new_method, "ballots_removed": removed})
-            if (body.num_winners if body.num_winners is not None else proposal.num_winners) != 1:
+            effective_num_winners = (body.num_winners if body.num_winners is not None else
+                                     1 if old_method == "ranked_choice" else proposal.num_winners)
+            if new_method in EXPERIMENTAL_VOTING_METHODS and effective_num_winners != 1:
                 raise HTTPException(status_code=400, detail="Experimental methods select exactly one winner")
         # When the new method is binary, drop any existing options.
         if new_method == "binary":
@@ -1837,7 +1839,6 @@ def update_proposal(
         ):
             proposal.approval_winner_config = None
         proposal.voting_method = new_method
-        initialize_rules(proposal)
     # num_winners change (independent of method change — RCV proposals
     # can adjust num_winners while in draft).
     if "num_winners" in body.model_fields_set and body.num_winners is not None:
@@ -1852,6 +1853,11 @@ def update_proposal(
         proposal.num_winners = body.num_winners
         if is_experimental(proposal) and proposal.num_winners != 1:
             raise HTTPException(status_code=400, detail="Experimental methods select exactly one winner")
+
+    if method_changed:
+        # Initialize only after the new winner count is applied. A draft STV
+        # vote can become STAR in one PATCH with num_winners=1.
+        initialize_rules(proposal)
 
     # Phase 90c — count_mode change (draft-only; changing it after draft is
     # rejected because it flips outcome semantics on a proposal that already
@@ -2305,6 +2311,7 @@ def archive_proposal(
     There is no "unarchive" in this pass (forward-only).
     """
     proposal = _proposal_or_404(proposal_id, db)
+    lock_proposal(db, proposal)
     _require_proposal_viewer(db, proposal, current_user)
 
     # Idempotency guard: already-archived → 409 (nothing to do).
