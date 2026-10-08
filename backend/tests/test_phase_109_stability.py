@@ -15,15 +15,16 @@ def point(minutes, **kwargs):
     return replace(base, **kwargs)
 
 
-def stable(points):
-    return evaluate_extension_stability("star", points, 0.5, NOW, timedelta(minutes=10))
+def stable(method, points):
+    return evaluate_extension_stability(method, points, 0.5, NOW, timedelta(minutes=10))
 
 
-def test_full_window_evidence_required():
-    assert stable([point(-11), point(-5), point(0)])
-    assert not stable([point(-9), point(0)])
-    assert not stable([point(-11)])
-    assert not stable([])
+@pytest.mark.parametrize("method", ["star", "score"])
+def test_full_window_evidence_required(method):
+    assert stable(method, [point(-11), point(-5), point(0)])
+    assert not stable(method, [point(-9), point(0)])
+    assert not stable(method, [point(-11)])
+    assert not stable(method, [])
 
 
 @pytest.mark.parametrize("change", [
@@ -31,18 +32,21 @@ def test_full_window_evidence_required():
     {"option_set_version": None}, {"quorum_met": False},
     {"meaningful": False}, {"priority_used": True},
 ])
-def test_any_in_window_breach_prevents_stability(change):
-    assert not stable([point(-11), point(-5, **change), point(0)])
+@pytest.mark.parametrize("method", ["star", "score"])
+def test_any_in_window_breach_prevents_stability(change, method):
+    assert not stable(method, [point(-11), point(-5, **change), point(0)])
 
 
-def test_old_breach_expires_and_no_future_evidence():
-    assert stable([point(-20, priority_used=True), point(-11), point(0)])
-    assert not stable([point(-5), point(5)])
+@pytest.mark.parametrize("method", ["star", "score"])
+def test_old_breach_expires_and_no_future_evidence(method):
+    assert stable(method, [point(-20, priority_used=True), point(-11), point(0)])
+    assert not stable(method, [point(-5), point(5)])
 
 
-def test_original_window_applies_same_experimental_rules():
+@pytest.mark.parametrize("method", ["star", "score"])
+def test_original_window_applies_same_experimental_rules(method):
     def evaluate(points, now=NOW):
-        return evaluate_original_window_stability("star", points, 0.5, NOW-timedelta(minutes=100),
+        return evaluate_original_window_stability(method, points, 0.5, NOW-timedelta(minutes=100),
                                                    NOW, now, 0.1)
     assert not evaluate([point(-11), point(0)]).destabilized
     assert evaluate([point(-5), point(0)]).destabilized
@@ -50,7 +54,8 @@ def test_original_window_applies_same_experimental_rules():
     assert not evaluate([point(-50, priority_used=True)], NOW-timedelta(minutes=20)).destabilized
 
 
-def test_snapshot_exact_counts_and_worker_atomic_finalization(db):
+@pytest.mark.parametrize("method", ["star", "score"])
+def test_snapshot_exact_counts_and_worker_atomic_finalization(db, method):
     import models
     from tests.conftest import make_user, make_org_membership
     from voting_methods import new_voting_rules
@@ -61,10 +66,10 @@ def test_snapshot_exact_counts_and_worker_atomic_finalization(db):
     db.add(org); db.flush()
     make_org_membership(db, org_id=org.id, user_id=user.id)
     proposal = models.Proposal(title="Worker", body="", org_id=org.id, author_id=user.id,
-                               voting_method="star", status="voting", quorum_threshold=0.4,
+                               voting_method=method, status="voting", quorum_threshold=0.4,
                                voting_start=NOW-timedelta(days=1), voting_end=NOW)
     db.add(proposal); db.flush()
-    proposal.voting_rules = new_voting_rules("star", proposal.id)
+    proposal.voting_rules = new_voting_rules(method, proposal.id)
     opts = [models.ProposalOption(proposal_id=proposal.id, label=name) for name in ("A", "B")]
     db.add_all(opts); db.flush()
     db.add(models.Vote(proposal_id=proposal.id, user_id=user.id, cast_by_id=user.id,
@@ -94,8 +99,9 @@ def test_snapshot_exact_counts_and_worker_atomic_finalization(db):
     ("tied", "passed", None),
     ("quorum", "failed", None),
 ])
+@pytest.mark.parametrize("method", ["star", "score"])
 def test_missing_snapshot_evidence_exhausts_bounded_extensions_then_closes(
-        db, monkeypatch, expression, expected_status, reason):
+        db, monkeypatch, expression, expected_status, reason, method):
     import models
     import sustained_majority_worker as worker
     from sustained_majority_service import count_extensions, _sum_extension_seconds
@@ -113,11 +119,11 @@ def test_missing_snapshot_evidence_exhausts_bounded_extensions_then_closes(
             absent = make_user(db, f"absent-quorum-{i}")
             make_org_membership(db, org_id=org.id, user_id=absent.id)
     proposal = models.Proposal(title="No evidence", body="", org_id=org.id,
-                               author_id=user.id, voting_method="star", status="voting",
+                               author_id=user.id, voting_method=method, status="voting",
                                voting_start=NOW-timedelta(hours=4), voting_end=NOW,
                                quorum_threshold=0.4)
     db.add(proposal); db.flush()
-    proposal.voting_rules = new_voting_rules("star", proposal.id)
+    proposal.voting_rules = new_voting_rules(method, proposal.id)
     options = [models.ProposalOption(proposal_id=proposal.id, label=name) for name in ("A", "B")]
     db.add_all(options); db.flush()
     if expression is not None:
@@ -156,7 +162,8 @@ def test_missing_snapshot_evidence_exhausts_bounded_extensions_then_closes(
     assert db.query(models.AuditLog).filter_by(target_id=proposal.id).count() == audits
 
 
-def test_capture_software_failure_propagates_without_fabricated_final_result(db, monkeypatch):
+@pytest.mark.parametrize("method", ["star", "score"])
+def test_capture_software_failure_propagates_without_fabricated_final_result(db, monkeypatch, method):
     import models
     import sustained_majority_worker as worker
     from tests.conftest import make_user
@@ -165,9 +172,9 @@ def test_capture_software_failure_propagates_without_fabricated_final_result(db,
     org = models.Organization(name="Failure", slug="failed-capture", settings={"stable_result_enabled_default": True})
     db.add(org); db.flush()
     proposal = models.Proposal(title="Failure", body="", org_id=org.id, author_id=user.id,
-                               voting_method="star", status="voting", voting_start=NOW-timedelta(hours=1), voting_end=NOW)
+                               voting_method=method, status="voting", voting_start=NOW-timedelta(hours=1), voting_end=NOW)
     db.add(proposal); db.flush()
-    proposal.voting_rules = new_voting_rules("star", proposal.id)
+    proposal.voting_rules = new_voting_rules(method, proposal.id)
     db.commit()
     def fail(*args):
         raise ValueError("Invalid stored ballot")
@@ -178,7 +185,8 @@ def test_capture_software_failure_propagates_without_fabricated_final_result(db,
     assert proposal.status == "voting" and proposal.final_method_result is None
 
 
-def test_worker_notification_failure_rolls_back_close_then_retry_once(db, monkeypatch):
+@pytest.mark.parametrize("method", ["star", "score"])
+def test_worker_notification_failure_rolls_back_close_then_retry_once(db, monkeypatch, method):
     import models
     import sustained_majority_worker as worker
     from tests.conftest import make_user, make_org_membership
@@ -188,10 +196,10 @@ def test_worker_notification_failure_rolls_back_close_then_retry_once(db, monkey
     db.add(org); db.flush()
     make_org_membership(db, org_id=org.id, user_id=user.id)
     proposal = models.Proposal(title="Atomic close", body="", org_id=org.id, author_id=user.id,
-                               voting_method="star", status="voting", stable_result_required=False,
+                               voting_method=method, status="voting", stable_result_required=False,
                                voting_start=NOW-timedelta(hours=1), voting_end=NOW)
     db.add(proposal); db.flush()
-    proposal.voting_rules = new_voting_rules("star", proposal.id)
+    proposal.voting_rules = new_voting_rules(method, proposal.id)
     options = [models.ProposalOption(proposal_id=proposal.id, label=name) for name in ("A", "B")]
     db.add_all(options); db.flush()
     db.add(models.Vote(proposal_id=proposal.id, user_id=user.id, cast_by_id=user.id,

@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from fractions import Fraction
 
 from experimental_ballots import MAX_BALLOT_OPTIONS, validate_ballot
-from voting_methods import candidate_priority, option_set_version, validate_voting_rules
+from voting_methods import RULE_IDS, candidate_priority, option_set_version, validate_voting_rules
 
 
 @dataclass
@@ -57,30 +57,40 @@ class ExperimentalTally:
             if type(value[key]) is not int or value[key] < 0:
                 raise ValueError("Invalid persisted participation count")
         result = value["method_result"]
-        if (not isinstance(result, dict) or result.get("method") != "star"
-                or result.get("rule_id") != "star_0_5_v1"
+        if (not isinstance(result, dict) or result.get("method") not in ("star", "score")
+                or result.get("rule_id") != RULE_IDS[result["method"]]
                 or type(result.get("priority_used")) is not bool
                 or "winner" not in result or "no_result_reason" not in result):
             raise ValueError("Invalid persisted experimental method result")
+        if "method" in record and record["method"] != result["method"]:
+            raise ValueError("Persisted record method contradicts tally")
+        if "rules" in record:
+            rules = record["rules"]
+            if (not isinstance(rules, dict) or rules.get("method") != result["method"]
+                    or rules.get("rule_id") != result["rule_id"]):
+                raise ValueError("Persisted record rules contradict tally")
         if value["total_ballots_cast"] + value["not_cast"] != value["total_eligible"]:
             raise ValueError("Inconsistent persisted participation count")
         if value["total_abstain"] > value["total_ballots_cast"]:
             raise ValueError("Inconsistent persisted abstention count")
         scores = result.get("scores")
         histograms = result.get("score_histograms")
+        is_star = result["method"] == "star"
         five = result.get("five_star_counts")
-        finalists = result.get("finalists")
-        runoff = result.get("runoff")
+        finalists = result.get("finalists") if is_star else []
+        runoff = result.get("runoff") if is_star else {}
         preference_weight = value["total_ballots_cast"] - value["total_abstain"]
         if (not isinstance(scores, dict) or len(scores) > MAX_BALLOT_OPTIONS
                 or not isinstance(histograms, dict) or set(histograms) != set(scores)
-                or not isinstance(five, dict) or set(five) != set(scores)
+                or (is_star and (not isinstance(five, dict) or set(five) != set(scores)))
                 or not isinstance(finalists, list) or len(finalists) != len(set(finalists))
                 or any(oid not in scores for oid in finalists)
                 or not isinstance(runoff, dict) or set(runoff) != set(finalists)
                 or result.get("preference_weight") != preference_weight
                 or not isinstance(result.get("tie_trace"), list)):
-            raise ValueError("Inconsistent persisted STAR aggregates")
+            raise ValueError("Inconsistent persisted rating aggregates")
+        if not is_star and any(key in result for key in ("finalists", "runoff", "five_star_counts", "equal_preference")):
+            raise ValueError("Persisted Score result contains STAR-only fields")
         if result.get("option_set_version") != option_set_version(scores):
             raise ValueError("Invalid persisted option set version")
         for oid, score in scores.items():
@@ -88,10 +98,18 @@ class ExperimentalTally:
             if (type(score) is not int or score < 0 or not isinstance(histogram, list)
                     or len(histogram) != 6 or any(type(n) is not int or n < 0 for n in histogram)
                     or sum(histogram) != preference_weight
-                    or type(five[oid]) is not int or five[oid] != histogram[5]
+                    or (is_star and (type(five[oid]) is not int or five[oid] != histogram[5]))
                     or sum(grade * n for grade, n in enumerate(histogram)) != score):
-                raise ValueError("Invalid persisted STAR score histogram")
-        if result["winner"] is not None:
+                raise ValueError("Invalid persisted score histogram")
+        if result["winner"] is not None and not is_star:
+            if (len(scores) < 2 or not any(scores.values())
+                    or result["winner"] not in scores or result["no_result_reason"] is not None
+                    or scores[result["winner"]] != max(scores.values())):
+                raise ValueError("Invalid persisted Score winner")
+            tied = sum(n == max(scores.values()) for n in scores.values()) > 1
+            if result["priority_used"] != tied:
+                raise ValueError("Persisted Score tie contradicts priority use")
+        elif result["winner"] is not None:
             if (len(finalists) != 2 or result["winner"] not in finalists
                     or result["no_result_reason"] is not None
                     or any(type(n) is not int or n < 0 for n in runoff.values())
@@ -132,8 +150,9 @@ def public_tally(tally: ExperimentalTally) -> dict:
     return convert(tally.to_record())
 
 
-def count_star(option_ids, weighted_ballots, rules, proposal_id) -> ExperimentalTally:
-    validate_voting_rules(rules, "star", proposal_id)
+def _rated_totals(method, option_ids, weighted_ballots, rules, proposal_id):
+    """Shared rating aggregation; method-specific winner selection stays separate."""
+    validate_voting_rules(rules, method, proposal_id)
     ids = list(option_ids)
     if len(ids) > MAX_BALLOT_OPTIONS:
         raise ValueError("Too many voting options")
@@ -145,7 +164,7 @@ def count_star(option_ids, weighted_ballots, rules, proposal_id) -> Experimental
     for payload, weight in weighted_ballots:
         if type(weight) is not int or weight < 0:
             raise ValueError("Voting weight must be a nonnegative integer")
-        ballot = validate_ballot("star", payload, ids)
+        ballot = validate_ballot(method, payload, ids)
         total += weight
         headcount += 1
         if ballot.get("abstain"):
@@ -159,12 +178,10 @@ def count_star(option_ids, weighted_ballots, rules, proposal_id) -> Experimental
             rating = ratings.get(oid, 0)
             scores[oid] += rating * weight
             histograms[oid][rating] += weight
-    five = {oid: histograms[oid][5] for oid in ids}
     result = {
-        "method": "star", "rule_id": rules["rule_id"], "scores": scores,
-        "score_histograms": histograms, "five_star_counts": five,
+        "method": method, "rule_id": rules["rule_id"], "scores": scores,
+        "score_histograms": histograms,
         "preference_weight": total - abstain,
-        "finalists": [], "runoff": {}, "equal_preference": 0,
         "winner": None, "tie_trace": [], "priority_used": False,
         "no_result_reason": None, "option_set_version": version,
     }
@@ -177,6 +194,29 @@ def count_star(option_ids, weighted_ballots, rules, proposal_id) -> Experimental
         result["no_result_reason"] = "no_positive_weight_preferences"
     elif not any(scores.values()):
         result["no_result_reason"] = "all_bottom_ratings"
+    return tally, preference_ballots, ids
+
+
+def count_score(option_ids, weighted_ballots, rules, proposal_id) -> ExperimentalTally:
+    tally, _, ids = _rated_totals("score", option_ids, weighted_ballots, rules, proposal_id)
+    result = tally.method_result
+    if result["no_result_reason"]:
+        return tally
+    maximum = max(result["scores"].values())
+    tied = [oid for oid in ids if result["scores"][oid] == maximum]
+    if len(tied) > 1:
+        result["priority_used"] = True
+        result["tie_trace"] = [{"stage": "score_priority", "pool": sorted(tied)}]
+    result["winner"] = min(tied, key=lambda oid: candidate_priority(rules, proposal_id, oid))
+    return tally
+
+
+def count_star(option_ids, weighted_ballots, rules, proposal_id) -> ExperimentalTally:
+    tally, preference_ballots, ids = _rated_totals("star", option_ids, weighted_ballots, rules, proposal_id)
+    result = tally.method_result
+    scores = result["scores"]
+    five = {oid: result["score_histograms"][oid][5] for oid in ids}
+    result.update(five_star_counts=five, finalists=[], runoff={}, equal_preference=0)
     if result["no_result_reason"]:
         return tally
 

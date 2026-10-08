@@ -692,10 +692,10 @@ def compute_tally_pure(
         return _compute_allocation_tally_pure(user_ids, ctx)
     if ctx.voting_method == "budget_project":
         return _compute_project_tally_pure(user_ids, ctx)
-    if ctx.voting_method == "star":
-        from experimental_tally import count_star
+    if ctx.voting_method in ("star", "score"):
+        from experimental_tally import count_star, count_score
         if num_winners != 1:
-            raise ValueError("STAR supports exactly one winner")
+            raise ValueError("Rated methods support exactly one winner")
         weighted_ballots = []
         missing = 0
         eligible_weight = 0
@@ -709,11 +709,12 @@ def compute_tally_pure(
                 missing += weight
                 continue
             ballot = resolved.ballot
-            if ballot.method != "star":
+            if ballot.method != ctx.voting_method:
                 raise ValueError("Stored ballot method does not match proposal")
             payload = {"abstain": True} if ballot.abstain else {"scores": ballot.scores}
             weighted_ballots.append((payload, weight))
-        tally = count_star(option_ids, weighted_ballots, ctx.voting_rules, ctx.proposal_id)
+        counter = count_star if ctx.voting_method == "star" else count_score
+        tally = counter(option_ids, weighted_ballots, ctx.voting_rules, ctx.proposal_id)
         tally.total_eligible = eligible_weight
         tally.not_cast = missing
         tally.eligible_headcount = len(user_ids)
@@ -1792,7 +1793,7 @@ class DelegationService:
         if eligible_ids is not None:
             vote_query = vote_query.filter(models.Vote.user_id.in_(eligible_ids))
         for row in vote_query.all():
-            if voting_method == "star":
+            if voting_method in ("star", "score"):
                 from experimental_ballots import validate_ballot
                 from voting_methods import validate_voting_rules
                 validate_voting_rules(proposal.voting_rules, voting_method, proposal.id)
@@ -2066,10 +2067,13 @@ class DelegationService:
         so a non-eligible user's pre-fix Vote row can't leak through delegation
         chain resolution either.
         """
-        if proposal.voting_method == "star" and (proposal.final_method_result is not None
+        if proposal.voting_method in ("star", "score") and (proposal.final_method_result is not None
                                                 or proposal.status in ("passed", "failed", "unresolved")):
             from experimental_tally import ExperimentalTally
-            return ExperimentalTally.from_record(proposal.final_method_result)
+            tally = ExperimentalTally.from_record(proposal.final_method_result)
+            if tally.method_result["method"] != proposal.voting_method:
+                raise ValueError("Final tally method does not match proposal")
+            return tally
         eligible_ids = eligible_voter_ids_for_proposal(db, proposal)
         ctx = self._build_context(proposal, db, eligible_ids=eligible_ids)
         # Sort by User.id for deterministic RCV/STV ballot insertion order.
@@ -2078,7 +2082,7 @@ class DelegationService:
         user_ids = sorted(eligible_ids)
         option_ids: list[str] = []
         num_winners = getattr(proposal, "num_winners", 1) or 1
-        if ctx.voting_method in ("ranked_choice", "star"):
+        if ctx.voting_method in ("ranked_choice", "star", "score"):
             option_ids = [opt.id for opt in proposal.options]
         return compute_tally_pure(
             user_ids, ctx,

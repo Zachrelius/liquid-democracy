@@ -363,7 +363,7 @@ def evaluate_original_window_stability(
         snapshot, per D10's first-snapshot baseline rule). If any pair fails
         ``winner_set_overlaps``, return ``destabilized=True``.
     """
-    if not snapshots and voting_method == "star":
+    if not snapshots and voting_method in ("star", "score"):
         return DestabilizationDecision(destabilized=now >= voting_end, reason="Missing experimental stability evidence")
     if not snapshots:
         return DestabilizationDecision(destabilized=False)
@@ -380,7 +380,7 @@ def evaluate_original_window_stability(
     if now < stable_window_starts_at:
         return DestabilizationDecision(destabilized=False)
 
-    if voting_method == "star":
+    if voting_method in ("star", "score"):
         stable = experimental_window_stable(snapshots, stable_window_starts_at, now)
         return DestabilizationDecision(
             destabilized=not stable,
@@ -476,7 +476,7 @@ def evaluate_extension_stability(
         overlapping winners. Any disjoint pair -> return False.
       - Otherwise: return True (stability demonstrated).
     """
-    if voting_method == "star":
+    if voting_method in ("star", "score"):
         return experimental_window_stable(snapshots, now - stable_window_duration, now)
     if not snapshots:
         return False

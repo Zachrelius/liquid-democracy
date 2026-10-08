@@ -100,7 +100,8 @@ def test_delegation_uses_represented_member_weight_and_direct_abstain_override()
     assert run().method_result["scores"] == {"a": 10, "b": 4}
 
 
-def test_real_stored_ballot_and_final_record_survive_membership_change(db):
+@pytest.mark.parametrize("method", ["star", "score"])
+def test_real_stored_ballot_and_final_record_survive_membership_change(db, method):
     import models
     from tests.conftest import make_user, make_org_membership
     author = make_user(db, "star-voter")
@@ -108,9 +109,9 @@ def test_real_stored_ballot_and_final_record_survive_membership_change(db):
     db.add(org); db.flush()
     membership = make_org_membership(db, org_id=org.id, user_id=author.id)
     proposal = models.Proposal(title="STAR", body="", author_id=author.id, org_id=org.id,
-                               voting_method="star", status="voting")
+                               voting_method=method, status="voting")
     db.add(proposal); db.flush()
-    proposal.voting_rules = new_voting_rules("star", proposal.id)
+    proposal.voting_rules = new_voting_rules(method, proposal.id)
     options = [models.ProposalOption(proposal_id=proposal.id, label=name) for name in ("A", "B")]
     db.add_all(options); db.flush()
     vote = models.Vote(proposal_id=proposal.id, user_id=author.id, cast_by_id=author.id,
@@ -126,6 +127,10 @@ def test_real_stored_ballot_and_final_record_survive_membership_change(db):
     vote.ballot = {"scores": {options[1].id: 5}}
     db.flush()
     assert service.compute_tally(proposal, db) == original
+    proposal.voting_method = "score" if method == "star" else "star"
+    with pytest.raises(ValueError, match="method does not match"):
+        service.compute_tally(proposal, db)
+    proposal.voting_method = method
     proposal.final_method_result = None
     with pytest.raises(ValueError, match="record is missing"):
         service.compute_tally(proposal, db)
@@ -137,18 +142,19 @@ def test_invalid_weights_fail_loud(weight):
         tally([({"scores": {"a": 5}}, weight)])
 
 
-def test_relevance_selects_one_whole_ballot_and_chains_keep_owner_weight():
+@pytest.mark.parametrize("method", ["star", "score"])
+def test_relevance_selects_one_whole_ballot_and_chains_keep_owner_weight(method):
     ctx = ProposalContext(
         ["t1", "t2"],
         {"u": {"t1": DelegationData("u", "left", "t1", "accept_sub"),
                "t2": DelegationData("u", "right", "t2", "accept_sub")}},
         {}, {},
-        direct_ballots={"left": Ballot(method="star", scores={"a": 5}),
-                        "right": Ballot(method="star", scores={"b": 5})},
-        voting_method="star", user_strategies={"u": "relevance_weighted"},
+        direct_ballots={"left": Ballot(method=method, scores={"a": 5}),
+                        "right": Ballot(method=method, scores={"b": 5})},
+        voting_method=method, user_strategies={"u": "relevance_weighted"},
         proposal_topic_relevances={"t1": 0.2, "t2": 0.8},
         user_weights={"u": 7, "left": 0, "right": 0},
-        voting_rules=new_voting_rules("star", "p"), proposal_id="p",
+        voting_rules=new_voting_rules(method, "p"), proposal_id="p",
     )
     result = compute_tally_pure(["u", "left", "right"], ctx, option_ids=["a", "b"])
     assert result.method_result["scores"] == {"a": 0, "b": 35}
