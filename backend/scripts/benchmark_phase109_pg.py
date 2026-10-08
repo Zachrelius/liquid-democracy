@@ -40,12 +40,15 @@ def child():
     from experimental_voting import lock_proposal
     from voting_methods import new_voting_rules
 
+    method = os.environ.get("PHASE109_BENCHMARK_METHOD", "star")
+    if method not in ("star", "score"):
+        raise ValueError("Unsupported benchmark method")
     logging.disable(logging.CRITICAL)
     Base.metadata.create_all(engine)
     rng = random.Random(109)
     with SessionLocal() as db:
         org = models.Organization(name="Phase109 synthetic", slug="phase109-pg-benchmark",
-                                  settings={"allowed_voting_methods": ["star"]})
+                                  settings={"allowed_voting_methods": [method]})
         db.add(org); db.flush()
         roles = seed_default_roles_for_org(db, org.id)
         users = [models.User(id=str(uuid4()), username=f"p109_{i}", display_name=f"Synthetic {i}", email=f"p109_{i}@demo.example",
@@ -54,11 +57,11 @@ def child():
         db.add_all([models.OrgMembership(org_id=org.id, user_id=u.id, role_id=roles["member"].id,
                                         status="active") for u in users])
         now = datetime.now(timezone.utc).replace(tzinfo=None)
-        proposal = models.Proposal(title="Synthetic STAR concurrency", body="Synthetic",
-                                   org_id=org.id, author_id=users[0].id, voting_method="star",
+        proposal = models.Proposal(title=f"Synthetic {method} concurrency", body="Synthetic",
+                                   org_id=org.id, author_id=users[0].id, voting_method=method,
                                    status="voting", voting_start=now, voting_end=now+timedelta(days=1))
         db.add(proposal); db.flush()
-        proposal.voting_rules = new_voting_rules("star", proposal.id)
+        proposal.voting_rules = new_voting_rules(method, proposal.id)
         options = [models.ProposalOption(proposal_id=proposal.id, label=f"Option{i}") for i in range(20)]
         db.add_all(options); db.flush()
         option_ids = [o.id for o in options]
@@ -158,7 +161,7 @@ def child():
                          "p95_ms": round(times[min(len(times)-1, int(len(times)*0.95))]*1000, 2),
                          "max_queries": max(r["queries"] for r in rows),
                          "min_queries": min(r["queries"] for r in rows)}
-    report = {"python": platform.python_version(), "platform": platform.platform(),
+    report = {"method": method, "python": platform.python_version(), "platform": platform.platform(),
               "logical_processors": os.cpu_count(), "fixture": "1000 members/20 options/900 direct ballots/100-node delegation graph",
               "seconds": round(elapsed, 2), "tracemalloc_enabled": trace_memory, "peak_load_bytes": peak,
               "pool_capacity": 5, "peak_checked_out": max(samples or [0]),
