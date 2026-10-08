@@ -219,10 +219,10 @@ class BatchViewerResolver:
                 if row.user_id not in eligible:
                     continue
                 ballot = row.ballot or {}
-                if proposal.voting_method == "star":
+                if proposal.voting_method in ("star", "score"):
                     from experimental_ballots import validate_ballot
-                    value = validate_ballot("star", ballot)
-                    direct_ballots[row.user_id] = Ballot(method="star", scores=value.get("scores"), abstain=value.get("abstain", False))
+                    value = validate_ballot(proposal.voting_method, ballot)
+                    direct_ballots[row.user_id] = Ballot(method=proposal.voting_method, scores=value.get("scores"), abstain=value.get("abstain", False))
                 elif proposal.voting_method == "approval":
                     direct_ballots[row.user_id] = Ballot(approvals=ballot.get("approvals", []))
                 elif proposal.voting_method == "ranked_choice":
