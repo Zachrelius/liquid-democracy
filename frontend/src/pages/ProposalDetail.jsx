@@ -1,3 +1,6 @@
+import RatedBallot from '../components/RatedBallot';
+import StarResultsPanel from '../components/StarResultsPanel';
+import { hasRatedBallot } from '../utils/ratedBallot';
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api';
@@ -753,6 +756,8 @@ function VoteGraphLegend({ proposal, voteGraph }) {
     (n) => n.ballot === null && n.type !== 'non_voter' && n.vote_source !== 'delegation'
   );
 
+  if (method === 'star') return <p className="text-xs text-gray-500">STAR ballots use 0–5 ratings. See the scoring round and automatic runoff in results.</p>;
+
   if (method === 'approval' || method === 'ranked_choice') {
     return (
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-gray-500">
@@ -948,7 +953,7 @@ function OptionRow({ option, index, proposal, currentUser, onDeleted }) {
   const isWriteIn = !!option.is_write_in;
   const isAdder = !!currentUser && option.added_by_user_id === currentUser.id;
   const isAdmin = !!currentUser && !!currentUser.is_admin;
-  const canDelete = isWriteIn && (isAdder || isAdmin);
+  const canDelete = isWriteIn && (isAdder || isAdmin) && !(proposal.voting_method === 'star' && ['passed', 'failed', 'closed'].includes(proposal.status));
 
   async function handleDelete() {
     setSubmitting(true);
@@ -2121,7 +2126,7 @@ export default function ProposalDetail() {
         </p>
         <ProposalForm
           slug={linkOrg?.slug}
-          orgSettings={currentOrg?.settings || {}}
+          orgSettings={{ ...(currentOrg?.settings || {}), ...(subOrg?.settings?.allowed_voting_methods != null ? { allowed_voting_methods: subOrg.settings.allowed_voting_methods } : {}) }}
           topics={editTopics}
           subOrgs={editSubOrgs}
           editingProposal={proposal}
@@ -2226,6 +2231,7 @@ export default function ProposalDetail() {
               <StatusBadge status={proposal.status} />
               {/* Phase 90c — headcount-counted proposal marker (weighted orgs). */}
               <CountModeBadge countMode={proposal.count_mode} />
+              {proposal.voting_method === 'star' && <span className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-800">STAR · single winner</span>}
               {proposal.voting_method === 'approval' && (
                 <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Approval Vote</span>
               )}
@@ -2512,7 +2518,7 @@ export default function ProposalDetail() {
           )}
 
           {/* Options list for multi-option proposals (visible when not actively voting) */}
-          {(proposal.voting_method === 'approval' || proposal.voting_method === 'ranked_choice') && proposal.options?.length > 0 && !isVoting && (
+          {(['approval', 'ranked_choice', 'star'].includes(proposal.voting_method)) && proposal.options?.length > 0 && (!isVoting || proposal.voting_method === 'star') && (
             <div className="bg-white border border-gray-200 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Options</h3>
               <div className="space-y-2">
@@ -2535,7 +2541,7 @@ export default function ProposalDetail() {
                   hides during voting to avoid duplicating the ballot UI;
                   the Adder still needs to surface).
                   Phase 80 — write-ins require membership; hidden read-only. */}
-              {!readOnly && (
+              {!readOnly && !isVoting && (
                 <WriteInOptionAdder
                   proposal={proposal}
                   onAdded={fetchData}
@@ -2563,13 +2569,13 @@ export default function ProposalDetail() {
               is true. The component self-gates on the resolver flags,
               so this returns null if write-ins-during-voting is off. */}
           {!readOnly
-            && (proposal.voting_method === 'approval' || proposal.voting_method === 'ranked_choice')
+            && (['approval', 'ranked_choice', 'star'].includes(proposal.voting_method))
             && isVoting
             && proposal.effective_allow_write_in_options
             && proposal.effective_allow_write_ins_during_voting && (
             <div className="bg-white border border-gray-200 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-1">Add a write-in option</h3>
-              <p className="text-xs text-gray-500 mb-2">Write-in options added during voting become available immediately on the ballot.</p>
+              <p className="text-xs text-gray-500 mb-2">Write-in options added during voting become available immediately on the ballot.{proposal.voting_method === 'star' && ' Existing ballots give them zero stars until voters change their ballots.'}</p>
               <WriteInOptionAdder
                 proposal={proposal}
                 onAdded={fetchData}
@@ -2580,7 +2586,9 @@ export default function ProposalDetail() {
           {/* Results (desktop: shown inline; mobile: shown below vote panel) */}
           {(isVoting || isClosed) && tally && (
             <div className="lg:hidden bg-white border border-gray-200 rounded-xl p-5">
-              {proposal.voting_method === 'approval' ? (
+              {proposal.voting_method === 'star' ? (
+                <StarResultsPanel tally={tally} proposal={proposal} />
+              ) : proposal.voting_method === 'approval' ? (
                 <ApprovalResultsPanel tally={tally} proposal={proposal} />
               ) : proposal.voting_method === 'ranked_choice' ? (
                 <RCVResultsPanel tally={tally} proposal={proposal} />
@@ -2775,7 +2783,9 @@ export default function ProposalDetail() {
                   Your vote carries {myVote.my_voting_weight} {currentOrg?.weighted_voting?.unit_label || 'shares'}
                 </div>
               )}
-              {proposal.voting_method === 'approval' ? (
+              {proposal.voting_method === 'star' ? (
+                <RatedBallot proposal={proposal} myVote={myVote} proposalId={id} onVoteChange={refreshVote} emailVerified={user?.email_verified} />
+              ) : proposal.voting_method === 'approval' ? (
                 <ApprovalBallot
                   proposal={proposal}
                   myVote={myVote}
@@ -2822,7 +2832,7 @@ export default function ProposalDetail() {
               <MyVoteRationaleBox
                 proposalId={id}
                 slug={linkOrg?.slug}
-                hasVote={!!(myVote?.vote_value || myVote?.approvals?.length || myVote?.ranking?.length)}
+                hasVote={!!(hasRatedBallot(myVote) || myVote?.vote_value || myVote?.approvals?.length || myVote?.ranking?.length)}
               />
             </div>
           )}
@@ -2844,7 +2854,9 @@ export default function ProposalDetail() {
           {/* Results (desktop sidebar) */}
           {(isVoting || isClosed) && tally && (
             <div className="hidden lg:block bg-white border border-gray-200 rounded-xl p-5">
-              {proposal.voting_method === 'approval' ? (
+              {proposal.voting_method === 'star' ? (
+                <StarResultsPanel tally={tally} proposal={proposal} />
+              ) : proposal.voting_method === 'approval' ? (
                 <ApprovalResultsPanel tally={tally} proposal={proposal} />
               ) : proposal.voting_method === 'ranked_choice' ? (
                 <RCVResultsPanel tally={tally} proposal={proposal} />
@@ -2897,6 +2909,7 @@ export default function ProposalDetail() {
           )}
 
           {isClosed && (() => {
+            if (proposal.voting_method === 'star') return <p className="rounded-xl border p-4 text-center font-semibold">{proposal.status === 'passed' ? 'STAR decision finalized' : 'Closed without a finalized winner'}</p>;
             // Phase 67 W1 — election close banners. Quorum gates seat
             // installation: a passed election seated its winners
             // (announce them by display name); a failed election under

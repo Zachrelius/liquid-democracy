@@ -1,3 +1,4 @@
+import { VOTING_METHODS, toggleAllowedVotingMethod } from '../../utils/votingMethods';
 import { useState, useEffect, useRef } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
@@ -2198,6 +2199,15 @@ export default function OrgSettings() {
               <p className="text-xs text-gray-400">Voters rank discrete projects under a fixed budget. Funds top priorities until the money runs out; supports fixed-cost, fund-or-skip, and tiered-variant items.</p>
             </div>
           </label>
+          {VOTING_METHODS.star.available && <div className="border-t pt-3 space-y-2">
+            <h4 className="text-sm font-medium">Optional voting methods</h4>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" checked={(settings.allowed_voting_methods || ['binary']).includes('star')}
+                onChange={e => updateSetting('allowed_voting_methods', toggleAllowedVotingMethod(settings.allowed_voting_methods, 'star', e.target.checked))} className="mt-1 accent-[var(--brand-accent)]" />
+              <span className="text-sm">STAR — rate options 0–5; the top two enter an automatic runoff.</span>
+            </label>
+            <p className="text-xs text-gray-500">Off by default. Disabling prevents new STAR proposals; existing proposals remain usable. Single-winner proposals only, excluding officeholder elections.</p>
+          </div>}
           {/* Phase 34 F1 — per-section save button. */}
           <button
             onClick={handleSaveVotingMethods}

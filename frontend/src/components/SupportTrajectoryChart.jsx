@@ -1,3 +1,4 @@
+import { formatExactCount } from '../utils/ratedBallot';
 /**
  * Phase 22 F1+F2+F4 — Support Trajectory Chart.
  *
@@ -560,6 +561,25 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
       </div>
     );
   }
+
+  if (data.voting_method === 'star') return <section aria-label="STAR result history" className="space-y-3 p-3">
+    <p className="text-sm">STAR history tracks the runoff winner, scoring totals and runoff votes. A change to the option set restarts stability observation.</p>
+    <div className="overflow-x-auto"><table className="text-xs w-full text-left">
+      <caption className="text-left font-medium mb-2">Recorded STAR snapshots</caption>
+      <thead><tr><th scope="col">Time</th><th scope="col">Runoff leader</th><th scope="col">Scores and runoff</th></tr></thead>
+      <tbody>{snapshots.map((snapshot, index) => {
+        const result = snapshot.method_result;
+        const label = id => result?.option_labels?.[id] || optionsById[id]?.label || id;
+        return <tr key={snapshot.id || index} className="border-t align-top"><td className="p-2">{new Date(snapshot.captured_at).toLocaleString()}</td>
+          <td className="p-2">{result?.winner ? label(result.winner) : 'No meaningful result'}{result?.priority_used && ' (draw order needed)'}</td>
+          <td className="p-2">{result ? <details><summary className="cursor-pointer">View exact totals</summary>
+            <ul>{Object.entries(result.scores || {}).map(([id, value]) => <li key={id}>{label(id)}: {formatExactCount(value)} stars</li>)}</ul>
+            <p className="mt-1">Runoff: {(result.finalists || []).map(id => `${label(id)} ${formatExactCount(result.runoff?.[id] ?? '0')}`).join('; ')}</p>
+            <p>Equal preference: {formatExactCount(result.equal_preference ?? '0')}</p>
+          </details> : 'Historical method detail unavailable'}</td></tr>;
+      })}</tbody>
+    </table></div>
+  </section>;
 
   // Heights — responsive: mobile 200, desktop 350.
   // Tailwind doesn't easily give us viewport-conditional heights for

@@ -1,3 +1,4 @@
+import { VOTING_METHODS as METHOD_CAPABILITIES, votingMethodLabel } from '../../utils/votingMethods';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api, { isAbortError } from '../../api';
@@ -21,7 +22,7 @@ const SR_DEFAULTS = {
 
 const SR_KEYS = Object.keys(SR_DEFAULTS);
 
-const VOTING_METHODS = ['binary', 'approval', 'ranked_choice'];
+const VOTING_METHODS = ['binary', 'approval', 'ranked_choice', ...(METHOD_CAPABILITIES.star.available ? ['star'] : [])];
 
 /**
  * Phase 8.5 — Sub-Org Settings page.
@@ -378,6 +379,7 @@ export default function SubOrgSettings() {
           </label>
           {vmOverride && (
             <div className="pl-7 space-y-2">
+              <p className="text-xs text-gray-500">Optional methods are off by default. Disabling a method prevents new proposals, while existing proposals remain usable.</p>
               {VOTING_METHODS.map(m => (
                 <label key={m} className={`flex items-center gap-2 ${m === 'binary' ? 'opacity-70' : 'cursor-pointer'}`}>
                   <input
@@ -388,7 +390,7 @@ export default function SubOrgSettings() {
                     className="accent-[var(--brand-accent)]"
                   />
                   <span className="text-sm text-gray-700">
-                    {m === 'binary' ? 'Binary (always enabled)' : m === 'approval' ? 'Approval' : 'Ranked Choice'}
+                    {m === 'binary' ? 'Binary (always enabled)' : m === 'ranked_choice' ? 'Ranked Choice' : votingMethodLabel(m)}
                   </span>
                 </label>
               ))}

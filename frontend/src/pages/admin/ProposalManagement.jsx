@@ -1,3 +1,4 @@
+import { VOTING_METHODS } from '../../utils/votingMethods';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
@@ -781,7 +782,9 @@ function CreateProposalForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const allowedMethods = orgSettings?.allowed_voting_methods || ['binary'];
+  const scopeSettings = subOrgs?.find(org => org.id === scope)?.settings;
+  const allowedMethods = scopeSettings?.allowed_voting_methods ?? orgSettings?.allowed_voting_methods ?? ['binary'];
+  const starAllowed = VOTING_METHODS.star.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('star');
   const approvalAllowed = allowedMethods.includes('approval');
   const rankedChoiceAllowed = allowedMethods.includes('ranked_choice');
   // Phase 73/74 — budget methods are opt-in per org (like ranked_choice).
@@ -791,7 +794,7 @@ function CreateProposalForm({
   const isProjectBudget = votingMethod === 'budget_project';
   // Budget-allocation buckets are options too, so they share the multi-option
   // editor. Project budget uses its own ProjectItemsEditor (kind + tiers).
-  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || isBudget;
+  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || votingMethod === 'star' || isBudget;
 
   // Phase 90c — the per-proposal count-mode toggle is offered only in weighted
   // orgs that allow the override (weighted_voting.allow_per_member_proposals,
@@ -1047,7 +1050,7 @@ function CreateProposalForm({
       // diverged from the mode default. For `always_*` modes the
       // toggle isn't rendered, so we keep the field null to inherit
       // (the backend resolver will return the always-locked value).
-      const isMultiOptionM = votingMethod === 'approval' || votingMethod === 'ranked_choice';
+      const isMultiOptionM = votingMethod === 'approval' || votingMethod === 'ranked_choice' || votingMethod === 'star';
       if (isMultiOptionM && writeInsOverridable && allowWriteIns !== orgWriteInsAllowed) {
         payload.allow_write_in_options = allowWriteIns;
       }
@@ -1569,7 +1572,7 @@ function CreateProposalForm({
           Voting Method
           <Link to="/help/voting-methods" className="ml-2 text-[var(--brand-accent)] hover:underline">Which should I pick?</Link>
         </label>
-        <div className="flex gap-3">
+        <div className="flex gap-3 flex-wrap">
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="radio" name="votingMethod" value="binary" checked={votingMethod === 'binary'}
               onChange={() => setVotingMethod('binary')} className="accent-[var(--brand-accent)]" />
@@ -1589,6 +1592,12 @@ function CreateProposalForm({
             <span className="text-sm text-gray-700">Ranked Choice</span>
             {!rankedChoiceAllowed && <span className="text-xs text-amber-600">(Not enabled for this org)</span>}
           </label>
+          {(starAllowed || (isEditMode && editingProposal.voting_method === 'star')) && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="votingMethod" value="star" checked={votingMethod === 'star'} onChange={() => setVotingMethod('star')} className="accent-[var(--brand-accent)]" />
+              <span className="text-sm text-gray-700">STAR (0–5 stars, then automatic runoff)</span>
+            </label>
+          )}
           {/* Phase 73 — allocation budget (opt-in per org). */}
           {budgetAllowed && (
             <label className="flex items-center gap-2 cursor-pointer">
@@ -1970,7 +1979,7 @@ function CreateProposalForm({
           notice in lieu of the inputs; backend uses the org defaults. */}
       {canSetThresholds ? (
         <div className="grid grid-cols-2 gap-4">
-          <div>
+          {votingMethod !== 'star' && <div>
             <label htmlFor="proposal-pass-threshold" className="block text-xs text-gray-500 mb-1">
               Pass Threshold: {Math.round(passThreshold * 100)}%
             </label>
@@ -1983,7 +1992,7 @@ function CreateProposalForm({
               onChange={e => setPassThreshold(parseInt(e.target.value) / 100)}
               className="w-full accent-[var(--brand-accent)]"
             />
-          </div>
+          </div>}
           <div>
             <label htmlFor="proposal-quorum-threshold" className="block text-xs text-gray-500 mb-1">
               Quorum Threshold: {Math.round(quorumThreshold * 100)}%
@@ -2004,11 +2013,11 @@ function CreateProposalForm({
         // of the prior "ask an Admin" copy. Numbers from the orgSettings
         // prop (= currentOrg.settings, 12.5 B2) with fallback to 0.50/0.40.
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">Approval thresholds</p>
+          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">{votingMethod === 'star' ? 'Participation requirement' : 'Approval thresholds'}</p>
           <p className="text-sm text-[#2C3E50]">
             This proposal will use the organization's defaults:{' '}
-            <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>
-            {' / '}
+            {votingMethod !== 'star' && <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>}
+            {votingMethod !== 'star' && ' / '}
             <strong>{Math.round((orgSettings?.default_quorum_threshold ?? 0.40) * 100)}% quorum</strong>.
           </p>
         </div>

@@ -1,3 +1,4 @@
+import StarResultsPanel from './StarResultsPanel';
 import { useState, useMemo } from 'react';
 import BinaryVoteFlowGraph from './BinaryVoteFlowGraph';
 import OptionAttractorVoteFlowGraph from './OptionAttractorVoteFlowGraph';
@@ -29,6 +30,7 @@ export default function VoteFlowGraph({ data, onNodeClick, proposal, tally }) {
   if (!data) return null;
 
   const method = data.voting_method || 'binary';
+  if (method === 'star') return <div className="p-4"><p className="text-sm mb-3">STAR uses scored ballots. The summary below shows scores and runoff votes; network positions do not represent STAR preferences.</p><StarResultsPanel proposal={proposal} tally={tally} /></div>;
 
   return (
     <div className="space-y-3">

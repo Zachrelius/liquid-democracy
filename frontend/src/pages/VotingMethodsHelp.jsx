@@ -40,6 +40,15 @@ export default function VotingMethodsHelp() {
         </ul>
       </section>
 
+      <section id="star" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold">STAR — optional, single winner</h2>
+        <p className="text-sm">Rate each option from 0 to 5 stars, allowing equal ratings. The two highest total scores reach an automatic runoff. Your ballot supports the finalist you rated higher; equal ratings support neither. A rating click is not a submitted vote.</p>
+        <p className="text-sm">Unrated options receive zero, including write-ins added later. Organizations control early voting and write-ins. You can change a submitted ballot while voting is permitted. Delegation transfers one whole ballot, with each represented member’s own weight applied in both rounds.</p>
+        <p className="text-sm">Abstention overrides delegation and counts for participation but contributes no ratings. An all-zero ballot is also participation; if every rating is zero, no winner is selected. Quorum applies, but the binary yes/no pass threshold does not.</p>
+        <p className="text-sm">Score ties affecting finalists use preferences within the tied group, then five-star counts. Runoff ties use original total scores, then five-star counts. Remaining ties use a committed draw order, revealed with the final result. Live draw-dependent results cannot satisfy Stable Result Required.</p>
+        <p className="text-sm">STAR is off by default and must be enabled in organization settings. It selects one proposal option; officeholder elections and multiwinner STAR are outside this release.</p>
+      </section>
+
       {/* Binary */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
         <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Binary Voting (Yes / No / Abstain)</h2>
