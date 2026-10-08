@@ -1,3 +1,4 @@
+import { refreshProposalVote, proposalClosedAt } from '../utils/proposalVoteRefresh';
 import RatedBallot from '../components/RatedBallot';
 import StarResultsPanel from '../components/StarResultsPanel';
 import { hasRatedBallot } from '../utils/ratedBallot';
@@ -1927,21 +1928,13 @@ export default function ProposalDetail() {
   }, [proposal, currentOrg, userOrgs, readOnly]);
 
   const refreshVote = useCallback(async () => {
-    try {
-      const [t, mv] = await Promise.all([
-        api.get(`/api/proposals/${id}/results`),
-        api.get(`/api/proposals/${id}/my-vote`),
-      ]);
-      setTally(t);
-      setMyVote(mv);
-      // Also refresh vote graph
-      try {
-        const graph = await api.get(`/api/proposals/${id}/vote-graph`);
-        setVoteGraph(graph);
-      } catch {/* ignore */}
-    } catch {/* ignore */}
-  }, [id]);
-
+    const state = await refreshProposalVote(api, id);
+    setTally(state.tally);
+    setMyVote(state.myVote);
+    setVoteGraph(state.voteGraph);
+    if (state.ballotError) setError('Your ballot display could not be refreshed. Retry to verify your saved vote.');
+    else if (state.resultsError) toast.error('Results could not be refreshed. Please try again.');
+  }, [id, toast]);
   // Phase 46 F1 — cosign sign / withdraw handlers. The backend returns
   // the updated ProposalOut so we just merge it into our local state.
   async function handleCosignSign() {
@@ -1981,6 +1974,7 @@ export default function ProposalDetail() {
 
   const isVoting = proposal.status === 'voting';
   const isClosed = ['passed', 'failed', 'withdrawn'].includes(proposal.status);
+  const closedAt = proposalClosedAt(proposal, tally);
   const isDeliberation = proposal.status === 'deliberation';
   // Phase 59 A3 — extend edit gating to include draft status. Drafts
   // are the most permissive edit state (no audience yet); the lockout
@@ -2283,7 +2277,7 @@ export default function ProposalDetail() {
               Proposed by {proposal.author?.display_name}
               {proposal.created_at && ` · ${new Date(proposal.created_at).toLocaleDateString()}`}
               {proposal.voting_end && isVoting && ` · Closes ${new Date(proposal.voting_end).toLocaleString()}`}
-              {isClosed && proposal.voting_end && ` · Closed ${new Date(proposal.voting_end).toLocaleDateString()}`}
+              {isClosed && closedAt && ` · Closed ${new Date(closedAt).toLocaleDateString()}`}
               {/* Phase 86 (B-4) — subtle report affordance for non-author members. */}
               {!!user && isMember && proposal.author_id !== user.id && (
                 <>
