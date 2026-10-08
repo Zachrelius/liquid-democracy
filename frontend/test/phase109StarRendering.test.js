@@ -7,11 +7,13 @@ import { renderToStaticMarkup } from 'react-dom/server';
 let server;
 let Results;
 let Ballot;
+let VoteGraph;
 let ToastProvider;
 before(async () => {
   server = await createServer({ cacheDir: 'node_modules/.vite-phase109-tests', server: { middlewareMode: true, hmr: false }, appType: 'custom' });
   Results = (await server.ssrLoadModule('/src/components/StarResultsPanel.jsx')).default;
   Ballot = (await server.ssrLoadModule('/src/components/RatedBallot.jsx')).default;
+  VoteGraph = (await server.ssrLoadModule('/src/components/VoteFlowGraph.jsx')).default;
   ToastProvider = (await server.ssrLoadModule('/src/components/Toast.jsx')).ToastProvider;
 });
 after(async () => { await server?.close(); });
@@ -67,4 +69,13 @@ test('no meaningful result renders its reason without a fabricated winner', () =
   }));
   assert.match(html, /No option received a rating above zero/);
   assert.doesNotMatch(html, /Winner:/);
+});
+
+test('STAR network fallback stays compact without duplicating full results', () => {
+  const html = renderToStaticMarkup(createElement(VoteGraph, {
+    data: { voting_method: 'star' }, tally: { method_result: result() },
+  }));
+  assert.match(html, /5 ballot units cast/);
+  assert.match(html, /See the results panel/);
+  assert.doesNotMatch(html, /Scoring round|Automatic runoff|Winner:/);
 });
