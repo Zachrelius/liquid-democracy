@@ -1,0 +1,46 @@
+ce16797 Phase 109 W0: record approved experimental methods specification
+ec14928 Phase 109 W0: guard public ballot contracts and preserve method defaults
+5955428 Phase 109 W0: define frontend voting method capabilities
+c9c837b Phase 109 W0: persist protected voting rules and validate experimental ballots
+4086e61 Phase 109 W1: integrate STAR ballot and result surfaces
+8edd136 Phase 109 W1: count STAR ballots and preserve stable final outcomes
+f82de7f Phase 109 W1: bound STAR tie work and verify delegation edge cases
+5983d46 Phase 109 W1: verify rendered STAR contracts and record browser gate
+74d8377 Phase 109 W1: integrate STAR lifecycle, opt-in routes, and immutable results
+d0e7966 Phase 109 W1: preserve draft ballots and scope reset consent
+1604914 Phase 109 W1: verify PostgreSQL vote tally and snapshot concurrency
+5df8a49 Phase 109 W1: terminate STAR votes after missing stability evidence
+a88646b Phase 109 W1: display privacy-filtered profile ballot summaries
+5fe4095 Phase 109 W1: stage worker close notifications atomically
+14adaa4 Phase 109 W1: serialize archives and initialize rules after draft changes
+31a75f9 Phase 109 W1: apply archive lock and draft winner count before rules
+a4f624b Phase 109 W1: record Chrome verification recheck blocker
+dcae2e0 Phase 109 W1: harden finalization and private STAR result surfaces
+4aac523 Phase 109 W1: record tested checkpoint and blocked browser gate
+80a6f07 Phase 109 W1: verify frozen STAR outcomes and exact quorum arithmetic
+5abfd3b Phase 109 W1: simplify STAR network fallback and extend local QA
+797f82e Phase 109 W1: verify early neutral ballots override delegation
+a60bdd6 Phase 109 W1: refresh hidden preliminary ballots independently
+af58c63 Phase 109 W1: pass rendered STAR gate and begin sequential Score stage
+90e1ce7 Phase 109 W2: integrate Score feed and verify API lifecycle
+87c3a20 Phase 109 W2: add opt-in Score ballot and results surfaces
+df12b7e Phase 109 W2: implement exact Score counting and lifecycle
+2f7e8ae Phase 109 W2: record Score reference and concurrency evidence
+8a0320f Phase 109 W2: pass Score browser gate and record evidence
+95b6de4 Phase 109 W3: add accessible Ranked Pairs ballots and results
+03192df Phase 109 W3: integrate Ranked Pairs ballot privacy and lifecycle
+26ea6a3 Phase 109 W3: record Ranked Pairs reference and performance evidence
+051823b Phase 109 W3: verify Ranked Pairs browser journeys
+7e1d8a4 Phase 109 W4: preserve grade semantics across API and privacy surfaces
+c9b1710 Phase 109 W4: add Majority Judgment grade ballots and distributions
+d12f61b Phase 109 W4: implement exact Majority Judgment with histogram jumps
+87ce130 Phase 109 W4: record Majority Judgment evidence and close races
+a9913d5 Phase 109 W5: preserve finalized results after archive
+88abeb2 Phase 109 W5: hide archived write-in removal controls
+9e266b0 Phase 109 W4: verify grade ballot and finalized archive journeys
+21f3432 Phase 109 W5: prepare scoped release API verification driver
+3bd34e3 Phase 109 W5: add scoped worker release QA helper
+534f1ff Phase 109 W5: pass full integration regression and prepare release
+09b9da0 Phase 109: release opt-in STAR, Score, Ranked Pairs and Majority Judgment
+c754834 Phase 109 W5: flush worker QA audit before assertion
+550a521 Phase 109 W5: integrate production worker QA flush fix

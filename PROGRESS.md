@@ -4638,44 +4638,67 @@ Railway backend deployment `00fa12d4-4fba-4fd2-b2f3-fd38f8784243` is **SUCCESS**
 
 ---
 
-## Phase 109 — Experimental Single Winner Methods — W5 in progress (2026-10-08)
+## Phase 109 — Experimental Single Winner Methods — Deployed (2026-10-08)
 
-Approved spec: `phase109_experimental_single_winner_methods_spec.md`. Isolated branch
-`phase-109/experimental-single-winner-methods` from refreshed `0096997`; original
-dirty planning checkout preserved. **Not merged, pushed or deployed.** W0 shared
-foundation is done. Z resolved the Chrome password-manager popup by completing
-local login. W1 STAR, W2 Score and W3 Ranked Pairs now passed their sequential
-automated and local rendered browser gates. W4 Majority Judgment has also passed
-its complete local gate. W5 final regression and integration review passed;
-release integration and deployment verification are in progress.
+Spec: `phase109_experimental_single_winner_methods_spec.md`. Branch
+`phase-109/experimental-single-winner-methods` from `0096997`; W0-W5 DONE.
+Application no-ff release `09b9da0`; helper fix `c754834`, no-ff merge `550a521`.
+The original dirty planning checkout is preserved. Full evidence and commit/file
+inventories: `docs/phase109_closeout.md`, `docs/phase109_execution.md`,
+`docs/phase109_commits.txt`, `docs/phase109_changed_files.txt`.
 
-Evidence and restart context: `docs/phase109_execution.md`,
-`docs/phase109_star_backend_evidence.md`, `frontend/PHASE109_QA.md`.
-Earlier full backend run: 3,379 passed / 21 skipped before W2/W3 additions;
-latest focused regression 178 passed / 1 optional oracle skip, with isolated
-2,000-profile pinned oracle subsequently passing. Phase 109 adds 160 collected
-backend tests at that checkpoint. W3 adds independent 1,000-profile reference
-agreement, 206 focused backend checks plus six real-storage scope checks, and
-110 passing frontend tests/build. Current all-phase totals await W5. SQLite migration
-cycle and PostgreSQL fresh/upgrade smoke pass for `a109b0c1d2e3`; prior head
-`f8a9b0c1d2e3`. Forty synthetic PostgreSQL concurrent operations pass without
-pool timeouts. No production data, secrets or infrastructure changed.
+STAR, Score, Ranked Pairs and Majority Judgment are independent organization
+opt-ins, off by default, for ordinary single-winner proposals. Whole-ballot
+delegation, represented weights, neutral/direct overrides, abstention, late
+write-ins, early privacy, subgroup inheritance and existing permission gates
+are retained. Versioned rules commit a reproducible draw before voting; final
+results freeze exact aggregates/labels/participation/rules/actual close time
+and reveal the seed. Officeholder elections remain outside this release.
 
-STAR, Score and Ranked Pairs each passed desktop and 380px browser checks for
-keyboard controls, cast/change/retract, delegated ballots, write-ins, early
-privacy and admin close/frozen results. STAR browser review found and fixed
-duplicate results, preliminary-ballot refresh and close-date display issues.
-Evidence and screenshots are recorded in `docs/phase109_execution.md` and
-`test_results/phase109/`. W4 evidence checkpoint: `9e266b0`. Majority Judgment
-agrees with 82,993 exhaustive histogram pairs and 2,000 random literal-removal
-profiles. Actual PostgreSQL option-add/close races pass for all four methods.
-Frontend integration fixes preserve archived final results and hide mutation
-controls; Chrome reverified them. Final frontend suite: 124 passing tests.
-Production QA helpers are prepared and locally tested but have not executed.
+Independent references agreed: STAR 2,000 synthetic profiles against test-only
+MIT starvote 2.1.5; Score 2,000 exact-sum profiles; Ranked Pairs 1,000 independent
+topological profiles; Majority Judgment 82,993 small histogram pairs plus 2,000
+random literal-removal comparisons. Billion/trillion weights do not expand
+shares. Four evidence files record performance, memory, query counts and local
+capacity limits. Each method passed 40 concurrent PostgreSQL operations; all
+four real option-add/close races passed without leaked connections or locks.
 
-Final full backend regression: **3,602 passed / 21 skipped / zero failures**
-in 1,499.91 seconds. Six subsequently added worker-helper tests also passed:
-**3,608 distinct passing cases**, +364 versus Phase 108. Optional STAR oracle
-was verified separately; existing environment skips remain. Final frontend:
-124 passing tests, bundle `index-BYrMsS6k.js`. Detailed closeout is being
-recorded in `docs/phase109_closeout.md`; production gates remain pending.
+Full backend regression: **3,602 passed / 21 skipped / zero failures** in
+1,499.91 seconds. Seven later worker-helper cases passed separately:
+**3,609 distinct passing cases**, **+365** versus Phase 108. Optional STAR
+oracle verified separately; remaining environment skips recorded. Frontend:
+**124 passed**, production build PASS at `index-BYrMsS6k.js`; baseline lint's
+ten errors/one warning reproduced on `0096997`, no new findings. Credential
+assignment guard/tests and source/diff/integration review passed. Migration
+`a109b0c1d2e3` above `f8a9b0c1d2e3` passed SQLite cycle and PostgreSQL fresh/upgrade.
+
+Local and production Chrome desktop/380px/keyboard/focus journeys passed for
+all four methods: cast/change/retract, delegation, write-ins/omission defaults,
+abstention, and manual close/frozen results. Local early-private journeys and
+production API early-privacy/neutral/subgroup gates also passed. Browser review
+fixed duplicate STAR results, stale preliminary ballots, close-date display,
+archived provisional labels and archived write-in removal controls. Captures
+are in `test_results/phase109/`, including production `prod-*.jpg` evidence.
+
+The private synthetic production org `phase109-release-qa-20261008` contains
+two fictional non-platform-admin accounts with all notification channels off.
+The one-shot API driver passed all four methods and was not rerun. Scoped
+worker closure passed all four exact fixtures: frozen result, one new audit,
+staged notification intent and no-op retry. The first QA-helper assertion
+rolled back because production autoflush is false; helper-only explicit flush
+fix `c754834` and seven production-shaped tests resolved it. Application
+persistence was correct. No global worker tick was invoked.
+
+Application backend `321c6d2d-32fc-4af4-bd5e-ce5414563667` and frontend
+`0edea2f0-9438-4357-975b-7470e3cf0593` succeeded for `09b9da0`. Final helper
+backend `639f499a-34cf-46d4-891b-5cfe660fca2b` succeeded for exact `550a521`;
+frontend appropriately skipped the backend-only patch and retained the bundle.
+After browser/worker QA, homepage/health/readiness/monitor returned 200/ok,
+database connected, no monitoring issues, zero rolling 5xx/pool timeouts.
+Live: `https://www.liquiddemocracy.us/`.
+
+No real organization policies/ballots, infrastructure, secrets or provider
+settings were changed; no backfill was needed. Existing non-durable immediate
+email delivery, costly dense Ranked Pairs and baseline lint/bundle warnings
+remain documented limitations. Officeholder support, multiwinner variants and
+custom scales are **NOT STARTED**; no follow-up automation was created.

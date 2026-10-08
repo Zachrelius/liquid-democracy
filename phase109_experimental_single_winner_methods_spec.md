@@ -1,6 +1,6 @@
 # Phase 109 Experimental single winner voting methods
 
-Status: APPROVED FOR EXECUTION. Written and approved by Z on October 8, 2026. Implementation dispatch authorized; test and deployment results pending.
+Status: COMPLETE. Approved by Z October 8, 2026; W0-W5 implemented sequentially, deployed and production-verified October 8, 2026. Application release 09b9da0; helper-only release 550a521. Final evidence: docs/phase109_closeout.md.
 
 This pass plans STAR, Score, Ranked Pairs, and Majority Judgment together so they can share infrastructure, then requires implementation and verification of one method at a time. Every new method is disabled by default. Organizations retain their existing control over early voting and write-ins, including additions during voting.
 
