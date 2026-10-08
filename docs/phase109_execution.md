@@ -1,5 +1,9 @@
 # Phase 109 execution evidence
 
+Final status: W0-W5 DONE, deployed and production-verified October 8, 2026.
+Earlier entries below are chronological checkpoints, not current blockers.
+Authoritative final closeout: docs/phase109_closeout.md.
+
 Started October 8, 2026 from refreshed origin/master `0096997` in isolated
 `phase-109/experimental-single-winner-methods`. Original dirty checkout preserved.
 
@@ -18,7 +22,7 @@ Started October 8, 2026 from refreshed origin/master `0096997` in isolated
   starting installed Docker resolved it. Concurrent default-port use was avoided
   with port 55509 for lead's independent run; both disposable containers removed.
 
-## W1 — STAR: local gate PASS, NOT production release verified
+## W1 — STAR: local gate PASS (historical checkpoint)
 
 - Pure counter compared with pinned test-only `starvote==2.1.5`, MIT license,
   against 2,000 synthetic profiles. No reference dependency in production.
@@ -128,7 +132,7 @@ retraction restoring delegation, neutral private early voting, and admin
 close preserving the final winner and revealed seed. Captures are the three
 `majority-judgment-*.jpg` files under `test_results/phase109/`.
 
-W5 final integration STARTED after W4 passed. Full backend regression and
+At this checkpoint, W5 final integration STARTED after W4 passed. Full backend regression and
 independent integration review are active. No merge, push or deployment yet.
 
 Frontend integration review fixed archived frozen winners being labeled
@@ -142,7 +146,7 @@ reproduced against baseline `0096997`; no new findings. The scoped Didit guard
 and all six guard tests pass. Release QA bootstrap is additive, private,
 notification-opted-out and collision-refusing, locally tested but NOT EXECUTED.
 
-No production data, secrets, or infrastructure configuration changed.
+At that preparation checkpoint, no production data, secrets, or infrastructure configuration had changed.
 
 W5 release preparation: refreshed `origin/master` still resolves to `0096997`.
 The isolated integration checkout is detached at that baseline, preserving the
@@ -158,13 +162,12 @@ regression is still running. Private release bootstrap, API driver and scoped
 worker helper passed 14 local tests in total, but production execution remains
 pending. Helpers refuse scope collisions and do not reset existing fixtures.
 
-## Remaining gates and known limitations
+## Final regression checkpoint and known limitations
 
 Final regression completed: 3,602 passed, 21 skipped, zero failures in
-1,499.91 seconds (`pytest -n 4`). Six subsequent worker-helper tests passed
-separately, giving 3,608 distinct passing cases (+364 over Phase 108).
-The interrupted sequential attempt is not a passed check. All local gates
-are satisfied; exact deployment and isolated production QA remain pending.
+1,499.91 seconds (`pytest -n 4`). Seven subsequent worker-helper tests passed
+separately, giving 3,609 distinct passing cases (+365 over Phase 108).
+The interrupted sequential attempt is not a passed check. All local gates are satisfied; production gates subsequently passed as recorded below.
 
 The existing immediate-email mechanism is not a durable outbox, and worker
 `BackgroundTasks` lack an HTTP response cycle. Atomic close coverage applies to
@@ -176,3 +179,48 @@ Local synthetic QA servers are available at frontend `127.0.0.1:5173` and backen
 `backend/scripts/phase109_localqa.py`. No production authentication is involved.
 The untracked full-suite log and pytest temporary directory are local test
 artifacts, excluded from commits. Original dirty root files remain untouched.
+
+## W5 production verification completed
+
+Application release no-ff merge `09b9da0` deployed: backend
+`321c6d2d-32fc-4af4-bd5e-ce5414563667`, frontend
+`0edea2f0-9438-4357-975b-7470e3cf0593`; both SUCCESS. Live bundle
+`index-BYrMsS6k.js`, migration `a109b0c1d2e3`. The private bootstrap and one-shot
+API driver executed successfully on synthetic opted-out accounts. All method
+API checks, including early privacy/neutral/delegation/subgroup/frozen results,
+passed. Bootstrap/API driver were not rerun during the continuation.
+
+The initial scoped worker helper assertion rolled back with production's
+`autoflush=False`: staged audit rows had not been flushed before its count.
+Application persistence was correct. `c754834` adds explicit helper flush and
+seven production-shaped tests, including injected second-close failure,
+rollback and retry. Normal no-ff merge `550a521` was pushed; backend deployment
+`639f499a-34cf-46d4-891b-5cfe660fca2b` matched the exact commit and succeeded.
+Frontend `b48869a3-ee54-4e1d-8939-5e1b768041e6` was correctly SKIPPED.
+
+Read-only preflight confirmed all four worker rows voting/unfinalized with one
+ballot each. The scoped helper then closed only the exact IDs in the worker
+manifest; all four passed with `closed_on_time`, one additional audit, staged
+notification intent and frozen no-op retry. No global worker tick, scheduler
+configuration change, real voter mutation or backfill was performed.
+
+Production Chrome Person 1 reused the authenticated owner tab. All four
+methods passed desktop/380px/keyboard, cast/change/retract, delegation,
+late-write-in/default, abstention and admin-close journeys. Ranked Pairs tied
+groups and movement persisted; pairwise/locking details expanded correctly.
+Score/Majority Judgment keyboard controls confirmed focus plus selection.
+All final pages showed method-specific winner/aggregates, actual close date,
+rule/commitment/seed reveal and locked mutation controls. Screenshots:
+`test_results/phase109/prod-*.jpg`. Long-page STAR capture timed out; viewport
+captures were saved. STAR read briefly timed out during redeploy and recovered
+through the visible retry button, with its saved ballot verified afterward.
+
+Final production homepage/health/readiness/monitor returned HTTP 200/ok with
+connected DB and no issues. Monitor showed zero rolling 5xx/pool timeouts,
+one checked-out connection of capacity five. Full completed suites were not
+repeated for the helper-only patch. Final totals: 3,609 distinct backend passing
+cases (+365), 21 recorded full-suite skips, frontend 124 passing tests.
+
+Spec, PROGRESS, closeout, helper instructions and frontend QA notes now record
+the completed release; file and commit lists accompany the closeout. Original
+dirty root and local logs/temp directories remain preserved.

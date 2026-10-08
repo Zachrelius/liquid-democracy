@@ -253,3 +253,20 @@ archive/early-state boundary regression; helper/test lint passes. Build:
 The lead subsequently reran the complete final frontend suite: **124 passed,
 zero failures**. Chrome confirmed the archived winner/banner with removal
 controls absent, and confirmed native Score arrow-key selection and focus.
+
+## W5 production verification completed
+
+Production bundle `index-BYrMsS6k.js` is live after application merge `09b9da0`.
+The continuation lead reused the authenticated synthetic owner Chrome session.
+All four methods passed desktop/380px keyboard/focus, cast/change/retract,
+delegation, late write-ins/omission defaults, abstention and actual admin close.
+Ranked Pairs tied groups/movement and pairwise/locking disclosures passed.
+Majority Judgment verbal grade selection and original distributions passed.
+Every final display showed the winner, method aggregates, actual date,
+rule/commitment/revealed seed and locked mutation controls. Screenshots are
+`test_results/phase109/prod-*.jpg`. API early-privacy/neutral/inheritance gates
+also passed; the existing local private early-browser journeys remain valid.
+Final frontend total remains 124 passing tests; no application frontend code
+changed during release continuation. Helper-only merge `550a521` appropriately
+skipped a frontend redeploy. See `docs/phase109_closeout.md` for exact deployments,
+worker results, all test counts and the transient read timeout during redeploy.

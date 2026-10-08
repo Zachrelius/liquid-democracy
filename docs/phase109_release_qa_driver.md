@@ -1,6 +1,6 @@
 # Phase 109 isolated release API QA
 
-Prepared and verified locally; preparation does not mean production execution.
+Executed successfully in the isolated production org on October 8, 2026. API driver and scoped worker gates PASS. The procedural instructions below describe the one-shot workflow; do not rerun bootstrap or API driver against existing fixtures. Final evidence: docs/phase109_closeout.md.
 
 The bootstrap and driver operate only on `phase109-release-qa-20261008` and the two fixed `phase109releaseowner` / `phase109releasemember` accounts. They require fresh distinct passwords supplied through `PHASE109_QA_OWNER_PASSWORD` and `PHASE109_QA_MEMBER_PASSWORD`. Keep passwords out of command-line arguments, logs, checked-in files and manifests. Do not change any existing user's credentials.
 
@@ -24,8 +24,18 @@ In a dedicated server-side process with explicitly selected PostgreSQL `DATABASE
 python scripts/phase109_release_worker_qa.py --confirm-exact-production-worker-qa
 ```
 
-The helper validates the fixed private org, exact two synthetic non-admin members, disabled notification channels, each method/author/title/status and absence of a final record. It locks and validates the entire batch before changing any deadlines. It shortens only those four deadlines, disables their stability requirement, invokes `evaluate_proposal` on each exact row and commits the batch atomically. It verifies frozen results, notification staging, exactly one additional closure audit (preserving any API creation audit), and a no-op retry. It never calls the global tick or changes scheduler settings. Refusal rolls back the batch. Keep its non-secret output as execution evidence; six local tests cover all four closures, existing API-shaped audit history, repeat evaluation, unrelated-row preservation and five scope refusals. Production worker execution remains **NOT RUN** until the release operator actually runs this helper.
+The helper validates the fixed private org, exact two synthetic non-admin members, disabled notification channels, each method/author/title/status and absence of a final record. It locks and validates the entire batch before changing any deadlines. It shortens only those four deadlines, disables their stability requirement, invokes `evaluate_proposal` on each exact row and commits the batch atomically. It verifies frozen results, notification staging, exactly one additional closure audit (preserving any API creation audit), and a no-op retry. It never calls the global tick or changes scheduler settings. Refusal rolls back the batch. Keep its non-secret output as execution evidence; seven local tests cover all four closures, existing API-shaped audit history, repeat evaluation, unrelated-row preservation and five scope refusals. Production worker execution subsequently PASSED after helper fix c754834 deployed in merge 550a521; see the completed evidence below.
 
 Local validation: six tests pass, including the entire driver through real FastAPI endpoints on an isolated in-memory SQLite database bootstrapped specifically for the test. The five URL rejection tests cover external hosts, production HTTP, paths, embedded credentials and query strings. Existing `phase109-qa` local browser fixtures and production were not touched during preparation.
 
 Worker helper follow-up: the initial production attempt rolled back when its audit-count assertion queried before pending audit rows were flushed. Production sessions use `autoflush=False`; the worker correctly stages its audit for the caller's transaction. The helper now explicitly flushes before checking persistence. Seven worker-helper tests pass with production's flush policy, including reproduction of the original failure before the fix, rollback after the second closure has been staged, and a successful clean retry. This changes the QA helper only, not application closure behavior.
+
+Completed worker execution: backend deployment `639f499a-34cf-46d4-891b-5cfe660fca2b`
+was SUCCESS for exact merge `550a521`. Read-only preflight found the four exact
+worker fixtures voting/unfinalized, each with a meaningful ballot. The manifest
+was supplied on stdin through Railway SSH. Every method returned passed,
+closed_on_time, new_status_audits=1, notification_intent_staged=true and
+retry_noop=true. Original browser fixtures were preserved by this helper and
+later finalized through production browser admin QA. No global tick was run.
+The initial assertion failure rolled back the whole batch; retry succeeded.
+The checked-in closeout records the exact non-secret IDs and outcomes.
