@@ -98,14 +98,28 @@ the exact sum winner, correct actual close date and disclosed rule/seed, with
 no STAR runoff. Screenshots `score-mobile-ballot.jpg`, `score-early-private.jpg`
 and `score-final-desktop.jpg` are in `test_results/phase109/`.
 
-W3 Ranked Pairs STARTED only after W2 passed. Both developers work on W3.
-W4 Majority Judgment and W5 release/deployment remain NOT STARTED.
+W3 Ranked Pairs local gate PASS. Backend and API `03192df`, evidence `26ea6a3`,
+frontend `95b6de4`. 1,000 independent reference profiles agreed, 206 focused
+backend tests and six real-storage scope tests passed, PostgreSQL 40/40
+concurrent operations succeeded without leaked connections or lingering locks.
+Frontend: 110 tests and build passed. No additional migration.
+
+Chrome verified tied-group assignment by keyboard, 380px layout, movement
+controls, late write-in omitted/unranked semantics, direct override and revote,
+abstention, retraction restoring delegation, pairwise matrix and locked edges,
+neutral early ballot with hidden preliminary results, and admin close with
+frozen winner, actual close date, rules and revealed seed. Three captures are
+`ranked-pairs-mobile-ballot.jpg`, `ranked-pairs-early-private.jpg`, and
+`ranked-pairs-final-desktop.jpg` under `test_results/phase109/`.
+
+W4 Majority Judgment STARTED only after W3 passed. Both developers work on W4.
+W5 release/deployment remains NOT STARTED.
 
 No production data, secrets, or infrastructure configuration changed.
 
 ## Remaining gates and known limitations
 
-Ranked Pairs needs its complete method-specific gate before W4 begins. Do not deploy
+Majority Judgment needs its complete method-specific gate before W5 begins. Do not deploy
 this partial phase. Final integration still requires the complete four-method
 matrix, full regression, exact deployment checks and production browser QA.
 
