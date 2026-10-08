@@ -219,7 +219,19 @@ class BatchViewerResolver:
                 if row.user_id not in eligible:
                     continue
                 ballot = row.ballot or {}
-                if proposal.voting_method == "approval":
+                if proposal.voting_method in ("star", "score"):
+                    from experimental_ballots import validate_ballot
+                    value = validate_ballot(proposal.voting_method, ballot)
+                    direct_ballots[row.user_id] = Ballot(method=proposal.voting_method, scores=value.get("scores"), abstain=value.get("abstain", False))
+                elif proposal.voting_method == "majority_judgment":
+                    from experimental_ballots import validate_ballot
+                    value = validate_ballot("majority_judgment", ballot)
+                    direct_ballots[row.user_id] = Ballot(method="majority_judgment", grades=value.get("grades"), abstain=value.get("abstain", False))
+                elif proposal.voting_method == "ranked_pairs":
+                    from experimental_ballots import validate_ballot
+                    value = validate_ballot("ranked_pairs", ballot)
+                    direct_ballots[row.user_id] = Ballot(method="ranked_pairs", rank_groups=value.get("rank_groups"), abstain=value.get("abstain", False))
+                elif proposal.voting_method == "approval":
                     direct_ballots[row.user_id] = Ballot(approvals=ballot.get("approvals", []))
                 elif proposal.voting_method == "ranked_choice":
                     direct_ballots[row.user_id] = Ballot(ranking=ballot.get("ranking", []))
@@ -252,7 +264,13 @@ def _viewer_out(result, users: dict[str, models.User], proposal: models.Proposal
         return schemas.ProposalFeedViewerVoteOut(has_effective_vote=False)
     selection_count = None
     ballot = result.ballot
-    if ballot.approvals is not None:
+    if ballot.scores is not None:
+        selection_count = len(ballot.scores)
+    elif ballot.grades is not None:
+        selection_count = len(ballot.grades)
+    elif ballot.rank_groups is not None:
+        selection_count = sum(len(group) for group in ballot.rank_groups)
+    elif ballot.approvals is not None:
         selection_count = len(ballot.approvals)
     elif ballot.ranking is not None:
         selection_count = len(ballot.ranking)

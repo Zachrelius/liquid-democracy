@@ -203,6 +203,38 @@ class MultiOptionSnapshotPoint:
     total_eligible: int
 
 
+@dataclass(frozen=True)
+class ExperimentalSnapshotPoint(MultiOptionSnapshotPoint):
+    option_set_version: str | None = None
+    quorum_met: bool = False
+    meaningful: bool = False
+    priority_used: bool = True
+
+
+def experimental_window_stable(snapshots, cutoff, now):
+    """Require evidence covering the entire window, not two recent samples.
+
+    Include the latest sample at/before cutoff as its baseline. Missing old
+    payloads, no result, failed quorum and draw-dependent results all fail closed.
+    """
+    points = sorted((s for s in snapshots if s.simulated_time <= now), key=lambda s: s.simulated_time)
+    prior = [s for s in points if s.simulated_time <= cutoff]
+    if not prior:
+        return False
+    selected = [prior[-1], *[s for s in points if s.simulated_time > cutoff]]
+    if len(selected) < 2:
+        return False
+    baseline = selected[0]
+    for point in selected:
+        if (not isinstance(point, ExperimentalSnapshotPoint)
+                or len(point.winners) != 1 or not point.option_set_version
+                or not point.quorum_met or not point.meaningful or point.priority_used
+                or point.winners != baseline.winners
+                or point.option_set_version != baseline.option_set_version):
+            return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Pure evaluation primitives
 # ---------------------------------------------------------------------------
@@ -331,6 +363,8 @@ def evaluate_original_window_stability(
         snapshot, per D10's first-snapshot baseline rule). If any pair fails
         ``winner_set_overlaps``, return ``destabilized=True``.
     """
+    if not snapshots and voting_method in ("star", "score", "ranked_pairs", "majority_judgment"):
+        return DestabilizationDecision(destabilized=now >= voting_end, reason="Missing experimental stability evidence")
     if not snapshots:
         return DestabilizationDecision(destabilized=False)
 
@@ -345,6 +379,13 @@ def evaluate_original_window_stability(
     # Are we even in the stable window yet?
     if now < stable_window_starts_at:
         return DestabilizationDecision(destabilized=False)
+
+    if voting_method in ("star", "score", "ranked_pairs", "majority_judgment"):
+        stable = experimental_window_stable(snapshots, stable_window_starts_at, now)
+        return DestabilizationDecision(
+            destabilized=not stable,
+            reason="" if stable else "Experimental winner, option set, quorum or tie state was not stable throughout the window",
+        )
 
     in_window = [s for s in snapshots if s.simulated_time >= stable_window_starts_at]
     if not in_window:
@@ -435,6 +476,8 @@ def evaluate_extension_stability(
         overlapping winners. Any disjoint pair -> return False.
       - Otherwise: return True (stability demonstrated).
     """
+    if voting_method in ("star", "score", "ranked_pairs", "majority_judgment"):
+        return experimental_window_stable(snapshots, now - stable_window_duration, now)
     if not snapshots:
         return False
     cutoff = now - stable_window_duration

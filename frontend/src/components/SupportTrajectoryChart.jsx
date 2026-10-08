@@ -1,3 +1,6 @@
+import MajorityJudgmentHistory from './MajorityJudgmentHistory';
+import RankedPairsHistory from './RankedPairsHistory';
+import { formatExactCount } from '../utils/ratedBallot';
 /**
  * Phase 22 F1+F2+F4 — Support Trajectory Chart.
  *
@@ -560,6 +563,29 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
       </div>
     );
   }
+
+  if (data.voting_method === 'majority_judgment') return <MajorityJudgmentHistory snapshots={snapshots} optionsById={optionsById} />;
+
+  if (data.voting_method === 'ranked_pairs') return <RankedPairsHistory snapshots={snapshots} optionsById={optionsById} />;
+
+  if (['star', 'score'].includes(data.voting_method)) return <section aria-label={`${data.voting_method === 'score' ? 'Score' : 'STAR'} result history`} className="space-y-3 p-3">
+    <p className="text-sm">{data.voting_method === 'score' ? 'Score history tracks the highest-total leader and total points.' : 'STAR history tracks the runoff winner, scoring totals and runoff votes.'} A change to the option set restarts stability observation.</p>
+    <div className="overflow-x-auto"><table className="text-xs w-full text-left">
+      <caption className="text-left font-medium mb-2">Recorded {data.voting_method === 'score' ? 'Score' : 'STAR'} snapshots</caption>
+      <thead><tr><th scope="col">Time</th><th scope="col">{data.voting_method === 'score' ? 'Total-points leader' : 'Runoff leader'}</th><th scope="col">{data.voting_method === 'score' ? 'Total points' : 'Scores and runoff'}</th></tr></thead>
+      <tbody>{snapshots.map((snapshot, index) => {
+        const result = snapshot.method_result;
+        const label = id => result?.option_labels?.[id] || optionsById[id]?.label || id;
+        return <tr key={snapshot.id || index} className="border-t align-top"><td className="p-2">{new Date(snapshot.captured_at).toLocaleString()}</td>
+          <td className="p-2">{result?.winner ? label(result.winner) : 'No meaningful result'}{result?.priority_used && ' (draw order needed)'}</td>
+          <td className="p-2">{result ? <details><summary className="cursor-pointer">View exact totals</summary>
+            <ul>{Object.entries(result.scores || {}).map(([id, value]) => <li key={id}>{label(id)}: {formatExactCount(value)} {data.voting_method === 'score' ? 'points' : 'stars'}</li>)}</ul>
+            {data.voting_method === 'star' && <><p className="mt-1">Runoff: {(result.finalists || []).map(id => `${label(id)} ${formatExactCount(result.runoff?.[id] ?? '0')}`).join('; ')}</p>
+            <p>Equal preference: {formatExactCount(result.equal_preference ?? '0')}</p></>}
+          </details> : 'Historical method detail unavailable'}</td></tr>;
+      })}</tbody>
+    </table></div>
+  </section>;
 
   // Heights — responsive: mobile 200, desktop 350.
   // Tailwind doesn't easily give us viewport-conditional heights for

@@ -964,7 +964,7 @@ export default function DelegateProfile() {
                     {v.proposal_title || v.proposal_id}
                   </Link>
                   <span className="text-xs text-gray-500 whitespace-nowrap">
-                    {v.vote_value ? v.vote_value.toUpperCase() : 'Voted'}
+                    {v.ballot_summary || (v.vote_value ? v.vote_value.toUpperCase() : 'Voted')}
                   </span>
                 </div>
                 <VoteRationaleEditor vote={v} />

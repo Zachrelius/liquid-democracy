@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 import auth as auth_utils
 import models
 import schemas
+from experimental_voting import is_experimental, lock_proposal, require_mutable
 from audit_utils import log_audit_event
 from database import get_db
 from delegation_engine import engine as delegation_engine, eligible_voter_ids_for_proposal
@@ -111,8 +112,20 @@ def _delegators_for_proposal(
         # Proposal has no topics; only org-wide global delegations
         # (topic_id IS NULL) qualify.
         q = q.filter(models.Delegation.topic_id.is_(None))
+    if is_experimental(proposal):
+        q = q.filter(or_(models.Delegation.sub_org_id.is_(None),
+                         models.Delegation.sub_org_id == proposal.sub_org_id))
     delegations = q.all()
-    return {d.delegator_id for d in delegations if d.delegator_id != delegate_user_id}
+    recipients = {d.delegator_id for d in delegations if d.delegator_id != delegate_user_id}
+    if is_experimental(proposal):
+        from eligibility import eligible_viewers_for_proposal
+        from permissions import can_see_votes
+        recipients &= eligible_viewers_for_proposal(db, proposal)
+        recipients &= {uid for (uid,) in db.query(models.User.id).filter(
+            models.User.id.in_(recipients), models.User.is_active.is_(True)).all()}
+        recipients = {uid for uid in recipients if can_see_votes(
+            db, uid, delegate_user_id, topic_ids, org_id=proposal.org_id)}
+    return recipients
 
 
 def _format_vote_value_for_payload(
@@ -126,6 +139,12 @@ def _format_vote_value_for_payload(
     {option_id, tier_id} items. Delegators of a budget voter receive
     delegate.voted / delegate.vote_changed like every other method.
     """
+    from voting_methods import EXPERIMENTAL_VOTING_METHODS
+    if voting_method in EXPERIMENTAL_VOTING_METHODS:
+        if isinstance(ballot, dict) and ballot.get("abstain") is True:
+            return "Abstained"
+        name = "STAR" if voting_method == "star" else voting_method.replace('_', ' ').title()
+        return f"{name} ballot submitted"
     if voting_method == "binary":
         return vote_value
     if voting_method == "approval":
@@ -158,6 +177,8 @@ async def cast_vote(
     current_user: models.User = Depends(auth_utils.require_verified_email),
 ):
     proposal = _proposal_or_404(proposal_id, db)
+    lock_proposal(db, proposal)
+    require_mutable(proposal)
     _require_voting_open(proposal, db)
 
     # Phase 52 Stage 1 — verification per-vote floor gate. If the
@@ -195,7 +216,21 @@ async def cast_vote(
         )
 
     # -- Method-specific validation --
-    if proposal.voting_method == "binary":
+    # Until an experimental method's complete handler is released, preference
+    # fields must not silently disappear into an existing method's ballot.
+    if not is_experimental(proposal) and (body.scores is not None or body.grades is not None
+            or body.rank_groups is not None or body.abstain):
+        raise HTTPException(status_code=400, detail="This voting method does not accept this ballot")
+    if is_experimental(proposal):
+        from experimental_ballots import validate_ballot
+        expression = body.model_dump(exclude_none=True, exclude_defaults=True)
+        try:
+            ballot = validate_ballot(proposal.voting_method, expression,
+                                     {opt.id for opt in proposal.options})
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        vote_value = None
+    elif proposal.voting_method == "binary":
         if body.approvals is not None or body.ranking is not None:
             raise HTTPException(status_code=400, detail="Use vote_value for binary proposals")
         if body.vote_value is None:
@@ -553,6 +588,8 @@ async def retract_vote(
     current_user: models.User = Depends(auth_utils.get_current_user),
 ):
     proposal = _proposal_or_404(proposal_id, db)
+    lock_proposal(db, proposal)
+    require_mutable(proposal)
     _require_voting_open(proposal, db)
 
     # Phase 10.1: same eligibility gate as cast_vote — a non-eligible user

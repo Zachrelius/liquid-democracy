@@ -10,6 +10,7 @@ import TopicBadge from '../components/TopicBadge';
 
 function VoteRecordCell({ vote }) {
   const [expanded, setExpanded] = useState(false);
+  if (vote.ballot_summary) return <span className="text-sm text-gray-600">{vote.ballot_summary}</span>;
   if (vote.vote_value) {
     return (
       <span className={`text-sm font-medium ${
@@ -25,6 +26,16 @@ function VoteRecordCell({ vote }) {
   if (!vote.ballot) {
     return <span className="text-sm text-gray-400">-</span>;
   }
+
+  if (vote.ballot.abstain === true) return <span className="text-sm text-gray-500">Abstained</span>;
+  if (vote.ballot.scores != null) return <div className="text-sm">
+    <span>{vote.voting_method === 'score' ? 'Score ballot (0–5 points)' : 'STAR ballot (0–5 stars)'}</span>
+    <details><summary className="cursor-pointer">View ratings</summary><ul>{Object.entries(vote.ballot.scores).map(([id, score]) => <li key={id}>{vote.option_labels?.[id] || id}: {score}/5</li>)}</ul><p className="text-xs">Unrated options receive zero, including later additions.</p></details>
+  </div>;
+
+  if (Array.isArray(vote.ballot.rank_groups)) return <span className="text-sm">Ranked Pairs ballot submitted ({vote.ballot.rank_groups.length} rank groups)</span>;
+
+  if (vote.ballot.grades != null) return <span className="text-sm">Majority Judgment grades submitted</span>;
 
   // Approval ballot
   if (Array.isArray(vote.ballot.approvals)) {

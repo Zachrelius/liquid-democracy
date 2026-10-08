@@ -300,6 +300,34 @@ def capture_snapshot(
 
     when = _naive_utc(simulated_time) if simulated_time else _now_naive()
     tally = delegation_engine.compute_tally(proposal, db)
+    if proposal.voting_method in ("star", "score", "ranked_pairs", "majority_judgment"):
+        from copy import deepcopy
+        from experimental_tally import ExperimentalTally
+        if not isinstance(tally, ExperimentalTally):
+            raise ValueError("Missing experimental snapshot tally handler")
+        # Legacy scalar columns are PostgreSQL int32; exact experimental
+        # counts live in JSON and never pass through these compatibility fields.
+        snap = models.VoteSnapshot(
+            proposal_id=proposal.id, simulated_time=when,
+            yes_count=0, no_count=0, abstain_count=0, not_cast_count=0,
+            total_eligible=0,
+            multi_option_winners={
+                "winners": tally.winners,
+                "total_ballots_cast": tally.total_ballots_cast,
+                "total_abstain": tally.total_abstain,
+                "not_cast": tally.not_cast,
+                "total_eligible": tally.total_eligible,
+                "option_totals": deepcopy(tally.method_result.get("scores", {})),
+                "method_result": deepcopy(tally.method_result),
+                "option_set_version": tally.method_result["option_set_version"],
+                "quorum_met": tally.quorum_met(proposal.quorum_threshold),
+                "meaningful": bool(tally.winners) and tally.method_result["no_result_reason"] is None,
+                "priority_used": tally.method_result["priority_used"],
+            },
+        )
+        db.add(snap)
+        db.flush()
+        return snap
 
     if proposal.voting_method == "binary":
         snap = models.VoteSnapshot(

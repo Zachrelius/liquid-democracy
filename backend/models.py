@@ -925,6 +925,10 @@ class Proposal(Base):
     voting_method: Mapped[str] = mapped_column(
         String, nullable=False, default="binary",
     )
+    # Phase 109: server-owned rules (contains protected seed) and immutable
+    # aggregate close record. Serialize rules only through public_voting_rules.
+    voting_rules: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    final_method_result: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     num_winners: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     # Phase 90c — per-proposal vote-counting mode: 'weighted' | 'one_per_member'
     # | NULL (org default: weighted in weighted orgs, headcount otherwise).

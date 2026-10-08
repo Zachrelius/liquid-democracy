@@ -1,3 +1,4 @@
+import { VOTING_METHODS, votingMethodLabel, draftMethodResetFields, unchangedOptionText } from '../../utils/votingMethods';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
@@ -781,7 +782,12 @@ function CreateProposalForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const allowedMethods = orgSettings?.allowed_voting_methods || ['binary'];
+  const scopeSettings = subOrgs?.find(org => org.id === scope)?.settings;
+  const allowedMethods = scopeSettings?.allowed_voting_methods ?? orgSettings?.allowed_voting_methods ?? ['binary'];
+  const majorityJudgmentAllowed = VOTING_METHODS.majority_judgment.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('majority_judgment');
+  const rankedPairsAllowed = VOTING_METHODS.ranked_pairs.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('ranked_pairs');
+  const scoreAllowed = VOTING_METHODS.score.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('score');
+  const starAllowed = VOTING_METHODS.star.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('star');
   const approvalAllowed = allowedMethods.includes('approval');
   const rankedChoiceAllowed = allowedMethods.includes('ranked_choice');
   // Phase 73/74 — budget methods are opt-in per org (like ranked_choice).
@@ -791,7 +797,7 @@ function CreateProposalForm({
   const isProjectBudget = votingMethod === 'budget_project';
   // Budget-allocation buckets are options too, so they share the multi-option
   // editor. Project budget uses its own ProjectItemsEditor (kind + tiers).
-  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || isBudget;
+  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) || isBudget;
 
   // Phase 90c — the per-proposal count-mode toggle is offered only in weighted
   // orgs that allow the override (weighted_voting.allow_per_member_proposals,
@@ -883,6 +889,7 @@ function CreateProposalForm({
   // closing the editor (which onCreated does). The advance handler invokes
   // this via the onAdvance(saveChanges) wiring.
   async function saveChanges() {
+    let confirmedBallotReset = false;
     // Phase 9 — block submission when require_polis_for_new_proposals is
     // true and the picker is empty. Server enforces this too; we surface
     // it inline so the operator doesn't round-trip a 400.
@@ -897,19 +904,18 @@ function CreateProposalForm({
     if (
       isEditMode
       && votingMethod !== (editingProposal.voting_method ?? 'binary')
-      && Array.isArray(editingProposal.options)
-      && editingProposal.options.length > 0
     ) {
       const ok = await confirm({
         title: 'Change voting method?',
         message: (
           'Changing the voting method on this draft will discard the '
-          + 'existing options. New options can be added if the new method '
-          + 'is approval or ranked-choice. Continue?'
+          + 'existing options and any preliminary ballots. New options can be '
+          + 'added for methods that use them. Continue?'
         ),
         destructive: true,
       });
       if (!ok) return false;
+      confirmedBallotReset = true;
     }
     setSaving(true);
     setError('');
@@ -919,6 +925,7 @@ function CreateProposalForm({
         body,
         topics: selectedTopics,
         voting_method: votingMethod,
+        ...draftMethodResetFields(editingProposal?.voting_method, votingMethod, confirmedBallotReset),
       };
       // Phase 12.5 F3 — only include thresholds when the user has the
       // `proposal.set_thresholds` permission. Backend (B3) applies org
@@ -949,7 +956,8 @@ function CreateProposalForm({
       // the proposal's existing scope; the PATCH endpoint does not accept
       // a scope change.
       if (!isEditMode && scope) payload.sub_org_id = scope;
-      if (isMultiOption) {
+      if (isMultiOption && !(isEditMode && ['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod)
+          && editingProposal.voting_method === votingMethod && unchangedOptionText(editingProposal.options, options))) {
         payload.options = options.map(o => ({
           label: o.label.trim(),
           description: o.description.trim(),
@@ -962,6 +970,8 @@ function CreateProposalForm({
       }
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
+      } else if (['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod)) {
+        payload.num_winners = 1;
       }
       // Phase 90c — per-proposal count mode (weighted orgs that allow it). Send
       // 'one_per_member' when chosen; otherwise omit so the org default (weighted)
@@ -1047,7 +1057,7 @@ function CreateProposalForm({
       // diverged from the mode default. For `always_*` modes the
       // toggle isn't rendered, so we keep the field null to inherit
       // (the backend resolver will return the always-locked value).
-      const isMultiOptionM = votingMethod === 'approval' || votingMethod === 'ranked_choice';
+      const isMultiOptionM = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod);
       if (isMultiOptionM && writeInsOverridable && allowWriteIns !== orgWriteInsAllowed) {
         payload.allow_write_in_options = allowWriteIns;
       }
@@ -1569,7 +1579,7 @@ function CreateProposalForm({
           Voting Method
           <Link to="/help/voting-methods" className="ml-2 text-[var(--brand-accent)] hover:underline">Which should I pick?</Link>
         </label>
-        <div className="flex gap-3">
+        <div className="flex gap-3 flex-wrap">
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="radio" name="votingMethod" value="binary" checked={votingMethod === 'binary'}
               onChange={() => setVotingMethod('binary')} className="accent-[var(--brand-accent)]" />
@@ -1589,6 +1599,26 @@ function CreateProposalForm({
             <span className="text-sm text-gray-700">Ranked Choice</span>
             {!rankedChoiceAllowed && <span className="text-xs text-amber-600">(Not enabled for this org)</span>}
           </label>
+          {(starAllowed || (isEditMode && editingProposal.voting_method === 'star')) && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="votingMethod" value="star" checked={votingMethod === 'star'} onChange={() => setVotingMethod('star')} className="accent-[var(--brand-accent)]" />
+              <span className="text-sm text-gray-700">STAR (0–5 stars, then automatic runoff)</span>
+            </label>
+          )}
+          {(majorityJudgmentAllowed || (isEditMode && editingProposal.voting_method === 'majority_judgment')) && <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="votingMethod" value="majority_judgment" checked={votingMethod === 'majority_judgment'} onChange={() => setVotingMethod('majority_judgment')} className="accent-[var(--brand-accent)]" />
+            <span className="text-sm text-gray-700">Majority Judgment (verbal grades, highest majority grade)</span>
+          </label>}
+          {(rankedPairsAllowed || (isEditMode && editingProposal.voting_method === 'ranked_pairs')) && <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="votingMethod" value="ranked_pairs" checked={votingMethod === 'ranked_pairs'} onChange={() => setVotingMethod('ranked_pairs')} className="accent-[var(--brand-accent)]" />
+            <span className="text-sm text-gray-700">Ranked Pairs (equal rank groups, head-to-head victories)</span>
+          </label>}
+          {(scoreAllowed || (isEditMode && editingProposal.voting_method === 'score')) && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="votingMethod" value="score" checked={votingMethod === 'score'} onChange={() => setVotingMethod('score')} className="accent-[var(--brand-accent)]" />
+              <span className="text-sm text-gray-700">Score (0–5 points, highest total wins)</span>
+            </label>
+          )}
           {/* Phase 73 — allocation budget (opt-in per org). */}
           {budgetAllowed && (
             <label className="flex items-center gap-2 cursor-pointer">
@@ -1970,7 +2000,7 @@ function CreateProposalForm({
           notice in lieu of the inputs; backend uses the org defaults. */}
       {canSetThresholds ? (
         <div className="grid grid-cols-2 gap-4">
-          <div>
+          {!['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) && <div>
             <label htmlFor="proposal-pass-threshold" className="block text-xs text-gray-500 mb-1">
               Pass Threshold: {Math.round(passThreshold * 100)}%
             </label>
@@ -1983,7 +2013,7 @@ function CreateProposalForm({
               onChange={e => setPassThreshold(parseInt(e.target.value) / 100)}
               className="w-full accent-[var(--brand-accent)]"
             />
-          </div>
+          </div>}
           <div>
             <label htmlFor="proposal-quorum-threshold" className="block text-xs text-gray-500 mb-1">
               Quorum Threshold: {Math.round(quorumThreshold * 100)}%
@@ -2004,11 +2034,11 @@ function CreateProposalForm({
         // of the prior "ask an Admin" copy. Numbers from the orgSettings
         // prop (= currentOrg.settings, 12.5 B2) with fallback to 0.50/0.40.
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">Approval thresholds</p>
+          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">{['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) ? 'Participation requirement' : 'Approval thresholds'}</p>
           <p className="text-sm text-[#2C3E50]">
             This proposal will use the organization's defaults:{' '}
-            <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>
-            {' / '}
+            {!['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) && <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>}
+            {!['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) && ' / '}
             <strong>{Math.round((orgSettings?.default_quorum_threshold ?? 0.40) * 100)}% quorum</strong>.
           </p>
         </div>
@@ -2555,7 +2585,7 @@ function MultiImportReview({ items, slug, onDone, onCancel }) {
 
             {expanded === row.id && row.payload && (
               <div className="mt-2 ml-7 text-xs text-gray-600 bg-gray-50 border border-gray-100 rounded p-2 space-y-1">
-                <div><span className="font-medium">Method:</span> {row.payload.voting_method}</div>
+                <div><span className="font-medium">Method:</span> {votingMethodLabel(row.payload.voting_method)}</div>
                 {row.payload.body && (
                   <div><span className="font-medium">Body:</span> {String(row.payload.body).slice(0, 200)}{String(row.payload.body).length > 200 ? '…' : ''}</div>
                 )}
@@ -3245,6 +3275,7 @@ export default function ProposalManagement() {
                 >
                   <span className="flex-1 font-medium text-gray-800">
                     {p.title}
+                    {VOTING_METHODS[p.voting_method]?.experimental && <span className="ml-2 text-xs bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded">{votingMethodLabel(p.voting_method)}</span>}
                     {p.voting_method === 'approval' && (
                       <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">Approval</span>
                     )}

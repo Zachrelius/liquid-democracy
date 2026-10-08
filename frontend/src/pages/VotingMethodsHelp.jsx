@@ -40,6 +40,39 @@ export default function VotingMethodsHelp() {
         </ul>
       </section>
 
+      <section id="majority-judgment" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold">Majority Judgment — optional, single winner</h2>
+        <p className="text-sm">Give each option one verbal grade: Reject, Poor, Acceptable, Good, Very good, or Excellent. You may give equal grades. These are ordered descriptions, not numeric points to total or average.</p>
+        <p className="text-sm">The highest majority grade leads: the weighted median, using the lower middle grade when voting weight is even. If options tie, repeatedly remove one unit of their current median grades and compare again. The original grade distributions stay intact. Identical distributions use the committed draw order.</p>
+        <p className="text-sm">Ungraded options receive Reject, including write-ins added later. Selecting a grade does not submit your ballot. Explicitly submit, change or retract while voting is permitted. An all-Reject or empty grade ballot counts as participation and overrides delegation; abstention also overrides delegation but contributes no grades to any distribution.</p>
+        <p className="text-sm">No winner is produced if every grade is Reject, and quorum must be met. A live result requiring the draw cannot satisfy Stable Result Required. The final result reveals the seed used for any draw.</p>
+        <p className="text-sm">Majority Judgment is off by default and requires organization opt-in. It applies to ordinary single-winner proposals, excluding officeholder elections.</p>
+      </section>
+      <section id="ranked-pairs" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold">Ranked Pairs — optional, single winner</h2>
+        <p className="text-sm">Assign options to rank groups, with group 1 most preferred. Options in the same group are tied. Unranked options tie below all ranked options, including write-ins added after your vote. Use group menus and Move up/Move down buttons without dragging, then submit explicitly.</p>
+        <p className="text-sm">Each pair of options is compared head to head using represented voting weight. A tied ranking favors neither option. Victories are considered by descending winning margin, then winning support, then committed option priority. Each victory is locked unless it would form a cycle. The winner has no incoming locked defeat; multiple such options use the committed draw order.</p>
+        <p className="text-sm">This is the platform's fixed margins variant. Equal-strength edges may use the committed draw order, making live results provisional for Stable Result Required. The final result reveals the seed and records locked and skipped edges.</p>
+        <p className="text-sm">An entirely unranked ballot counts as participation and overrides delegation. Explicit abstention also overrides delegation but contributes no preferences. Retracting restores normal delegation fallback. If no strict preference is expressed, there is no winner; quorum must also be met.</p>
+        <p className="text-sm">Ranked Pairs is off by default and requires organization opt-in. It applies to ordinary single-winner proposals, excluding officeholder elections. It does not use first-choice totals or IRV elimination.</p>
+      </section>
+      <section id="score" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold">Score — optional, single winner</h2>
+        <p className="text-sm">Rate each option from 0 to 5 points. Equal ratings are allowed. The option with the highest weighted total points wins. There is no runoff or five-star tiebreak.</p>
+        <p className="text-sm">Unrated options receive zero, including later write-ins. Selecting a rating does not submit your ballot. Submit it explicitly; you may change or retract it while voting is permitted.</p>
+        <p className="text-sm">A neutral all-zero ballot counts as participation and overrides delegation. Explicit abstention also overrides delegation but contributes no points. Retracting restores ordinary delegation fallback.</p>
+        <p className="text-sm">Equal highest totals use the committed draw order, revealed at close. Live results relying on the draw cannot satisfy Stable Result Required. All-zero ballots produce no winner; quorum must also be met.</p>
+        <p className="text-sm">Total points are not approval percentages. Score is off by default and requires organization opt-in. It applies to ordinary single-winner proposals, excluding officeholder elections.</p>
+      </section>
+      <section id="star" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold">STAR — optional, single winner</h2>
+        <p className="text-sm">Rate each option from 0 to 5 stars, allowing equal ratings. The two highest total scores reach an automatic runoff. Your ballot supports the finalist you rated higher; equal ratings support neither. A rating click is not a submitted vote.</p>
+        <p className="text-sm">Unrated options receive zero, including write-ins added later. Organizations control early voting and write-ins. You can change a submitted ballot while voting is permitted. Delegation transfers one whole ballot, with each represented member’s own weight applied in both rounds.</p>
+        <p className="text-sm">Abstention overrides delegation and counts for participation but contributes no ratings. An all-zero ballot is also participation; if every rating is zero, no winner is selected. Quorum applies, but the binary yes/no pass threshold does not.</p>
+        <p className="text-sm">Score ties affecting finalists use preferences within the tied group, then five-star counts. Runoff ties use original total scores, then five-star counts. Remaining ties use a committed draw order, revealed with the final result. Live draw-dependent results cannot satisfy Stable Result Required.</p>
+        <p className="text-sm">STAR is off by default and must be enabled in organization settings. It selects one proposal option; officeholder elections and multiwinner STAR are outside this release.</p>
+      </section>
+
       {/* Binary */}
       <section className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
         <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Binary Voting (Yes / No / Abstain)</h2>

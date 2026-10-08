@@ -1,3 +1,10 @@
+import RankGroupsBallot from '../components/RankGroupsBallot';
+import { hasRankGroupsBallot } from '../utils/rankGroups';
+import { votingMethodLabel, experimentalOptionsLocked } from '../utils/votingMethods';
+import { refreshProposalVote, proposalClosedAt } from '../utils/proposalVoteRefresh';
+import RatedBallot from '../components/RatedBallot';
+import ExperimentalResultsPanel from '../components/ExperimentalResultsPanel';
+import { hasRatedBallot } from '../utils/ratedBallot';
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import api from '../api';
@@ -753,6 +760,11 @@ function VoteGraphLegend({ proposal, voteGraph }) {
     (n) => n.ballot === null && n.type !== 'non_voter' && n.vote_source !== 'delegation'
   );
 
+  if (method === 'majority_judgment') return <p className="text-xs text-gray-500">Majority Judgment uses verbal grades. See majority grades and distributions in the results.</p>;
+  if (method === 'ranked_pairs') return <p className="text-xs text-gray-500">Ranked Pairs compares head-to-head preferences and locks victories without creating cycles. See the pairwise results.</p>;
+  if (method === 'score') return <p className="text-xs text-gray-500">Score ballots use 0–5 points. The highest total points wins.</p>;
+  if (method === 'star') return <p className="text-xs text-gray-500">STAR ballots use 0–5 ratings. See the scoring round and automatic runoff in results.</p>;
+
   if (method === 'approval' || method === 'ranked_choice') {
     return (
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-gray-500">
@@ -940,7 +952,7 @@ function WriteInOptionAdder({ proposal, onAdded }) {
  * Server-side authoritative on permission (Phase 32 W3); this is the
  * pre-check render. Users without permission see no button.
  */
-function OptionRow({ option, index, proposal, currentUser, onDeleted }) {
+function OptionRow({ option, index, proposal, methodResult, currentUser, onDeleted }) {
   const toast = useToast();
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -948,7 +960,7 @@ function OptionRow({ option, index, proposal, currentUser, onDeleted }) {
   const isWriteIn = !!option.is_write_in;
   const isAdder = !!currentUser && option.added_by_user_id === currentUser.id;
   const isAdmin = !!currentUser && !!currentUser.is_admin;
-  const canDelete = isWriteIn && (isAdder || isAdmin);
+  const canDelete = isWriteIn && (isAdder || isAdmin) && !experimentalOptionsLocked(proposal, methodResult);
 
   async function handleDelete() {
     setSubmitting(true);
@@ -1645,6 +1657,7 @@ export default function ProposalDetail() {
     // button on ErrorMessage actually exits the error UI on a
     // successful refetch (same pattern as Delegations.jsx).
     setError('');
+    setVoteGraph(null);
     // Phase 80 — read-only viewers fetch the anon /public endpoints only
     // (detail + aggregate results). All the member-gated extras (my-vote,
     // vote-graph, delegations, verification-weight) are skipped — a stray
@@ -1659,7 +1672,7 @@ export default function ProposalDetail() {
         ]);
         if (p.status === 'fulfilled') setProposal(p.value);
         else throw p.reason;
-        if (t.status === 'fulfilled') setTally(t.value);
+        setTally(t.status === 'fulfilled' ? t.value : null);
         setMyVote(null);
         setVoteGraph(null);
         setDelegations([]);
@@ -1679,8 +1692,8 @@ export default function ProposalDetail() {
       ]);
       if (p.status === 'fulfilled') setProposal(p.value);
       else throw p.reason;
-      if (t.status === 'fulfilled') setTally(t.value);
-      if (mv.status === 'fulfilled') setMyVote(mv.value);
+      setTally(t.status === 'fulfilled' ? t.value : null);
+      setMyVote(mv.status === 'fulfilled' ? mv.value : null);
 
       // Fetch vote graph for voting/passed/failed
       const prop = p.status === 'fulfilled' ? p.value : null;
@@ -1922,21 +1935,13 @@ export default function ProposalDetail() {
   }, [proposal, currentOrg, userOrgs, readOnly]);
 
   const refreshVote = useCallback(async () => {
-    try {
-      const [t, mv] = await Promise.all([
-        api.get(`/api/proposals/${id}/results`),
-        api.get(`/api/proposals/${id}/my-vote`),
-      ]);
-      setTally(t);
-      setMyVote(mv);
-      // Also refresh vote graph
-      try {
-        const graph = await api.get(`/api/proposals/${id}/vote-graph`);
-        setVoteGraph(graph);
-      } catch {/* ignore */}
-    } catch {/* ignore */}
-  }, [id]);
-
+    const state = await refreshProposalVote(api, id);
+    setTally(state.tally);
+    setMyVote(state.myVote);
+    setVoteGraph(state.voteGraph);
+    if (state.ballotError) setError('Your ballot display could not be refreshed. Retry to verify your saved vote.');
+    else if (state.resultsError) toast.error('Results could not be refreshed. Please try again.');
+  }, [id, toast]);
   // Phase 46 F1 — cosign sign / withdraw handlers. The backend returns
   // the updated ProposalOut so we just merge it into our local state.
   async function handleCosignSign() {
@@ -1976,6 +1981,7 @@ export default function ProposalDetail() {
 
   const isVoting = proposal.status === 'voting';
   const isClosed = ['passed', 'failed', 'withdrawn'].includes(proposal.status);
+  const closedAt = proposalClosedAt(proposal, tally);
   const isDeliberation = proposal.status === 'deliberation';
   // Phase 59 A3 — extend edit gating to include draft status. Drafts
   // are the most permissive edit state (no audience yet); the lockout
@@ -2121,7 +2127,7 @@ export default function ProposalDetail() {
         </p>
         <ProposalForm
           slug={linkOrg?.slug}
-          orgSettings={currentOrg?.settings || {}}
+          orgSettings={{ ...(currentOrg?.settings || {}), ...(subOrg?.settings?.allowed_voting_methods != null ? { allowed_voting_methods: subOrg.settings.allowed_voting_methods } : {}) }}
           topics={editTopics}
           subOrgs={editSubOrgs}
           editingProposal={proposal}
@@ -2226,6 +2232,7 @@ export default function ProposalDetail() {
               <StatusBadge status={proposal.status} />
               {/* Phase 90c — headcount-counted proposal marker (weighted orgs). */}
               <CountModeBadge countMode={proposal.count_mode} />
+              {['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) && <span className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-800">{votingMethodLabel(proposal.voting_method)} · single winner</span>}
               {proposal.voting_method === 'approval' && (
                 <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Approval Vote</span>
               )}
@@ -2277,7 +2284,7 @@ export default function ProposalDetail() {
               Proposed by {proposal.author?.display_name}
               {proposal.created_at && ` · ${new Date(proposal.created_at).toLocaleDateString()}`}
               {proposal.voting_end && isVoting && ` · Closes ${new Date(proposal.voting_end).toLocaleString()}`}
-              {isClosed && proposal.voting_end && ` · Closed ${new Date(proposal.voting_end).toLocaleDateString()}`}
+              {isClosed && closedAt && ` · Closed ${new Date(closedAt).toLocaleDateString()}`}
               {/* Phase 86 (B-4) — subtle report affordance for non-author members. */}
               {!!user && isMember && proposal.author_id !== user.id && (
                 <>
@@ -2512,7 +2519,7 @@ export default function ProposalDetail() {
           )}
 
           {/* Options list for multi-option proposals (visible when not actively voting) */}
-          {(proposal.voting_method === 'approval' || proposal.voting_method === 'ranked_choice') && proposal.options?.length > 0 && !isVoting && (
+          {(['approval', 'ranked_choice', 'star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method)) && proposal.options?.length > 0 && (!isVoting || ['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method)) && (
             <div className="bg-white border border-gray-200 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Options</h3>
               <div className="space-y-2">
@@ -2522,6 +2529,7 @@ export default function ProposalDetail() {
                     option={opt}
                     index={idx}
                     proposal={proposal}
+                    methodResult={tally?.method_result}
                     currentUser={user}
                     onDeleted={fetchData}
                   />
@@ -2535,7 +2543,7 @@ export default function ProposalDetail() {
                   hides during voting to avoid duplicating the ballot UI;
                   the Adder still needs to surface).
                   Phase 80 — write-ins require membership; hidden read-only. */}
-              {!readOnly && (
+              {!readOnly && !isVoting && (
                 <WriteInOptionAdder
                   proposal={proposal}
                   onAdded={fetchData}
@@ -2563,13 +2571,13 @@ export default function ProposalDetail() {
               is true. The component self-gates on the resolver flags,
               so this returns null if write-ins-during-voting is off. */}
           {!readOnly
-            && (proposal.voting_method === 'approval' || proposal.voting_method === 'ranked_choice')
+            && (['approval', 'ranked_choice', 'star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method))
             && isVoting
             && proposal.effective_allow_write_in_options
             && proposal.effective_allow_write_ins_during_voting && (
             <div className="bg-white border border-gray-200 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-1">Add a write-in option</h3>
-              <p className="text-xs text-gray-500 mb-2">Write-in options added during voting become available immediately on the ballot.</p>
+              <p className="text-xs text-gray-500 mb-2">Write-in options added during voting become available immediately on the ballot.{['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) && (proposal.voting_method === 'majority_judgment' ? ' Existing ballots give them Reject until voters change their ballots.' : proposal.voting_method === 'ranked_pairs' ? ' Existing ballots leave them unranked, tied below every ranked option, until voters change their ballots.' : ` Existing ballots give them zero ${proposal.voting_method === 'score' ? 'points' : 'stars'} until voters change their ballots.`)}</p>
               <WriteInOptionAdder
                 proposal={proposal}
                 onAdded={fetchData}
@@ -2578,9 +2586,11 @@ export default function ProposalDetail() {
           )}
 
           {/* Results (desktop: shown inline; mobile: shown below vote panel) */}
-          {(isVoting || isClosed) && tally && (
+          {(isVoting || isClosed || (['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) && isDeliberation && proposal.effective_show_votes_during_deliberation === true)) && tally && (
             <div className="lg:hidden bg-white border border-gray-200 rounded-xl p-5">
-              {proposal.voting_method === 'approval' ? (
+              {['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) ? (
+                <ExperimentalResultsPanel tally={tally} proposal={proposal} />
+              ) : proposal.voting_method === 'approval' ? (
                 <ApprovalResultsPanel tally={tally} proposal={proposal} />
               ) : proposal.voting_method === 'ranked_choice' ? (
                 <RCVResultsPanel tally={tally} proposal={proposal} />
@@ -2775,7 +2785,9 @@ export default function ProposalDetail() {
                   Your vote carries {myVote.my_voting_weight} {currentOrg?.weighted_voting?.unit_label || 'shares'}
                 </div>
               )}
-              {proposal.voting_method === 'approval' ? (
+              {['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) ? (
+                proposal.voting_method === 'ranked_pairs' ? <RankGroupsBallot proposal={proposal} myVote={myVote} proposalId={id} onVoteChange={refreshVote} emailVerified={user?.email_verified} /> : <RatedBallot proposal={proposal} myVote={myVote} proposalId={id} onVoteChange={refreshVote} emailVerified={user?.email_verified} />
+              ) : proposal.voting_method === 'approval' ? (
                 <ApprovalBallot
                   proposal={proposal}
                   myVote={myVote}
@@ -2822,7 +2834,7 @@ export default function ProposalDetail() {
               <MyVoteRationaleBox
                 proposalId={id}
                 slug={linkOrg?.slug}
-                hasVote={!!(myVote?.vote_value || myVote?.approvals?.length || myVote?.ranking?.length)}
+                hasVote={!!(hasRankGroupsBallot(myVote) || hasRatedBallot(myVote) || myVote?.vote_value || myVote?.approvals?.length || myVote?.ranking?.length)}
               />
             </div>
           )}
@@ -2842,9 +2854,11 @@ export default function ProposalDetail() {
           )}
 
           {/* Results (desktop sidebar) */}
-          {(isVoting || isClosed) && tally && (
+          {(isVoting || isClosed || (['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) && isDeliberation && proposal.effective_show_votes_during_deliberation === true)) && tally && (
             <div className="hidden lg:block bg-white border border-gray-200 rounded-xl p-5">
-              {proposal.voting_method === 'approval' ? (
+              {['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) ? (
+                <ExperimentalResultsPanel tally={tally} proposal={proposal} />
+              ) : proposal.voting_method === 'approval' ? (
                 <ApprovalResultsPanel tally={tally} proposal={proposal} />
               ) : proposal.voting_method === 'ranked_choice' ? (
                 <RCVResultsPanel tally={tally} proposal={proposal} />
@@ -2897,6 +2911,7 @@ export default function ProposalDetail() {
           )}
 
           {isClosed && (() => {
+            if (['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method)) return <p className="rounded-xl border p-4 text-center font-semibold">{proposal.status === 'withdrawn' ? tally?.method_result?.finalized ? 'Archived — final result preserved' : 'Archived without a finalized decision' : proposal.status === 'passed' ? `${votingMethodLabel(proposal.voting_method)} decision finalized` : 'Closed without a finalized winner'}</p>;
             // Phase 67 W1 — election close banners. Quorum gates seat
             // installation: a passed election seated its winners
             // (announce them by display name); a failed election under
