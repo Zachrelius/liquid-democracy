@@ -58,9 +58,9 @@ function VoteRow({ vote, slug, rationale, allRationalesExpanded }) {
       </li>
     );
   }
-  const valueLabel = vote.vote_value
+  const valueLabel = vote.ballot_summary || (vote.vote_value
     ? vote.vote_value.toUpperCase()
-    : 'Voted';
+    : 'Voted');
   const colorClass =
     vote.vote_value === 'yes' ? 'text-[#2D8A56]'
     : vote.vote_value === 'no' ? 'text-[#C0392B]'

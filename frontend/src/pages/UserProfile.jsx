@@ -10,6 +10,7 @@ import TopicBadge from '../components/TopicBadge';
 
 function VoteRecordCell({ vote }) {
   const [expanded, setExpanded] = useState(false);
+  if (vote.ballot_summary) return <span className="text-sm text-gray-600">{vote.ballot_summary}</span>;
   if (vote.vote_value) {
     return (
       <span className={`text-sm font-medium ${
