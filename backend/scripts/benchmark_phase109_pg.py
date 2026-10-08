@@ -41,7 +41,7 @@ def child():
     from voting_methods import new_voting_rules
 
     method = os.environ.get("PHASE109_BENCHMARK_METHOD", "star")
-    if method not in ("star", "score", "ranked_pairs"):
+    if method not in ("star", "score", "ranked_pairs", "majority_judgment"):
         raise ValueError("Unsupported benchmark method")
     logging.disable(logging.CRITICAL)
     Base.metadata.create_all(engine)
@@ -54,8 +54,9 @@ def child():
         users = [models.User(id=str(uuid4()), username=f"p109_{i}", display_name=f"Synthetic {i}", email=f"p109_{i}@demo.example",
                              password_hash="synthetic-no-login", email_verified=True) for i in range(1000)]
         db.add_all(users); db.flush()
-        db.add_all([models.OrgMembership(org_id=org.id, user_id=u.id, role_id=roles["member"].id,
-                                        status="active") for u in users])
+        db.add_all([models.OrgMembership(org_id=org.id, user_id=u.id,
+                                        role_id=roles["steward" if i == 0 else "member"].id,
+                                        status="active") for i, u in enumerate(users)])
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         proposal = models.Proposal(title=f"Synthetic {method} concurrency", body="Synthetic",
                                    org_id=org.id, author_id=users[0].id, voting_method=method,
@@ -71,11 +72,58 @@ def child():
                                      delegate_id=users[i+1].id, chain_behavior="accept_sub"))
         db.add_all([models.Vote(proposal_id=proposal.id, user_id=u.id, cast_by_id=u.id,
                                is_direct=True, ballot=({"rank_groups": [[oid] for oid in rng.sample(option_ids, len(option_ids))]}
-                                                      if method == "ranked_pairs" else {"scores": {oid: rng.randrange(6) for oid in option_ids}}))
+                                                      if method == "ranked_pairs" else {("grades" if method == "majority_judgment" else "scores"): {oid: rng.randrange(6) for oid in option_ids}}))
                     for i, u in enumerate(users) if not 100 <= i < 200])
         proposal_id = proposal.id
         token = auth.create_access_token(users[0].id)
         db.commit()
+
+    async def option_close_races():
+        outcomes = []
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver",
+                                    headers={"Authorization": f"Bearer {token}"}) as client:
+            for race_method in ("star", "score", "ranked_pairs", "majority_judgment"):
+                with SessionLocal() as db:
+                    original = db.get(models.Proposal, proposal_id)
+                    raced = models.Proposal(title="Synthetic option-close race", body="Synthetic",
+                        org_id=original.org_id, author_id=original.author_id, voting_method=race_method,
+                        status="voting", voting_start=now, voting_end=now+timedelta(days=1),
+                        allow_write_in_options=True, allow_write_ins_during_voting=True, quorum_threshold=0)
+                    db.add(raced); db.flush()
+                    raced.voting_rules = new_voting_rules(race_method, raced.id)
+                    opts = [models.ProposalOption(proposal_id=raced.id, label=label) for label in ("A", "B")]
+                    db.add_all(opts); db.flush()
+                    field = "grades" if race_method == "majority_judgment" else "scores"
+                    expression = ({"rank_groups": [[opts[0].id]]} if race_method == "ranked_pairs" else
+                                  {field: {opts[0].id: 5}})
+                    db.add(models.Vote(proposal_id=raced.id, user_id=original.author_id,
+                                       cast_by_id=original.author_id, is_direct=True, ballot=expression))
+                    race_id = raced.id
+                    db.commit()
+                path = f"/api/proposals/{race_id}"
+                added, closed = await asyncio.gather(
+                    client.post(path+"/options", json={"label": "Racing late option"}),
+                    client.post(path+"/advance", json={}))
+                assert closed.status_code == 200, closed.text
+                assert added.status_code in (201, 400), added.text
+                with SessionLocal() as db:
+                    final = db.get(models.Proposal, race_id).final_method_result
+                    current = {o.id for o in db.query(models.ProposalOption).filter_by(proposal_id=race_id)}
+                    assert set(final["option_labels"]) == current
+                    aggregates = final["tally"]["method_result"]
+                    field = {"star": "scores", "score": "scores", "ranked_pairs": "pairwise",
+                             "majority_judgment": "grade_histograms"}[race_method]
+                    assert set(aggregates[field]) == current
+                    if added.status_code == 201:
+                        assert added.json()["id"] in current
+                    else:
+                        assert len(current) == 2
+                    assert db.query(models.AuditLog).filter_by(target_id=race_id, action="proposal.status_changed").count() == 1
+                    assert final["notification_intent_staged"]
+                assert (await client.post(path+"/options", json={"label": "Too late"})).status_code == 400
+                outcomes.append({"method": race_method, "option_status": added.status_code,
+                                 "close_status": closed.status_code, "consistent_frozen_options": True})
+        return outcomes
 
     counts = ContextVar("phase109_queries", default=None)
     @event.listens_for(engine, "before_cursor_execute")
@@ -107,7 +155,7 @@ def child():
                     try:
                         if kind == "vote":
                             payload = ({"rank_groups": [[option_ids[i % 2]], [option_ids[1 - i % 2]]]}
-                                       if method == "ranked_pairs" else {"scores": {option_ids[0]: 5, option_ids[1]: i % 5}})
+                                       if method == "ranked_pairs" else {("grades" if method == "majority_judgment" else "scores"): {option_ids[0]: 5, option_ids[1]: i % 5}})
                             response = await client.post(path+"/vote", json=payload)
                         else:
                             response = await client.get(path+"/results")
@@ -152,6 +200,9 @@ def child():
     if trace_memory:
         _, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
+    # Separate from the measured workload: exercise all four methods' row-lock
+    # serialization against actual PostgreSQL, not a mocked lock callback.
+    race_outcomes = asyncio.run(option_close_races())
     checked_out_after = engine.pool.checkedout()
     with engine.connect() as connection:
         waiting = connection.execute(text("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'")).scalar()
@@ -170,7 +221,8 @@ def child():
               "pool_capacity": 5, "peak_checked_out": max(samples or [0]),
               "checked_out_after": checked_out_after, "waiting_locks_after": waiting,
               "idle_in_transaction_over_5s_after": idle,
-              "statuses": dict(Counter(str(r["status"]) for r in metrics)), "operations": summary}
+              "statuses": dict(Counter(str(r["status"]) for r in metrics)), "operations": summary,
+              "option_close_races": race_outcomes}
     assert checked_out_after == 0 and waiting == 0 and idle == 0
     print(json.dumps(report, indent=2))
     engine.dispose()
