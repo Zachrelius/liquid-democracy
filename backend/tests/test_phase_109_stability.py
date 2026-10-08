@@ -19,7 +19,7 @@ def stable(method, points):
     return evaluate_extension_stability(method, points, 0.5, NOW, timedelta(minutes=10))
 
 
-@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs"])
+@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs", "majority_judgment"])
 def test_full_window_evidence_required(method):
     assert stable(method, [point(-11), point(-5), point(0)])
     assert not stable(method, [point(-9), point(0)])
@@ -32,18 +32,18 @@ def test_full_window_evidence_required(method):
     {"option_set_version": None}, {"quorum_met": False},
     {"meaningful": False}, {"priority_used": True},
 ])
-@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs"])
+@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs", "majority_judgment"])
 def test_any_in_window_breach_prevents_stability(change, method):
     assert not stable(method, [point(-11), point(-5, **change), point(0)])
 
 
-@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs"])
+@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs", "majority_judgment"])
 def test_old_breach_expires_and_no_future_evidence(method):
     assert stable(method, [point(-20, priority_used=True), point(-11), point(0)])
     assert not stable(method, [point(-5), point(5)])
 
 
-@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs"])
+@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs", "majority_judgment"])
 def test_original_window_applies_same_experimental_rules(method):
     def evaluate(points, now=NOW):
         return evaluate_original_window_stability(method, points, 0.5, NOW-timedelta(minutes=100),
@@ -54,7 +54,7 @@ def test_original_window_applies_same_experimental_rules(method):
     assert not evaluate([point(-50, priority_used=True)], NOW-timedelta(minutes=20)).destabilized
 
 
-@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs"])
+@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs", "majority_judgment"])
 def test_snapshot_exact_counts_and_worker_atomic_finalization(db, method):
     import models
     from tests.conftest import make_user, make_org_membership
@@ -73,7 +73,7 @@ def test_snapshot_exact_counts_and_worker_atomic_finalization(db, method):
     opts = [models.ProposalOption(proposal_id=proposal.id, label=name) for name in ("A", "B")]
     db.add_all(opts); db.flush()
     db.add(models.Vote(proposal_id=proposal.id, user_id=user.id, cast_by_id=user.id,
-                       is_direct=True, ballot=({"rank_groups": [[opts[0].id]]} if method == "ranked_pairs" else {"scores": {opts[0].id: 5}})))
+                       is_direct=True, ballot=({"rank_groups": [[opts[0].id]]} if method == "ranked_pairs" else {("grades" if method == "majority_judgment" else "scores"): {opts[0].id: 5}})))
     db.flush()
     snapshot = capture_snapshot(db, proposal, simulated_time=NOW)
     assert snapshot.total_eligible == 0  # no overflow in legacy PG int32 columns
@@ -99,7 +99,7 @@ def test_snapshot_exact_counts_and_worker_atomic_finalization(db, method):
     ("tied", "passed", None),
     ("quorum", "failed", None),
 ])
-@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs"])
+@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs", "majority_judgment"])
 def test_missing_snapshot_evidence_exhausts_bounded_extensions_then_closes(
         db, monkeypatch, expression, expected_status, reason, method):
     import models
@@ -138,6 +138,8 @@ def test_missing_snapshot_evidence_exhausts_bounded_extensions_then_closes(
                 make_org_membership(db, org_id=org.id, user_id=other.id)
                 db.add(models.Vote(proposal_id=proposal.id, user_id=other.id, cast_by_id=other.id, is_direct=True,
                                    ballot={"rank_groups": [[options[1].id]]}))
+        if method == "majority_judgment" and "scores" in ballot:
+            ballot = {"grades": ballot["scores"]}
         db.add(models.Vote(proposal_id=proposal.id, user_id=user.id, cast_by_id=user.id,
                            is_direct=True, ballot=ballot))
     db.commit()
@@ -171,7 +173,7 @@ def test_missing_snapshot_evidence_exhausts_bounded_extensions_then_closes(
     assert db.query(models.AuditLog).filter_by(target_id=proposal.id).count() == audits
 
 
-@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs"])
+@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs", "majority_judgment"])
 def test_capture_software_failure_propagates_without_fabricated_final_result(db, monkeypatch, method):
     import models
     import sustained_majority_worker as worker
@@ -194,7 +196,7 @@ def test_capture_software_failure_propagates_without_fabricated_final_result(db,
     assert proposal.status == "voting" and proposal.final_method_result is None
 
 
-@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs"])
+@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs", "majority_judgment"])
 def test_worker_notification_failure_rolls_back_close_then_retry_once(db, monkeypatch, method):
     import models
     import sustained_majority_worker as worker
@@ -212,7 +214,7 @@ def test_worker_notification_failure_rolls_back_close_then_retry_once(db, monkey
     options = [models.ProposalOption(proposal_id=proposal.id, label=name) for name in ("A", "B")]
     db.add_all(options); db.flush()
     db.add(models.Vote(proposal_id=proposal.id, user_id=user.id, cast_by_id=user.id,
-                       is_direct=True, ballot=({"rank_groups": [[options[0].id]]} if method == "ranked_pairs" else {"scores": {options[0].id: 5}})))
+                       is_direct=True, ballot=({"rank_groups": [[options[0].id]]} if method == "ranked_pairs" else {("grades" if method == "majority_judgment" else "scores"): {options[0].id: 5}})))
     db.add(models.NotificationPreference(user_id=user.id, event_type="proposal.closed",
                                          channel="in_app", enabled=True))
     # Historical voters who have lost visibility or account access must not
@@ -223,7 +225,7 @@ def test_worker_notification_failure_rolls_back_close_then_retry_once(db, monkey
         if inactive:
             make_org_membership(db, org_id=org.id, user_id=former.id)
         db.add(models.Vote(proposal_id=proposal.id, user_id=former.id, cast_by_id=former.id,
-                           is_direct=True, ballot=({"rank_groups": [[options[0].id]]} if method == "ranked_pairs" else {"scores": {options[0].id: 5}})))
+                           is_direct=True, ballot=({"rank_groups": [[options[0].id]]} if method == "ranked_pairs" else {("grades" if method == "majority_judgment" else "scores"): {options[0].id: 5}})))
         db.add(models.NotificationPreference(user_id=former.id, event_type="proposal.closed",
                                              channel="in_app", enabled=True))
     db.commit()

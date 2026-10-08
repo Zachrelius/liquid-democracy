@@ -21,7 +21,7 @@ from voting_methods import (
 def test_default_and_release_lists_do_not_opt_in_experiments():
     assert DEFAULT_ENABLED_VOTING_METHODS == (
         "binary", "approval", "ranked_choice", "budget_allocation", "budget_project")
-    assert available_voting_methods() == LEGACY_VOTING_METHODS + ("star", "score", "ranked_pairs")
+    assert available_voting_methods() == LEGACY_VOTING_METHODS + EXPERIMENTAL_VOTING_METHODS
     assert not set(DEFAULT_ENABLED_VOTING_METHODS) & set(EXPERIMENTAL_VOTING_METHODS)
 
 

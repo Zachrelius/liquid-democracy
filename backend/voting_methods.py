@@ -15,7 +15,7 @@ LEGACY_VOTING_METHODS = (
 )
 EXPERIMENTAL_VOTING_METHODS = ("star", "score", "ranked_pairs", "majority_judgment")
 DEFAULT_ENABLED_VOTING_METHODS = LEGACY_VOTING_METHODS
-RELEASED_EXPERIMENTAL_METHODS: tuple[str, ...] = ("star", "score", "ranked_pairs")
+RELEASED_EXPERIMENTAL_METHODS: tuple[str, ...] = EXPERIMENTAL_VOTING_METHODS
 GRADE_LABELS = ("Reject", "Poor", "Acceptable", "Good", "Very good", "Excellent")
 RULE_IDS = {
     "star": "star_0_5_v1",

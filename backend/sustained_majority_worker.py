@@ -184,7 +184,7 @@ def _snapshot_points_for(
             payload = r.multi_option_winners or {}
             winners = tuple(payload.get("winners", []) or [])
             total_cast = int(payload.get("total_ballots_cast", 0) or 0)
-            if proposal.voting_method in ("star", "score", "ranked_pairs"):
+            if proposal.voting_method in ("star", "score", "ranked_pairs", "majority_judgment"):
                 from sustained_majority import ExperimentalSnapshotPoint
                 result = payload.get("method_result") or {}
                 from voting_methods import RULE_IDS
@@ -279,7 +279,7 @@ def _emit_proposal_closed_for_stability(
     """Emit ``proposal.closed`` with ``trigger: stable_result_achieved`` when
     the worker closes a proposal early because sliding-window stability
     succeeded during an extension."""
-    if proposal.voting_method in ("star", "score", "ranked_pairs"):
+    if proposal.voting_method in ("star", "score", "ranked_pairs", "majority_judgment"):
         return  # staged atomically inside _close_proposal_now
     if not NOTIFICATION_EMIT_AVAILABLE:
         return
@@ -355,9 +355,9 @@ def _build_outcome_detail(
     if new_status == "failed" and not quorum_met:
         return "failed (quorum not met)"
 
-    if proposal.voting_method in ("star", "score", "ranked_pairs"):
+    if proposal.voting_method in ("star", "score", "ranked_pairs", "majority_judgment"):
         # Keep rich aggregates/labels on the permissioned result surface.
-        name = {"star": "STAR", "score": "Score", "ranked_pairs": "Ranked Pairs"}[proposal.voting_method]
+        name = {"star": "STAR", "score": "Score", "ranked_pairs": "Ranked Pairs", "majority_judgment": "Majority Judgment"}[proposal.voting_method]
         return f"passed ({name} result available)" if new_status == "passed" else f"failed (no {name} winner)"
 
     if proposal.voting_method == "approval" and isinstance(tally, ApprovalTally):
@@ -397,7 +397,7 @@ def _emit_proposal_closed_natural(
     ``_emit_proposal_closed_for_stability`` but with a different trigger
     string + an ``outcome_detail`` field carrying per-method outcome copy.
     """
-    if proposal.voting_method in ("star", "score", "ranked_pairs"):
+    if proposal.voting_method in ("star", "score", "ranked_pairs", "majority_judgment"):
         return  # staged atomically inside _close_proposal_now
     if not NOTIFICATION_EMIT_AVAILABLE:
         return
@@ -620,7 +620,7 @@ def _close_proposal_now(
             "trigger": trigger,
         },
     )
-    if proposal.voting_method in ("star", "score", "ranked_pairs"):
+    if proposal.voting_method in ("star", "score", "ranked_pairs", "majority_judgment"):
         _stage_experimental_closed(db, proposal, old_status=old_status,
                                    new_status=new_status, trigger=trigger)
         proposal.final_method_result = {
@@ -705,7 +705,7 @@ def evaluate_proposal(
     # Missing experimental evidence is instability, not permission to wait
     # forever. Feed it to the pure evaluator so the bounded extension budget
     # and eventual deadline close still apply. Keep legacy behavior unchanged.
-    if not snapshots and proposal.voting_method not in ("star", "score", "ranked_pairs"):
+    if not snapshots and proposal.voting_method not in ("star", "score", "ranked_pairs", "majority_judgment"):
         return None
 
     # 3. Reconstruct the original voting duration (= current span minus all

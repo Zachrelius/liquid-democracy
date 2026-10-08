@@ -7,7 +7,7 @@ from tests.conftest import make_user, make_org_membership, make_sub_org_membersh
 from voting_methods import new_voting_rules
 
 
-@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs"])
+@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs", "majority_judgment"])
 @pytest.mark.parametrize("count_mode", ["weighted", "one_per_member"])
 def test_suborg_members_only_and_cross_org_delegation_ignored(db, method, count_mode):
     parent = models.Organization(name="Parent", slug="scope-parent", settings={
@@ -33,7 +33,7 @@ def test_suborg_members_only_and_cross_org_delegation_ignored(db, method, count_
     db.add_all(options); db.flush()
     a, b = (option.id for option in options)
     def payload(oid):
-        return {"rank_groups": [[oid]]} if method == "ranked_pairs" else {"scores": {oid: 5}}
+        return {"rank_groups": [[oid]]} if method == "ranked_pairs" else {("grades" if method == "majority_judgment" else "scores"): {oid: 5}}
     for user, oid in ((delegate, a), (outsider, b), (parent_only, b)):
         db.add(models.Vote(proposal_id=proposal.id, user_id=user.id, cast_by_id=user.id,
                            is_direct=True, ballot=payload(oid)))
@@ -55,5 +55,8 @@ def test_suborg_members_only_and_cross_org_delegation_ignored(db, method, count_
     if method == "ranked_pairs":
         assert after.method_result["pairwise"][a][b] == after.total_eligible
         assert after.method_result["pairwise"][b][a] == 0
+    elif method == "majority_judgment":
+        assert after.method_result["grade_histograms"][a] == [0, 0, 0, 0, 0, after.total_eligible]
+        assert after.method_result["grade_histograms"][b] == [after.total_eligible, 0, 0, 0, 0, 0]
     else:
         assert after.method_result["scores"] == {a: 5 * after.total_eligible, b: 0}

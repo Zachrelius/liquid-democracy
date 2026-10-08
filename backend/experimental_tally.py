@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from fractions import Fraction
 
 from experimental_ballots import MAX_BALLOT_OPTIONS, validate_ballot
-from voting_methods import RULE_IDS, candidate_priority, option_set_version, validate_voting_rules
+from voting_methods import GRADE_LABELS, RULE_IDS, candidate_priority, option_set_version, validate_voting_rules
 
 
 @dataclass
@@ -57,7 +57,7 @@ class ExperimentalTally:
             if type(value[key]) is not int or value[key] < 0:
                 raise ValueError("Invalid persisted participation count")
         result = value["method_result"]
-        if (not isinstance(result, dict) or result.get("method") not in ("star", "score", "ranked_pairs")
+        if (not isinstance(result, dict) or result.get("method") not in RULE_IDS
                 or result.get("rule_id") != RULE_IDS[result["method"]]
                 or type(result.get("priority_used")) is not bool
                 or "winner" not in result or "no_result_reason" not in result):
@@ -73,6 +73,9 @@ class ExperimentalTally:
             raise ValueError("Inconsistent persisted participation count")
         if value["total_abstain"] > value["total_ballots_cast"]:
             raise ValueError("Inconsistent persisted abstention count")
+        if result["method"] == "majority_judgment":
+            _validate_mj_record(result, value["total_ballots_cast"] - value["total_abstain"], record)
+            return cls(**value)
         if result["method"] == "ranked_pairs":
             _validate_ranked_pairs_record(result, value["total_ballots_cast"] - value["total_abstain"], record)
             return cls(**value)
@@ -146,7 +149,8 @@ def public_tally(tally: ExperimentalTally) -> dict:
         if type(value) is int:
             return str(value)
         if isinstance(value, dict):
-            return {key: convert(item) for key, item in value.items()}
+            return {key: deepcopy(item) if key == "majority_grades" else convert(item)
+                    for key, item in value.items()}
         if isinstance(value, list):
             return [convert(item) for item in value]
         return value
@@ -212,6 +216,164 @@ def count_score(option_ids, weighted_ballots, rules, proposal_id) -> Experimenta
         result["tie_trace"] = [{"stage": "score_priority", "pool": sorted(tied)}]
     result["winner"] = min(tied, key=lambda oid: candidate_priority(rules, proposal_id, oid))
     return tally
+
+
+def _lower_median(histogram):
+    target = (sum(histogram) + 1) // 2
+    if target == 0:
+        return None
+    cumulative = 0
+    for grade, count in enumerate(histogram):
+        cumulative += count
+        if cumulative >= target:
+            return grade
+
+
+def _median_pair_runs(histogram):
+    """Run-length encode the exact median-removal sequence in pairs.
+
+    For even N=2k, removal visits sorted positions k,k+1,k-1,k+2,... .
+    For odd N=2k+1, first remove k+1, then k,k+2,k-1,k+3,... .
+    The descending lower half and ascending upper half therefore interleave.
+    Six histogram bins produce at most eleven pair runs, regardless of N.
+    """
+    remaining = list(histogram)
+    needed = sum(remaining) // 2
+    lower = []
+    for grade in range(6):
+        take = min(needed, remaining[grade])
+        if take:
+            lower.append([grade, take])
+            remaining[grade] -= take
+            needed -= take
+    if sum(histogram) % 2:
+        remaining[next(g for g, n in enumerate(remaining) if n)] -= 1
+    lower.reverse()
+    upper = [[g, n] for g, n in enumerate(remaining) if n]
+    runs = []
+    left = right = 0
+    while left < len(lower):
+        take = min(lower[left][1], upper[right][1])
+        runs.append((lower[left][0], upper[right][0], take))
+        lower[left][1] -= take
+        upper[right][1] -= take
+        if not lower[left][1]:
+            left += 1
+        if not upper[right][1]:
+            right += 1
+    return runs
+
+
+def _mj_outcome(histograms, priority):
+    initial = {oid: _lower_median(histogram) for oid, histogram in histograms.items()}
+    best = max(initial.values())
+    pool = sorted(oid for oid in histograms if initial[oid] == best)
+    trace = []
+    runs = {oid: _median_pair_runs(histograms[oid]) for oid in pool}
+    positions = dict.fromkeys(pool, 0)
+    consumed = dict.fromkeys(pool, 0)
+    removed = sum(next(iter(histograms.values()))) % 2
+    while len(pool) > 1 and positions[pool[0]] < len(runs[pool[0]]):
+        for half in (0, 1):
+            grades = {oid: runs[oid][positions[oid]][half] for oid in pool}
+            maximum = max(grades.values())
+            survivors = [oid for oid in pool if grades[oid] == maximum]
+            if len(survivors) < len(pool):
+                trace.append({"stage": "median_removal", "pool": pool,
+                              "removed_per_candidate": removed + half,
+                              "majority_grades": grades, "remaining_candidates": survivors})
+                pool = survivors
+            if len(pool) == 1:
+                break
+        if len(pool) == 1:
+            break
+        # All surviving candidates share this pair of medians. Jump the
+        # complete common run, including potentially trillions of removals.
+        jump = min(runs[oid][positions[oid]][2] - consumed[oid] for oid in pool)
+        for oid in pool:
+            consumed[oid] += jump
+            if consumed[oid] == runs[oid][positions[oid]][2]:
+                positions[oid] += 1
+                consumed[oid] = 0
+        removed += 2 * jump
+    priority_used = len(pool) > 1
+    if priority_used:
+        trace.append({"stage": "identical_distribution_priority", "pool": pool})
+    return {"majority_grades": initial, "winner": min(pool, key=lambda oid: priority[oid]),
+            "tie_trace": trace, "priority_used": priority_used}
+
+
+def count_majority_judgment(option_ids, weighted_ballots, rules, proposal_id):
+    validate_voting_rules(rules, "majority_judgment", proposal_id)
+    ids = list(option_ids)
+    if len(ids) > MAX_BALLOT_OPTIONS:
+        raise ValueError("Too many voting options")
+    version = option_set_version(ids)
+    histograms = {oid: [0] * 6 for oid in ids}
+    total = abstain = headcount = 0
+    for payload, weight in weighted_ballots:
+        if type(weight) is not int or weight < 0:
+            raise ValueError("Voting weight must be a nonnegative integer")
+        ballot = validate_ballot("majority_judgment", payload, ids)
+        total += weight
+        headcount += 1
+        if ballot.get("abstain"):
+            abstain += weight
+            continue
+        for oid in ids:
+            histograms[oid][ballot["grades"].get(oid, 0)] += weight
+    preference_weight = total - abstain
+    reason = ("fewer_than_two_options" if len(ids) < 2 else
+              "no_positive_weight_preferences" if preference_weight == 0 else
+              "all_bottom_ratings" if not any(any(h[1:]) for h in histograms.values()) else None)
+    result = {"method": "majority_judgment", "rule_id": rules["rule_id"],
+              "grade_histograms": histograms, "majority_grades": {oid: _lower_median(h) for oid, h in histograms.items()},
+              "grade_labels": list(GRADE_LABELS), "preference_weight": preference_weight,
+              "winner": None, "tie_trace": [], "priority_used": False,
+              "no_result_reason": reason, "option_set_version": version}
+    if reason is None:
+        result.update(_mj_outcome(histograms, {oid: candidate_priority(rules, proposal_id, oid) for oid in ids}))
+    return ExperimentalTally(result, total_eligible=total, total_ballots_cast=total,
+                             total_abstain=abstain, eligible_headcount=headcount,
+                             participating_headcount=headcount)
+
+
+def _validate_mj_record(result, preference_weight, record):
+    histograms = result.get("grade_histograms")
+    if (not isinstance(histograms, dict) or len(histograms) > MAX_BALLOT_OPTIONS
+            or type(result.get("preference_weight")) is not int
+            or result["preference_weight"] != preference_weight
+            or result.get("grade_labels") != list(GRADE_LABELS)):
+        raise ValueError("Invalid persisted Majority Judgment histograms")
+    for histogram in histograms.values():
+        if (not isinstance(histogram, list) or len(histogram) != 6
+                or any(type(n) is not int or n < 0 for n in histogram)
+                or sum(histogram) != preference_weight):
+            raise ValueError("Invalid persisted grade frequencies")
+    if result.get("option_set_version") != option_set_version(histograms):
+        raise ValueError("Invalid persisted option set version")
+    reason = ("fewer_than_two_options" if len(histograms) < 2 else
+              "no_positive_weight_preferences" if preference_weight == 0 else
+              "all_bottom_ratings" if not any(any(h[1:]) for h in histograms.values()) else None)
+    if result["no_result_reason"] != reason:
+        raise ValueError("Persisted Majority Judgment reason contradicts histograms")
+    initial = {oid: _lower_median(h) for oid, h in histograms.items()}
+    displayed = result.get("majority_grades")
+    if (displayed != initial or not isinstance(displayed, dict)
+            or any(code is not None and type(code) is not int for code in displayed.values())):
+        raise ValueError("Persisted majority grades contradict histograms")
+    if reason is not None:
+        if result["winner"] is not None or result["priority_used"] or result.get("tie_trace") != []:
+            raise ValueError("No-result record contains Majority Judgment winner")
+        return
+    if not isinstance(record.get("rules"), dict) or "tie_seed" not in record:
+        raise ValueError("Final Majority Judgment record requires frozen rules and seed")
+    rules = {**record["rules"], "tie_seed": record["tie_seed"]}
+    proposal_id = rules.get("proposal_id")
+    validate_voting_rules(rules, "majority_judgment", proposal_id)
+    expected = _mj_outcome(histograms, {oid: candidate_priority(rules, proposal_id, oid) for oid in histograms})
+    if any(result.get(field) != value for field, value in expected.items()):
+        raise ValueError("Persisted Majority Judgment result contradicts histograms/rules")
 
 
 def _ranked_pairs_graph(pairwise, priority):
