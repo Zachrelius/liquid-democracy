@@ -4638,15 +4638,16 @@ Railway backend deployment `00fa12d4-4fba-4fd2-b2f3-fd38f8784243` is **SUCCESS**
 
 ---
 
-## Phase 109 — Experimental Single Winner Methods — W4 in progress (2026-10-08)
+## Phase 109 — Experimental Single Winner Methods — W5 in progress (2026-10-08)
 
 Approved spec: `phase109_experimental_single_winner_methods_spec.md`. Isolated branch
 `phase-109/experimental-single-winner-methods` from refreshed `0096997`; original
 dirty planning checkout preserved. **Not merged, pushed or deployed.** W0 shared
 foundation is done. Z resolved the Chrome password-manager popup by completing
 local login. W1 STAR, W2 Score and W3 Ranked Pairs now passed their sequential
-automated and local rendered browser gates. W4 Majority Judgment is active;
-W5 final regression, integration and deployment are **NOT STARTED**.
+automated and local rendered browser gates. W4 Majority Judgment has also passed
+its complete local gate. W5 final regression and integration review passed;
+release integration and deployment verification are in progress.
 
 Evidence and restart context: `docs/phase109_execution.md`,
 `docs/phase109_star_backend_evidence.md`, `frontend/PHASE109_QA.md`.
@@ -4665,4 +4666,16 @@ keyboard controls, cast/change/retract, delegated ballots, write-ins, early
 privacy and admin close/frozen results. STAR browser review found and fixed
 duplicate results, preliminary-ballot refresh and close-date display issues.
 Evidence and screenshots are recorded in `docs/phase109_execution.md` and
-`test_results/phase109/`. Latest completed-stage checkpoint: `051823b`.
+`test_results/phase109/`. W4 evidence checkpoint: `9e266b0`. Majority Judgment
+agrees with 82,993 exhaustive histogram pairs and 2,000 random literal-removal
+profiles. Actual PostgreSQL option-add/close races pass for all four methods.
+Frontend integration fixes preserve archived final results and hide mutation
+controls; Chrome reverified them. Final frontend suite: 124 passing tests.
+Production QA helpers are prepared and locally tested but have not executed.
+
+Final full backend regression: **3,602 passed / 21 skipped / zero failures**
+in 1,499.91 seconds. Six subsequently added worker-helper tests also passed:
+**3,608 distinct passing cases**, +364 versus Phase 108. Optional STAR oracle
+was verified separately; existing environment skips remain. Final frontend:
+124 passing tests, bundle `index-BYrMsS6k.js`. Detailed closeout is being
+recorded in `docs/phase109_closeout.md`; production gates remain pending.

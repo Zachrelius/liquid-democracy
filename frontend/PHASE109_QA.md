@@ -249,3 +249,7 @@ and the authoritative finalized result flag, preserving legacy behavior.
 archive/early-state boundary regression; helper/test lint passes. Build:
 `index-BYrMsS6k.js`. The full suite was not repeated for this bounded follow-up
 (previous full 123 passed; one additional regression is now present).
+
+The lead subsequently reran the complete final frontend suite: **124 passed,
+zero failures**. Chrome confirmed the archived winner/banner with removal
+controls absent, and confirmed native Score arrow-key selection and focus.

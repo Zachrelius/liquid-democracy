@@ -144,10 +144,27 @@ notification-opted-out and collision-refusing, locally tested but NOT EXECUTED.
 
 No production data, secrets, or infrastructure configuration changed.
 
+W5 release preparation: refreshed `origin/master` still resolves to `0096997`.
+The isolated integration checkout is detached at that baseline, preserving the
+dirty original master checkout. Railway SSH reports Python 3.11.16 and migration
+`f8a9b0c1d2e3`; the last successful backend is Phase 108 `224e553`, deployment
+`00fa12d4-4fba-4fd2-b2f3-fd38f8784243`. Production health, readiness and monitor
+are healthy; baseline frontend bundle is `index-DKjP7ryU.js`.
+
+Final frontend suite is 124 passing tests. A final Score keyboard check directly
+observed native ArrowRight moving both focus and checked state from zero to one;
+Cancel preserved the previously submitted neutral ballot. The complete backend
+regression is still running. Private release bootstrap, API driver and scoped
+worker helper passed 14 local tests in total, but production execution remains
+pending. Helpers refuse scope collisions and do not reset existing fixtures.
+
 ## Remaining gates and known limitations
 
-Final integration still requires the complete four-method
-matrix, full regression, exact deployment checks and production browser QA.
+Final regression completed: 3,602 passed, 21 skipped, zero failures in
+1,499.91 seconds (`pytest -n 4`). Six subsequent worker-helper tests passed
+separately, giving 3,608 distinct passing cases (+364 over Phase 108).
+The interrupted sequential attempt is not a passed check. All local gates
+are satisfied; exact deployment and isolated production QA remain pending.
 
 The existing immediate-email mechanism is not a durable outbox, and worker
 `BackgroundTasks` lack an HTTP response cycle. Atomic close coverage applies to
