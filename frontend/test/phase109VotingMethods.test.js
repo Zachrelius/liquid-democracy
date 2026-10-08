@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   VOTING_METHODS, FALLBACK_ENABLED_METHODS, MAJORITY_JUDGMENT_GRADES,
-  selectableVotingMethods, toggleAllowedVotingMethod, votingMethodLabel, draftMethodResetFields, unchangedOptionText,
+  selectableVotingMethods, toggleAllowedVotingMethod, votingMethodLabel, draftMethodResetFields, unchangedOptionText, experimentalOptionsLocked,
 } from '../src/utils/votingMethods.js';
 
 test('legacy defaults remain binary and method labels remain unchanged', () => {
@@ -90,4 +90,17 @@ test('Majority Judgment stays independently opted in and grade conversion needs 
   assert.deepEqual(toggleAllowedVotingMethod(['binary', 'star', 'score', 'ranked_pairs'], 'majority_judgment', true), ['binary', 'star', 'score', 'ranked_pairs', 'majority_judgment']);
   assert.throws(() => draftMethodResetFields('score', 'majority_judgment', false), /Confirm/);
   assert.deepEqual(draftMethodResetFields('score', 'majority_judgment', true), { confirm_ballot_reset: true });
+});
+
+
+test('archived and finalized experimental options cannot expose write-in mutation controls', () => {
+  for (const voting_method of ['star', 'score', 'ranked_pairs', 'majority_judgment']) {
+    for (const status of ['passed', 'failed', 'closed', 'withdrawn', 'unresolved']) {
+      assert.equal(experimentalOptionsLocked({ voting_method, status }), true);
+    }
+    assert.equal(experimentalOptionsLocked({ voting_method, status: 'voting' }, { finalized: true }), true);
+    assert.equal(experimentalOptionsLocked({ voting_method, status: 'voting' }, { finalized: false }), false);
+    assert.equal(experimentalOptionsLocked({ voting_method, status: 'deliberation' }), false);
+  }
+  assert.equal(experimentalOptionsLocked({ voting_method: 'approval', status: 'withdrawn' }), false);
 });

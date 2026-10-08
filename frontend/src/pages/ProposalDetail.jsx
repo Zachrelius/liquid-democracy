@@ -1,6 +1,6 @@
 import RankGroupsBallot from '../components/RankGroupsBallot';
 import { hasRankGroupsBallot } from '../utils/rankGroups';
-import { votingMethodLabel } from '../utils/votingMethods';
+import { votingMethodLabel, experimentalOptionsLocked } from '../utils/votingMethods';
 import { refreshProposalVote, proposalClosedAt } from '../utils/proposalVoteRefresh';
 import RatedBallot from '../components/RatedBallot';
 import ExperimentalResultsPanel from '../components/ExperimentalResultsPanel';
@@ -952,7 +952,7 @@ function WriteInOptionAdder({ proposal, onAdded }) {
  * Server-side authoritative on permission (Phase 32 W3); this is the
  * pre-check render. Users without permission see no button.
  */
-function OptionRow({ option, index, proposal, currentUser, onDeleted }) {
+function OptionRow({ option, index, proposal, methodResult, currentUser, onDeleted }) {
   const toast = useToast();
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -960,7 +960,7 @@ function OptionRow({ option, index, proposal, currentUser, onDeleted }) {
   const isWriteIn = !!option.is_write_in;
   const isAdder = !!currentUser && option.added_by_user_id === currentUser.id;
   const isAdmin = !!currentUser && !!currentUser.is_admin;
-  const canDelete = isWriteIn && (isAdder || isAdmin) && !(['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) && ['passed', 'failed', 'closed'].includes(proposal.status));
+  const canDelete = isWriteIn && (isAdder || isAdmin) && !experimentalOptionsLocked(proposal, methodResult);
 
   async function handleDelete() {
     setSubmitting(true);
@@ -2529,6 +2529,7 @@ export default function ProposalDetail() {
                     option={opt}
                     index={idx}
                     proposal={proposal}
+                    methodResult={tally?.method_result}
                     currentUser={user}
                     onDeleted={fetchData}
                   />

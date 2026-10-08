@@ -237,3 +237,15 @@ whole-phase check additionally includes DelegatePublic's two baseline
 findings. All other changed/new JavaScript files lint clean, including the
 new final-result regression. Diff whitespace checks pass. This records local
 verification only; production deployment/sanity remains the lead's W5 gate.
+
+
+### W5 archive-control follow-up
+
+The lead browser verified the preserved archived winner/banner, then spotted
+write-in removal controls reappearing after archive. The controls now use a
+shared experimental-method lock that recognizes archived/unresolved states
+and the authoritative finalized result flag, preserving legacy behavior.
+15 focused method/final-result tests pass, including the new four-method
+archive/early-state boundary regression; helper/test lint passes. Build:
+`index-BYrMsS6k.js`. The full suite was not repeated for this bounded follow-up
+(previous full 123 passed; one additional regression is now present).

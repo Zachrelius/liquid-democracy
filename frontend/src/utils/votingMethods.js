@@ -62,3 +62,9 @@ export function unchangedOptionText(existing = [], edited = []) {
     (option.label || '').trim() === (edited[index].label || '').trim()
     && (option.description || '').trim() === (edited[index].description || '').trim());
 }
+
+export function experimentalOptionsLocked(proposal, methodResult) {
+  return !!VOTING_METHODS[proposal.voting_method]?.experimental
+    && (methodResult?.finalized === true
+      || ['passed', 'failed', 'closed', 'withdrawn', 'unresolved'].includes(proposal.status));
+}
