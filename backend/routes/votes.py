@@ -112,8 +112,20 @@ def _delegators_for_proposal(
         # Proposal has no topics; only org-wide global delegations
         # (topic_id IS NULL) qualify.
         q = q.filter(models.Delegation.topic_id.is_(None))
+    if is_experimental(proposal):
+        q = q.filter(or_(models.Delegation.sub_org_id.is_(None),
+                         models.Delegation.sub_org_id == proposal.sub_org_id))
     delegations = q.all()
-    return {d.delegator_id for d in delegations if d.delegator_id != delegate_user_id}
+    recipients = {d.delegator_id for d in delegations if d.delegator_id != delegate_user_id}
+    if is_experimental(proposal):
+        from eligibility import eligible_viewers_for_proposal
+        from permissions import can_see_votes
+        recipients &= eligible_viewers_for_proposal(db, proposal)
+        recipients &= {uid for (uid,) in db.query(models.User.id).filter(
+            models.User.id.in_(recipients), models.User.is_active.is_(True)).all()}
+        recipients = {uid for uid in recipients if can_see_votes(
+            db, uid, delegate_user_id, topic_ids, org_id=proposal.org_id)}
+    return recipients
 
 
 def _format_vote_value_for_payload(
@@ -129,7 +141,10 @@ def _format_vote_value_for_payload(
     """
     from voting_methods import EXPERIMENTAL_VOTING_METHODS
     if voting_method in EXPERIMENTAL_VOTING_METHODS:
-        return dict(ballot) if isinstance(ballot, dict) else None
+        if isinstance(ballot, dict) and ballot.get("abstain") is True:
+            return "Abstained"
+        name = "STAR" if voting_method == "star" else voting_method.replace('_', ' ').title()
+        return f"{name} ballot submitted"
     if voting_method == "binary":
         return vote_value
     if voting_method == "approval":

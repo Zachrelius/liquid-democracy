@@ -1419,7 +1419,7 @@ class MyVoteStatus(BaseModel):
     # Phase 88 — the caller's own effective voting weight (shares) on this
     # proposal, so the ballot UI can show "Your vote carries N shares". None in
     # unweighted orgs (weight is a uniform 1 and the chip is hidden).
-    my_voting_weight: Optional[int] = None
+    my_voting_weight: Optional[int | str] = None
     message: str                      # Human-readable explanation
     # True when the user's delegation_strategy is not strict_precedence on a
     # multi-option proposal — strategy fell back since approval/ranked_choice
@@ -2003,6 +2003,8 @@ class VoteVisibility(BaseModel):
     id: str
     proposal_id: str
     proposal_title: Optional[str] = None
+    voting_method: Optional[str] = None
+    ballot_summary: Optional[str] = None
     vote_value: Optional[str]        # None means private/hidden
     is_direct: Optional[bool]
     cast_at: Optional[datetime]

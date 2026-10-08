@@ -97,6 +97,7 @@ def result_response(proposal, tally, db):
                  "participating_headcount", "eligible_headcount"):
         aggregates[name] = getattr(tally, name)
     aggregates.update(option_labels=labels, quorum_met=quorum, finalized=record is not None)
+    aggregates = decimal_counts(aggregates)
     if record is not None:
         aggregates.update(tie_seed=record["tie_seed"], rules=record["rules"],
                           closed_at=record["closed_at"], count_mode=record["count_mode"])
@@ -104,7 +105,7 @@ def result_response(proposal, tally, db):
                 if record is not None else weighting_metadata(proposal, db))
     return schemas.ProposalResults(
         proposal_id=proposal.id, voting_method=proposal.voting_method,
-        method_result=decimal_counts(aggregates), option_labels=labels,
+        method_result=aggregates, option_labels=labels,
         quorum_met=quorum, winners=tally.winners, tied=tally.method_result["priority_used"],
         total_eligible=str(tally.total_eligible), votes_cast=str(tally.total_ballots_cast),
         total_ballots_cast=str(tally.total_ballots_cast), total_abstain=str(tally.total_abstain),

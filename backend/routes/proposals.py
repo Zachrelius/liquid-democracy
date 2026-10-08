@@ -3407,6 +3407,17 @@ def advance_proposal(
             ip_address=request.client.host if request.client else None,
         )
 
+    if is_experimental(proposal) and old_status == "voting":
+        try:
+            _emit_proposal_status_notifications(db, background_tasks, proposal, old_status,
+                                                next_status, actor_id=current_user.id)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        db.refresh(proposal)
+        return _build_proposal_out(proposal, db, viewer_id=current_user.id)
+
     db.commit()
     db.refresh(proposal)
 
@@ -4036,6 +4047,8 @@ def my_vote_status(
         else:
             _my_weight = 1
 
+    if is_experimental(proposal) and _my_weight is not None:
+        _my_weight = str(_my_weight)
     # Phase 89 — budget proposals now compose with delegation, so my-vote
     # resolves through the delegation engine like every other method (a
     # delegator's status reflects their delegate's budget ballot).

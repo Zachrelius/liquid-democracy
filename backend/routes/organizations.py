@@ -3602,8 +3602,7 @@ def get_public_org_proposal_results(
         raise HTTPException(status_code=404, detail="Proposal not found")
     # Reuse the existing results-construction logic. Import locally to
     # avoid circular import at module load time.
-    import delegation_engine
-    from delegation_engine import ApprovalTally, RCVTally
+    from delegation_engine import engine as delegation_engine, ApprovalTally, RCVTally
     tally = delegation_engine.compute_tally(proposal, db)
     if is_experimental(proposal):
         return result_response(proposal, tally, db)
@@ -6832,6 +6831,18 @@ def advance_org_proposal(
             details={"proposal_id": proposal.id, "old_status": old_status, "new_status": next_status},
             ip_address=request.client.host if request.client else None,
         )
+
+    if is_experimental(proposal) and old_status == "voting":
+        try:
+            emit_status_notifications(db, background_tasks, proposal, old_status=old_status,
+                                      new_status=next_status, actor_id=current_user.id)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        db.refresh(proposal)
+        from routes.proposals import _build_proposal_out
+        return _build_proposal_out(proposal, db, viewer_id=current_user.id)
 
     db.commit()
     db.refresh(proposal)

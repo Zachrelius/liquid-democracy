@@ -16,6 +16,19 @@ from permissions import can_see_votes
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 
+def _experimental_ballot_summary(proposal, vote):
+    if proposal is None:
+        return None
+    from voting_methods import EXPERIMENTAL_VOTING_METHODS
+    if proposal.voting_method not in EXPERIMENTAL_VOTING_METHODS:
+        return None
+    if isinstance(vote.ballot, dict) and vote.ballot.get("abstain") is True:
+        return "Abstained"
+    labels = {"star": "STAR ratings submitted", "score": "Score ratings submitted",
+              "ranked_pairs": "Ranked Pairs ballot submitted", "majority_judgment": "Grades submitted"}
+    return labels[proposal.voting_method]
+
+
 def _viewer_can_read_proposal(
     db: Session,
     viewer: Optional[models.User],
@@ -469,6 +482,8 @@ def get_user_profile(
                 id=v.id,
                 proposal_id=v.proposal_id,
                 proposal_title=proposal.title if proposal else None,
+                voting_method=proposal.voting_method if proposal else None,
+                ballot_summary=_experimental_ballot_summary(proposal, v),
                 vote_value=v.vote_value,
                 is_direct=v.is_direct,
                 cast_at=v.cast_at,
@@ -689,6 +704,8 @@ def user_votes(
                 id=v.id,
                 proposal_id=v.proposal_id,
                 proposal_title=proposal.title if proposal else None,
+                voting_method=proposal.voting_method if proposal else None,
+                ballot_summary=_experimental_ballot_summary(proposal, v),
                 vote_value=v.vote_value,
                 is_direct=v.is_direct,
                 cast_at=v.cast_at,
