@@ -85,3 +85,94 @@ def test_snapshot_exact_counts_and_worker_atomic_finalization(db):
     assert _close_proposal_now(db, proposal, trigger="voting_end_reached", update_voting_end=False) == "passed"
     assert proposal.final_method_result == stored
     assert db.query(models.AuditLog).filter(models.AuditLog.target_id == proposal.id).count() == audit_count
+
+
+@pytest.mark.parametrize("expression,expected_status,reason", [
+    ({"scores": {}}, "failed", "all_bottom_ratings"),
+    ({"abstain": True}, "failed", "no_positive_weight_preferences"),
+    (None, "failed", "no_positive_weight_preferences"),
+    ("tied", "passed", None),
+    ("quorum", "failed", None),
+])
+def test_missing_snapshot_evidence_exhausts_bounded_extensions_then_closes(
+        db, monkeypatch, expression, expected_status, reason):
+    import models
+    import sustained_majority_worker as worker
+    from sustained_majority_service import count_extensions, _sum_extension_seconds
+    from tests.conftest import make_user, make_org_membership
+    from voting_methods import new_voting_rules
+    user = make_user(db, "no-evidence-worker")
+    org = models.Organization(name="No evidence", slug="no-evidence", settings={
+        "stable_result_enabled_default": True, "stable_window_fraction": 0.25,
+        "max_extension_fraction": 0.5,
+    })
+    db.add(org); db.flush()
+    make_org_membership(db, org_id=org.id, user_id=user.id)
+    if expression == "quorum":
+        for i in range(2):
+            absent = make_user(db, f"absent-quorum-{i}")
+            make_org_membership(db, org_id=org.id, user_id=absent.id)
+    proposal = models.Proposal(title="No evidence", body="", org_id=org.id,
+                               author_id=user.id, voting_method="star", status="voting",
+                               voting_start=NOW-timedelta(hours=4), voting_end=NOW,
+                               quorum_threshold=0.4)
+    db.add(proposal); db.flush()
+    proposal.voting_rules = new_voting_rules("star", proposal.id)
+    options = [models.ProposalOption(proposal_id=proposal.id, label=name) for name in ("A", "B")]
+    db.add_all(options); db.flush()
+    if expression is not None:
+        ballot = ({"scores": {opt.id: 5 for opt in options}} if expression == "tied" else
+                  {"scores": {options[0].id: 5}} if expression == "quorum" else expression)
+        db.add(models.Vote(proposal_id=proposal.id, user_id=user.id, cast_by_id=user.id,
+                           is_direct=True, ballot=ballot))
+    db.commit()
+    # Simulate unavailable history without turning an actual counting error
+    # into success: failures from real capture still propagate and roll back.
+    monkeypatch.setattr(worker, "capture_snapshot", lambda *args: None)
+    notification_calls = []
+    monkeypatch.setattr(worker, "_emit_extended_by_stability", lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker, "_emit_proposal_closed_natural", lambda *args, **kwargs: notification_calls.append(kwargs))
+    for offset in (0, 1):
+        monkeypatch.setattr(worker, "_now_naive", lambda offset=offset: NOW+timedelta(hours=offset))
+        assert worker.evaluate_proposal(db, proposal) == "extended"
+        db.commit()
+        assert proposal.voting_end == NOW+timedelta(hours=offset+1)
+        assert proposal.status == "voting"
+    monkeypatch.setattr(worker, "_now_naive", lambda: NOW+timedelta(hours=2))
+    assert worker.evaluate_proposal(db, proposal) == "closed_on_time_after_srr_exhausted"
+    db.commit()
+    assert proposal.status == expected_status
+    assert count_extensions(db, proposal.id) == 2
+    assert _sum_extension_seconds(db, proposal.id) == 7200
+    final = proposal.final_method_result
+    assert final["tally"]["method_result"]["no_result_reason"] == reason
+    assert final["tally"]["method_result"]["priority_used"] is (expression == "tied")
+    assert len(notification_calls) == 1
+    audits = db.query(models.AuditLog).filter_by(target_id=proposal.id).count()
+    assert worker.evaluate_proposal(db, proposal) is None
+    db.commit()
+    assert len(notification_calls) == 1
+    assert proposal.final_method_result == final
+    assert db.query(models.AuditLog).filter_by(target_id=proposal.id).count() == audits
+
+
+def test_capture_software_failure_propagates_without_fabricated_final_result(db, monkeypatch):
+    import models
+    import sustained_majority_worker as worker
+    from tests.conftest import make_user
+    from voting_methods import new_voting_rules
+    user = make_user(db, "failed-capture-worker")
+    org = models.Organization(name="Failure", slug="failed-capture", settings={"stable_result_enabled_default": True})
+    db.add(org); db.flush()
+    proposal = models.Proposal(title="Failure", body="", org_id=org.id, author_id=user.id,
+                               voting_method="star", status="voting", voting_start=NOW-timedelta(hours=1), voting_end=NOW)
+    db.add(proposal); db.flush()
+    proposal.voting_rules = new_voting_rules("star", proposal.id)
+    db.commit()
+    def fail(*args):
+        raise ValueError("Invalid stored ballot")
+    monkeypatch.setattr(worker, "capture_snapshot", fail)
+    with pytest.raises(ValueError, match="Invalid stored ballot"):
+        worker.evaluate_proposal(db, proposal)
+    db.rollback()
+    assert proposal.status == "voting" and proposal.final_method_result is None

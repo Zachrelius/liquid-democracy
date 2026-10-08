@@ -658,7 +658,10 @@ def evaluate_proposal(
 
     # 2. Read all snapshots (newest last).
     snapshots = _snapshot_points_for(db, proposal)
-    if not snapshots:
+    # Missing experimental evidence is instability, not permission to wait
+    # forever. Feed it to the pure evaluator so the bounded extension budget
+    # and eventual deadline close still apply. Keep legacy behavior unchanged.
+    if not snapshots and proposal.voting_method != "star":
         return None
 
     # 3. Reconstruct the original voting duration (= current span minus all
