@@ -694,6 +694,8 @@ def compute_tally_pure(
         return _compute_project_tally_pure(user_ids, ctx)
     if ctx.voting_method == "star":
         from experimental_tally import count_star
+        if num_winners != 1:
+            raise ValueError("STAR supports exactly one winner")
         weighted_ballots = []
         missing = 0
         eligible_weight = 0

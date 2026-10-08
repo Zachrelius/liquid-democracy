@@ -135,3 +135,59 @@ def test_real_stored_ballot_and_final_record_survive_membership_change(db):
 def test_invalid_weights_fail_loud(weight):
     with pytest.raises(ValueError):
         tally([({"scores": {"a": 5}}, weight)])
+
+
+def test_relevance_selects_one_whole_ballot_and_chains_keep_owner_weight():
+    ctx = ProposalContext(
+        ["t1", "t2"],
+        {"u": {"t1": DelegationData("u", "left", "t1", "accept_sub"),
+               "t2": DelegationData("u", "right", "t2", "accept_sub")}},
+        {}, {},
+        direct_ballots={"left": Ballot(method="star", scores={"a": 5}),
+                        "right": Ballot(method="star", scores={"b": 5})},
+        voting_method="star", user_strategies={"u": "relevance_weighted"},
+        proposal_topic_relevances={"t1": 0.2, "t2": 0.8},
+        user_weights={"u": 7, "left": 0, "right": 0},
+        voting_rules=new_voting_rules("star", "p"), proposal_id="p",
+    )
+    result = compute_tally_pure(["u", "left", "right"], ctx, option_ids=["a", "b"])
+    assert result.method_result["scores"] == {"a": 0, "b": 35}
+    # Deep graphs retain the existing policy: direct delegate or one accepted
+    # sub-delegate, not unlimited transitive delegation.
+    chain = [f"chain{i}" for i in range(100)]
+    for a, b in zip(chain, chain[1:] + ["right"]):
+        ctx.all_delegations[a] = {None: DelegationData(a, b, None, "accept_sub")}
+        ctx.user_weights[a] = 3
+    result = compute_tally_pure(chain + ["right"], ctx, option_ids=["a", "b"])
+    assert result.method_result["scores"] == {"a": 0, "b": 30}
+    assert result.not_cast == 98 * 3
+
+
+def test_late_options_default_zero_without_mutating_saved_expression():
+    rules = new_voting_rules("star", "p")
+    ballot = {"scores": {"a": 5, "b": 2}}
+    before = deepcopy(ballot)
+    old = tally([(ballot, 7)], ["a", "b"], rules)
+    late = tally([(ballot, 7)], ["a", "b", "c"], rules)
+    assert ballot == before
+    assert late.method_result["scores"]["c"] == 0
+    assert late.method_result["score_histograms"]["c"] == [7, 0, 0, 0, 0, 0]
+    assert old.method_result["option_set_version"] != late.method_result["option_set_version"]
+    assert old.winners == late.winners
+
+
+@pytest.mark.parametrize("corrupt", [
+    {"scores": {"a": True}}, {"scores": {"other": 5}},
+    {"scores": {}, "ranking": []}, {"abstain": True, "scores": {}},
+])
+def test_corrupt_counter_expression_fails(corrupt):
+    with pytest.raises(ValueError):
+        tally([(corrupt, 1)], ["a", "b"])
+
+
+def test_corrupt_final_records_never_silently_recompute():
+    original = tally([({"scores": {"a": 5}}, 7)], ["a", "b"])
+    record = {"tally": original.to_record()}
+    record["tally"]["method_result"]["scores"]["a"] = 123
+    with pytest.raises(ValueError, match="histogram"):
+        ExperimentalTally.from_record(record)

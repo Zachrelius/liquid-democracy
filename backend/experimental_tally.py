@@ -172,8 +172,16 @@ def count_star(option_ids, weighted_ballots, rules, proposal_id) -> Experimental
     if boundary:
         prefs = dict.fromkeys(boundary, 0)
         for ratings, weight in preference_ballots:
+            # Fixed six-value scale: sum strict pairwise preferences by a
+            # score histogram, avoiding O(options squared) work per tie ballot.
+            frequencies = [0] * 6
             for a in boundary:
-                prefs[a] += weight * sum(ratings.get(a, 0) > ratings.get(b, 0) for b in boundary if b != a)
+                frequencies[ratings.get(a, 0)] += 1
+            lower = [0] * 6
+            for rating in range(1, 6):
+                lower[rating] = lower[rating - 1] + frequencies[rating - 1]
+            for a in boundary:
+                prefs[a] += weight * lower[ratings.get(a, 0)]
         result["tie_trace"].append({"stage": "finalist_preferences", "pool": sorted(boundary), "values": prefs})
         selected, boundary = cut(boundary, prefs, 2 - len(finalists))
         finalists.extend(selected)
