@@ -44,3 +44,18 @@ or successful login/ballot journey is claimed. The parent lead was informed.
 Desktop, 380px, keyboard submit/change/retract, delegation, late write-in,
 closure and rendered results remain **NOT VERIFIED**. W2 must not begin until
 the W1 gate is satisfied.
+
+### Recheck, 2026-10-08
+
+The previous ephemeral tab had expired. A replacement tab in the same approved
+Chrome extension browser opened the local login page successfully. Filling the
+synthetic fixture login then reading accessibility state produced the same
+explicit extension-UI block quoted above. Sign In was not submitted during
+this recheck. No alternate browser or control mechanism was attempted.
+The interactive gate remains BLOCKED; all listed ballot journeys remain
+NOT VERIFIED.
+
+Current frontend: 92 tests pass (rerun after profile-summary integration).
+Production build passes at commit `a88646b`, JavaScript `index-DRsQa-g0.js`.
+The three profile surfaces render the backend privacy-filtered `ballot_summary`
+with legacy vote-value fallbacks; that display mapping is PASS-by-source.
