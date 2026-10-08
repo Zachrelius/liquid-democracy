@@ -18,7 +18,7 @@ Started October 8, 2026 from refreshed origin/master `0096997` in isolated
   starting installed Docker resolved it. Concurrent default-port use was avoided
   with port 55509 for lead's independent run; both disposable containers removed.
 
-## W1 — STAR: in progress, NOT release verified
+## W1 — STAR: local gate PASS, NOT production release verified
 
 - Pure counter compared with pinned test-only `starvote==2.1.5`, MIT license,
   against 2,000 synthetic profiles. No reference dependency in production.
@@ -60,20 +60,39 @@ Started October 8, 2026 from refreshed origin/master `0096997` in isolated
 - Source availability currently enables STAR for integrated local testing only.
   No branch push, merge, or production deployment yet.
 
+### Rendered verification completed, October 8 evening
+
+Z completed local login and dismissed a Bitwarden save-password popup. The
+authenticated `localhost` tab then worked through approved Chrome tooling.
+The earlier browser block below is resolved; no alternate automation or login
+bypass was used. Lead verified actual keyboard arrow selection and initial
+focus, cast/change/retract, 380px layout, late write-in omission at zero,
+delegate selection and whole-ballot totals, abstention overriding delegation,
+retraction restoring delegation, hidden preliminary results, continued voting
+after org opt-out, admin close, immutable final result and revealed seed.
+
+Browser review found and fixed duplicate full results (`5abfd3b`), stale saved
+preliminary ballots when hidden results returned 404, and future scheduled dates
+shown as actual close dates (`a60bdd6`). Both behavior fixes were reverified in
+the browser. Additional backend review tightened exact quorum and frozen-result
+integrity (`80a6f07`) and proved early neutral/rated overrides with actual
+delegation (`797f82e`). Frontend now has 97 passing tests. Screenshots are under
+`test_results/phase109/`; the corrected close-date capture uses the viewport
+because later full-page capture timed out while DOM inspection stayed usable.
+
 ## W2–W5
 
-NOT STARTED. Sequential method gates prohibit starting Score until W1 rendered
-verification and remaining compatibility/performance review pass. Ranked Pairs,
-Majority Judgment, release integration and production QA remain pending.
+W2 Score STARTED after W1's rendered and automated gates passed. Backend and
+frontend work on Score concurrently; no other new method is being implemented.
+W3 Ranked Pairs, W4 Majority Judgment and W5 release/deployment remain NOT STARTED.
 
 No production data, secrets, or infrastructure configuration changed.
 
 ## Remaining gates and known limitations
 
-W1 still needs the full rendered desktop/mobile/keyboard ballot, re-vote,
-retraction, delegation, write-in and final-result journeys. Dismissing the
-blocking Chrome extension UI is the external action required to resume them.
-Do not begin W2 until W1 passes; do not deploy this partial phase.
+Score needs its complete method-specific gate before W3 begins. Do not deploy
+this partial phase. Final integration still requires the complete four-method
+matrix, full regression, exact deployment checks and production browser QA.
 
 The existing immediate-email mechanism is not a durable outbox, and worker
 `BackgroundTasks` lack an HTTP response cycle. Atomic close coverage applies to
