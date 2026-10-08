@@ -1579,6 +1579,7 @@ class VoteFlowBallot(BaseModel):
     approvals: Optional[list[str]] = None  # approval: option_ids
     ranking: Optional[list[str]] = None    # ranked_choice: option_ids in rank order
     scores: Optional[dict[str, int]] = None
+    rank_groups: Optional[list[list[str]]] = None
     abstain: bool = False
 
 

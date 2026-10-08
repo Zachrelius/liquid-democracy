@@ -100,7 +100,7 @@ def test_delegation_uses_represented_member_weight_and_direct_abstain_override()
     assert run().method_result["scores"] == {"a": 10, "b": 4}
 
 
-@pytest.mark.parametrize("method", ["star", "score"])
+@pytest.mark.parametrize("method", ["star", "score", "ranked_pairs"])
 def test_real_stored_ballot_and_final_record_survive_membership_change(db, method):
     import models
     from tests.conftest import make_user, make_org_membership
@@ -115,13 +115,14 @@ def test_real_stored_ballot_and_final_record_survive_membership_change(db, metho
     options = [models.ProposalOption(proposal_id=proposal.id, label=name) for name in ("A", "B")]
     db.add_all(options); db.flush()
     vote = models.Vote(proposal_id=proposal.id, user_id=author.id, cast_by_id=author.id,
-                       ballot={"scores": {options[0].id: 5}}, is_direct=True)
+                       ballot=({"rank_groups": [[options[0].id]]} if method == "ranked_pairs" else {"scores": {options[0].id: 5}}), is_direct=True)
     db.add(vote); db.flush()
     from delegation_engine import DelegationGraphStore
     service = DelegationService(DelegationGraphStore())
     original = service.compute_tally(proposal, db)
     assert original.winners == [options[0].id]
-    proposal.final_method_result = {"tally": original.to_record()}
+    from voting_methods import public_voting_rules
+    proposal.final_method_result = {"tally": original.to_record(), "rules": public_voting_rules(proposal.voting_rules), "tie_seed": proposal.voting_rules["tie_seed"]}
     proposal.status = "passed"
     db.delete(membership)
     vote.ballot = {"scores": {options[1].id: 5}}

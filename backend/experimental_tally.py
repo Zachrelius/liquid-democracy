@@ -57,7 +57,7 @@ class ExperimentalTally:
             if type(value[key]) is not int or value[key] < 0:
                 raise ValueError("Invalid persisted participation count")
         result = value["method_result"]
-        if (not isinstance(result, dict) or result.get("method") not in ("star", "score")
+        if (not isinstance(result, dict) or result.get("method") not in ("star", "score", "ranked_pairs")
                 or result.get("rule_id") != RULE_IDS[result["method"]]
                 or type(result.get("priority_used")) is not bool
                 or "winner" not in result or "no_result_reason" not in result):
@@ -73,6 +73,9 @@ class ExperimentalTally:
             raise ValueError("Inconsistent persisted participation count")
         if value["total_abstain"] > value["total_ballots_cast"]:
             raise ValueError("Inconsistent persisted abstention count")
+        if result["method"] == "ranked_pairs":
+            _validate_ranked_pairs_record(result, value["total_ballots_cast"] - value["total_abstain"], record)
+            return cls(**value)
         scores = result.get("scores")
         histograms = result.get("score_histograms")
         is_star = result["method"] == "star"
@@ -209,6 +212,127 @@ def count_score(option_ids, weighted_ballots, rules, proposal_id) -> Experimenta
         result["tie_trace"] = [{"stage": "score_priority", "pool": sorted(tied)}]
     result["winner"] = min(tied, key=lambda oid: candidate_priority(rules, proposal_id, oid))
     return tally
+
+
+def _ranked_pairs_graph(pairwise, priority):
+    """Lock sorted victories using incremental bitset transitive closure."""
+    ids = sorted(pairwise)
+    index = {oid: i for i, oid in enumerate(ids)}
+    victories = [{"winner": a, "loser": b, "margin": pairwise[a][b] - pairwise[b][a],
+                  "support": pairwise[a][b]} for a in ids for b in ids
+                 if pairwise[a][b] > pairwise[b][a]]
+    victories.sort(key=lambda e: (-e["margin"], -e["support"], priority[e["winner"]], priority[e["loser"]]))
+    tied_strengths = {}
+    for edge in victories:
+        tied_strengths.setdefault((edge["margin"], edge["support"]), []).append(
+            {"winner": edge["winner"], "loser": edge["loser"]})
+    trace = [{"stage": "edge_priority", "margin": margin, "support": support, "edges": edges}
+             for (margin, support), edges in tied_strengths.items() if len(edges) > 1]
+    reachable = [0] * len(ids)
+    incoming = set()
+    locked, skipped = [], []
+    for edge in victories:
+        a, b = index[edge["winner"]], index[edge["loser"]]
+        if reachable[b] & (1 << a):
+            skipped.append({**edge, "reason": "would_create_cycle"})
+            continue
+        locked.append({**edge, "reason": "locked"})
+        incoming.add(edge["loser"])
+        descendants = reachable[b] | (1 << b)
+        for i in range(len(ids)):
+            if i == a or reachable[i] & (1 << a):
+                reachable[i] |= descendants
+    sources = sorted((oid for oid in ids if oid not in incoming), key=lambda oid: priority[oid])
+    if len(sources) > 1:
+        trace.append({"stage": "source_priority", "pool": sorted(sources)})
+    return {"ordered_victories": victories, "locked_edges": locked, "skipped_edges": skipped,
+            "source_candidates": sources, "winner": sources[0] if sources else None,
+            "tie_trace": trace, "priority_used": bool(trace)}
+
+
+def count_ranked_pairs(option_ids, weighted_ballots, rules, proposal_id) -> ExperimentalTally:
+    validate_voting_rules(rules, "ranked_pairs", proposal_id)
+    ids = list(option_ids)
+    if len(ids) > MAX_BALLOT_OPTIONS:
+        raise ValueError("Too many voting options")
+    version = option_set_version(ids)
+    pairwise = {a: dict.fromkeys(ids, 0) for a in ids}
+    total = abstain = headcount = 0
+    for payload, weight in weighted_ballots:
+        if type(weight) is not int or weight < 0:
+            raise ValueError("Voting weight must be a nonnegative integer")
+        ballot = validate_ballot("ranked_pairs", payload, ids)
+        total += weight
+        headcount += 1
+        if ballot.get("abstain"):
+            abstain += weight
+            continue
+        if not weight:
+            continue
+        groups = ballot["rank_groups"]
+        ranks = {oid: rank for rank, group in enumerate(groups) for oid in group}
+        ranked = [(oid, ranks.get(oid, len(groups))) for oid in ids]
+        # O(options squared) once per effective ballot, independent of shares.
+        for a, rank_a in ranked:
+            row = pairwise[a]
+            for b, rank_b in ranked:
+                if rank_a < rank_b:
+                    row[b] += weight
+    reason = ("fewer_than_two_options" if len(ids) < 2 else
+              "no_positive_weight_preferences" if total == abstain else
+              "no_strict_preferences" if not any(any(row.values()) for row in pairwise.values()) else None)
+    result = {"method": "ranked_pairs", "rule_id": rules["rule_id"], "pairwise": pairwise,
+              "ordered_victories": [], "locked_edges": [], "skipped_edges": [], "source_candidates": [],
+              "preference_weight": total - abstain, "winner": None, "tie_trace": [],
+              "priority_used": False, "no_result_reason": reason, "option_set_version": version}
+    if reason is None:
+        priority = {oid: candidate_priority(rules, proposal_id, oid) for oid in ids}
+        result.update(_ranked_pairs_graph(pairwise, priority))
+    return ExperimentalTally(result, total_eligible=total, total_ballots_cast=total,
+                             total_abstain=abstain, eligible_headcount=headcount,
+                             participating_headcount=headcount)
+
+
+def _validate_ranked_pairs_record(result, preference_weight, record):
+    matrix = result.get("pairwise")
+    if (not isinstance(matrix, dict) or len(matrix) > MAX_BALLOT_OPTIONS
+            or type(result.get("preference_weight")) is not int
+            or result["preference_weight"] != preference_weight):
+        raise ValueError("Invalid persisted Ranked Pairs matrix")
+    ids = set(matrix)
+    if result.get("option_set_version") != option_set_version(ids):
+        raise ValueError("Invalid persisted option set version")
+    for a, row in matrix.items():
+        if (not isinstance(row, dict) or set(row) != ids
+                or any(type(n) is not int or n < 0 or n > preference_weight for n in row.values())
+                or row[a] != 0):
+            raise ValueError("Invalid persisted Ranked Pairs matrix row")
+    if any(matrix[a][b] + matrix[b][a] > preference_weight for a in ids for b in ids):
+        raise ValueError("Persisted pairwise preferences exceed voting power")
+    reason = ("fewer_than_two_options" if len(ids) < 2 else
+              "no_positive_weight_preferences" if preference_weight == 0 else
+              "no_strict_preferences" if not any(any(row.values()) for row in matrix.values()) else None)
+    if result["no_result_reason"] != reason:
+        raise ValueError("Persisted Ranked Pairs reason contradicts matrix")
+    fields = ("ordered_victories", "locked_edges", "skipped_edges", "source_candidates", "tie_trace")
+    if any(not isinstance(result.get(field), list) for field in fields):
+        raise ValueError("Invalid persisted Ranked Pairs graph")
+    if reason is not None:
+        if result["winner"] is not None or result["priority_used"] or any(result[field] for field in fields):
+            raise ValueError("No-result record contains a Ranked Pairs winner")
+        return
+    # Full production records carry the committed seed; derive the graph only
+    # from frozen aggregates, never from mutable current ballots or membership.
+    if "rules" in record and "tie_seed" in record:
+        rules = {**record["rules"], "tie_seed": record["tie_seed"]}
+        proposal_id = rules.get("proposal_id")
+        validate_voting_rules(rules, "ranked_pairs", proposal_id)
+        priority = {oid: candidate_priority(rules, proposal_id, oid) for oid in ids}
+        expected = _ranked_pairs_graph(matrix, priority)
+        if any(result.get(field) != value for field, value in expected.items()):
+            raise ValueError("Persisted Ranked Pairs graph contradicts matrix/rules")
+    else:
+        raise ValueError("Final Ranked Pairs record requires frozen rules and seed")
 
 
 def count_star(option_ids, weighted_ballots, rules, proposal_id) -> ExperimentalTally:
