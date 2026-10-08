@@ -82,15 +82,30 @@ because later full-page capture timed out while DOM inspection stayed usable.
 
 ## W2–W5
 
-W2 Score STARTED after W1's rendered and automated gates passed. Backend and
-frontend work on Score concurrently; no other new method is being implemented.
-W3 Ranked Pairs, W4 Majority Judgment and W5 release/deployment remain NOT STARTED.
+W2 Score local gate PASS. Backend `df12b7e`, evidence `2f7e8ae`, API/feed
+`90e1ce7`, frontend `87c3a20`. Score's exact weighted sum and priority-only ties
+passed 2,000 independently evaluated profiles; full measurements are in
+`docs/phase109_score_backend_evidence.md`. Focused backend checks passed (106
+counter/SRR/API, 93 registry/STAR API, 44 STAR reference/RCV); frontend 102 tests
+and build passed. Disposable PostgreSQL concurrency: 40/40 success, no pool
+timeouts or leaked connections. No new migration.
+
+Lead's Chrome journey verified desktop and 380px point controls, delegated
+ballot, direct override/cast/change, late option default zero and revote,
+explicit abstain, retraction restoring delegation, neutral early override with
+immediate refresh and hidden results, and admin close. Final Score displays
+the exact sum winner, correct actual close date and disclosed rule/seed, with
+no STAR runoff. Screenshots `score-mobile-ballot.jpg`, `score-early-private.jpg`
+and `score-final-desktop.jpg` are in `test_results/phase109/`.
+
+W3 Ranked Pairs STARTED only after W2 passed. Both developers work on W3.
+W4 Majority Judgment and W5 release/deployment remain NOT STARTED.
 
 No production data, secrets, or infrastructure configuration changed.
 
 ## Remaining gates and known limitations
 
-Score needs its complete method-specific gate before W3 begins. Do not deploy
+Ranked Pairs needs its complete method-specific gate before W4 begins. Do not deploy
 this partial phase. Final integration still requires the complete four-method
 matrix, full regression, exact deployment checks and production browser QA.
 
