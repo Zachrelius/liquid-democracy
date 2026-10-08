@@ -33,6 +33,8 @@ function VoteRecordCell({ vote }) {
     <details><summary className="cursor-pointer">View ratings</summary><ul>{Object.entries(vote.ballot.scores).map(([id, score]) => <li key={id}>{vote.option_labels?.[id] || id}: {score}/5</li>)}</ul><p className="text-xs">Unrated options receive zero, including later additions.</p></details>
   </div>;
 
+  if (Array.isArray(vote.ballot.rank_groups)) return <span className="text-sm">Ranked Pairs ballot submitted ({vote.ballot.rank_groups.length} rank groups)</span>;
+
   // Approval ballot
   if (Array.isArray(vote.ballot.approvals)) {
     return (

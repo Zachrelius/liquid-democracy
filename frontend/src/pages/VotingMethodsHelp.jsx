@@ -40,6 +40,14 @@ export default function VotingMethodsHelp() {
         </ul>
       </section>
 
+      <section id="ranked-pairs" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold">Ranked Pairs — optional, single winner</h2>
+        <p className="text-sm">Assign options to rank groups, with group 1 most preferred. Options in the same group are tied. Unranked options tie below all ranked options, including write-ins added after your vote. Use group menus and Move up/Move down buttons without dragging, then submit explicitly.</p>
+        <p className="text-sm">Each pair of options is compared head to head using represented voting weight. A tied ranking favors neither option. Victories are considered by descending winning margin, then winning support, then committed option priority. Each victory is locked unless it would form a cycle. The winner has no incoming locked defeat; multiple such options use the committed draw order.</p>
+        <p className="text-sm">This is the platform's fixed margins variant. Equal-strength edges may use the committed draw order, making live results provisional for Stable Result Required. The final result reveals the seed and records locked and skipped edges.</p>
+        <p className="text-sm">An entirely unranked ballot counts as participation and overrides delegation. Explicit abstention also overrides delegation but contributes no preferences. Retracting restores normal delegation fallback. If no strict preference is expressed, there is no winner; quorum must also be met.</p>
+        <p className="text-sm">Ranked Pairs is off by default and requires organization opt-in. It applies to ordinary single-winner proposals, excluding officeholder elections. It does not use first-choice totals or IRV elimination.</p>
+      </section>
       <section id="score" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
         <h2 className="text-lg font-semibold">Score — optional, single winner</h2>
         <p className="text-sm">Rate each option from 0 to 5 points. Equal ratings are allowed. The option with the highest weighted total points wins. There is no runoff or five-star tiebreak.</p>

@@ -84,7 +84,7 @@ Evidence supplied by the lead in `test_results/phase109/`:
 The W1 frontend finished at 97 passing Node tests with build
 `index-CSHkOgul.js`. This local gate does not claim production verification.
 
-## W2 Score, in progress
+## W2 Score, local rendered gate passed
 
 Shared 0–5 ballot controls use explicit Score context and point labels. Score
 results show exact total points, highest-total ties, participation and the
@@ -92,7 +92,7 @@ committed draw disclosure, with no STAR finalist or runoff fields. The
 optional average is omitted. Create/edit/import/sub-org, opt-in controls,
 write-ins, early visibility, profile summaries, help and snapshot history
 use method-appropriate labels. The existing disabled-by-default contract is
-preserved. W2 rendered browser verification is pending.
+preserved. The successful lead browser verification below supersedes the initial pending state.
 
 
 W2 automated verification: 102 Node tests pass, including the STAR/Score
@@ -111,3 +111,43 @@ delegate's ballot. It refuses any database other than the exact adjacent
 `phase109_localqa.db`, preserves existing proposals/ballots and only enables
 STAR/Score in the synthetic `phase109-qa` organization. The lead owns browser
 verification of these fixtures.
+
+
+### W2 successful browser verification, reported by the implementation lead
+
+The lead reported PASS for desktop and approximately 380px mobile points
+ballots, delegate override, cast/re-vote, late-option zero, abstain/retract
+restoring the delegate, neutral early ballot with immediate refresh and
+hidden aggregates, and admin close with final rule/seed/actual date.
+Evidence in `test_results/phase109/`: `score-mobile-ballot.jpg`,
+`score-early-private.jpg`, `score-final-desktop.jpg`. The lead owned the
+signed-in browser tab; the frontend agent did not perform those interactions.
+
+## W3 Ranked Pairs, in progress
+
+Native rank-group menus and Move up/down controls support equal ranks and
+incomplete ballots without dragging. A group change is not a submission;
+neutral empty ranks, explicit abstention, direct override and retraction
+retain their distinct semantics. Late write-ins remain unranked-last.
+
+Results include exact pairwise preferences, ordered victories, locked edges,
+skipped cycle edges, source candidates, winner, and priority dependence.
+History uses head-to-head margins/support and locking detail, with no
+first-choice/IRV chart. Authoring/settings/sub-org/import, write-ins, privacy,
+profiles, help and closure display recognize Ranked Pairs. Majority Judgment
+remains unavailable. Ranked Pairs frontend availability was enabled only
+after the backend agent confirmed handlers and focused tests passed.
+
+Automated verification: 110 frontend tests pass. New and changed
+admin/help/graph files pass ESLint; legacy detail/profile/history hook
+findings retain the previously recorded baseline. Build passes with bundle
+`index-BlnTYkUn.js`. New tests cover equal/incomplete/neutral payloads,
+malformed/stale ranks, native labels/buttons, cycles, exact large counts,
+priority disclosure, history and independent opt-in/election rejection.
+
+`backend/scripts/phase109_ranked_pairs_localqa.py` creates idempotent fixtures
+only in the exact adjacent local SQLite database, preserving prior ballots
+and statuses. The voting fixture is `261209e6-066c-4207-ae60-489ddcc9f452` and
+the early fixture is `f365883c-6dec-44a9-8347-e03804705800`. Both share the
+existing synthetic topic and delegate. W3 interactive verification remains
+pending with the implementation lead.

@@ -1,3 +1,4 @@
+import RankedPairsHistory from './RankedPairsHistory';
 import { formatExactCount } from '../utils/ratedBallot';
 /**
  * Phase 22 F1+F2+F4 — Support Trajectory Chart.
@@ -561,6 +562,8 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
       </div>
     );
   }
+
+  if (data.voting_method === 'ranked_pairs') return <RankedPairsHistory snapshots={snapshots} optionsById={optionsById} />;
 
   if (['star', 'score'].includes(data.voting_method)) return <section aria-label={`${data.voting_method === 'score' ? 'Score' : 'STAR'} result history`} className="space-y-3 p-3">
     <p className="text-sm">{data.voting_method === 'score' ? 'Score history tracks the highest-total leader and total points.' : 'STAR history tracks the runoff winner, scoring totals and runoff votes.'} A change to the option set restarts stability observation.</p>

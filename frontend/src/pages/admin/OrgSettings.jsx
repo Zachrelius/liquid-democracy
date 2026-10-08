@@ -2206,6 +2206,11 @@ export default function OrgSettings() {
                 onChange={e => updateSetting('allowed_voting_methods', toggleAllowedVotingMethod(settings.allowed_voting_methods, 'star', e.target.checked))} className="mt-1 accent-[var(--brand-accent)]" />
               <span className="text-sm">STAR — rate options 0–5; the top two enter an automatic runoff.</span>
             </label>
+            {VOTING_METHODS.ranked_pairs.available && <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" checked={(settings.allowed_voting_methods || ['binary']).includes('ranked_pairs')}
+                onChange={e => updateSetting('allowed_voting_methods', toggleAllowedVotingMethod(settings.allowed_voting_methods, 'ranked_pairs', e.target.checked))} className="mt-1 accent-[var(--brand-accent)]" />
+              <span className="text-sm">Ranked Pairs — rank options with ties; compare head-to-head victories.</span>
+            </label>}
             {VOTING_METHODS.score.available && <label className="flex items-start gap-3 cursor-pointer">
               <input type="checkbox" checked={(settings.allowed_voting_methods || ['binary']).includes('score')}
                 onChange={e => updateSetting('allowed_voting_methods', toggleAllowedVotingMethod(settings.allowed_voting_methods, 'score', e.target.checked))} className="mt-1 accent-[var(--brand-accent)]" />

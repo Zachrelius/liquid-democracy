@@ -16,8 +16,8 @@ export const VOTING_METHODS = Object.freeze({
   budget_project: legacy('Ranked projects', 'ranked'),
   star: Object.freeze({ ...experimental('STAR', 'scores', 'star_0_5_v1', 'Unrated options receive 0 stars.'), available: true }),
   score: Object.freeze({ ...experimental('Score', 'scores', 'score_0_5_sum_v1', 'Unrated options receive 0 points.'), available: true }),
-  ranked_pairs: experimental('Ranked Pairs', 'rank_groups', 'ranked_pairs_margins_v1',
-    'Unranked options tie below every ranked option.'),
+  ranked_pairs: Object.freeze({ ...experimental('Ranked Pairs', 'rank_groups', 'ranked_pairs_margins_v1',
+    'Unranked options tie below every ranked option.'), available: true }),
   majority_judgment: experimental('Majority Judgment', 'grades', 'majority_judgment_lower_median_v1',
     'Ungraded options receive Reject.'),
 });

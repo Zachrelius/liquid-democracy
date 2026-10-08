@@ -39,12 +39,12 @@ test('explicit legacy organization methods are retained without adding others', 
 test('unfinished experimental methods cannot appear even in an opted-in organization', () => {
   const settings = { allowed_voting_methods: Object.keys(VOTING_METHODS) };
   assert.deepEqual(selectableVotingMethods(settings, { hasOrg: true }),
-    ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project', 'star', 'score']);
+    ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project', 'star', 'score', 'ranked_pairs']);
   for (const context of [{ hasOrg: false }, { hasOrg: true, election: true }]) {
     assert.deepEqual(selectableVotingMethods(settings, context),
       ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project']);
   }
-  assert.deepEqual(toggleAllowedVotingMethod(['binary'], 'ranked_pairs', true), ['binary']);
+  assert.deepEqual(toggleAllowedVotingMethod(['binary'], 'majority_judgment', true), ['binary']);
 });
 
 test('settings edits preserve unrelated and future method choices', () => {
@@ -71,4 +71,14 @@ test('Score remains an independent opt-in and draft switching requires explicit 
   assert.deepEqual(toggleAllowedVotingMethod(['binary', 'star', 'score'], 'score', false), ['binary', 'star']);
   assert.throws(() => draftMethodResetFields('star', 'score', false), /Confirm/);
   assert.deepEqual(draftMethodResetFields('star', 'score', true), { confirm_ballot_reset: true });
+});
+
+
+test('Ranked Pairs is independently opted in and has no legacy/global/election fallback', () => {
+  const enabled = { allowed_voting_methods: ['binary', 'ranked_pairs'] };
+  assert.deepEqual(selectableVotingMethods(enabled, { hasOrg: true }), ['binary', 'ranked_pairs']);
+  assert.deepEqual(selectableVotingMethods(enabled, { hasOrg: false }), ['binary']);
+  assert.deepEqual(selectableVotingMethods(enabled, { hasOrg: true, election: true }), ['binary']);
+  assert.deepEqual(toggleAllowedVotingMethod(['binary', 'star', 'score'], 'ranked_pairs', true), ['binary', 'star', 'score', 'ranked_pairs']);
+  assert.throws(() => draftMethodResetFields('score', 'ranked_pairs', false), /Confirm/);
 });
