@@ -224,3 +224,9 @@ cases (+365), 21 recorded full-suite skips, frontend 124 passing tests.
 Spec, PROGRESS, closeout, helper instructions and frontend QA notes now record
 the completed release; file and commit lists accompany the closeout. Original
 dirty root and local logs/temp directories remain preserved.
+
+Closeout commit `792c291` integrated as `b71581f`. Backend skipped its watched
+paths, but the frontend QA note triggered a rebuild through `frontend/**`.
+Deployment `df60259b-14a9-479f-846d-4e485b538b2e` is SUCCESS for exact `b71581f`;
+production homepage returned 200 with unchanged bundle `index-BYrMsS6k.js`.
+Final monitor remains ok/no issues, zero pool timeouts and rolling 5xx.

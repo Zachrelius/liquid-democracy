@@ -4702,3 +4702,8 @@ settings were changed; no backfill was needed. Existing non-durable immediate
 email delivery, costly dense Ranked Pairs and baseline lint/bundle warnings
 remain documented limitations. Officeholder support, multiwinner variants and
 custom scales are **NOT STARTED**; no follow-up automation was created.
+
+Closeout `792c291` integrated as `b71581f`. Its frontend QA notes triggered
+an additional watched-path rebuild: frontend `df60259b-14a9-479f-846d-4e485b538b2e`
+is SUCCESS for exact `b71581f`, with the same tested `index-BYrMsS6k.js` and
+homepage 200. Backend skipped this documentation merge as expected.

@@ -138,12 +138,15 @@ detached checkout and normal no-ff merges. No reset, clean or force push.
 Frontend appropriately skipped helper-only merge (`b48869a3-ee54-4e1d-8939-5e1b768041e6`)
 and still serves `index-BYrMsS6k.js`. After browser/worker QA, homepage, health,
 readiness and monitor returned HTTP 200; DB connected, monitor ok/no issues,
-zero rolling 5xx and pool timeouts, pool occupancy 1/5. Documentation closeout
-is integrated separately; it changes no watched service source.
+zero rolling 5xx and pool timeouts, pool occupancy 1/5. Closeout documentation commit `792c291` merged as `b71581f`. Backend skipped
+that merge (`c7b83aa9-ceaa-40d3-a1e3-a8a4115e4180`), while the broad frontend
+watch pattern rebuilt after its QA notes changed. Frontend deployment
+`df60259b-14a9-479f-846d-4e485b538b2e` is SUCCESS for exact `b71581f` and
+serves the same tested `index-BYrMsS6k.js`; homepage returned 200 afterward.
 
 Changed-file inventory: `docs/phase109_changed_files.txt`. Implementation and
 integration commits through the helper release: `docs/phase109_commits.txt`.
-This closeout's documentation commit/merge are reported in the visible final
+The final deployment-evidence documentation commit/merge are reported in the visible final
 response. Untracked full-suite logs/temp directories are preserved local
 artifacts and excluded from commits.
 
