@@ -328,7 +328,7 @@ def emit_status_notifications(
     db: Session, background_tasks: Any, proposal: models.Proposal, *,
     old_status: str, new_status: str, actor_id: Optional[str],
 ) -> None:
-    """Queue lifecycle notifications after the caller's mutation commit."""
+    """Stage lifecycle notifications; experimental close calls before commit."""
     payload = {
         "proposal_id": proposal.id, "proposal_title": proposal.title,
         "org_id": proposal.org_id, "old_status": old_status,
@@ -350,6 +350,13 @@ def emit_status_notifications(
                 models.Vote.proposal_id == proposal.id,
             ).all()
         )
+        from experimental_voting import is_experimental
+        if is_experimental(proposal):
+            from eligibility import eligible_viewers_for_proposal
+            recipients &= eligible_viewers_for_proposal(db, proposal)
+            recipients &= {uid for (uid,) in db.query(models.User.id).filter(
+                models.User.id.in_(recipients), models.User.is_active.is_(True),
+            ).all()}
         for user_id in recipients:
             emit_notification(
                 db, background_tasks, event_type="proposal.closed", user_id=user_id,
@@ -357,6 +364,10 @@ def emit_status_notifications(
                 target_type="proposal", target_id=proposal.id,
                 payload={**payload, "outcome": new_status},
             )
+        if is_experimental(proposal):
+            proposal.final_method_result = {
+                **proposal.final_method_result, "notification_intent_staged": True,
+            }
 
 
 def emit_transition_notifications(
