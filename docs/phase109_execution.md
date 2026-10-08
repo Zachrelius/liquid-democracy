@@ -112,15 +112,41 @@ frozen winner, actual close date, rules and revealed seed. Three captures are
 `ranked-pairs-mobile-ballot.jpg`, `ranked-pairs-early-private.jpg`, and
 `ranked-pairs-final-desktop.jpg` under `test_results/phase109/`.
 
-W4 Majority Judgment STARTED only after W3 passed. Both developers work on W4.
-W5 release/deployment remains NOT STARTED.
+W4 Majority Judgment local gate PASS. Backend `d12f61b`, evidence `87ce130`,
+API `7e1d8a4`, frontend `c9b1710`. Exact compact median-removal agrees with
+82,993 exhaustive small histogram pairs and 2,000 random multiway profiles;
+large-share work does not expand shares. 247 focused backend checks plus the
+lead's 14 API tests pass; frontend 119 tests/build pass. PostgreSQL 40/40
+concurrent operations and actual option-add/close races for all four methods
+pass. Full measurements and the compact algorithm proof are in
+`docs/phase109_majority_judgment_backend_evidence.md`. No new migration.
+
+Chrome verified six verbal grades, keyboard arrow selection, 380px layout,
+direct/delegated ballots, lower-even-median tie explanation with original
+distributions intact, late-write-in Reject defaults and revote, abstention,
+retraction restoring delegation, neutral private early voting, and admin
+close preserving the final winner and revealed seed. Captures are the three
+`majority-judgment-*.jpg` files under `test_results/phase109/`.
+
+W5 final integration STARTED after W4 passed. Full backend regression and
+independent integration review are active. No merge, push or deployment yet.
+
+Frontend integration review fixed archived frozen winners being labeled
+provisional (`a9913d5`), then actual Chrome QA caught an archived write-in
+remove control that should be hidden. `88abeb2` locks those controls; Chrome
+confirmed the recorded winner/banner and locked options. Capture:
+`majority-judgment-archived-final.jpg`. Full frontend tests reached 123 passing,
+then 15 focused checks passed after the lock fix. Latest build:
+`index-BYrMsS6k.js`. Whole-phase lint reports ten errors and one warning, all
+reproduced against baseline `0096997`; no new findings. The scoped Didit guard
+and all six guard tests pass. Release QA bootstrap is additive, private,
+notification-opted-out and collision-refusing, locally tested but NOT EXECUTED.
 
 No production data, secrets, or infrastructure configuration changed.
 
 ## Remaining gates and known limitations
 
-Majority Judgment needs its complete method-specific gate before W5 begins. Do not deploy
-this partial phase. Final integration still requires the complete four-method
+Final integration still requires the complete four-method
 matrix, full regression, exact deployment checks and production browser QA.
 
 The existing immediate-email mechanism is not a durable outbox, and worker
