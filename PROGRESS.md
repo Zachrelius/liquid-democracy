@@ -4635,3 +4635,25 @@ The quota investigation found 85 provider-accepted submissions on September 14 (
 Verification: **48 new regression cases PASS**, plus **72 existing compatibility checks PASS**. The full local run completed **3,236 passed / 20 skipped / zero failures**, including the initial 40 new cases; the final 48-case file was also run separately, covering eight later additions. This represents 3,244 distinct local passing cases (+48 from Phase 107's local baseline). Independent source review, compile, whitespace, and scoped credential checks pass. Supplemental Linux/Python 3.11 PR CI run `35034729597` had passed frontend and credential checks and was still running backend tests at live verification; no unobserved CI result is claimed. No migration; PostgreSQL migration smoke is not required. No UI change; browser QA is not required by this pass's matrix.
 
 Railway backend deployment `00fa12d4-4fba-4fd2-b2f3-fd38f8784243` is **SUCCESS** for exact release `224e55329607223a5c44bd2a067953e2c71902d2`. The checked-in safe probe executed inside the deployed Python 3.11.16 backend and passed: handled result, zero transport calls, zero delivery metrics, zero console body output, and verified suppression log. Homepage, liveness, readiness, and monitor return HTTP 200/healthy with zero monitoring issues. Frontend remains `index-DKjP7ryU.js`. No email was actually sent, demo reset triggered, production data mutated, infrastructure changed, or paid capacity added for verification. The original dirty planning checkout remains intact. Natural future digest-cycle observation was not performed or scheduled; the deployed common boundary was verified directly.
+
+---
+
+## Phase 109 — Experimental Single Winner Methods — W1 browser gate blocked (2026-10-08)
+
+Approved spec: `phase109_experimental_single_winner_methods_spec.md`. Isolated branch
+`phase-109/experimental-single-winner-methods` from refreshed `0096997`; original
+dirty planning checkout preserved. **Not merged, pushed or deployed.** W0 shared
+foundation is done. W1 STAR implementation and automated review are complete;
+required rendered QA is blocked by Chrome reporting another extension UI open
+while filling synthetic local login. W2 Score, W3 Ranked Pairs, W4 Majority
+Judgment and W5 deployment are **NOT STARTED**, respecting sequential gates.
+
+Evidence and restart context: `docs/phase109_execution.md`,
+`docs/phase109_star_backend_evidence.md`, `frontend/PHASE109_QA.md`.
+Full backend run: 3,379 passed / 21 skipped before final review additions;
+latest focused regression 178 passed / 1 optional oracle skip, with isolated
+2,000-profile pinned oracle subsequently passing. Phase 109 adds 160 collected
+backend tests. Frontend 92 tests and production build pass. SQLite migration
+cycle and PostgreSQL fresh/upgrade smoke pass for `a109b0c1d2e3`; prior head
+`f8a9b0c1d2e3`. Forty synthetic PostgreSQL concurrent operations pass without
+pool timeouts. No production data, secrets or infrastructure changed.

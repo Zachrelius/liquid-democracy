@@ -344,3 +344,24 @@ def test_delegate_vote_notification_respects_visibility_and_membership(client, t
     for notice in notices:
         assert notice.payload["vote_value"] == "STAR ballot submitted"
         assert options[0].id not in str(notice.payload)
+
+
+@pytest.mark.parametrize("endpoint", ["profile", "votes"])
+def test_profile_summary_is_method_aware_and_private(client, star, endpoint):
+    user, _, proposal, options = star
+    headers = _auth_header(user)
+    vote_path = f"/api/proposals/{proposal.id}/vote"
+    assert client.post(vote_path, headers=headers, json={"scores": {options[0].id: 5}}).status_code == 200
+    path = f"/api/users/{user.id}/{endpoint}"
+    def votes(response):
+        assert response.status_code == 200, response.text
+        data = response.json()
+        return data["votes"] if endpoint == "profile" else data
+    own = votes(client.get(path, headers=headers))
+    assert len(own) == 1
+    assert own[0]["voting_method"] == "star"
+    assert own[0]["ballot_summary"] == "STAR ratings submitted"
+    assert "ballot" not in own[0]
+    assert votes(client.get(path)) == []
+    assert client.post(vote_path, headers=headers, json={"abstain": True}).status_code == 200
+    assert votes(client.get(path, headers=headers))[0]["ballot_summary"] == "Abstained"
