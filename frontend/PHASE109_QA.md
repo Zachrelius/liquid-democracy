@@ -123,7 +123,7 @@ Evidence in `test_results/phase109/`: `score-mobile-ballot.jpg`,
 `score-early-private.jpg`, `score-final-desktop.jpg`. The lead owned the
 signed-in browser tab; the frontend agent did not perform those interactions.
 
-## W3 Ranked Pairs, in progress
+## W3 Ranked Pairs, local rendered gate passed
 
 Native rank-group menus and Move up/down controls support equal ranks and
 incomplete ballots without dragging. A group change is not a submission;
@@ -149,5 +149,47 @@ priority disclosure, history and independent opt-in/election rejection.
 only in the exact adjacent local SQLite database, preserving prior ballots
 and statuses. The voting fixture is `261209e6-066c-4207-ae60-489ddcc9f452` and
 the early fixture is `f365883c-6dec-44a9-8347-e03804705800`. Both share the
-existing synthetic topic and delegate. W3 interactive verification remains
-pending with the implementation lead.
+existing synthetic topic and delegate. The later successful lead verification below supersedes the initial pending state.
+
+
+### W3 successful browser verification, reported by the implementation lead
+
+The lead reported PASS for desktop and approximately 380px mobile, keyboard
+tie-group selection, Move up, late write-in, re-vote, abstain, retract restoring
+delegation, neutral private early ballot, and close with frozen winner/seed.
+Evidence in `test_results/phase109/`: `ranked-pairs-mobile-ballot.jpg`,
+`ranked-pairs-early-private.jpg`, `ranked-pairs-final-desktop.jpg`.
+The lead owned the browser; the frontend agent did not perform these steps.
+
+## W4 Majority Judgment, in progress
+
+The shared rating controls now support six verbal grades: Reject, Poor,
+Acceptable, Good, Very good, Excellent. Grade codes are transport identifiers;
+the UI presents no point sum or numeric grade average. The ballot preserves
+explicit Reject versus omitted entries, neutral empty maps, and abstention.
+Mobile grade controls use two columns and wider layouts three columns.
+
+Results show original majority grades and accessible stacked distributions,
+exact grade frequencies, lower-median rules, repeated-median comparison
+steps and final draw disclosure. Histogram ratios use BigInt counts before
+converting only the bounded display fraction. History preserves the same
+original distributions and verbal labels. Settings, authoring/import,
+sub-orgs, write-ins, preliminary visibility, summaries, graph fallback and
+help recognize Majority Judgment. Source availability was enabled after
+backend handlers and focused API tests passed; organization opt-in remains
+independent and defaults remain unchanged.
+
+119 frontend tests pass, including all preceding method tests and new
+grade payload/labels, neutral/late/abstain, median-vs-mean, original tie
+distributions, exact large counts, native grade controls, history, and
+independent opt-in tests. New and changed admin/help/graph/ballot files pass
+ESLint. The three previously documented legacy hook files retain baseline
+findings. Production build passes: `index-DXSMnm4T.js`. SSR tests disable
+unused Vite WebSocket servers to avoid port collisions between test files.
+
+The idempotent `backend/scripts/phase109_majority_judgment_localqa.py` creates
+fixtures only in the exact local SQLite test database, preserving prior
+ballots/statuses. Voting: `1f2506dc-ee6d-483b-ae81-d867a7a81065`; early:
+`e978e4f0-e5ad-4265-a766-4c8193d411d2`. The existing delegate has Playground
+Excellent, Community center Acceptable, Parking Reject. W4 interactive
+verification is pending with the implementation lead.

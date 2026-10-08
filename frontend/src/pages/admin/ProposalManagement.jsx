@@ -784,6 +784,7 @@ function CreateProposalForm({
 
   const scopeSettings = subOrgs?.find(org => org.id === scope)?.settings;
   const allowedMethods = scopeSettings?.allowed_voting_methods ?? orgSettings?.allowed_voting_methods ?? ['binary'];
+  const majorityJudgmentAllowed = VOTING_METHODS.majority_judgment.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('majority_judgment');
   const rankedPairsAllowed = VOTING_METHODS.ranked_pairs.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('ranked_pairs');
   const scoreAllowed = VOTING_METHODS.score.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('score');
   const starAllowed = VOTING_METHODS.star.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('star');
@@ -796,7 +797,7 @@ function CreateProposalForm({
   const isProjectBudget = votingMethod === 'budget_project';
   // Budget-allocation buckets are options too, so they share the multi-option
   // editor. Project budget uses its own ProjectItemsEditor (kind + tiers).
-  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score', 'ranked_pairs'].includes(votingMethod) || isBudget;
+  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) || isBudget;
 
   // Phase 90c — the per-proposal count-mode toggle is offered only in weighted
   // orgs that allow the override (weighted_voting.allow_per_member_proposals,
@@ -955,7 +956,7 @@ function CreateProposalForm({
       // the proposal's existing scope; the PATCH endpoint does not accept
       // a scope change.
       if (!isEditMode && scope) payload.sub_org_id = scope;
-      if (isMultiOption && !(isEditMode && ['star', 'score', 'ranked_pairs'].includes(votingMethod)
+      if (isMultiOption && !(isEditMode && ['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod)
           && editingProposal.voting_method === votingMethod && unchangedOptionText(editingProposal.options, options))) {
         payload.options = options.map(o => ({
           label: o.label.trim(),
@@ -969,7 +970,7 @@ function CreateProposalForm({
       }
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
-      } else if (['star', 'score', 'ranked_pairs'].includes(votingMethod)) {
+      } else if (['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod)) {
         payload.num_winners = 1;
       }
       // Phase 90c — per-proposal count mode (weighted orgs that allow it). Send
@@ -1056,7 +1057,7 @@ function CreateProposalForm({
       // diverged from the mode default. For `always_*` modes the
       // toggle isn't rendered, so we keep the field null to inherit
       // (the backend resolver will return the always-locked value).
-      const isMultiOptionM = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score', 'ranked_pairs'].includes(votingMethod);
+      const isMultiOptionM = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod);
       if (isMultiOptionM && writeInsOverridable && allowWriteIns !== orgWriteInsAllowed) {
         payload.allow_write_in_options = allowWriteIns;
       }
@@ -1604,6 +1605,10 @@ function CreateProposalForm({
               <span className="text-sm text-gray-700">STAR (0–5 stars, then automatic runoff)</span>
             </label>
           )}
+          {(majorityJudgmentAllowed || (isEditMode && editingProposal.voting_method === 'majority_judgment')) && <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="votingMethod" value="majority_judgment" checked={votingMethod === 'majority_judgment'} onChange={() => setVotingMethod('majority_judgment')} className="accent-[var(--brand-accent)]" />
+            <span className="text-sm text-gray-700">Majority Judgment (verbal grades, highest majority grade)</span>
+          </label>}
           {(rankedPairsAllowed || (isEditMode && editingProposal.voting_method === 'ranked_pairs')) && <label className="flex items-center gap-2 cursor-pointer">
             <input type="radio" name="votingMethod" value="ranked_pairs" checked={votingMethod === 'ranked_pairs'} onChange={() => setVotingMethod('ranked_pairs')} className="accent-[var(--brand-accent)]" />
             <span className="text-sm text-gray-700">Ranked Pairs (equal rank groups, head-to-head victories)</span>
@@ -1995,7 +2000,7 @@ function CreateProposalForm({
           notice in lieu of the inputs; backend uses the org defaults. */}
       {canSetThresholds ? (
         <div className="grid grid-cols-2 gap-4">
-          {!['star', 'score', 'ranked_pairs'].includes(votingMethod) && <div>
+          {!['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) && <div>
             <label htmlFor="proposal-pass-threshold" className="block text-xs text-gray-500 mb-1">
               Pass Threshold: {Math.round(passThreshold * 100)}%
             </label>
@@ -2029,11 +2034,11 @@ function CreateProposalForm({
         // of the prior "ask an Admin" copy. Numbers from the orgSettings
         // prop (= currentOrg.settings, 12.5 B2) with fallback to 0.50/0.40.
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">{['star', 'score', 'ranked_pairs'].includes(votingMethod) ? 'Participation requirement' : 'Approval thresholds'}</p>
+          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">{['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) ? 'Participation requirement' : 'Approval thresholds'}</p>
           <p className="text-sm text-[#2C3E50]">
             This proposal will use the organization's defaults:{' '}
-            {!['star', 'score', 'ranked_pairs'].includes(votingMethod) && <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>}
-            {!['star', 'score', 'ranked_pairs'].includes(votingMethod) && ' / '}
+            {!['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) && <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>}
+            {!['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) && ' / '}
             <strong>{Math.round((orgSettings?.default_quorum_threshold ?? 0.40) * 100)}% quorum</strong>.
           </p>
         </div>

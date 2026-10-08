@@ -10,7 +10,7 @@ let Ballot;
 let VoteGraph;
 let ToastProvider;
 before(async () => {
-  server = await createServer({ cacheDir: 'node_modules/.vite-phase109-tests', server: { middlewareMode: true, hmr: false }, appType: 'custom' });
+  server = await createServer({ cacheDir: 'node_modules/.vite-phase109-tests', server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom' });
   Results = (await server.ssrLoadModule('/src/components/StarResultsPanel.jsx')).default;
   Ballot = (await server.ssrLoadModule('/src/components/RatedBallot.jsx')).default;
   VoteGraph = (await server.ssrLoadModule('/src/components/VoteFlowGraph.jsx')).default;

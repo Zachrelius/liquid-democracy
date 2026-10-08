@@ -18,5 +18,10 @@ export function formatExactCount(value) {
 }
 
 export function hasRatedBallot(vote) {
-  return vote?.scores != null || vote?.abstain === true;
+  return vote?.scores != null || vote?.grades != null || vote?.abstain === true;
+}
+
+export function gradePayload(grades, optionIds, abstain = false) {
+  if (abstain) return { abstain: true };
+  return { grades: ratedPayload(grades, optionIds).scores };
 }

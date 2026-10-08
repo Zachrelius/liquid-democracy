@@ -35,6 +35,8 @@ function VoteRecordCell({ vote }) {
 
   if (Array.isArray(vote.ballot.rank_groups)) return <span className="text-sm">Ranked Pairs ballot submitted ({vote.ballot.rank_groups.length} rank groups)</span>;
 
+  if (vote.ballot.grades != null) return <span className="text-sm">Majority Judgment grades submitted</span>;
+
   // Approval ballot
   if (Array.isArray(vote.ballot.approvals)) {
     return (

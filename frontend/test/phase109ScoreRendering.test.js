@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { ratedPayload } from '../src/utils/ratedBallot.js';
 let server, Results, Ballot, ToastProvider, Graph;
 before(async () => {
-  server = await createServer({ cacheDir: 'node_modules/.vite-phase109-score-tests', server: { middlewareMode: true, hmr: false }, appType: 'custom' });
+  server = await createServer({ cacheDir: 'node_modules/.vite-phase109-score-tests', server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom' });
   Results = (await server.ssrLoadModule('/src/components/RatedResultsPanel.jsx')).default;
   Ballot = (await server.ssrLoadModule('/src/components/RatedBallot.jsx')).default;
   Graph = (await server.ssrLoadModule('/src/components/VoteFlowGraph.jsx')).default;

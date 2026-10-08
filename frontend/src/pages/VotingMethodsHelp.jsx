@@ -40,6 +40,14 @@ export default function VotingMethodsHelp() {
         </ul>
       </section>
 
+      <section id="majority-judgment" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
+        <h2 className="text-lg font-semibold">Majority Judgment — optional, single winner</h2>
+        <p className="text-sm">Give each option one verbal grade: Reject, Poor, Acceptable, Good, Very good, or Excellent. You may give equal grades. These are ordered descriptions, not numeric points to total or average.</p>
+        <p className="text-sm">The highest majority grade leads: the weighted median, using the lower middle grade when voting weight is even. If options tie, repeatedly remove one unit of their current median grades and compare again. The original grade distributions stay intact. Identical distributions use the committed draw order.</p>
+        <p className="text-sm">Ungraded options receive Reject, including write-ins added later. Selecting a grade does not submit your ballot. Explicitly submit, change or retract while voting is permitted. An all-Reject or empty grade ballot counts as participation and overrides delegation; abstention also overrides delegation but contributes no grades to any distribution.</p>
+        <p className="text-sm">No winner is produced if every grade is Reject, and quorum must be met. A live result requiring the draw cannot satisfy Stable Result Required. The final result reveals the seed used for any draw.</p>
+        <p className="text-sm">Majority Judgment is off by default and requires organization opt-in. It applies to ordinary single-winner proposals, excluding officeholder elections.</p>
+      </section>
       <section id="ranked-pairs" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
         <h2 className="text-lg font-semibold">Ranked Pairs — optional, single winner</h2>
         <p className="text-sm">Assign options to rank groups, with group 1 most preferred. Options in the same group are tied. Unranked options tie below all ranked options, including write-ins added after your vote. Use group menus and Move up/Move down buttons without dragging, then submit explicitly.</p>

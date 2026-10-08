@@ -34,6 +34,7 @@ export default function StableResultHelp() {
           voting is automatically extended to give voters time to react.
         </p>
         <ul className="text-sm text-gray-700 space-y-2 leading-relaxed list-disc pl-5">
+          <li><strong>Majority Judgment proposals</strong> require the same winner, quorum, a meaningful grade above Reject and an unchanged option set throughout the observation window. Repeated-median comparisons may establish a stable winner; a committed draw between identical distributions does not.</li>
           <li><strong>Ranked Pairs proposals</strong> require the same winner, quorum, a meaningful strict preference and an unchanged option set throughout the observation window. Using the committed draw order for equal-strength edges or tied source options makes the result provisional and not stable.</li>
           <li><strong>Score proposals</strong> require the same highest-total winner, quorum, a meaningful result and an unchanged option set throughout the observation window. A tied total requiring the committed draw order is not stable.</li>
           <li><strong>STAR proposals</strong> require the same runoff winner, quorum, a meaningful result and an unchanged option set throughout the observation window. A result requiring the committed draw order is not stable. Adding or removing an option restarts observation, but does not reset the maximum extension allowance.</li>

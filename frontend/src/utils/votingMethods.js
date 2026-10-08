@@ -18,8 +18,8 @@ export const VOTING_METHODS = Object.freeze({
   score: Object.freeze({ ...experimental('Score', 'scores', 'score_0_5_sum_v1', 'Unrated options receive 0 points.'), available: true }),
   ranked_pairs: Object.freeze({ ...experimental('Ranked Pairs', 'rank_groups', 'ranked_pairs_margins_v1',
     'Unranked options tie below every ranked option.'), available: true }),
-  majority_judgment: experimental('Majority Judgment', 'grades', 'majority_judgment_lower_median_v1',
-    'Ungraded options receive Reject.'),
+  majority_judgment: Object.freeze({ ...experimental('Majority Judgment', 'grades', 'majority_judgment_lower_median_v1',
+    'Ungraded options receive Reject.'), available: true }),
 });
 
 // Existing UI fallback is binary only. Never derive defaults from this registry.

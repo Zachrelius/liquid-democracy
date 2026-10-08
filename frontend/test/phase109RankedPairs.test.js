@@ -21,7 +21,7 @@ test('rank payload rejects stale options and malformed ranks before submission',
 
 let server, Results, Ballot, Controls, ToastProvider, History;
 before(async () => {
-  server = await createServer({ cacheDir: 'node_modules/.vite-phase109-rp-tests', server: { middlewareMode: true, hmr: false }, appType: 'custom' });
+  server = await createServer({ cacheDir: 'node_modules/.vite-phase109-rp-tests', server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom' });
   Results = (await server.ssrLoadModule('/src/components/ExperimentalResultsPanel.jsx')).default;
   const module = await server.ssrLoadModule('/src/components/RankGroupsBallot.jsx');
   Ballot = module.default; Controls = module.RankGroupControls;

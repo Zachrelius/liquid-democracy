@@ -36,15 +36,15 @@ test('explicit legacy organization methods are retained without adding others', 
   assert.deepEqual(selectableVotingMethods({ allowed_voting_methods: [] }), []);
 });
 
-test('unfinished experimental methods cannot appear even in an opted-in organization', () => {
+test('available experimental methods still require organization context and exclude elections', () => {
   const settings = { allowed_voting_methods: Object.keys(VOTING_METHODS) };
   assert.deepEqual(selectableVotingMethods(settings, { hasOrg: true }),
-    ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project', 'star', 'score', 'ranked_pairs']);
+    ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project', 'star', 'score', 'ranked_pairs', 'majority_judgment']);
   for (const context of [{ hasOrg: false }, { hasOrg: true, election: true }]) {
     assert.deepEqual(selectableVotingMethods(settings, context),
       ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project']);
   }
-  assert.deepEqual(toggleAllowedVotingMethod(['binary'], 'majority_judgment', true), ['binary']);
+  assert.deepEqual(toggleAllowedVotingMethod(['binary'], 'unavailable_future_method', true), ['binary']);
 });
 
 test('settings edits preserve unrelated and future method choices', () => {
@@ -81,4 +81,13 @@ test('Ranked Pairs is independently opted in and has no legacy/global/election f
   assert.deepEqual(selectableVotingMethods(enabled, { hasOrg: true, election: true }), ['binary']);
   assert.deepEqual(toggleAllowedVotingMethod(['binary', 'star', 'score'], 'ranked_pairs', true), ['binary', 'star', 'score', 'ranked_pairs']);
   assert.throws(() => draftMethodResetFields('score', 'ranked_pairs', false), /Confirm/);
+});
+
+
+test('Majority Judgment stays independently opted in and grade conversion needs reset', () => {
+  assert.deepEqual(selectableVotingMethods({ allowed_voting_methods: ['binary', 'majority_judgment'] }, { hasOrg: true }), ['binary', 'majority_judgment']);
+  assert.deepEqual(selectableVotingMethods(undefined, { hasOrg: true }), ['binary']);
+  assert.deepEqual(toggleAllowedVotingMethod(['binary', 'star', 'score', 'ranked_pairs'], 'majority_judgment', true), ['binary', 'star', 'score', 'ranked_pairs', 'majority_judgment']);
+  assert.throws(() => draftMethodResetFields('score', 'majority_judgment', false), /Confirm/);
+  assert.deepEqual(draftMethodResetFields('score', 'majority_judgment', true), { confirm_ballot_reset: true });
 });

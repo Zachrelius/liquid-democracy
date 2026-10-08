@@ -4,7 +4,20 @@ import { useToast } from './Toast';
 import VerifyEmailInlineNote from './VerifyEmailInlineNote';
 import UserLink from './UserLink';
 import OptionCardDescription from './OptionCardDescription';
-import { hasRatedBallot, ratedPayload } from '../utils/ratedBallot';
+import { MAJORITY_JUDGMENT_GRADES } from '../utils/votingMethods';
+import { gradeLabel } from '../utils/majorityJudgment';
+import { hasRatedBallot, ratedPayload, gradePayload } from '../utils/ratedBallot';
+
+export function RatingChoices({ option: o, id, selectedValue, disabled, isGrade = false, ratingUnit = 'stars', onChange }) {
+  return <fieldset key={o.id} disabled={disabled} className="min-w-0 border rounded-lg p-2">
+        <legend className="px-1 text-sm font-medium break-words">{o.label}</legend>
+        {o.description && <OptionCardDescription text={o.description} />}
+        <div className={`grid ${isGrade ? 'grid-cols-2 sm:grid-cols-3' : 'grid-cols-6'} gap-1 mt-2`}>{[0, 1, 2, 3, 4, 5].map(value => <label key={value} className={`flex flex-col items-center p-2 rounded cursor-pointer ${selectedValue === value ? 'bg-blue-100 border border-blue-600' : 'bg-gray-50 border border-gray-200'}`}>
+          <input type="radio" name={`${id}-${o.id}`} value={value} checked={selectedValue === value} onChange={() => onChange(value)} aria-label={`${o.label}: ${isGrade ? MAJORITY_JUDGMENT_GRADES[value] : `${value} ${ratingUnit}`}`} className="accent-blue-700" />
+          <span className="text-sm mt-1">{isGrade ? MAJORITY_JUDGMENT_GRADES[value] : value}</span>
+        </label>)}</div>
+      </fieldset>;
+}
 
 export default function RatedBallot({ proposal, proposalId, myVote, onVoteChange, emailVerified }) {
   const [scores, setScores] = useState({});
@@ -16,14 +29,16 @@ export default function RatedBallot({ proposal, proposalId, myVote, onVoteChange
   const changeRef = useRef(null);
   const toast = useToast();
   const options = proposal.options || [];
+  const isGrade = proposal.voting_method === 'majority_judgment';
   const isScore = proposal.voting_method === 'score';
-  const methodName = isScore ? 'Score' : 'STAR';
+  const methodName = isGrade ? 'Majority Judgment' : isScore ? 'Score' : 'STAR';
   const ratingUnit = isScore ? 'points' : 'stars';
+  const savedRatings = (isGrade ? myVote?.grades : myVote?.scores) || {};
   const hasVote = hasRatedBallot(myVote);
   const disabled = busy || !emailVerified;
 
   function open() {
-    setScores(myVote?.is_direct ? { ...(myVote.scores || {}) } : {});
+    setScores(myVote?.is_direct ? { ...savedRatings } : {});
     setError('');
     setEditing(true);
     requestAnimationFrame(() => formRef.current?.querySelector('input')?.focus());
@@ -36,7 +51,7 @@ export default function RatedBallot({ proposal, proposalId, myVote, onVoteChange
     setBusy(true);
     setError('');
     try {
-      await api.post(`/api/proposals/${proposalId}/vote`, ratedPayload(scores, options.map(o => o.id), abstain));
+      await api.post(`/api/proposals/${proposalId}/vote`, (isGrade ? gradePayload : ratedPayload)(scores, options.map(o => o.id), abstain));
       setEditing(false);
       toast.success(abstain ? 'Abstention recorded' : 'Ballot submitted');
       await onVoteChange();
@@ -56,15 +71,15 @@ export default function RatedBallot({ proposal, proposalId, myVote, onVoteChange
   }
   return <section className="space-y-3" aria-label={`Your ${methodName} ballot`}>
     <h3 className="text-sm font-semibold">Your {methodName} ballot</h3>
-    <p id={`${id}-instructions`} className="text-sm text-gray-600">Rate each option from 0 to 5 {ratingUnit}. Equal ratings are allowed. {isScore ? 'The option with the highest total points wins. Equal highest totals use the committed draw order.' : 'The two highest total scores reach a runoff; your ballot supports whichever finalist you rated higher.'}</p>
-    <p className="text-xs text-gray-600">Unrated options receive 0 {ratingUnit}, including write-ins added after you vote. You may change your ballot while voting is permitted. Selecting a rating does not submit your vote.</p>
+    <p id={`${id}-instructions`} className="text-sm text-gray-600">{isGrade ? 'Grade each option from Reject to Excellent. Grades are ordered descriptions, not points. The highest majority grade leads; tied grades use repeated median comparison.' : <>Rate each option from 0 to 5 {ratingUnit}. Equal ratings are allowed. {isScore ? 'The option with the highest total points wins. Equal highest totals use the committed draw order.' : 'The two highest total scores reach a runoff; your ballot supports whichever finalist you rated higher.'}</>}</p>
+    <p className="text-xs text-gray-600">{isGrade ? 'Ungraded options receive Reject, including write-ins added after you vote.' : <>Unrated options receive 0 {ratingUnit}, including write-ins added after you vote.</>} You may change your ballot while voting is permitted. Selecting a rating does not submit your vote.</p>
     {!emailVerified && <VerifyEmailInlineNote action="vote" />}
     {!editing && <>
       {hasVote ? <div className="text-sm">
         <p>{myVote.is_direct ? 'Your submitted ballot' : <>Via {myVote.cast_by ? <UserLink user={myVote.cast_by} /> : 'delegate'}</>}</p>
-        {myVote.abstain ? <p>You abstained. This overrides delegation and contributes no ratings.</p> : <>
-          <ul className="space-y-1 mt-2">{options.map(o => <li key={o.id}>{o.label}: <strong>{myVote.scores?.[o.id] ?? 0}/5</strong>{!Object.hasOwn(myVote.scores || {}, o.id) && ' (unrated)'}</li>)}</ul>
-          {options.some(o => !Object.hasOwn(myVote.scores || {}, o.id)) && <p className="mt-2 text-xs text-amber-800">Options absent from this ballot—including any added later—receive zero until you change your ballot.</p>}
+        {myVote.abstain ? <p>You abstained. This overrides delegation and contributes no ratings or grades.</p> : <>
+          <ul className="space-y-1 mt-2">{options.map(o => <li key={o.id}>{o.label}: <strong>{isGrade ? gradeLabel(savedRatings[o.id] ?? 0) : `${savedRatings[o.id] ?? 0}/5`}</strong>{!Object.hasOwn(savedRatings, o.id) && (isGrade ? ' (ungraded)' : ' (unrated)')}</li>)}</ul>
+          {options.some(o => !Object.hasOwn(savedRatings, o.id)) && <p className="mt-2 text-xs text-amber-800">Options absent from this ballot—including any added later—receive {isGrade ? 'Reject' : 'zero'} until you change your ballot.</p>}
         </>}
       </div> : <p className="text-sm text-gray-500">{myVote?.message || 'No ballot cast.'}</p>}
       <div className="flex flex-wrap gap-2">
@@ -73,15 +88,8 @@ export default function RatedBallot({ proposal, proposalId, myVote, onVoteChange
       </div>
     </>}
     {editing && <form ref={formRef} onSubmit={e => { e.preventDefault(); submit(); }} aria-describedby={`${id}-instructions ${id}-error`} className="space-y-4">
-      {options.map(o => <fieldset key={o.id} disabled={disabled} className="min-w-0 border rounded-lg p-2">
-        <legend className="px-1 text-sm font-medium break-words">{o.label}</legend>
-        {o.description && <OptionCardDescription text={o.description} />}
-        <div className="grid grid-cols-6 gap-1 mt-2">{[0, 1, 2, 3, 4, 5].map(value => <label key={value} className={`flex flex-col items-center p-2 rounded cursor-pointer ${scores[o.id] === value ? 'bg-blue-100 border border-blue-600' : 'bg-gray-50 border border-gray-200'}`}>
-          <input type="radio" name={`${id}-${o.id}`} value={value} checked={scores[o.id] === value} onChange={() => setScores(old => ({ ...old, [o.id]: value }))} aria-label={`${o.label}: ${value} ${ratingUnit}`} className="accent-blue-700" />
-          <span className="text-sm mt-1">{value}</span>
-        </label>)}</div>
-      </fieldset>)}
-      <p className="text-xs text-gray-600">An all-zero ballot counts as participation and overrides delegation. Abstaining also overrides delegation but is excluded from rating totals.</p>
+      {options.map(option => <RatingChoices key={option.id} option={option} id={id} selectedValue={scores[option.id]} disabled={disabled} isGrade={isGrade} ratingUnit={ratingUnit} onChange={value => setScores(old => ({ ...old, [option.id]: value }))} />)}
+      <p className="text-xs text-gray-600">{isGrade ? 'An all-Reject or ungraded ballot counts as participation and overrides delegation. Abstaining also overrides delegation but contributes no grades to the distributions.' : 'An all-zero ballot counts as participation and overrides delegation. Abstaining also overrides delegation but is excluded from rating totals.'}</p>
       <div className="flex flex-wrap gap-2">
         <button type="submit" disabled={disabled} className="px-3 py-2 bg-[var(--brand-primary)] text-white rounded-lg disabled:opacity-50">{busy ? 'Submitting…' : 'Submit ballot'}</button>
         <button type="button" disabled={disabled} onClick={() => submit(true)} className="px-3 py-2 border rounded-lg">Abstain</button>
