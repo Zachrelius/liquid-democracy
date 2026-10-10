@@ -4720,3 +4720,21 @@ Backend: **3,776 distinct core passing cases, +167** versus 3,609. Initial full 
 Production backend `1e40a7da-3466-4259-b1a0-4076f8650d0d` and frontend `6e0b2171-b315-4252-b5a7-efb6a137d75e` are SUCCESS for exact `c7f1963`. Live `https://www.liquiddemocracy.us/`, bundle **index-CpFpIu6F.js**. Final health/readiness/monitor 200/ok, database connected, no issues, zero rolling 5xx/pool timeouts. Chrome desktop/380px/keyboard ballot-to-office QA passes all four methods; both manual advance routes and four scoped worker fixtures install exactly second-declared Bea Fictional with moderator, one resolution/intent and immutable no-op retries. Private invite-only/hidden synthetic org and four non-platform-admin accounts; all notification channels off. Unauthenticated proposals return 401. No real org changes, global tick, backfill, infrastructure or secret changes.
 
 Verification-pending results grant no office/privilege and need a later authorized action; no automatic installation after verification was added. Existing lint/bundle/dense Ranked Pairs costs and 24px settings-underlay mobile overflow remain. Multiwinner variants and per-title scheduled-method configuration are **NOT STARTED**; scheduled generation still uses ranked choice. No follow-up automation created. Full suite's generated historical audit sample is preserved and excluded from phase commits.
+
+
+## Phase 112 — JWT token hardening — Deployed (2026-10-10)
+
+Spec: `phase112_jwt_token_hardening_spec.md`. Single-lead security pass on isolated branch `phase-112/jwt-token-hardening` cut from `origin/master` `931d6b2`; the dirty root checkout was not touched.
+
+**Finding fixed (High):** email unsubscribe tokens shared the access token's key, HS256 algorithm and `sub` claim, and `_get_user_from_token` never checked token purpose. Every notification email's unsubscribe link therefore authenticated its recipient over REST and WebSocket for 30 days and survived password reset / logout-all. Access tokens now carry `typ: access`. `auth.decode_access_token` is the single decode path for REST auth, WebSocket `check_access`, rate-limit keying and request logging; it requires `exp`+`sub` and rejects any other type. Unsubscribe tokens carry `typ: unsubscribe`; legacy `purpose`-only links still unsubscribe but never authenticate. Pre-deploy untyped access tokens are rejected once (15-minute lifetime; `api.js` refreshes on 401).
+
+**CI unblocked:** `python-jose` 3.5.0 (no-fix GHSA-3qf3-8w2g-rqmx / CVE-2026-85394, not reachable here because of the HS256 shared secret, but it failed `pip-audit` before tests ran) replaced by `PyJWT==2.15.1`. This drops the transitive `ecdsa`, so the `PYSEC-2026-1325` exception is retired; `pip-audit -r requirements.txt` reports no known vulnerabilities with zero ignores. Nothing imports `cryptography`/`rsa`/`ecdsa` directly.
+
+**Log hygiene:** the app request log and (W2) uvicorn's access log redact token-length path segments as `:token`. W2 was found during prod QA: after the first deploy, uvicorn's separate access log still printed the raw unsubscribe token.
+
+Backend: full suite **3,793 passed / 0 failed / 21 skipped** (970s) on W1 = 3,776 + 17 new. W2 added 1 test (total **+18**, 3,794); verified with the Phase 112 + Phase 107 files (42 passed) and all 8 logging/caplog test files (164 passed), not a second full run. A mutation check (removing the `typ` check) fails 6 of the new tests. No migration; PG smoke not required. No frontend change; bundle unchanged `index-CpFpIu6F.js`.
+
+Commits: `7342c33` (W1), merge `d45d501`; W2 `487960f`, merge `4219e04`. Railway backend `ba346089-a3ab-4584-89e8-42074c128f88` (W1) and `86dad8a7-1f70-4b9c-88bf-5e7411ba88e2` (W2) SUCCESS. Prod: health/readiness 200, unauthenticated `/api/auth/me` 401, bogus bearer 401. Demo login on `demo-cedar-hollow` mints a token with claims `exp, sub, typ=access` that authenticates (200). Both prod log lines show `/api/notifications/unsubscribe/:token`.
+
+Followups (NOT STARTED, in spec): F1 hash password-reset/email-verification tokens at rest (needs migration); F2 invalidate outstanding reset tokens on use/password change; F3 access-token revocation (15-minute residual, accepted). A real unsubscribe link was not exercised against prod auth; the rejection is covered by tests only.
+
