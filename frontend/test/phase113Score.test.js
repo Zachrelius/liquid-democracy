@@ -58,3 +58,14 @@ test('Bloc STAR opt-in and results disclose unchanged influence and each runoff'
   assert.match(html,/Round 1: Bea/);assert.match(html,/Round 2: Cara/);assert.match(html,/Cara 5; Ada 4/);
   assert.doesNotMatch(html,/Ranked total points/);
 });
+
+
+test('Majority Judgment top-N explains grade order and preserves original distributions',()=>{
+  const settings=render(Settings,{allowed:['binary','majority_judgment'],multiwinner:['majority_judgment'],onChange(){},onMultiwinnerChange(){}});
+  assert.match(settings,/Allow multiple winners for Majority Judgment/);
+  const r={requested_count:'2',filled_count:'2',unfilled_count:'0',winners:['a','b'],ranked_order:['a','b','c'],supported_options:['a','b','c'],majority_grades:{a:'4',b:'4',c:'4',d:'0'},grade_histograms:{a:['0','0','1','1','2','1'],b:['0','1','0','1','2','1'],c:['1','0','0','1','2','1'],d:['5','0','0','0','0','0']},option_labels:{a:'Ada',b:'Bea',c:'Cara',d:'Dee'},quorum_met:true,finalized:true,selection_boundary_tie:true,comparisons:[{pool:['b','c'],winner:'b',tie_trace:[{stage:'median_removal',removed_per_candidate:'3',majority_grades:{b:'1',c:'0'}}]}]};
+  const html=render(Results,{proposal:{voting_method:'majority_judgment'},tally:{method_result:r}});
+  assert.match(html,/Selected: Ada, Bea/);assert.match(html,/Very good/);assert.match(html,/original distributions/);
+  assert.match(html,/Temporary grades removed per candidate: 3/);assert.match(html,/Bea Poor; Cara Reject/);assert.match(html,/Unsupported/);
+  assert.doesNotMatch(html,/Ranked total points|<th[^>]*>Points/);
+});

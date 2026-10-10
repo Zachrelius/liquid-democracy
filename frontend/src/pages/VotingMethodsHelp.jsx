@@ -19,7 +19,7 @@ export default function VotingMethodsHelp() {
         {Object.entries(VOTING_METHOD_DESCRIPTIONS).map(([method, text]) => <div key={method} className="space-y-2">
           <h2 className="text-lg font-semibold text-[var(--brand-primary)]">{text.name}</h2>
           <p className="text-sm text-gray-700 leading-relaxed">{text.description}</p>
-          {method === 'majority_judgment' && <MajorityJudgmentExplanation />}
+          {method === 'majority_judgment' && <><MajorityJudgmentExplanation /><p className="text-sm">Multiple winners require a separate permission. Select the highest options in the majority-grade ranking. Tied medians compare original distributions with temporary grade removal; voting influence stays unchanged between selections. Reject-only options leave vacancies. This does not provide proportional representation.</p></>}
         </div>)}
         <p className="text-sm text-gray-700">{VOTER_WEIGHT_EXPLANATION}</p>
         <p className="text-sm text-gray-700">{METHOD_AVAILABILITY_FOOTER}</p>

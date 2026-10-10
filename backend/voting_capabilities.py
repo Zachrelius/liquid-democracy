@@ -16,7 +16,7 @@ MULTIWINNER_METHODS = ("score", "star", "majority_judgment", "ranked_pairs")
 BUDGET_AGGREGATIONS = ("median", "trimmed_mean")
 MAX_WINNERS = 120
 # Advance only after the corresponding complete lifecycle/rendered gate passes.
-RELEASED_MULTIWINNER_METHODS = frozenset({"score", "star"})
+RELEASED_MULTIWINNER_METHODS = frozenset({"score", "star", "majority_judgment"})
 ALLOCATED_SCORE_RELEASED = False
 
 @dataclass(frozen=True)

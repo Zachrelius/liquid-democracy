@@ -76,6 +76,7 @@ export function changedMethodSettings(allowed, method, enabled, editable) {
 }
 
 export const MULTIWINNER_COPY = Object.freeze({
+  majority_judgment: "Grade each option from Reject to Excellent. Select the options highest in the majority-grade ranking, using the same grade-based tie rules. Each option is judged by the full electorate; this does not provide proportional representation.",
   star: "Select each winner using STAR's scoring and automatic runoff. Remove that winner and repeat for the remaining places. Every ballot retains its full weight in every round; this does not provide proportional representation.",
   score: 'Rate each option from 0 to 5. The options with the highest total scores win. Every ballot counts at full weight toward every selection; this does not provide proportional representation.',
 });

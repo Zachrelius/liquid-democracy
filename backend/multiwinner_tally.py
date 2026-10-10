@@ -1,7 +1,8 @@
 """Exact aggregate-only multiwinner extensions. Old v1 counters stay unchanged."""
 from copy import deepcopy
-from experimental_tally import ExperimentalTally, _rated_totals, count_star
-from voting_methods import candidate_priority, validate_voting_rules, option_set_version
+from functools import cmp_to_key
+from experimental_tally import ExperimentalTally, _rated_totals, count_star, count_majority_judgment, _mj_outcome, _lower_median
+from voting_methods import candidate_priority, validate_voting_rules, option_set_version, GRADE_LABELS
 from voting_capabilities import PLANNED_CAPABILITIES, validate_winner_count
 
 
@@ -77,9 +78,63 @@ def count_bloc_star(option_ids, weighted_ballots, rules, proposal_id):
     return tally
 
 
+
+def _mj_order(histograms, rules, proposal_id):
+    # Each pair compares the complete original distributions. The existing
+    # counter jumps common median runs; its input histograms are never depleted.
+    supported = sorted(oid for oid,h in histograms.items() if any(h[1:]))
+    priority = {oid:candidate_priority(rules,proposal_id,oid) for oid in supported}
+    comparisons = []
+    def compare(a,b):
+        outcome = _mj_outcome({a:histograms[a],b:histograms[b]},priority)
+        comparisons.append({"pool":sorted([a,b]),"winner":outcome["winner"],
+            "tie_trace":outcome["tie_trace"],"priority_used":outcome["priority_used"]})
+        return -1 if outcome["winner"]==a else 1
+    return sorted(supported,key=cmp_to_key(compare)),comparisons
+
+
+def count_majority_judgment_top_n(option_ids,weighted_ballots,rules,proposal_id):
+    count=rules.get("num_winners")
+    validate_voting_rules(rules,"majority_judgment",proposal_id,count)
+    if count is None or count<2:raise ValueError("Majority Judgment top-N requires multiple winners")
+    tally=count_majority_judgment(option_ids,weighted_ballots,rules,proposal_id)
+    result=tally.method_result
+    order,comparisons=_mj_order(result["grade_histograms"],rules,proposal_id)
+    _selection(result,order,count)
+    result.update(comparisons=comparisons,
+        tie_trace=[{"comparison":i+1,**event} for i,row in enumerate(comparisons) for event in row["tie_trace"]],
+        priority_used=any(row["priority_used"] for row in comparisons),
+        selection_boundary_tie=len(order)>count and result["majority_grades"][order[count-1]]==result["majority_grades"][order[count]])
+    return tally
+
+
+def _validate_mj_top_n_record(result,record,rules,preference_weight):
+    histograms=result.get("grade_histograms")
+    if (not isinstance(histograms,dict) or len(histograms)>120 or result.get("preference_weight")!=preference_weight
+            or result.get("grade_labels")!=list(GRADE_LABELS)
+            or result.get("option_set_version")!=option_set_version(histograms)
+            or set(record.get("option_labels",{}))!=set(histograms)):
+        raise ValueError("Invalid frozen Majority Judgment aggregates")
+    for h in histograms.values():
+        if not isinstance(h,list) or len(h)!=6 or any(type(n) is not int or n<0 for n in h) or sum(h)!=preference_weight:
+            raise ValueError("Invalid frozen grade frequencies")
+    grades={oid:_lower_median(h) for oid,h in histograms.items()}
+    if result.get("majority_grades")!=grades:raise ValueError("Invalid frozen original majority grades")
+    order,comparisons=_mj_order(histograms,rules,rules["proposal_id"])
+    expected=deepcopy(result);_selection(expected,order,rules["num_winners"])
+    expected.update(comparisons=comparisons,
+        tie_trace=[{"comparison":i+1,**event} for i,row in enumerate(comparisons) for event in row["tie_trace"]],
+        priority_used=any(row["priority_used"] for row in comparisons),
+        selection_boundary_tie=len(order)>rules["num_winners"] and grades[order[rules["num_winners"]-1]]==grades[order[rules["num_winners"]]])
+    for key in ("winners","winner","ranked_order","supported_options","requested_count","filled_count","unfilled_count","unfilled_reason","no_result_reason","comparisons","tie_trace","priority_used","selection_boundary_tie"):
+        if result.get(key)!=expected[key]:raise ValueError("Frozen grade ranking contradicts original histograms")
+    if record.get("official_winners")!=(expected["winners"] if record.get("quorum_met") else []):
+        raise ValueError("Invalid official Majority Judgment winners")
+
+
 def count_multiwinner(method, option_ids, weighted_ballots, rules, proposal_id, num_winners):
     validate_voting_rules(rules, method, proposal_id, num_winners)
-    counters = {"score":count_score_top_n,"star":count_bloc_star}
+    counters = {"score":count_score_top_n,"star":count_bloc_star,"majority_judgment":count_majority_judgment_top_n}
     if method not in counters: raise ValueError("No released multiwinner tally handler")
     return counters[method](option_ids,weighted_ballots,rules,proposal_id)
 
@@ -94,8 +149,14 @@ def validate_multiwinner_record(result, record, preference_weight):
     if (count is None or count < 2 or result.get("requested_count") != count
             or result.get("rule_id") != rules["rule_id"] or type(result.get("priority_used")) is not bool):
         raise ValueError("Invalid frozen winner count")
+    if (any(type(result.get(key)) is not int for key in ("requested_count","filled_count","unfilled_count"))
+            or type(record.get("quorum_met")) is not bool):
+        raise ValueError("Invalid frozen selection or quorum types")
     if record.get("record_version") != 2 or record.get("num_winners") != count:
         raise ValueError("Incompatible multiwinner frozen record")
+    if method == "majority_judgment":
+        _validate_mj_top_n_record(result,record,rules,preference_weight)
+        return
     scores = result.get("scores")
     histograms = result.get("score_histograms")
     if (method not in ("score","star") or not isinstance(scores,dict) or len(scores)>120 or not isinstance(histograms,dict)
