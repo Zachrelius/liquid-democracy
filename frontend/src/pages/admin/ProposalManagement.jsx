@@ -1599,26 +1599,6 @@ function CreateProposalForm({
             <span className="text-sm text-gray-700">Ranked Choice</span>
             {!rankedChoiceAllowed && <span className="text-xs text-amber-600">(Not enabled for this org)</span>}
           </label>
-          {(starAllowed || (isEditMode && editingProposal.voting_method === 'star')) && (
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="radio" name="votingMethod" value="star" checked={votingMethod === 'star'} onChange={() => setVotingMethod('star')} className="accent-[var(--brand-accent)]" />
-              <span className="text-sm text-gray-700">STAR (0–5 stars, then automatic runoff)</span>
-            </label>
-          )}
-          {(majorityJudgmentAllowed || (isEditMode && editingProposal.voting_method === 'majority_judgment')) && <label className="flex items-center gap-2 cursor-pointer">
-            <input type="radio" name="votingMethod" value="majority_judgment" checked={votingMethod === 'majority_judgment'} onChange={() => setVotingMethod('majority_judgment')} className="accent-[var(--brand-accent)]" />
-            <span className="text-sm text-gray-700">Majority Judgment (verbal grades, highest majority grade)</span>
-          </label>}
-          {(rankedPairsAllowed || (isEditMode && editingProposal.voting_method === 'ranked_pairs')) && <label className="flex items-center gap-2 cursor-pointer">
-            <input type="radio" name="votingMethod" value="ranked_pairs" checked={votingMethod === 'ranked_pairs'} onChange={() => setVotingMethod('ranked_pairs')} className="accent-[var(--brand-accent)]" />
-            <span className="text-sm text-gray-700">Ranked Pairs (equal rank groups, head-to-head victories)</span>
-          </label>}
-          {(scoreAllowed || (isEditMode && editingProposal.voting_method === 'score')) && (
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input type="radio" name="votingMethod" value="score" checked={votingMethod === 'score'} onChange={() => setVotingMethod('score')} className="accent-[var(--brand-accent)]" />
-              <span className="text-sm text-gray-700">Score (0–5 points, highest total wins)</span>
-            </label>
-          )}
           {/* Phase 73 — allocation budget (opt-in per org). */}
           {budgetAllowed && (
             <label className="flex items-center gap-2 cursor-pointer">
@@ -1634,6 +1614,26 @@ function CreateProposalForm({
               <span className="text-sm text-gray-700">Project budget (fund discrete projects by priority)</span>
             </label>
           )}
+          {(starAllowed || (isEditMode && editingProposal.voting_method === 'star')) && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="votingMethod" value="star" checked={votingMethod === 'star'} onChange={() => setVotingMethod('star')} className="accent-[var(--brand-accent)]" />
+              <span className="text-sm text-gray-700">STAR (0–5 stars, then automatic runoff)</span>
+            </label>
+          )}
+          {(scoreAllowed || (isEditMode && editingProposal.voting_method === 'score')) && (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="radio" name="votingMethod" value="score" checked={votingMethod === 'score'} onChange={() => setVotingMethod('score')} className="accent-[var(--brand-accent)]" />
+              <span className="text-sm text-gray-700">Score (0–5 points, highest total wins)</span>
+            </label>
+          )}
+          {(rankedPairsAllowed || (isEditMode && editingProposal.voting_method === 'ranked_pairs')) && <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="votingMethod" value="ranked_pairs" checked={votingMethod === 'ranked_pairs'} onChange={() => setVotingMethod('ranked_pairs')} className="accent-[var(--brand-accent)]" />
+            <span className="text-sm text-gray-700">Ranked Pairs (equal rank groups, head-to-head victories)</span>
+          </label>}
+          {(majorityJudgmentAllowed || (isEditMode && editingProposal.voting_method === 'majority_judgment')) && <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="votingMethod" value="majority_judgment" checked={votingMethod === 'majority_judgment'} onChange={() => setVotingMethod('majority_judgment')} className="accent-[var(--brand-accent)]" />
+            <span className="text-sm text-gray-700">Majority Judgment (verbal grades, highest majority grade)</span>
+          </label>}
         </div>
       </div>
 

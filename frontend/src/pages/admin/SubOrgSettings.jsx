@@ -1,4 +1,5 @@
-import { VOTING_METHODS as METHOD_CAPABILITIES, votingMethodLabel } from '../../utils/votingMethods';
+import VotingMethodSettings from '../../components/VotingMethodSettings';
+import { votingMethodLabel } from '../../utils/votingMethods';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api, { isAbortError } from '../../api';
@@ -22,7 +23,6 @@ const SR_DEFAULTS = {
 
 const SR_KEYS = Object.keys(SR_DEFAULTS);
 
-const VOTING_METHODS = ['binary', 'approval', 'ranked_choice', ...['star', 'score', 'ranked_pairs', 'majority_judgment'].filter(method => METHOD_CAPABILITIES[method].available)];
 
 /**
  * Phase 8.5 — Sub-Org Settings page.
@@ -180,15 +180,6 @@ export default function SubOrgSettings() {
   function inheritedSrValue(key) {
     if (Object.prototype.hasOwnProperty.call(parentSettings, key)) return parentSettings[key];
     return SR_DEFAULTS[key];
-  }
-
-  function toggleVotingMethod(method, on) {
-    setVmList(prev => {
-      const next = on ? Array.from(new Set([...prev, method])) : prev.filter(m => m !== method);
-      // Always keep binary in the list (server allows binary always).
-      if (!next.includes('binary')) next.push('binary');
-      return next;
-    });
   }
 
   // Build the settings payload. Convention from Session 2: PATCH merges the
@@ -373,29 +364,12 @@ export default function SubOrgSettings() {
             <div>
               <p className="text-sm text-gray-700">Override allowed voting methods for this sub-org</p>
               <p className="text-xs text-gray-400">
-                Inherits from parent: <strong>{inheritedVotingMethods.join(', ')}</strong>
+                Inherits from parent: <strong>{inheritedVotingMethods.map(votingMethodLabel).join(', ')}</strong>
               </p>
             </div>
           </label>
-          {vmOverride && (
-            <div className="pl-7 space-y-2">
-              <p className="text-xs text-gray-500">Optional methods are off by default. Disabling a method prevents new proposals, while existing proposals remain usable.</p>
-              {VOTING_METHODS.map(m => (
-                <label key={m} className={`flex items-center gap-2 ${m === 'binary' ? 'opacity-70' : 'cursor-pointer'}`}>
-                  <input
-                    type="checkbox"
-                    checked={vmList.includes(m)}
-                    disabled={m === 'binary'}
-                    onChange={e => toggleVotingMethod(m, e.target.checked)}
-                    className="accent-[var(--brand-accent)]"
-                  />
-                  <span className="text-sm text-gray-700">
-                    {m === 'binary' ? 'Binary (always enabled)' : m === 'ranked_choice' ? 'Ranked Choice' : votingMethodLabel(m)}
-                  </span>
-                </label>
-              ))}
-            </div>
-          )}
+          <VotingMethodSettings allowed={vmOverride ? vmList : inheritedVotingMethods}
+            editable={vmOverride} onChange={setVmList} />
         </div>
       </section>
 

@@ -1,0 +1,15 @@
+// Shared approved Phase 110 wording. Keep method defaults and capabilities separate.
+export const VOTING_METHOD_DESCRIPTIONS = Object.freeze({
+  binary: { name: 'Binary (Yes / No / Abstain)', description: 'Vote for or against a proposal, or abstain. Always enabled.' },
+  approval: { name: 'Approval Voting', description: 'Approve as many options as you find acceptable. Each approval counts equally, and the option with the most approvals wins. For multiple winners, options are selected by approval totals and the proposal’s selection rules.' },
+  ranked_choice: { name: 'Ranked Choice (IRV / STV)', description: 'Rank options in preference order. For one winner, the lowest-supported option is eliminated each round, and those votes move to each voter’s next remaining choice. For multiple winners, votes transfer from eliminated options and surplus votes transfer from elected options to fill the available places proportionally.' },
+  budget_allocation: { name: 'Budget — Allocation (split a pool)', description: 'Suggest how to divide a budget among spending categories. The system combines voters’ allocations into a shared budget, respecting the available funds and category limits.' },
+  budget_project: { name: 'Budget — Projects (choose projects to fund)', description: 'Rank projects in funding priority order. The system combines voters’ priorities and funds projects in the resulting order, subject to their costs and the proposal’s spending rules. Projects can offer different funding levels.' },
+  star: { name: 'STAR Voting', description: 'Rate each option from 0 to 5. The two options with the highest total scores enter an automatic runoff. Whichever finalist more voters rated higher wins; equal ratings count for neither finalist in the runoff.' },
+  score: { name: 'Score Voting', description: 'Rate each option from 0 to 5. The option with the highest total score wins. Every point counts toward the result, with no runoff.' },
+  ranked_pairs: { name: 'Ranked Pairs', description: 'Rank options in preference order, allowing ties. The system compares every pair of options. An option preferred over every other option wins; otherwise, it builds an ordering from the strongest victories first, skipping any that would create a circular result.' },
+  majority_judgment: { name: 'Majority Judgment', description: 'Grade each option from Reject to Excellent. The option with the highest middle grade—the median—wins, rather than the highest average. If options share the same middle grade, the system compares their remaining grades to break the tie.' },
+});
+export const METHOD_AVAILABILITY_FOOTER = 'Enabling a method makes it available for new proposals. Disabling it does not affect existing proposals.';
+export const SINGLE_WINNER_ELIGIBILITY = 'STAR, Score, Ranked Pairs, and Majority Judgment currently support single-winner proposals, excluding officeholder elections.';
+export const VOTER_WEIGHT_EXPLANATION = 'These descriptions use equal voter weights for simplicity. When weighted voting applies, each ballot counts with its represented voting weight, including grade frequencies and head-to-head comparisons.';

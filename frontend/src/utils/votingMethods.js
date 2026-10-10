@@ -68,3 +68,8 @@ export function experimentalOptionsLocked(proposal, methodResult) {
     && (methodResult?.finalized === true
       || ['passed', 'failed', 'closed', 'withdrawn', 'unresolved'].includes(proposal.status));
 }
+
+// Inherited/locked views cannot mutate even if called outside the native input.
+export function changedMethodSettings(allowed, method, enabled, editable) {
+  return toggleAllowedVotingMethod(allowed, editable ? method : 'binary', enabled);
+}

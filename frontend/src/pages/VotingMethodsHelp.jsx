@@ -1,4 +1,6 @@
 import HelpBackLink from '../components/HelpBackLink';
+import { MajorityJudgmentExplanation } from '../components/VotingMethodSettings';
+import { VOTING_METHOD_DESCRIPTIONS, METHOD_AVAILABILITY_FOOTER, SINGLE_WINNER_ELIGIBILITY, VOTER_WEIGHT_EXPLANATION } from '../utils/votingMethodDescriptions';
 
 export default function VotingMethodsHelp() {
   return (
@@ -13,31 +15,16 @@ export default function VotingMethodsHelp() {
         </p>
       </div>
 
-      {/* Decision guide */}
-      <section className="bg-blue-50 border border-blue-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold text-[var(--brand-primary)]">Which method should I pick?</h2>
-        <ul className="text-sm text-gray-700 space-y-2 leading-relaxed">
-          <li>
-            <strong>Simple yes/no question</strong> &mdash; use{' '}
-            <span className="font-medium text-[var(--brand-primary)]">Binary</span>. Policy approvals, charter changes,
-            anything with a clean accept/reject framing.
-          </li>
-          <li>
-            <strong>Multiple options where any combination could be acceptable</strong> &mdash; use{' '}
-            <span className="font-medium text-[var(--brand-primary)]">Approval</span>. Voters tick every option they
-            could live with; the most-approved option wins.
-          </li>
-          <li>
-            <strong>One winner from a slate, want majority preference</strong> &mdash; use{' '}
-            <span className="font-medium text-[var(--brand-primary)]">Ranked-Choice (IRV)</span>. Voters rank options
-            in order; lowest-ranked options are eliminated until one has majority support.
-          </li>
-          <li>
-            <strong>Multiple winners from a slate, want proportional representation</strong> &mdash; use{' '}
-            <span className="font-medium text-[var(--brand-primary)]">Single Transferable Vote (STV)</span>. Picks N
-            winners while reflecting different preference groups in the body.
-          </li>
-        </ul>
+      <section className="bg-white border border-gray-200 rounded-xl p-5 space-y-5" aria-label="Voting method descriptions">
+        {Object.entries(VOTING_METHOD_DESCRIPTIONS).map(([method, text]) => <div key={method} className="space-y-2">
+          <h2 className="text-lg font-semibold text-[var(--brand-primary)]">{text.name}</h2>
+          <p className="text-sm text-gray-700 leading-relaxed">{text.description}</p>
+          {method === 'majority_judgment' && <MajorityJudgmentExplanation />}
+        </div>)}
+        <p className="text-sm text-gray-700">{VOTER_WEIGHT_EXPLANATION}</p>
+        <p className="text-sm text-gray-700">{METHOD_AVAILABILITY_FOOTER}</p>
+        <p className="text-sm text-gray-700">{SINGLE_WINNER_ELIGIBILITY}</p>
+        <p className="text-sm text-gray-700">Design background: <a href="https://www.rangevoting.org/BalinskiLarakiPNASpdf.pdf" className="underline" target="_blank" rel="noreferrer">Balinski and Laraki</a>.</p>
       </section>
 
       <section id="majority-judgment" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">

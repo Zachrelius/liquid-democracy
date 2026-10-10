@@ -153,7 +153,7 @@ function OpenElectionModal({ title, orgSlug, onClose }) {
         <form onSubmit={handleSubmit} className="p-4 space-y-4 flex-1 overflow-y-auto">
           {/* Voting method */}
           <div>
-            <label className="block text-xs text-gray-500 mb-2">Voting method</label>
+            <p className="block text-xs text-gray-500 mb-2">Voting method <a href="/help/voting-methods" target="_blank" rel="noreferrer" className="ml-2 text-[var(--brand-accent)] underline">Which should I pick?</a></p>
             <div className="space-y-1">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
