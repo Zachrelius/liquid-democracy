@@ -1,0 +1,9 @@
+# Phase 112a synchronization closeout
+
+DONE: reviewed pilot decisions and two local research ignore entries preserved in 724ead4, integrated with no-ff merge 8779bf5 and pushed. Primary master advanced from 3e24fb5 (110 behind) to origin/master with no divergence. CLAUDE.md and newly tracked AGENTS.md contain the safe sync convention; existing AGENTS instructions preserved. No app code changed, runtime tests or migration required.
+
+Local recovery directory: Archive/pre-sync-drafts-2026-10-10 (not committed). Contains original files, staged/unstaged binary patches, original index and SHA256 manifest. Nine conflicting untracked drafts plus original AGENTS moved into moved-originals. All 778 original loose-file hashes verified, either at original location or archived location. Original generated audit sample restored byte-for-byte and remains uncommitted. Recovery stash retained: 2965358a22b8ee359cc59a81d3e93f50a800191a. Do not blindly pop it: pilot changes are already integrated.
+
+Exact documentation merge 8779bf5d0253179d68a1fe7c083d23f339d047d4 produced SKIPPED Railway deployments (no watched-file changes): backend c89d6933-a511-4559-b76d-b66b720a86c3 and frontend fa6542e5-ad3e-4154-b046-8a02376b326c. No application redeploy required. Homepage, /api/health, /api/health/ready and /api/health/monitor returned 200; readiness database connected and monitor status ok. Live bundle remains index-CpFpIu6F.js. An initial /api/ready probe returned404 because that is not the readiness route; the verified route above succeeds.
+
+Phase113 source spec survived unchanged through sync; after preservation verification, its local status was explicitly updated to APPROVED FOR EXECUTION following Z's instruction. Its implementation owner must commit that approved spec in the phase113 worktree. No old worktrees were removed. Remaining root dirt is intentional local artifacts, archived drafts and the generated audit sample.
