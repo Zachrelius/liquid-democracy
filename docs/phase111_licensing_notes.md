@@ -80,4 +80,3 @@ PublicLayout, About, Security, and Pilot link to the correct GitHub repository; 
 After license/rights approval, a separately authorized app pass should reconcile Terms/public copy with the chosen license, identify the deployed source revision, and ensure a prominent source offer gives users the corresponding source including required build/install material. Keep build artifacts' upstream notices. Phase 110 app files were not edited here.
 
 **Remaining owner decision:** choose AGPL-3.0-only or AGPL-3.0-or-later (or retain a permissive choice), confirm rights/asset provenance and prior MIT treatment, and separately authorize any eventual integration/publication. Credential revocation and history remediation also remain separate decisions; see the [publication review](phase111_publication_review.md).
-

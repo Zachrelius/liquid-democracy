@@ -72,4 +72,3 @@ I'm looking for real organizations to pilot the platform. If your group might be
 ## Proposed license — awaiting owner approval
 
 The prepared proposal is the **GNU Affero General Public License version 3 only** (`AGPL-3.0-only`); see [LICENSE](LICENSE) and [licensing review](docs/phase111_licensing_notes.md). It has not been approved or published by this preparation pass. Third-party components retain their own licenses and notices. Ownership, existing MIT statements, and asset provenance are recorded in the [publication review](docs/phase111_publication_review.md).
-

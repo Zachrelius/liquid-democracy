@@ -93,4 +93,3 @@ Before publication, the owner must decide **AGPL-3.0-only vs AGPL-3.0-or-later (
 After those decisions, integration/publication requires a separate authorization, plus a separately scoped reconciliation of deployed Terms/source offer. Provider revocation metadata, any history cleanup, final distribution notices, historical note/mailbox consent review, and a refreshed clean-install guide remain **NOT STARTED**. No background task or automation was created.
 
 Root phase-document migration remains **DEFERRED / NOT STARTED** because current conventions and cross-references depend on the layout. This preparation leaves Phase 110 independent and does not claim that any concurrent release has completed.
-
