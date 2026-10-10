@@ -1,6 +1,6 @@
 # Phase 113 — Multiwinner methods and organization-controlled budget choices
 
-Status: APPROVED FOR EXECUTION by Z, October 10, 2026, after primary-checkout synchronization. The prior hold is released. Implementation, testing, normal no-ff integration and production deployment are authorized under the gates below. The specified baseline is approved; report material deviations for review.
+Status: DEPLOYED — W0–W7 production verified October 10, 2026. Z approved execution after the initial safe primary synchronization. Release no-ff a77f4a8 and caption correction no-ff 6843a6f are verified. Final closeout: docs/phase113_closeout.md. Primary synchronization is separately blocked by the preserved untracked original spec; no application gate remains.
 
 ## Goal and future dispatch
 
@@ -218,3 +218,8 @@ Sources for counting concepts (platform policies above are explicitly ours):
 - Balinski/Laraki majority ranking: https://www.rangevoting.org/BalinskiLarakiPNASpdf.pdf
 
 No source's advocacy claims about guaranteed honesty or universal superiority are adopted. Implementation must verify pinned reference licensing under the repository's MIT license. Proportional STAR terminology is an explanatory alias; Allocated Score remains the canonical independent product method.
+
+
+## Execution completion — October 10, 2026
+
+All W0–W7 gates completed sequentially, including independent references, real-ballot lifecycle/assignment tests, 42 disposable PostgreSQL race/rollback checks, bounded exact-performance measurements and all-five local/production Chrome journeys. No migration or backfill. Final frontend bundle index-AI_8GDFa.js and exact backend a77f4a8 deployment pass health/readiness/monitor. Backend 4,011 distinct passing/20 existing skips (one full3,992 run plus19 separately passing additions), frontend154/154. Full detail, root causes, exact deployment IDs, file/commit inventories and remaining limits live in docs/phase113_closeout.md. Existing security/MIT requirements preserved. The original primary files and recovery stash remain unchanged; Git refused the final safe fast-forward because this original approved spec is untracked there. Primary reconciliation is NOT STARTED; see the closeout dispatch. No follow-up automation.

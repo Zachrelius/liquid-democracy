@@ -1,0 +1,123 @@
+{
+  "/": {
+    "status": 200,
+    "body": "index-HZ7bWI4M.js"
+  },
+  "/api/health": {
+    "status": 200,
+    "body": {
+      "status": "ok",
+      "version": "0.1.0"
+    }
+  },
+  "/api/health/ready": {
+    "status": 200,
+    "body": {
+      "status": "ok",
+      "database": "connected"
+    }
+  },
+  "/api/health/monitor": {
+    "status": 200,
+    "body": {
+      "status": "ok",
+      "checked_at": "2026-10-10T18:07:52.795655+00:00",
+      "components": {
+        "database": {
+          "status": "ok",
+          "guidance": "No action required."
+        },
+        "database_capacity": {
+          "status": "ok",
+          "used_bytes": 1650865855,
+          "capacity_bytes": 5368709120,
+          "percent_used": 30.75,
+          "guidance": "Review database growth and resize the Railway Postgres volume before 90%."
+        },
+        "http_5xx": {
+          "status": "ok",
+          "count_15m": 0,
+          "threshold": 3,
+          "samples": [],
+          "guidance": "Search Railway backend logs for the listed request IDs."
+        },
+        "database_pool": {
+          "status": "ok",
+          "supported": true,
+          "size": 2,
+          "max_overflow": 3,
+          "capacity": 5,
+          "checked_out": 1,
+          "current_overflow": 0,
+          "utilization_percent": 20.0,
+          "pool_timeout_seconds": 5.0,
+          "timeout_count_15m": 0,
+          "guidance": "No action required."
+        },
+        "email_delivery": {
+          "status": "ok",
+          "consecutive_failures": 0,
+          "threshold": 3,
+          "last_failure_at": null,
+          "last_success_at": null,
+          "guidance": "Check Resend delivery logs, quota, domain status, and Railway email configuration."
+        },
+        "digest_scheduler": {
+          "status": "ok",
+          "last_successful_tick_at": "2026-10-10T18:07:00.743614+00:00",
+          "age_seconds": 52,
+          "ticks_since_last_success": 0,
+          "stale_after_seconds": 9000,
+          "guidance": "Check Railway backend logs and the digest scheduler process heartbeat."
+        },
+        "decision_worker": {
+          "status": "ok",
+          "last_successful_tick_at": "2026-10-10T18:07:11.540877+00:00",
+          "age_seconds": 41,
+          "ticks_since_last_success": 0,
+          "stale_after_seconds": 1200,
+          "guidance": "Check Railway backend logs and the decision worker process heartbeat."
+        },
+        "proposal_lifecycle": {
+          "status": "ok",
+          "automation_enabled": true,
+          "overdue_count": 0,
+          "ordinary_deliberation_overdue_count": 0,
+          "voting_overdue_count": 0,
+          "unscheduled_active_deliberation_count": 6,
+          "oldest_overdue_age_seconds": null,
+          "grace_seconds": 660,
+          "guidance": "No action required."
+        },
+        "offsite_backup": {
+          "status": "ok",
+          "last_success_at": "2026-10-10T11:00:50.611292+00:00",
+          "last_failure_at": null,
+          "age_seconds": 25622,
+          "stale_after_seconds": 129600,
+          "consecutive_failures": 0,
+          "last_encrypted_size": 303977112,
+          "last_retention_classes": [
+            "daily"
+          ],
+          "last_duration_seconds": 50.551,
+          "failure_category": null,
+          "guidance": "No action required."
+        },
+        "upload_capacity": {
+          "status": "ok",
+          "used_bytes": 1527808,
+          "capacity_bytes": 4838498304,
+          "percent_used": 0.03,
+          "guidance": "Review upload growth and resize or archive before 95%."
+        },
+        "alert_delivery": {
+          "status": "ok",
+          "active_verified_admin_recipients": 1,
+          "guidance": "Keep at least one active, verified platform-admin email available for operational alerts."
+        }
+      },
+      "issues": []
+    }
+  }
+}

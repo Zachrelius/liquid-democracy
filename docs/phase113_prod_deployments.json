@@ -1,0 +1,42 @@
+{
+  "backend": [
+    {
+      "id": "039b9f71-8016-44f0-85e2-ee78991ae123",
+      "status": "SKIPPED",
+      "createdAt": "2026-10-10T18:19:29.969Z",
+      "commit": "6843a6f9e212896abc0b3f381a5f640c7c1e6740"
+    },
+    {
+      "id": "a422d913-6b82-4825-984a-ce01d1966b83",
+      "status": "SUCCESS",
+      "createdAt": "2026-10-10T18:06:21.507Z",
+      "commit": "a77f4a8286eea603f28698df861761b786a41080"
+    },
+    {
+      "id": "9c96f18a-52da-4bc4-8f31-6c3a34d63a13",
+      "status": "SKIPPED",
+      "createdAt": "2026-10-10T15:54:02.662Z",
+      "commit": "27e67accafd3367f66f66ff5a27fc462876159fa"
+    }
+  ],
+  "frontend": [
+    {
+      "id": "fcab1159-4f24-4c68-8d08-d22f2c18ad04",
+      "status": "SUCCESS",
+      "createdAt": "2026-10-10T18:19:29.380Z",
+      "commit": "6843a6f9e212896abc0b3f381a5f640c7c1e6740"
+    },
+    {
+      "id": "877673d6-559e-446d-80a4-9f5141c90202",
+      "status": "REMOVED",
+      "createdAt": "2026-10-10T18:06:21.506Z",
+      "commit": "a77f4a8286eea603f28698df861761b786a41080"
+    },
+    {
+      "id": "77c36a62-72a4-4b2d-93bd-40ef16566cc3",
+      "status": "SKIPPED",
+      "createdAt": "2026-10-10T15:54:02.623Z",
+      "commit": "27e67accafd3367f66f66ff5a27fc462876159fa"
+    }
+  ]
+}

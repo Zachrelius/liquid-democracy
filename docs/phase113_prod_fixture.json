@@ -1,0 +1,46 @@
+{
+  "org_slug": "phase113-release-qa-20261010",
+  "org_id": "55e17a2b-4c22-4927-935c-1a15e392b771",
+  "child_slug": "phase113-release-child",
+  "child_id": "fac31c28-9a9b-4c3a-bf28-716c156edaf9",
+  "accounts": [
+    {
+      "id": "4031f8c9-ed08-4707-88ca-8cf6f8c0ca17",
+      "username": "phase113releaseowner",
+      "display_name": "Phase 113 Synthetic Steward"
+    },
+    {
+      "id": "c90ee2a1-2cd6-4888-b916-8e1acde84c20",
+      "username": "phase113candidateada",
+      "display_name": "Ada Fictional"
+    },
+    {
+      "id": "cc76e15e-18c7-4d9d-9cf9-789f4c62b65e",
+      "username": "phase113candidatebea",
+      "display_name": "Bea Fictional"
+    },
+    {
+      "id": "776f8c07-b2c7-4da5-97cc-206f5f68afd0",
+      "username": "phase113candidatecy",
+      "display_name": "Cy Fictional"
+    }
+  ],
+  "titles": {
+    "manual": {
+      "score": "80127862-0321-4129-a52c-cd40d7fdfc72",
+      "star": "39573a55-35a1-4d7d-aaae-647f6941a0c9",
+      "majority_judgment": "c0c9d736-1825-4361-b29c-b708365dbe34",
+      "ranked_pairs": "534eec6d-003d-444e-aa9d-d3d9891edb5e",
+      "allocated_score": "265ec846-b01e-448d-8f4a-3e8249838475"
+    },
+    "worker": {
+      "score": "3a119c5a-6a80-4e73-b5d5-92ba2e26f650",
+      "star": "800ac2d1-8ba0-4e90-9c0a-8724a81e53ad",
+      "majority_judgment": "2582868a-14fd-460c-81d2-6b698528f703",
+      "ranked_pairs": "aa99b9cd-827c-4bd6-a59e-d9ceca8b5cb4",
+      "allocated_score": "1c82e00e-5442-468a-acce-6681145ca113"
+    }
+  },
+  "notifications_enabled": false,
+  "proposals_created": 0
+}

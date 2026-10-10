@@ -1,0 +1,91 @@
+{
+  "tool": "Supported Chrome DOM-aware tooling (Codex in Chrome)",
+  "production_url": "https://www.liquiddemocracy.us/",
+  "bundle": "index-AI_8GDFa.js",
+  "private_synthetic_org": "phase113-release-qa-20261010",
+  "no_real_org_changes": true,
+  "methods": {
+    "score": {
+      "ordinary_keyboard_ballot_manual_close_frozen_pair": "PASS",
+      "office_keyboard_ballot_manual_close_installed_pair": "PASS",
+      "desktop_result": "PASS",
+      "380px_result_and_selected_set_history": "PASS",
+      "history_recorded_aggregates_Enter_disclosure": "PASS"
+    },
+    "star": {
+      "ordinary_keyboard_ballot_manual_close_frozen_pair": "PASS",
+      "office_keyboard_ballot_manual_close_installed_pair": "PASS",
+      "desktop_result": "PASS",
+      "380px_result_and_selected_set_history": "PASS",
+      "history_recorded_aggregates_Enter_disclosure": "PASS"
+    },
+    "majority_judgment": {
+      "ordinary_keyboard_ballot_manual_close_frozen_pair": "PASS",
+      "office_keyboard_ballot_manual_close_installed_pair": "PASS",
+      "desktop_result": "PASS",
+      "380px_result_and_selected_set_history": "PASS",
+      "history_recorded_aggregates_Enter_disclosure": "PASS"
+    },
+    "ranked_pairs": {
+      "ordinary_keyboard_ballot_manual_close_frozen_pair": "PASS",
+      "office_keyboard_ballot_manual_close_installed_pair": "PASS",
+      "desktop_result": "PASS",
+      "380px_result_and_selected_set_history": "PASS",
+      "history_recorded_aggregates_Enter_disclosure": "PASS"
+    },
+    "allocated_score": {
+      "ordinary_keyboard_ballot_manual_close_frozen_pair": "PASS",
+      "office_keyboard_ballot_manual_close_installed_pair": "PASS",
+      "desktop_result": "PASS",
+      "380px_result_and_selected_set_history": "PASS",
+      "history_recorded_aggregates_Enter_disclosure": "PASS"
+    }
+  },
+  "settings": {
+    "five_separate_opt_ins_and_save": "PASS",
+    "fresh_budget_median_only": "PASS",
+    "sole_trimmed_mean_no_dropdown": "PASS",
+    "two_choices_accessible_dropdown": "PASS",
+    "grandfathered_existing_drafts_and_new_disallowed_rejection": "PASS",
+    "child_inherited_allocated_K2_save_reopen_serializer": "PASS",
+    "election_picker_K1_excludes_allocated_K2_includes_it": "PASS",
+    "final_budget_setting": "median only",
+    "all_five_multiwinner_opt_ins": "enabled only in synthetic org"
+  },
+  "allocated_round2_exact_band": {
+    "contribution": "3/2",
+    "common_fraction": "1",
+    "mass": "1",
+    "allocated": "1",
+    "quota_shortfall": "0",
+    "aggregate_only": "PASS"
+  },
+  "privacy": "Unauthenticated results/graph return 401/403/404; local/backend privacy regression gates pass",
+  "width": {
+    "viewport": 380,
+    "document_client": 365,
+    "document_scroll": 365,
+    "table_client": 291,
+    "table_scroll": 291
+  },
+  "caption_correction": "Score/Bloc STAR K>1 legends browser-confirmed on final bundle; K1 exact copy preserved by source",
+  "screenshots_root": "C:/Users/zachk/.codex/visualizations/2026/10/10/01a12685-aa74-77f2-a3b0-10578f2470d3",
+  "screenshots": [
+    "phase113_prod_settings_desktop.jpg",
+    "phase113_prod_budget_choices.jpg",
+    "phase113_prod_child_creation.jpg",
+    "phase113_prod_election_picker.jpg",
+    "phase113_prod_allocated_exact_mobile.jpg",
+    "phase113_prod_score_office_mobile.jpg",
+    "phase113_prod_star_office_mobile.jpg",
+    "phase113_prod_majority_judgment_office_mobile.jpg",
+    "phase113_prod_ranked_pairs_office_mobile.jpg",
+    "phase113_prod_allocated_score_office_mobile.jpg",
+    "phase113_prod_score_ordinary_mobile.jpg",
+    "phase113_prod_star_ordinary_mobile.jpg",
+    "phase113_prod_majority_judgment_ordinary_mobile.jpg",
+    "phase113_prod_ranked_pairs_ordinary_mobile.jpg",
+    "phase113_prod_allocated_score_ordinary_mobile.jpg"
+  ],
+  "tool_notes": "Responsive screenshot raster occasionally lagged layout despite correct DOM widths/text; reset/reapply viewport and separate state/capture corrected it. Full-page capture timed out; viewport captures used. Viewport restored."
+}

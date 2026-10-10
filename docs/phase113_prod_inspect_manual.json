@@ -1,0 +1,62 @@
+{
+  "score": {
+    "proposal_id": "920ce828-c3b0-4849-9ebd-7ff61820f68d",
+    "status": "passed",
+    "winners": [
+      "Ada Fictional",
+      "Bea Fictional"
+    ],
+    "installation": "installed",
+    "bound_roles": "moderator",
+    "election_resolved_audits": 1,
+    "notification_intent_staged": true
+  },
+  "star": {
+    "proposal_id": "c23ae457-f18c-489c-b5a4-aebaa0e62fa2",
+    "status": "passed",
+    "winners": [
+      "Ada Fictional",
+      "Bea Fictional"
+    ],
+    "installation": "installed",
+    "bound_roles": "moderator",
+    "election_resolved_audits": 1,
+    "notification_intent_staged": true
+  },
+  "majority_judgment": {
+    "proposal_id": "120353b2-d036-481e-a991-00e481c69d7d",
+    "status": "passed",
+    "winners": [
+      "Ada Fictional",
+      "Bea Fictional"
+    ],
+    "installation": "installed",
+    "bound_roles": "moderator",
+    "election_resolved_audits": 1,
+    "notification_intent_staged": true
+  },
+  "ranked_pairs": {
+    "proposal_id": "d94a992d-b780-4526-ae65-7b0c2515f4c1",
+    "status": "passed",
+    "winners": [
+      "Ada Fictional",
+      "Bea Fictional"
+    ],
+    "installation": "installed",
+    "bound_roles": "moderator",
+    "election_resolved_audits": 1,
+    "notification_intent_staged": true
+  },
+  "allocated_score": {
+    "proposal_id": "69d1e016-8703-45b9-802e-247341875a12",
+    "status": "passed",
+    "winners": [
+      "Ada Fictional",
+      "Bea Fictional"
+    ],
+    "installation": "installed",
+    "bound_roles": "moderator",
+    "election_resolved_audits": 1,
+    "notification_intent_staged": true
+  }
+}

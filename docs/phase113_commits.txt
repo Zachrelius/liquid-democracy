@@ -1,0 +1,13 @@
+4da392baaa764e1d31f4b2e010b94c81faf59eca Phase 113 W0: commit approved execution spec
+4e1289ece860c50ad8c95698472edfb14af7c214 Phase 113 W0: isolate planned capabilities and review compatibility contracts
+5885a1d95f50d9d053aa63e1b849ec51c44ca4ec Phase 113 W1: authorize budget aggregations through effective organization settings
+d48e260a41456c180ea44cd07b3803f40185d7d5 Phase 113 W2: add Score top-N and atomic winner-set elections
+4f8e85d5397a00184965a198afa0e1b27f0d4c70 Phase 113 W3: repeat exact STAR runoffs with full ballot influence
+e444a6174f8e176f8746445f7b56a9cbb3a592e7 Phase 113 W4: rank original Majority Judgment distributions for multiple winners
+319f18889dad7381a0431985ee759d396d215b03 Phase 113 W5: select a prefix of one fixed Ranked Pairs graph
+42b4fabd59c6e2d3c6f3c38eef9ffa73542a3931 Phase 113 W5: pin fixed-graph final-seat behavior against fresh recount
+313c8b503941e13c509bec902daac1c46952205a Phase 113 W6: exact proportional Allocated Score and complete selected-set history
+7e7428b7200693808ec793cf3de69f9254c52a9b Phase 113 W7: verify release gates and serialize office capacity mutations
+a77f4a8286eea603f28698df861761b786a41080 Phase 113: integrate multiwinner methods and budget choice permissions
+6c09eb9b85c4e8e4a649849871fa8300b4302742 Phase 113 W7: pluralize multiwinner network legends
+6843a6f9e212896abc0b3f381a5f640c7c1e6740 Phase 113: integrate production-QA caption correction
