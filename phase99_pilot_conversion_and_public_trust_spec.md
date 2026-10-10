@@ -1,6 +1,6 @@
 # Phase 99 — Pilot Page Preview and Public-Copy Truth Pass
 
-**Status:** APPROVED FOR IMPLEMENTATION by Z on August 22, 2026. This pass deliberately publishes `/pilot` at its direct URL without promoting or linking it from the homepage, public navigation, footer, About page, or Security page. Z will review the built production page before a later activation pass changes that visibility.
+**Status:** SHIPPED. Implementation `4840ca7`; no-fast-forward merge `9a9b2ad`; production bundle `index-BQQaxIYy.js`; backend 3,036 passed / 20 skipped; frontend 15/15 passed. `/pilot` shipped unpromoted with `noindex,nofollow`. Phase 99a supersedes three pilot-page copy decisions and is authorized to promote the corrected page from the homepage; inquiry intake, video, CRM, and analytics remain not started.
 
 ## Goal
 
@@ -77,13 +77,13 @@ The deferred activation work belongs in a later Phase 99a spec after Z reviews t
 2. **Offer:** the initial supported pilot is free and has no preset end date.
 3. **Continuation:** continued use is welcome when the platform works for the organization.
 4. **Support:** support is concentrated during setup and the first decisions, then becomes lighter as the organization becomes self-sufficient. Unlimited or permanently high-touch support is not promised.
-5. **Future pricing:** no pilot organization is charged without advance discussion and express agreement.
+5. **Permanent-free intent (superseded by Phase 99a):** the hosted platform is intended to remain free. Public copy should state that it is free during and after the pilot and has no subscription fee, without suggesting later charges.
 6. **Adoption language:** “first supported external pilot(s)” is accurate. Example organizations and participation by friends/family are not represented as established organizational pilots.
 7. **Initial fit:** roughly 20–200 known members, a committed steward, and meaningful but correctable decisions.
 8. **Age:** do not imply the platform generally verifies age. State briefly that the hosted service is not directed to children under 13; optional age thresholds work only with identity verification.
 9. **Export and self-hosting:** not included in the initial pilot. They may be considered as future features if requested, but must not be presented as existing or promised.
 10. **Operator identification:** use the functional description “operated ... by the founder of Liquid Democracy” and the support email. Do not publish Z's home address or invent a company identity, governing-law clause, or arbitration clause.
-11. **Preview visibility:** `/pilot` is intentionally unpromoted until Z reviews the built page.
+11. **Preview visibility at Phase 99 ship (superseded by Phase 99a):** `/pilot` shipped unpromoted for Z's review. Phase 99a is authorized to promote it from the homepage and remove `noindex,nofollow` while leaving other navigation surfaces unchanged.
 12. **Video:** omit the entire video section until a reviewed video exists. Training/demonstration videos may later be hosted as Unlisted YouTube videos with click-to-load behavior.
 
 ## Implementation sequence
@@ -184,7 +184,7 @@ Small line-length or accessibility edits are permitted without changing meaning.
 - Tell members the service is pilot-stage and explain how results will be used.
 - Run at least one real, appropriate decision.
 - Share candid feedback on comprehension, participation, workload, missing features, and trust.
-- No public use of names, logos, quotes, or results without separate permission.
+- Do not add an organization-facing publicity obligation here. Liquid Democracy's own no-publicity-without-permission commitment remains in the offline pilot understanding.
 
 #### Privacy, security, and recovery
 
@@ -199,10 +199,10 @@ Small line-length or accessibility edits are permitted without changing meaning.
 
 Include:
 
-- `Does the pilot cost anything?` — free, no preset end, support tapers, continued use welcome, no future charge without express agreement.
+- `Does the pilot cost anything?` — no; Liquid Democracy is free during and after the pilot, has no subscription fee, and includes hands-on setup and early support at no charge.
 - `How many members do we need?` — roughly 20–200 is the strongest range, but commitment and decision fit matter more.
 - `Does everyone have to verify their identity?` — no; government-ID verification is optional and normally off unless needed.
-- `Can administrators see how members voted?` — distinguish normal org-admin views, no ordinary platform-admin ballot screen, the restricted audited API, underlying operator access, and intentionally public/follower-visible activity.
+- `Can administrators see how members voted?` — lead with `No.` Organization administrators can see membership and aggregate results, but not individual members' ballots. Briefly distinguish member-chosen public/follower visibility and the hosted platform-operator trust boundary; leave API mechanics to Privacy and Security & Trust.
 - `Is this a legally binding election system?` — no; the organization determines authority and follows separate legal/procedural requirements.
 - `Can we keep using the platform if the pilot works for us?` — yes; no preset end, lighter ongoing support, export/portability/self-hosting packages not included but possible future work.
 - `What if we find a bug or need help?` — direct support contact and operational monitoring, but no uptime SLA or fixed response-time promise.

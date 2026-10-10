@@ -1,6 +1,6 @@
 # Phase 99a — Pilot Copy Clarity and Homepage Promotion
 
-**Status:** APPROVED FOR IMPLEMENTATION from Z's August 23, 2026 live-page review and explicit authorization to promote the revised page from the homepage.
+**Status:** SHIPPED. Implementation `d09534d`; no-fast-forward merge `d6d2a9c`; production bundle `index-u_OX331_.js`; frontend 24/24 passed. Phase 99b supersedes only the homepage CTA balance after Z's live visual review; Phase 99a's pilot copy, indexability, and bounded promotion decisions otherwise remain in force.
 
 ## Goal
 

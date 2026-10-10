@@ -1,6 +1,6 @@
 # Pilot Outreach Materials — Review Draft
 
-**Status:** Content approved by Z on August 22, 2026 as offline pilot-support material. Not yet published, sent to an organization, or treated as a signed agreement or legal document.
+**Status:** Content approved by Z as offline pilot-support material and updated August 23, 2026 with the permanent-free decision. Not yet published, sent to an organization, or treated as a signed agreement or legal document.
 
 **Working offer approved for this draft:** a no-cost, supported pilot with no preset end date for a known-membership organization of roughly 20–200 people, beginning with one to three meaningful but correctable decisions. Support is concentrated during setup and early use, then becomes lighter as the organization becomes self-sufficient. Continued use is welcome when the platform works for the organization.
 
@@ -75,7 +75,7 @@ Explain:
 - It is not a conventional secret-ballot system; the operator can access the database, while ordinary member/org-admin visibility is restricted.
 - The strongest pilot begins with a rehearsal and one to three real but correctable decisions, at a pace that fits the organization.
 - Support includes setup, member material, and check-ins around the first decisions, then tapers as the organization becomes self-sufficient.
-- The pilot is free, has no preset end date, and may continue if it works well. Any future pricing would require advance discussion and express agreement.
+- Liquid Democracy is free to use during and after the pilot, with no subscription fee and no preset end date. Hands-on setup and early support are also provided at no charge.
 - No organization name, logo, quote, or result is used publicly without separate permission.
 
 Then choose one outcome:
@@ -269,7 +269,7 @@ The organization will test Liquid Democracy with a real member cohort to learn w
 - Candidate rehearsal: [DESCRIPTION]
 - Candidate real decisions: [ONE TO THREE APPROPRIATE USES]
 
-There is no automatic end date. Continued use is welcome if the platform works for the organization. Support is most hands-on during setup and the first decisions, then becomes lighter as the organization becomes self-sufficient. If pricing is introduced in the future, Liquid Democracy will discuss it in advance and will not charge the organization without its express agreement.
+There is no automatic end date. Liquid Democracy is free to use during and after the pilot, with no subscription fee. Continued use is welcome if the platform works for the organization. Hands-on support is closest during setup and the first decisions, then becomes lighter as the organization becomes self-sufficient.
 
 ### What Liquid Democracy will provide
 

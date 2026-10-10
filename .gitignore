@@ -31,3 +31,7 @@ janet*.json
 
 # Isolated pinned voting-method validation packages (not runtime dependencies)
 backend/.reference-*/
+
+# Local research/data-preparation projects (not application source)
+local_projects/massachusetts_bills/
+local_projects/california_bills/
