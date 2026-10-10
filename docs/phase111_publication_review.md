@@ -1,6 +1,6 @@
 # Phase 111 — Repository publication review
 
-**MIT publication approved by Z on October 10, 2026. Copyright identity: Zachary Petertam.**
+**MIT published to GitHub master on October 10, 2026. Copyright identity: Zachary Petertam.**
 
 The initial AGPL preparation was reviewed, then the owner selected MIT and explicitly authorized the README update and deployment to GitHub. This record now reflects that decision. Original audit findings below retain their reviewed-baseline context.
 
@@ -13,7 +13,7 @@ Branch: `phase-111/repository-publication-readiness`. Isolated managed worktree:
 | README | DONE: revised Claude's local draft, checked claims, rendered and inspected |
 | License materials | DONE: approved MIT LICENSE, copyright 2026 Zachary Petertam, and updated licensing review |
 | Tracked public notes | DONE: redacted baseline inventory, focused credential checks, one narrow personal-data cleanup |
-| Publication / integration / deployment | APPROVED and executing: no-ff integration and normal GitHub master push; final task closeout records release/production disposition |
+| Publication / integration / deployment | DONE: no-ff merge 95535dd published and exact GitHub files/MIT detection verified; Railway correctly skipped app builds and live smoke passed |
 
 Files prepared: `README.md`, `LICENSE`, `docs/phase111_licensing_notes.md`, this review, the committed Phase 111 spec, and the narrowly anonymized `delegation_org_scoping_diagnostic_2026-05.md`. No frontend/backend code, manifests, Phase 110 files, AGENTS/CLAUDE instructions, root .gitignore, or shared PROGRESS edits. No broad document moves or .claude deletion. The root README draft and dirty index were not edited or staged by this work.
 
@@ -79,20 +79,40 @@ All 84 npm production nodes have metadata; version-specific PyPI metadata for al
 | README factual claims | PASS by current source plus bounded public HTTP/bundle checks above |
 | Relative links | PASS: final README local targets and report/notes local targets checked |
 | Markdown rendering | PASS: Marked + headless Chrome preview visually inspected; eight headings and seven lists; final MIT rendering/link checks rerun; no horizontal overflow at 1100px or 380px; mobile preview visually inspected |
-| License text / identifier | PASS: canonical SPDX MIT template verified; only approved year/name substituted; final body matches OSI MIT; README/LICENSE identify MIT |
+| License text / identifier | PASS: canonical SPDX MIT template verified; only approved year/name substituted; final body matches OSI MIT; README/LICENSE and GitHub license detection identify MIT |
 | Ownership / third parties | REVIEW COMPLETE: owner approved MIT and provided copyright identity; third-party/provenance limits recorded, not comprehensive legal clearance |
 | Tracked public-note audit | PASS within stated limits; one current-tree personal-data cleanup; historical/key-revocation questions remain |
 | Screenshot | NOT APPLICABLE: no screenshot asset added; temporary README rendering is outside committed files |
 | Scope / diff | PASS: exact documentation/licensing path allow-list; no app or Phase 110 changes; explicit staging only |
 | Backend/frontend full suites | NOT REQUIRED for documentation-only preparation; backend test count delta 0 |
 | Migration / PostgreSQL smoke | No migration; smoke not required |
-| Deployment / backfill | GitHub publication authorized and executing; verify remote master plus Railway watch-path disposition/live health. No application change, migration, reset or backfill |
+| Deployment / backfill | PASS: exact remote 95535dd and published files verified; backend/frontend SKIPPED for that commit; live health/readiness/monitor 200/ok. No application change, migration, reset or backfill |
+
+## Published release evidence
+
+- Implementation/approval commit: `4db11ef`; initial preparation commits: `2fa0e72`, `5344188`, `e0d5e32`.
+- No-ff release merge: **95535dd2953a3868de9dd251045795c8ebc1bfaa**, first parent current Phase 110 master `0c591057da39e24e570dcab3bfbba6a777f266b1`. Normal push to origin/master succeeded. No force-push or history rewrite.
+- [Published README](https://github.com/Zachrelius/liquid-democracy/blob/master/README.md) and [LICENSE](https://github.com/Zachrelius/liquid-democracy/blob/master/LICENSE) were downloaded through GitHub API and matched committed blobs byte for byte. GitHub reports license key **mit**, name **MIT License**.
+- Railway backend **bec5989b-c08a-429b-9564-e1aec1a438bf** and frontend **c85b4abb-a4d3-4016-8672-638235048878** both report **SKIPPED for exact 95535dd**. Only documentation/license paths changed; app watch patterns correctly avoided unnecessary rebuilds. No manual deploy or infrastructure change was needed.
+- Live [liquiddemocracy.us](https://www.liquiddemocracy.us/) returns 200 and retains Phase 110 B bundle **index-CpFpIu6F.js**. Liveness, readiness and monitor return HTTP 200/ok; readiness reports database connected and monitor reports zero issues.
+- Final MIT README rendered and visually inspected at 1100px and 380px: eight headings, 13 links, no horizontal overflow. All local links resolve. Canonical license/template/copyright, narrow scope and whitespace checks pass; focused Didit scan plus six tests pass. No migration; PG smoke not required; backend/frontend test count delta 0 and full runtime suites not required for this documentation pass.
+- Original root README SHA-256 remains `646d005e5982802be02d5f34f2f164f3dc39b4fd6a59eda34ea3a50bc4e8329a`; root staged index SHA-256 remains `f9bcb874e882de11fa0695d485c3c09a0762c5fb540358c8dce6849ab0f3160b`. No user files or Phase 110 app code changed by this release.
+- [CI run 38058010706](https://github.com/Zachrelius/liquid-democracy/actions/runs/38058010706) completed with frontend and Didit-secret-check SUCCESS, backend FAILURE at dependency audit, and backend tests SKIPPED. The unchanged python-jose 3.5.0 pin is flagged for CVE-2026-85394. No full-backend-CI success is claimed. Publication and production smoke are verified independently.
+- This release touched only README, LICENSE, the Phase 111 spec/review/licensing notes and the narrowly anonymized historical diagnostic. No backfill, demo reset, provider request/authentication, credential rotation, repository-visibility change, real-user mutation or broad document migration.
+
+## Separate CI dependency finding — remediation NOT STARTED
+
+The backend audit failure is [CVE-2026-85394 / GHSA-3qf3-8w2g-rqmx](https://github.com/advisories/GHSA-3qf3-8w2g-rqmx), rated critical by GitHub. The official advisory lists python-jose <=3.5.0 and no patched version as of this read-only check. It describes algorithm confusion involving DER-encoded asymmetric public keys accepted as HMAC secrets. Dependencies and CI configuration are identical to the Phase 110 baseline; the MIT documentation release did not introduce this pin or change authentication.
+
+A limited source triage found auth.py and websocket.py explicitly restrict verification to HS256 with the application's secret key. These inspected paths do not use the advisory's asymmetric-public-key scenario; this is an applicability observation, not a comprehensive exploit assessment. No live token, secret, authentication probe or application modification was used. The dependency audit was not disabled or suppressed.
+
+Remediation is outside this documentation/licensing pass and remains NOT STARTED. Exact follow-up dispatch: **Investigate and remediate the python-jose CVE-2026-85394 CI failure in a separate isolated security pass, preserving the dirty root and the published MIT documentation.**
 
 ## Approved publication and remaining follow-ups
 
 Z selected **MIT**, supplied **Zachary Petertam**, and directed updating README and deploying to GitHub. No additional license-choice or copyright-name input is needed. The Phase 111 spec has a superseding publication authorization section; original preparation restrictions remain historical context.
 
-Integrate the reviewed documentation/license diff with a no-ff merge on top of refreshed origin/master from a clean isolated integration checkout. Push master normally. Preserve the dirty root checkout, README draft, staged index, app code and all Phase 110 commits. Repository visibility stays public as it already was. Verify the GitHub files/license detection, remote merge identity, Railway deployment disposition and healthy production endpoints. Final task closeout reports exact commits and observed outcomes.
+Integrate the reviewed documentation/license diff with a no-ff merge on top of refreshed origin/master from a clean isolated integration checkout. Push master normally. Preserve the dirty root checkout, README draft, staged index, app code and all Phase 110 commits. Repository visibility stays public as it already was. Verify the GitHub files/license detection, remote merge identity, Railway deployment disposition and healthy production endpoints. The release evidence below records the verified publication; the final task closeout reports the subsequent audit-record integration hash.
 
 Provider revocation metadata, any shared-history cleanup, exhaustive distribution notices, asset provenance records and a refreshed clean-install guide remain separately scoped follow-ups, **NOT STARTED**. MIT needs no AGPL network-source-offer app change. No background task or automation was created.
 
