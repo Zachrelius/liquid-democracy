@@ -2233,7 +2233,7 @@ export default function ProposalDetail() {
               <StatusBadge status={proposal.status} />
               {/* Phase 90c — headcount-counted proposal marker (weighted orgs). */}
               <CountModeBadge countMode={proposal.count_mode} />
-              {['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) && <span className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-800">{votingMethodLabel(proposal.voting_method)} · {proposal.num_winners > 1 ? `up to ${proposal.num_winners} winners` : 'single winner'}</span>}
+              {['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) && <span className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-800">{proposal.voting_method === 'star' && proposal.num_winners > 1 ? 'Bloc STAR' : votingMethodLabel(proposal.voting_method)} · {proposal.num_winners > 1 ? `up to ${proposal.num_winners} winners` : 'single winner'}</span>}
               {proposal.voting_method === 'approval' && (
                 <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Approval Vote</span>
               )}

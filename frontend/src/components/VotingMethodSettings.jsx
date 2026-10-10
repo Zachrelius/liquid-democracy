@@ -32,7 +32,7 @@ export default function VotingMethodSettings({ allowed, editable = true, onChang
           {onMultiwinnerChange && MULTIWINNER_COPY[method] && <div className="pl-2 pt-2 space-y-1">
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={multiwinner.includes(method)}
               disabled={!editable || !(allowed || []).includes(method) || !permittedMultiwinner.includes(method)}
-              onChange={e => onMultiwinnerChange(e.target.checked ? [...new Set([...multiwinner, method])] : multiwinner.filter(id => id !== method))} />Allow multiple winners for {text.name}</label>
+              onChange={e => onMultiwinnerChange(e.target.checked ? [...new Set([...multiwinner, method])] : multiwinner.filter(id => id !== method))} />{method === 'star' ? 'Allow Bloc STAR for multiple winners' : `Allow multiple winners for ${text.name}`}</label>
             <p className="text-xs text-gray-600">{MULTIWINNER_COPY[method]}</p>
           </div>}
         </div>

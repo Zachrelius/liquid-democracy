@@ -14,7 +14,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../api';
 import { useOrg } from '../OrgContext';
-import { VOTING_METHODS, selectableVotingMethods, votingMethodLabel } from '../utils/votingMethods';
+import { VOTING_METHODS, MULTIWINNER_COPY, selectableVotingMethods, votingMethodLabel } from '../utils/votingMethods';
 import { useToast } from './Toast';
 import { useHasPermission } from '../hooks/useHasPermission';
 // Phase 67 W2 — shared winner-selection helpers (same presets, live
@@ -187,9 +187,10 @@ function OpenElectionModal({ title, orgSlug, orgSettings, onClose }) {
               {[...new Set([...experimentalMethods, ...(isExperimental ? [votingMethod] : [])])].map(method => <label key={method} className="flex items-center gap-2 cursor-pointer">
                 <input type="radio" name="electionVotingMethod" value={method} checked={votingMethod === method}
                   disabled={!experimentalMethods.includes(method)} onChange={() => setVotingMethod(method)} className="accent-[var(--brand-accent)]" />
-                <span className="text-sm text-gray-700">{votingMethodLabel(method)} ({isMulti ? `up to ${numWinners} officeholders` : 'one officeholder'})</span>
+                <span className="text-sm text-gray-700">{method === 'star' && Number(numWinners) > 1 ? 'Bloc STAR' : votingMethodLabel(method)} ({isMulti ? `up to ${numWinners} officeholders` : 'one officeholder'})</span>
               </label>)}
               {methodCompatibilityError && <p role="alert" className="text-sm text-red-700">{methodCompatibilityError}</p>}
+              {isExperimental && Number(numWinners) > 1 && <p className="text-sm text-gray-700">{MULTIWINNER_COPY[votingMethod]}</p>}
             </div>
           </div>
 

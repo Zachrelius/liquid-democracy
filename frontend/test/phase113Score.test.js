@@ -48,3 +48,13 @@ test('plural installed and rejected outcomes use only frozen names and full-set 
   assert.match(experimentalElectionSummary({...outcome,installation:'pending_verification'}),/entire set.*no new office/);
   assert.match(experimentalElectionSummary({...outcome,installation:'rejected',reason:'capacity'}),/entire set.*preserved/);
 });
+
+test('Bloc STAR opt-in and results disclose unchanged influence and each runoff',()=>{
+  const settings=render(Settings,{allowed:['binary','star'],multiwinner:['star'],onChange(){},onMultiwinnerChange(){}});
+  assert.match(settings,/Allow Bloc STAR for multiple winners/);assert.match(settings,/full weight in every round/);
+  const result={requested_count:'2',filled_count:'2',unfilled_count:'0',winners:['b','c'],ranked_order:['b','c'],scores:{a:'20',b:'31',c:'22'},option_labels:{a:'Ada',b:'Bea',c:'Cara'},quorum_met:true,finalized:true,rounds:[{winner:'b',pool:['a','b','c'],scores:{a:'20',b:'31',c:'22'},competitive_runoff:true,finalists:['b','c'],runoff:{b:'7',c:'2'},equal_preference:'0',tie_trace:[]},{winner:'c',pool:['a','c'],scores:{a:'20',c:'22'},competitive_runoff:true,finalists:['c','a'],runoff:{c:'5',a:'4'},equal_preference:'0',tie_trace:[]}]};
+  const html=render(Results,{proposal:{voting_method:'star'},tally:{method_result:result}});
+  assert.match(html,/Selected: Bea, Cara/);assert.match(html,/runoffs decide selections/);
+  assert.match(html,/Round 1: Bea/);assert.match(html,/Round 2: Cara/);assert.match(html,/Cara 5; Ada 4/);
+  assert.doesNotMatch(html,/Ranked total points/);
+});

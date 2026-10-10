@@ -52,12 +52,12 @@ export default function VotingMethodsHelp() {
         <p className="text-sm">Total points are not approval percentages. Score requires organization opt-in. Multiple winners require a separate permission: supported options with the highest total scores fill up to the requested places. Every ballot keeps its full influence for every selection; this does not provide proportional representation. Exact boundary ties use the committed priority, and zero total scores leave unfilled places. For elections, the entire selected set must pass installation checks before any office or bound-role access is granted.</p>
       </section>
       <section id="star" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold">STAR — optional, single winner</h2>
+        <h2 className="text-lg font-semibold">STAR — optional, single winner or Bloc STAR</h2>
         <p className="text-sm">Rate each option from 0 to 5 stars, allowing equal ratings. The two highest total scores reach an automatic runoff. Your ballot supports the finalist you rated higher; equal ratings support neither. A rating click is not a submitted vote.</p>
         <p className="text-sm">Unrated options receive zero, including write-ins added later. Organizations control early voting and write-ins. You can change a submitted ballot while voting is permitted. Delegation transfers one whole ballot, with each represented member’s own weight applied in both rounds.</p>
         <p className="text-sm">Abstention overrides delegation and counts for participation but contributes no ratings. An all-zero ballot is also participation; if every rating is zero, no winner is selected. Quorum applies, but the binary yes/no pass threshold does not.</p>
         <p className="text-sm">Score ties affecting finalists use preferences within the tied group, then five-star counts. Runoff ties use original total scores, then five-star counts. Remaining ties use a committed draw order, revealed with the final result. Live draw-dependent results cannot satisfy Stable Result Required.</p>
-        <p className="text-sm">STAR is off by default and must be enabled in organization settings. It selects one proposal option or one officeholder. Multiwinner STAR is outside this release.</p>
+        <p className="text-sm">STAR is off by default and must be enabled in organization settings. For multiple winners, a separate Bloc STAR permission enables repeated scoring and automatic runoffs. The selected winner is removed, and every ballot retains its original full weight for the next round. This does not provide proportional representation. A single remaining supported option is selected without a competitive runoff; zero-score options leave vacancies. Each round is preserved in results.</p>
       </section>
 
       {/* Binary */}

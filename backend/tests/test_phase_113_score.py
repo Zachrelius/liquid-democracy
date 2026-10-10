@@ -66,7 +66,7 @@ def test_frozen_aggregate_tampering_fails_loudly(key,value):
 @pytest.fixture
 def multi_org(test_db,election_org):
     org,owner,candidates,title=election_org
-    org.settings={**org.settings,"allowed_multiwinner_methods":["score"]}
+    org.settings={**org.settings,"allowed_multiwinner_methods":["score","star"]}
     title.cardinality_mode="multi";title.max_holders=2
     test_db.commit()
     return election_org
@@ -83,9 +83,10 @@ def cast_set(client,fixture,pid,options,partial=False):
 
 
 @pytest.mark.parametrize("site",["generic","org","worker"])
-def test_complete_set_installed_frozen_and_retry_idempotent(client,test_db,multi_org,site):
+@pytest.mark.parametrize("method",["score","star"])
+def test_complete_set_installed_frozen_and_retry_idempotent(client,test_db,multi_org,site,method):
     org,owner,candidates,title=multi_org
-    pid=opened(client,multi_org,"score",num_winners=2)
+    pid=opened(client,multi_org,method,num_winners=2)
     options=nominate_and_open(client,multi_org,pid)
     expected=cast_set(client,multi_org,pid,options)
     assert test_db.query(models.Vote).filter_by(proposal_id=pid).one().ballot["scores"][expected[0]]==5
@@ -107,9 +108,10 @@ def test_complete_set_installed_frozen_and_retry_idempotent(client,test_db,multi
 
 
 @pytest.mark.parametrize("number",[0,1,2])
-def test_uncontested_set_policy_is_distinct(client,test_db,multi_org,number):
+@pytest.mark.parametrize("method",["score","star"])
+def test_uncontested_set_policy_is_distinct(client,test_db,multi_org,number,method):
     org,owner,candidates,title=multi_org
-    pid=opened(client,multi_org,"score",num_winners=2)
+    pid=opened(client,multi_org,method,num_winners=2)
     nominate_and_open(client,multi_org,pid,number)
     assert close(client,test_db,multi_org,pid,"worker")=="passed"
     outcome=test_db.get(models.Proposal,pid).final_method_result["election"]
@@ -119,13 +121,14 @@ def test_uncontested_set_policy_is_distinct(client,test_db,multi_org,number):
 
 
 @pytest.mark.parametrize("case",["verification","inactive","capacity","partial_refresh","partial_fill","quorum"])
-def test_whole_set_preflight_preserves_incumbents(client,test_db,multi_org,case):
+@pytest.mark.parametrize("method",["score","star"])
+def test_whole_set_preflight_preserves_incumbents(client,test_db,multi_org,case,method):
     org,owner,candidates,title=multi_org
     incumbent=candidates[2]
     test_db.add(models.OrgTitleAssignment(title_id=title.id,user_id=incumbent.id))
     if case=="verification":org.settings={**org.settings,"verification_role_floors":{"moderator":"identity"}}
     test_db.commit()
-    pid=opened(client,multi_org,"score",num_winners=2,slate_mode="fill_vacancies" if case in ("capacity","partial_fill") else "refresh_slate",quorum_threshold=1 if case=="quorum" else 0)
+    pid=opened(client,multi_org,method,num_winners=2,slate_mode="fill_vacancies" if case in ("capacity","partial_fill") else "refresh_slate",quorum_threshold=1 if case=="quorum" else 0)
     options=nominate_and_open(client,multi_org,pid)
     cast_set(client,multi_org,pid,options,partial=case in ("partial_fill","partial_refresh"))
     if case=="inactive":candidates[1].is_active=False
@@ -145,11 +148,12 @@ def test_whole_set_preflight_preserves_incumbents(client,test_db,multi_org,case)
 
 
 @pytest.mark.parametrize("stage",["second_assignment","expected_second","audit"])
-def test_atomic_second_assignment_and_audit_failures(client,test_db,multi_org,stage,monkeypatch):
+@pytest.mark.parametrize("method",["score","star"])
+def test_atomic_second_assignment_and_audit_failures(client,test_db,multi_org,stage,monkeypatch,method):
     import elections,audit_utils
     org,owner,candidates,title=multi_org
     test_db.add(models.OrgTitleAssignment(title_id=title.id,user_id=candidates[2].id));test_db.commit()
-    pid=opened(client,multi_org,"score",num_winners=2,slate_mode="refresh_slate")
+    pid=opened(client,multi_org,method,num_winners=2,slate_mode="refresh_slate")
     options=nominate_and_open(client,multi_org,pid);cast_set(client,multi_org,pid,options)
     module=audit_utils if stage=="audit" else elections
     key="log_audit_event" if stage=="audit" else "_apply_election_winner"
@@ -198,9 +202,9 @@ def test_strict_count_rejected_in_election_schema(client,test_db,multi_org,k):
     assert test_db.query(models.Proposal).count()==0
 
 
-def ordinary(client,fixture,k=2):
+def ordinary(client,fixture,k=2,method="score"):
     org,owner,*_=fixture
-    response=client.post(f"/api/orgs/{org.slug}/proposals",headers=_auth_header(owner),json={"title":"Synthetic choices","voting_method":"score","num_winners":k,"options":[{"label":name} for name in ("A","B","C")]})
+    response=client.post(f"/api/orgs/{org.slug}/proposals",headers=_auth_header(owner),json={"title":"Synthetic choices","voting_method":method,"num_winners":k,"options":[{"label":name} for name in ("A","B","C")]})
     assert response.status_code==201,response.text
     return response.json()
 
@@ -231,13 +235,14 @@ def test_ordinary_draft_count_reset_and_grandfathered_seed(client,test_db,multi_
 
 
 @pytest.mark.parametrize("site",["generic","org","worker"])
-def test_ordinary_weighted_delegation_neutral_override_quorum_and_frozen(client,test_db,multi_org,site):
+@pytest.mark.parametrize("method",["score","star"])
+def test_ordinary_weighted_delegation_neutral_override_quorum_and_frozen(client,test_db,multi_org,site,method):
     org,owner,candidates,title=multi_org
     org.settings={**org.settings,"weighted_voting":{"enabled":True,"unit_label":"shares"}}
     for user,weight in zip([owner,*candidates],[7,2,3,0]):
         test_db.query(models.OrgMembership).filter_by(org_id=org.id,user_id=user.id).one().voting_weight=weight
     test_db.add(models.Delegation(org_id=org.id,delegator_id=owner.id,delegate_id=candidates[0].id,chain_behavior="accept_sub"));test_db.commit()
-    p=ordinary(client,multi_org);pid=p["id"];options=p["options"]
+    p=ordinary(client,multi_org,method=method);pid=p["id"];options=p["options"]
     # Draft -> deliberation -> voting follows the two actual manual transitions.
     for _ in range(2):
         r=client.post(f"/api/proposals/{pid}/advance",headers=_auth_header(owner),json={})
@@ -268,3 +273,17 @@ def test_contested_ordinary_cannot_start_with_count_above_options(client,test_db
         r=client.post(f"/api/proposals/{p['id']}/advance",headers=_auth_header(owner),json={})
         assert r.status_code==expected,r.text
     assert test_db.get(models.Proposal,p["id"]).status=="deliberation"
+
+
+@pytest.mark.parametrize("method",["score","star"])
+def test_draft_departure_from_budget_clears_incompatible_budget_config(client,test_db,multi_org,method):
+    org,owner,*_=multi_org
+    # Reopened synthetic draft with actual stored budget configuration.
+    org.settings={**org.settings,"allowed_voting_methods":[*org.settings["allowed_voting_methods"],"budget_allocation"]};test_db.commit()
+    response=client.post(f"/api/orgs/{org.slug}/proposals",headers=_auth_header(owner),json={"title":"Budget draft","voting_method":"budget_allocation","budget_config":{"mode":"allocation","envelope":1000},"options":[{"label":"A"},{"label":"B"}]})
+    assert response.status_code==201,response.text
+    pid=response.json()["id"]
+    changed=client.patch(f"/api/proposals/{pid}",headers=_auth_header(owner),json={"voting_method":method,"num_winners":2,"confirm_ballot_reset":True})
+    assert changed.status_code==200,changed.text
+    assert changed.json()["budget_config"] is None
+    assert test_db.get(models.Proposal,pid).voting_rules["num_winners"]==2

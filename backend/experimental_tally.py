@@ -27,7 +27,7 @@ class ExperimentalTally:
 
     @property
     def winners(self):
-        if "winners" in self.method_result:
+        if self.method_result.get("requested_count", 1) > 1:
             return list(self.method_result["winners"])
         winner = self.method_result["winner"]
         return [winner] if winner is not None else []
@@ -73,6 +73,8 @@ class ExperimentalTally:
                 or type(result.get("priority_used")) is not bool
                 or "winner" not in result or "no_result_reason" not in result):
             raise ValueError("Invalid persisted experimental method result")
+        if any(key in result for key in ("winners", "requested_count", "filled_count", "ranked_order")):
+            raise ValueError("Single-winner record contains multiwinner fields")
         if "method" in record and record["method"] != result["method"]:
             raise ValueError("Persisted record method contradicts tally")
         if "rules" in record:

@@ -1867,6 +1867,8 @@ def update_proposal(
             and getattr(proposal, "approval_winner_config", None) is not None
         ):
             proposal.approval_winner_config = None
+        if old_method in ("budget_allocation", "budget_project") and new_method not in ("budget_allocation", "budget_project"):
+            proposal.budget_config = None
         proposal.voting_method = new_method
     # num_winners change (independent of method change — RCV proposals
     # can adjust num_winners while in draft).

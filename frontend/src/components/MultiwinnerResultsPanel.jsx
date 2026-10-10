@@ -8,9 +8,10 @@ export default function MultiwinnerResultsPanel({ tally, proposal }) {
   const label = id => labels[id] || id;
   const selected = new Set(result.winners || []);
   const official = result.finalized && result.quorum_met;
+  const isBloc = proposal.voting_method === 'star';
   const ordered = [...(result.ranked_order || []), ...Object.keys(result.scores || {}).filter(id => !(result.ranked_order || []).includes(id))];
   return <section aria-label={`${votingMethodLabel(proposal.voting_method)} multiple-winner results`} className="space-y-4">
-    <h3 className="font-semibold">{votingMethodLabel(proposal.voting_method)}: multiple winners</h3>
+    <h3 className="font-semibold">{isBloc ? 'Bloc STAR' : votingMethodLabel(proposal.voting_method)}: multiple winners</h3>
     <p className="text-sm">{MULTIWINNER_COPY[proposal.voting_method]}</p>
     <p className="font-medium">{official ? 'Selected' : 'Provisional selections'}: {(result.winners || []).map(label).join(', ') || 'None'}.</p>
     <p className="text-sm">{formatExactCount(result.filled_count)} of {formatExactCount(result.requested_count)} places selected.</p>
@@ -19,9 +20,14 @@ export default function MultiwinnerResultsPanel({ tally, proposal }) {
     {result.selection_boundary_tie && <p className="text-sm">Equal totals at the selection boundary use the committed candidate priority. The winner count does not expand.</p>}
     {result.priority_used && <p className="text-xs text-amber-800">A tie consulted committed priority. This result cannot satisfy Stable Result Required.</p>}
     <div className="overflow-x-auto"><table className="w-full text-left text-sm">
-      <caption className="text-left font-medium">Ranked total points</caption><thead><tr><th scope="col">Option</th><th scope="col">Points</th><th scope="col">Selection</th></tr></thead>
+      <caption className="text-left font-medium">{isBloc ? 'Original total scores (runoffs decide selections)' : 'Ranked total points'}</caption><thead><tr><th scope="col">Option</th><th scope="col">Points</th><th scope="col">Selection</th></tr></thead>
       <tbody>{ordered.map(id => <tr key={id} className="border-t"><th scope="row" className="py-2 pr-2 font-normal break-words">{label(id)}</th><td>{formatExactCount(result.scores?.[id])}</td><td>{selected.has(id) ? official ? 'Selected' : 'Provisional' : BigInt(result.scores?.[id] || 0) === 0n ? 'Unsupported' : ''}</td></tr>)}</tbody>
     </table></div>
+    {isBloc && <div className="space-y-3"><h4 className="font-medium">Selection rounds</h4>{(result.rounds || []).map((round,i) => <details key={i} open><summary className="text-sm cursor-pointer">Round {i+1}: {label(round.winner)}</summary>
+      <p className="text-sm">Remaining pool: {round.pool.map(label).join(', ')}.</p>
+      {round.competitive_runoff ? <><p className="text-sm">Finalists: {round.finalists.map(label).join(', ')}.</p><p className="text-sm">Runoff: {Object.entries(round.runoff).map(([id,n]) => `${label(id)} ${formatExactCount(n)}`).join('; ')}. Equal preference: {formatExactCount(round.equal_preference)}.</p></> : <p className="text-sm">One supported option remained; selected without a competitive runoff.</p>}
+      <details><summary className="text-xs cursor-pointer">Scores and tie stages</summary><p className="text-xs">{Object.entries(round.scores).map(([id,n]) => `${label(id)} ${formatExactCount(n)}`).join('; ')}</p>{round.tie_trace.map((event,j) => <p key={j} className="text-xs">{event.stage.replaceAll('_',' ')}: {(event.pool || []).map(label).join(', ')}. {event.values && Object.entries(event.values).map(([id,n]) => `${label(id)} ${formatExactCount(n)}`).join('; ')}</p>)}</details>
+    </details>)}</div>}
     <p className="text-xs text-gray-600">Participating people: {formatExactCount(result.participating_headcount)}. Ballots cast ({tally.weighted ? tally.unit_label || 'voting shares' : 'votes'}): {formatExactCount(result.total_ballots_cast)}. Abstentions: {formatExactCount(result.total_abstain)}.</p>
     <details><summary className="text-sm cursor-pointer">Auditable counting rules</summary>
       <p className="text-xs break-all mt-2">Rule: {proposal.voting_rules?.rule_id}. Draw commitment: {proposal.voting_rules?.tie_commitment}.</p>

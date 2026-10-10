@@ -1926,7 +1926,7 @@ function CreateProposalForm({
             className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
           />
           <p className="text-xs text-gray-500 mt-1">
-            {votingMethod === 'ranked_choice' ? '1 winner = ranked-choice voting (IRV). More than 1 winner = single transferable vote (STV).' : MULTIWINNER_COPY[votingMethod]}
+            {votingMethod === 'ranked_choice' ? '1 winner = ranked-choice voting (IRV). More than 1 winner = single transferable vote (STV).' : <>{votingMethod === 'star' && 'Bloc STAR. '}{MULTIWINNER_COPY[votingMethod]}</>}
             {votingMethod !== 'ranked_choice' && ' Up to the requested number can be selected. Unsupported options leave unfilled places. The count must fit the options before voting begins.'}
           </p>
           {!numWinnersValid && (
