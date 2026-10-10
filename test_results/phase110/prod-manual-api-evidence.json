@@ -1,0 +1,26 @@
+{
+  "star": {
+    "proposal_id": "033e0e63-af69-407d-a5a5-b719d3ef185c",
+    "winner": "Bea Fictional",
+    "installation": "installed",
+    "finalized": true
+  },
+  "score": {
+    "proposal_id": "5d58abe3-135c-4d4c-a8f7-c1d841256068",
+    "winner": "Bea Fictional",
+    "installation": "installed",
+    "finalized": true
+  },
+  "ranked_pairs": {
+    "proposal_id": "eea4d228-c0f1-49a4-9a5b-4015f3dc2ec3",
+    "winner": "Bea Fictional",
+    "installation": "installed",
+    "finalized": true
+  },
+  "majority_judgment": {
+    "proposal_id": "e8aaeaea-64f8-4c24-bb75-dac7a8e12b20",
+    "winner": "Bea Fictional",
+    "installation": "installed",
+    "finalized": true
+  }
+}

@@ -1,0 +1,119 @@
+{
+  "health": {
+    "http": 200,
+    "body": {
+      "status": "ok",
+      "version": "0.1.0"
+    }
+  },
+  "health/ready": {
+    "http": 200,
+    "body": {
+      "status": "ok",
+      "database": "connected"
+    }
+  },
+  "health/monitor": {
+    "http": 200,
+    "body": {
+      "status": "ok",
+      "checked_at": "2026-10-10T13:43:16.553952+00:00",
+      "components": {
+        "database": {
+          "status": "ok",
+          "guidance": "No action required."
+        },
+        "database_capacity": {
+          "status": "ok",
+          "used_bytes": 1646245567,
+          "capacity_bytes": 5368709120,
+          "percent_used": 30.66,
+          "guidance": "Review database growth and resize the Railway Postgres volume before 90%."
+        },
+        "http_5xx": {
+          "status": "ok",
+          "count_15m": 0,
+          "threshold": 3,
+          "samples": [],
+          "guidance": "Search Railway backend logs for the listed request IDs."
+        },
+        "database_pool": {
+          "status": "ok",
+          "supported": true,
+          "size": 2,
+          "max_overflow": 3,
+          "capacity": 5,
+          "checked_out": 2,
+          "current_overflow": 1,
+          "utilization_percent": 40.0,
+          "pool_timeout_seconds": 5.0,
+          "timeout_count_15m": 0,
+          "guidance": "No action required."
+        },
+        "email_delivery": {
+          "status": "ok",
+          "consecutive_failures": 0,
+          "threshold": 3,
+          "last_failure_at": null,
+          "last_success_at": null,
+          "guidance": "Check Resend delivery logs, quota, domain status, and Railway email configuration."
+        },
+        "digest_scheduler": {
+          "status": "ok",
+          "last_successful_tick_at": "2026-10-10T13:35:43.086040+00:00",
+          "age_seconds": 453,
+          "ticks_since_last_success": 0,
+          "stale_after_seconds": 9000,
+          "guidance": "Check Railway backend logs and the digest scheduler process heartbeat."
+        },
+        "decision_worker": {
+          "status": "ok",
+          "last_successful_tick_at": "2026-10-10T13:41:12.367836+00:00",
+          "age_seconds": 124,
+          "ticks_since_last_success": 0,
+          "stale_after_seconds": 1200,
+          "guidance": "Check Railway backend logs and the decision worker process heartbeat."
+        },
+        "proposal_lifecycle": {
+          "status": "ok",
+          "automation_enabled": true,
+          "overdue_count": 0,
+          "ordinary_deliberation_overdue_count": 0,
+          "voting_overdue_count": 0,
+          "unscheduled_active_deliberation_count": 6,
+          "oldest_overdue_age_seconds": null,
+          "grace_seconds": 660,
+          "guidance": "No action required."
+        },
+        "offsite_backup": {
+          "status": "ok",
+          "last_success_at": "2026-10-10T11:00:50.611292+00:00",
+          "last_failure_at": null,
+          "age_seconds": 9745,
+          "stale_after_seconds": 129600,
+          "consecutive_failures": 0,
+          "last_encrypted_size": 303977112,
+          "last_retention_classes": [
+            "daily"
+          ],
+          "last_duration_seconds": 50.551,
+          "failure_category": null,
+          "guidance": "No action required."
+        },
+        "upload_capacity": {
+          "status": "ok",
+          "used_bytes": 1527808,
+          "capacity_bytes": 4838498304,
+          "percent_used": 0.03,
+          "guidance": "Review upload growth and resize or archive before 95%."
+        },
+        "alert_delivery": {
+          "status": "ok",
+          "active_verified_admin_recipients": 1,
+          "guidance": "Keep at least one active, verified platform-admin email available for operational alerts."
+        }
+      },
+      "issues": []
+    }
+  }
+}

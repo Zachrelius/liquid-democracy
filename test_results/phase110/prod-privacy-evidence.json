@@ -1,0 +1,18 @@
+{
+  "star": {
+    "unauthenticated_http": 401,
+    "private_content_not_returned": true
+  },
+  "score": {
+    "unauthenticated_http": 401,
+    "private_content_not_returned": true
+  },
+  "ranked_pairs": {
+    "unauthenticated_http": 401,
+    "private_content_not_returned": true
+  },
+  "majority_judgment": {
+    "unauthenticated_http": 401,
+    "private_content_not_returned": true
+  }
+}

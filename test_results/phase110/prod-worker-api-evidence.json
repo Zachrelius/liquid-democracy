@@ -1,0 +1,18 @@
+{
+  "star": {
+    "proposal_id": "e6eabd3e-59f8-4443-addc-026e430767aa",
+    "ballots_ready_for_scoped_worker": true
+  },
+  "score": {
+    "proposal_id": "2a160829-e9a6-495b-859f-2e85975d60d7",
+    "ballots_ready_for_scoped_worker": true
+  },
+  "ranked_pairs": {
+    "proposal_id": "c5be805b-b791-4918-84ab-55acf444eed1",
+    "ballots_ready_for_scoped_worker": true
+  },
+  "majority_judgment": {
+    "proposal_id": "fae19cec-3d19-43ac-abc3-1dfdb7a4acea",
+    "ballots_ready_for_scoped_worker": true
+  }
+}

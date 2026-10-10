@@ -1,0 +1,8 @@
+1dc24076f7c1f09a057020d75695555c448f5a1d Phase 110 W0: Commit approved sequential release spec
+be3ea7c5f20d2db1a163363ced7409dcfd57794f Phase 110 A W1: Unify voting method descriptions and accessible settings
+bfbd01712c0c5e9fc0fba09702888139d60abbd1 Phase 110 A: integrate voting method clarity release
+fbc76ef456dec0bfde4954671bfae696a6e6bf6b Phase 110 A W2: Record verified production release gates
+aacd7095b2f07b1a690c7c651f06277b6c6915a2 Phase 110 B W1: enable atomic single-winner officeholder elections
+0112ec5e2d375e75bc8ba8dd3962476b34967e43 Phase 110 B W2: show frozen installation outcomes in notifications
+93c9b275b3b8d4a0daea4838f01f310040a6d58e Phase 110 B W3: record full regression and resolved runner flags
+c7f196335a91b7490ca3710c00d1edc231903a4b Phase 110 B: integrate single-winner officeholder election support

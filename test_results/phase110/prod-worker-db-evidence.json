@@ -1,0 +1,41 @@
+{
+  "worker_fixtures": {
+    "star": {
+      "proposal_id": "e6eabd3e-59f8-4443-addc-026e430767aa",
+      "status": "passed",
+      "winner": "Bea Fictional",
+      "installation": "installed",
+      "bound_role": "moderator",
+      "election_resolved_audits": 1,
+      "notification_intent_staged": true
+    },
+    "score": {
+      "proposal_id": "2a160829-e9a6-495b-859f-2e85975d60d7",
+      "status": "passed",
+      "winner": "Bea Fictional",
+      "installation": "installed",
+      "bound_role": "moderator",
+      "election_resolved_audits": 1,
+      "notification_intent_staged": true
+    },
+    "ranked_pairs": {
+      "proposal_id": "c5be805b-b791-4918-84ab-55acf444eed1",
+      "status": "passed",
+      "winner": "Bea Fictional",
+      "installation": "installed",
+      "bound_role": "moderator",
+      "election_resolved_audits": 1,
+      "notification_intent_staged": true
+    },
+    "majority_judgment": {
+      "proposal_id": "fae19cec-3d19-43ac-abc3-1dfdb7a4acea",
+      "status": "passed",
+      "winner": "Bea Fictional",
+      "installation": "installed",
+      "bound_role": "moderator",
+      "election_resolved_audits": 1,
+      "notification_intent_staged": true
+    }
+  },
+  "retry_noop": true
+}
