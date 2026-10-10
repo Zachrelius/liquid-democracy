@@ -763,8 +763,8 @@ function VoteGraphLegend({ proposal, voteGraph }) {
   if (method === 'allocated_score') return 'Allocated Score uses proportional allocation without an automatic runoff. See remaining-weight totals and allocation rounds in the results.';
   if (method === 'majority_judgment') return <p className="text-xs text-gray-500">Majority Judgment uses verbal grades. See majority grades and distributions in the results.</p>;
   if (method === 'ranked_pairs') return <p className="text-xs text-gray-500">Ranked Pairs compares head-to-head preferences and locks victories without creating cycles. See the pairwise results.</p>;
-  if (method === 'score') return <p className="text-xs text-gray-500">Score ballots use 0–5 points. The highest total points wins.</p>;
-  if (method === 'star') return <p className="text-xs text-gray-500">STAR ballots use 0–5 ratings. See the scoring round and automatic runoff in results.</p>;
+  if (method === 'score') return <p className="text-xs text-gray-500">{proposal.num_winners > 1 ? 'Score ballots use 0–5 points. The highest total points determine the selected set.' : 'Score ballots use 0–5 points. The highest total points wins.'}</p>;
+  if (method === 'star') return <p className="text-xs text-gray-500">{proposal.num_winners > 1 ? 'Bloc STAR repeats scoring and automatic runoff rounds for the remaining selections. See every round in results.' : 'STAR ballots use 0–5 ratings. See the scoring round and automatic runoff in results.'}</p>;
 
   if (method === 'approval' || method === 'ranked_choice') {
     return (
