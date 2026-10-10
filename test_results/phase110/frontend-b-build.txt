@@ -11,9 +11,9 @@ dist/registerSW.js                  0.13 kB
 dist/manifest.webmanifest           0.46 kB
 dist/index.html                     0.60 kB │ gzip:   0.36 kB
 dist/assets/index-DQcWNiPm.css     67.70 kB │ gzip:  12.66 kB
-dist/assets/index-MHOkyReV.js   1,969.26 kB │ gzip: 501.93 kB
+dist/assets/index-CpFpIu6F.js   1,969.37 kB │ gzip: 501.97 kB
 
-✓ built in 748ms
+✓ built in 754ms
 [plugin builtin:vite-reporter]
 (!) Some chunks are larger than 500 kB after minification. Consider:
 - Using dynamic import() to code-split the application
@@ -24,7 +24,7 @@ Browserslist: browsers data (caniuse-lite) is 6 months old. Please run:
   Why you should do it regularly: https://github.com/browserslist/update-db#readme
 PWA v1.2.0
 mode      generateSW
-precache  24 entries (2633.57 KiB)
+precache  24 entries (2633.68 KiB)
 files generated
   dist/sw.js
   dist/workbox-6bfcbdaa.js

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { formatNotification } from '../src/utils/formatNotification.js';
 import { optionLabelMap } from '../src/utils/optionDisplay.js';
 import { experimentalElectionSummary as summary } from '../src/utils/electionOutcome.js';
 import { experimentalOptionsLocked, selectableVotingMethods } from '../src/utils/votingMethods.js';
@@ -45,4 +46,16 @@ test('one-seat eligibility explicitly excludes methods from multiple-seat electi
   const s={allowed_voting_methods:['ranked_choice','star','score','ranked_pairs','majority_judgment']};
   assert.deepEqual(selectableVotingMethods(s,{hasOrg:true,election:true,numWinners:1}),s.allowed_voting_methods);
   assert.deepEqual(selectableVotingMethods(s,{hasOrg:true,election:true,numWinners:2}),['ranked_choice']);
+});
+
+test('in-app election notices use frozen candidate and installation text; ordinary notices stay unchanged',()=>{
+  for (const [office_installation,outcome_detail] of [
+    ['installed','Elected: Bea. Office installation completed.'],
+    ['pending_verification','Bea won; office installation is pending verification. No bound-role access was granted.'],
+    ['rejected','Bea won but could not be installed. Existing seats and roles were preserved.'],
+  ]) {
+    const text=formatNotification({event_type:'proposal.closed',payload:{proposal_title:'Treasurer election',office_installation,outcome_detail}});
+    assert.match(text,/Treasurer election.*has closed/);assert.ok(text.endsWith(outcome_detail));
+  }
+  assert.equal(formatNotification({event_type:'proposal.closed',payload:{proposal_title:'Budget',status:'passed'}}),'"Budget" has closed (passed)');
 });
