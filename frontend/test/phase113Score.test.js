@@ -1,0 +1,50 @@
+import { before, after, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer } from 'vite';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { selectableVotingMethods, multiwinnerEnabled, draftWinnerCountResetFields } from '../src/utils/votingMethods.js';
+import { experimentalElectionSummary } from '../src/utils/electionOutcome.js';
+let server, Settings, Results, Ballot, Toast;
+before(async () => {
+  server = await createServer({ optimizeDeps: { noDiscovery: true, include: [] },cacheDir:'node_modules/.vite-phase113-score-tests',server:{middlewareMode:true,hmr:false,ws:false},appType:'custom'});
+  Settings=(await server.ssrLoadModule('/src/components/VotingMethodSettings.jsx')).default;
+  Results=(await server.ssrLoadModule('/src/components/ExperimentalResultsPanel.jsx')).default;
+  Ballot=(await server.ssrLoadModule('/src/components/RatedBallot.jsx')).default;
+  Toast=(await server.ssrLoadModule('/src/components/Toast.jsx')).ToastProvider;
+});
+after(async()=>{await server?.close();});
+const render=(component,props)=>renderToStaticMarkup(createElement(component,props));
+test('multiwinner requires effective separate permission without enabling other variants',()=>{
+  const settings={allowed_voting_methods:['score','star','ranked_choice'],allowed_multiwinner_methods:['score']};
+  assert.deepEqual(selectableVotingMethods(settings,{hasOrg:true,election:true,numWinners:2}),['ranked_choice','score']);
+  assert.deepEqual(selectableVotingMethods(settings,{hasOrg:false,numWinners:2}),['ranked_choice']);
+  assert.equal(multiwinnerEnabled(settings,'score'),true);assert.equal(multiwinnerEnabled(settings,'star'),false);
+});
+test('draft count changes need explicit destructive confirmation; identical counts do not',()=>{
+  assert.throws(()=>draftWinnerCountResetFields(1,2,true,false),/Confirm/);
+  assert.deepEqual(draftWinnerCountResetFields(1,2,true,true),{confirm_ballot_reset:true});
+  assert.deepEqual(draftWinnerCountResetFields(2,2,true,false),{});
+});
+test('separate opt-in is labeled, explains full influence and honors parent restriction',()=>{
+  const html=render(Settings,{allowed:['binary','score'],multiwinner:[],permittedMultiwinner:[],onChange(){},onMultiwinnerChange(){}});
+  assert.match(html,/Allow multiple winners for Score Voting/);assert.match(html,/does not provide proportional representation/);
+  assert.match(html,/type="checkbox"[^>]*disabled.*Allow multiple winners/s);
+  assert.match(html,/entire|selected set together/);
+});
+test('results show a set, boundary ties, unsupported tail and frozen seed accurately',()=>{
+  const html=render(Results,{proposal:{voting_method:'score',voting_rules:{rule_id:'score_0_5_top_n_v1',tie_commitment:'commit'}},tally:{method_result:{requested_count:'2',filled_count:'1',unfilled_count:'1',winners:['a'],ranked_order:['a'],scores:{a:'12',b:'0'},option_labels:{a:'Ada',b:'Bea'},quorum_met:true,finalized:true,selection_boundary_tie:true,priority_used:true,tie_seed:'revealed'}}});
+  assert.match(html,/Selected: Ada/);assert.match(html,/1 of 2 places/);assert.match(html,/unfilled/);assert.match(html,/Unsupported/);
+  assert.match(html,/boundary/);assert.match(html,/Revealed seed: revealed/);assert.doesNotMatch(html,/Provisional leader/);
+});
+test('ballot states count and nonproportional rule before rating',()=>{
+  const html=render(Toast,{children:createElement(Ballot,{proposal:{voting_method:'score',num_winners:2,options:[{id:'a',label:'Ada'}]},emailVerified:true,onVoteChange(){}})});
+  assert.match(html,/Up to 2 selections/);assert.match(html,/full weight/);assert.match(html,/does not provide proportional representation/);
+  assert.doesNotMatch(html,/The option with the highest total points wins/);
+});
+test('plural installed and rejected outcomes use only frozen names and full-set policy',()=>{
+  const outcome={outcome_version:2,winner_user_ids:['a','b'],candidate_snapshot:{x:{user_id:'a',display_name:'Ada'},y:{user_id:'b',display_name:'Bea'}},selected_count:2,requested_count:2};
+  assert.match(experimentalElectionSummary({...outcome,installation:'installed'}),/Ada, Bea.*2 of 2 places/);
+  assert.match(experimentalElectionSummary({...outcome,installation:'pending_verification'}),/entire set.*no new office/);
+  assert.match(experimentalElectionSummary({...outcome,installation:'rejected',reason:'capacity'}),/entire set.*preserved/);
+});

@@ -1,6 +1,6 @@
 import { BudgetAggregationSelector } from '../../components/BudgetAggregationSettings';
 import { budgetAggregationChoices, chosenBudgetAggregation } from '../../utils/budgetAggregations';
-import { VOTING_METHODS, votingMethodLabel, draftMethodResetFields, unchangedOptionText } from '../../utils/votingMethods';
+import { VOTING_METHODS, votingMethodLabel, draftMethodResetFields, draftWinnerCountResetFields, multiwinnerEnabled, MULTIWINNER_COPY, unchangedOptionText } from '../../utils/votingMethods';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
@@ -71,14 +71,14 @@ function pluralizeDays(value) {
   return Number(value) === 1 ? 'day' : 'days';
 }
 
-function OptionsEditor({ options, onChange, budgetCeilings = false, unitSymbol = '$' }) {
+function OptionsEditor({ options, onChange, budgetCeilings = false, unitSymbol = '$', maxOptions = 20 }) {
   function updateOption(idx, field, value) {
     const updated = options.map((o, i) => i === idx ? { ...o, [field]: value } : o);
     onChange(updated);
   }
 
   function addOption() {
-    if (options.length >= 20) return;
+    if (options.length >= maxOptions) return;
     onChange([...options, { label: '', description: '', budgetMaxAmount: '' }]);
   }
 
@@ -105,13 +105,13 @@ function OptionsEditor({ options, onChange, budgetCeilings = false, unitSymbol =
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <label className="block text-xs text-gray-500">
-          {budgetCeilings ? 'Buckets' : 'Options'} ({options.length}/20)
+          {budgetCeilings ? 'Buckets' : 'Options'} ({options.length}/{maxOptions})
           {options.length < 2 && <span className="text-amber-600 ml-2">Minimum 2 required</span>}
         </label>
         <button
           type="button"
           onClick={addOption}
-          disabled={options.length >= 20}
+          disabled={options.length >= maxOptions}
           className="text-xs px-3 py-1 bg-[var(--brand-accent)] text-white rounded-lg hover:bg-[var(--brand-primary)] transition-colors disabled:opacity-50"
         >
           Add Option
@@ -784,6 +784,9 @@ function CreateProposalForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const scopeCapabilities = subOrgs?.find(org => org.id === scope)?.voting_capabilities ?? currentOrg?.voting_capabilities;
+  const multiAllowed = multiwinnerEnabled(scopeCapabilities, votingMethod);
+  const unchangedCount = isEditMode && editingProposal.voting_method === votingMethod && editingProposal.num_winners === numWinners;
   const scopeSettings = subOrgs?.find(org => org.id === scope)?.settings;
   const budgetChoices = budgetAggregationChoices(subOrgs?.find(org => org.id === scope)?.voting_capabilities ?? currentOrg?.voting_capabilities, scopeSettings ?? orgSettings);
   const effectiveBudgetAggregation = chosenBudgetAggregation(budgetAggregation, budgetChoices);
@@ -834,13 +837,15 @@ function CreateProposalForm({
   })();
 
   const optionsValid = !isMultiOption || (
-    options.length >= 2 &&
+    options.length >= 2 && options.length <= (VOTING_METHODS[votingMethod]?.experimental && numWinners > 1 ? 120 : 20) &&
     options.every(o => o.label.trim()) &&
     !hasDuplicateLabels
   );
 
-  const numWinnersValid = votingMethod !== 'ranked_choice' || (
-    Number.isInteger(numWinners) && numWinners >= 1 && numWinners <= options.length
+  const numWinnersValid = (votingMethod !== 'ranked_choice' && !VOTING_METHODS[votingMethod]?.experimental) || (
+    Number.isInteger(numWinners) && numWinners >= 1 && numWinners <= 120
+    && (votingMethod !== 'ranked_choice' || numWinners <= options.length)
+    && (votingMethod === 'ranked_choice' || numWinners === 1 || multiAllowed || unchangedCount)
   );
 
   // Phase 73 — budget proposals need a positive envelope.
@@ -907,12 +912,13 @@ function CreateProposalForm({
     // explicit. Only fires when actually changing methods.
     if (
       isEditMode
-      && votingMethod !== (editingProposal.voting_method ?? 'binary')
+      && (votingMethod !== (editingProposal.voting_method ?? 'binary')
+        || (VOTING_METHODS[votingMethod]?.experimental && numWinners !== editingProposal.num_winners))
     ) {
       const ok = await confirm({
-        title: 'Change voting method?',
+        title: 'Change voting method or winner count?',
         message: (
-          'Changing the voting method on this draft will discard the '
+          'Changing the voting method or winner count on this draft will discard the '
           + 'existing options and any preliminary ballots. New options can be '
           + 'added for methods that use them. Continue?'
         ),
@@ -930,6 +936,7 @@ function CreateProposalForm({
         topics: selectedTopics,
         voting_method: votingMethod,
         ...draftMethodResetFields(editingProposal?.voting_method, votingMethod, confirmedBallotReset),
+        ...draftWinnerCountResetFields(editingProposal?.num_winners, numWinners, VOTING_METHODS[votingMethod]?.experimental, confirmedBallotReset),
       };
       // Phase 12.5 F3 — only include thresholds when the user has the
       // `proposal.set_thresholds` permission. Backend (B3) applies org
@@ -975,7 +982,7 @@ function CreateProposalForm({
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
       } else if (['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod)) {
-        payload.num_winners = 1;
+        payload.num_winners = numWinners;
       }
       // Phase 90c — per-proposal count mode (weighted orgs that allow it). Send
       // 'one_per_member' when chosen; otherwise omit so the org default (weighted)
@@ -1770,7 +1777,7 @@ function CreateProposalForm({
 
       {/* Options Editor (approval, ranked-choice, and budget buckets) */}
       {isMultiOption && (
-        <OptionsEditor options={options} onChange={setOptions} budgetCeilings={isBudget} unitSymbol={unitInputSymbol(budgetUnit)} />
+        <OptionsEditor maxOptions={VOTING_METHODS[votingMethod]?.experimental && numWinners > 1 ? 120 : 20} options={options} onChange={setOptions} budgetCeilings={isBudget} unitSymbol={unitInputSymbol(budgetUnit)} />
       )}
 
       {/* Winner selection (approval only). Four presets writing one
@@ -1902,28 +1909,29 @@ function CreateProposalForm({
       )}
 
       {/* num_winners input (ranked-choice only) */}
-      {votingMethod === 'ranked_choice' && (
+      {(votingMethod === 'ranked_choice' || multiAllowed || (VOTING_METHODS[votingMethod]?.experimental && numWinners > 1)) && (
         <div>
           <label htmlFor="proposal-number-of-winners" className="block text-xs text-gray-500 mb-1">Number of Winners</label>
           <input
             id="proposal-number-of-winners"
             type="number"
             min={1}
-            max={options.length || 1}
+            max={votingMethod === 'ranked_choice' ? options.length || 1 : 120}
             value={numWinners}
             onChange={e => {
               const v = parseInt(e.target.value, 10);
               if (Number.isNaN(v)) return;
-              setNumWinners(Math.max(1, Math.min(options.length || 1, v)));
+              setNumWinners(v);
             }}
             className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
           />
           <p className="text-xs text-gray-500 mt-1">
-            1 winner = ranked-choice voting (IRV). More than 1 winner = single transferable vote (STV).
+            {votingMethod === 'ranked_choice' ? '1 winner = ranked-choice voting (IRV). More than 1 winner = single transferable vote (STV).' : MULTIWINNER_COPY[votingMethod]}
+            {votingMethod !== 'ranked_choice' && ' Up to the requested number can be selected. Unsupported options leave unfilled places. The count must fit the options before voting begins.'}
           </p>
           {!numWinnersValid && (
             <p className="text-xs text-red-500 mt-1">
-              Number of winners must be between 1 and the number of options ({options.length}).
+              Choose a permitted whole-number winner count that fits this method and organization.
             </p>
           )}
         </div>

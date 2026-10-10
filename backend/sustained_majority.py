@@ -209,6 +209,8 @@ class ExperimentalSnapshotPoint(MultiOptionSnapshotPoint):
     quorum_met: bool = False
     meaningful: bool = False
     priority_used: bool = True
+    requested_count: int = 1
+    unfilled_reason: str | None = None
 
 
 def experimental_window_stable(snapshots, cutoff, now):
@@ -227,9 +229,11 @@ def experimental_window_stable(snapshots, cutoff, now):
     baseline = selected[0]
     for point in selected:
         if (not isinstance(point, ExperimentalSnapshotPoint)
-                or len(point.winners) != 1 or not point.option_set_version
+                or not 1 <= len(point.winners) <= point.requested_count or not point.option_set_version
                 or not point.quorum_met or not point.meaningful or point.priority_used
-                or point.winners != baseline.winners
+                or set(point.winners) != set(baseline.winners)
+                or point.requested_count != baseline.requested_count
+                or point.unfilled_reason != baseline.unfilled_reason
                 or point.option_set_version != baseline.option_set_version):
             return False
     return True

@@ -40,7 +40,7 @@ class _OpenElectionBody(BaseModel):
     # num_winners defaults to 1 (single-holder election); the FE
     # picks higher values when the target title is multi-holder.
     voting_method: str = "ranked_choice"
-    num_winners: int = 1
+    num_winners: int = Field(default=1, ge=1, le=120, strict=True)
     slate_mode: str = "fill_vacancies"  # or 'refresh_slate'
     # Phase 48 Stage 3 — trigger source (D4). Default 'admin_direct'
     # so Stage 1+2 callers + tests are unchanged. 'member_cosign'

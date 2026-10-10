@@ -38,7 +38,7 @@ export function selectableVotingMethods(orgSettings, { hasOrg = false, election 
     ? orgSettings.allowed_voting_methods : FALLBACK_ENABLED_METHODS;
   return Object.entries(VOTING_METHODS)
     .filter(([id, method]) => method.available && allowed.includes(id)
-      && (!method.experimental || (hasOrg && (!election || numWinners === 1)))
+      && (!method.experimental || (hasOrg && (numWinners === 1 || (orgSettings?.allowed_multiwinner_methods || []).includes(id))))
       && (!election || !['budget_allocation', 'budget_project'].includes(id)))
     .map(([id]) => id);
 }
@@ -73,4 +73,18 @@ export function experimentalOptionsLocked(proposal, methodResult) {
 // Inherited/locked views cannot mutate even if called outside the native input.
 export function changedMethodSettings(allowed, method, enabled, editable) {
   return toggleAllowedVotingMethod(allowed, editable ? method : 'binary', enabled);
+}
+
+export const MULTIWINNER_COPY = Object.freeze({
+  score: 'Rate each option from 0 to 5. The options with the highest total scores win. Every ballot counts at full weight toward every selection; this does not provide proportional representation.',
+});
+
+export function multiwinnerEnabled(capabilities, method) {
+  return Object.hasOwn(MULTIWINNER_COPY, method) && (capabilities?.allowed_multiwinner_methods || []).includes(method);
+}
+
+export function draftWinnerCountResetFields(previous, next, experimental, confirmed) {
+  if (!experimental || previous == null || Number(previous) === Number(next)) return {};
+  if (!confirmed) throw new Error('Confirm the winner-count change before discarding preliminary ballots.');
+  return { confirm_ballot_reset: true };
 }

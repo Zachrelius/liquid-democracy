@@ -590,7 +590,7 @@ class ProposalCreate(BaseModel):
     quorum_threshold: float = Field(default=0.40, ge=0.0, le=1.0)
     voting_method: str = "binary"
     options: list[OptionCreate] = Field(default=[])
-    num_winners: int = Field(default=1, ge=1)
+    num_winners: int = Field(default=1, ge=1, le=120, strict=True)
     # Phase 90c — per-proposal vote-counting mode (weighted orgs only):
     # 'weighted' | 'one_per_member' | None (org default). Ignored in unweighted
     # orgs. Locked once the proposal leaves draft.
@@ -698,7 +698,7 @@ class ProposalUpdate(BaseModel):
     # option-handling fork (binary↔approval/RCV reshape). Outside draft
     # status these fields are rejected (400).
     voting_method: Optional[str] = Field(default=None)
-    num_winners: Optional[int] = Field(default=None, ge=1)
+    num_winners: Optional[int] = Field(default=None, ge=1, le=120, strict=True)
     # Phase 90c — per-proposal count_mode, editable WHILE STATUS == 'draft'
     # ONLY (mirrors voting_method — it changes outcome semantics, so it's
     # frozen once the proposal has left draft). The route rejects a change

@@ -5,7 +5,7 @@ import { useToast } from './Toast';
 import VerifyEmailInlineNote from './VerifyEmailInlineNote';
 import UserLink from './UserLink';
 import OptionCardDescription from './OptionCardDescription';
-import { MAJORITY_JUDGMENT_GRADES } from '../utils/votingMethods';
+import { MAJORITY_JUDGMENT_GRADES, MULTIWINNER_COPY } from '../utils/votingMethods';
 import { gradeLabel } from '../utils/majorityJudgment';
 import { hasRatedBallot, ratedPayload, gradePayload } from '../utils/ratedBallot';
 
@@ -73,7 +73,8 @@ export default function RatedBallot({ proposal, proposalId, myVote, onVoteChange
   }
   return <section className="space-y-3" aria-label={`Your ${methodName} ballot`}>
     <h3 className="text-sm font-semibold">Your {methodName} ballot</h3>
-    <p id={`${id}-instructions`} className="text-sm text-gray-600">{isGrade ? 'Grade each option from Reject to Excellent. Grades are ordered descriptions, not points. The highest majority grade leads; tied grades use repeated median comparison.' : <>Rate each option from 0 to 5 {ratingUnit}. Equal ratings are allowed. {isScore ? 'The option with the highest total points wins. Equal highest totals use the committed draw order.' : 'The two highest total scores reach a runoff; your ballot supports whichever finalist you rated higher.'}</>}</p>
+    {Number(proposal.num_winners) > 1 && <p className="text-sm font-medium">Up to {proposal.num_winners} selections. {MULTIWINNER_COPY[proposal.voting_method]}</p>}
+    <p id={`${id}-instructions`} className="text-sm text-gray-600">{isGrade ? 'Grade each option from Reject to Excellent. Grades are ordered descriptions, not points. The highest majority grade leads; tied grades use repeated median comparison.' : <>Rate each option from 0 to 5 {ratingUnit}. Equal ratings are allowed. {isScore ? (Number(proposal.num_winners) > 1 ? 'The highest total points determine the selected set. Exact ties use the committed draw order.' : 'The option with the highest total points wins. Equal highest totals use the committed draw order.') : 'The two highest total scores reach a runoff; your ballot supports whichever finalist you rated higher.'}</>}</p>
     <p className="text-xs text-gray-600">{proposal.is_election ? (isGrade ? 'Ungraded candidates receive Reject.' : `Unrated candidates receive 0 ${ratingUnit}.`) : isGrade ? 'Ungraded options receive Reject, including write-ins added after you vote.' : <>Unrated options receive 0 {ratingUnit}, including write-ins added after you vote.</>} You may change your ballot while voting is permitted. Selecting {isGrade ? 'a grade' : 'a rating'} does not submit your vote.</p>
     {!emailVerified && <VerifyEmailInlineNote action="vote" />}
     {!editing && <>

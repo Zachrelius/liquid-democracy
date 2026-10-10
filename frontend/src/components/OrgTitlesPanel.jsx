@@ -70,7 +70,7 @@ function OpenElectionModal({ title, orgSlug, orgSettings, onClose }) {
   const isApproval = votingMethod === 'approval';
   const isExperimental = !!VOTING_METHODS[votingMethod]?.experimental;
   const experimentalMethods = selectableVotingMethods(orgSettings, { hasOrg: true, election: true, numWinners: isMulti ? Number(numWinners) : 1 }).filter(method => VOTING_METHODS[method].experimental);
-  const methodCompatibilityError = isExperimental && isMulti && Number(numWinners) !== 1 ? 'Choose a compatible method for more than one seat, or set the election to one seat.' : null;
+  const methodCompatibilityError = isExperimental && !experimentalMethods.includes(votingMethod) ? 'Choose a compatible method for more than one seat, or set the election to one seat.' : null;
   const presetError = isApproval ? validateApprovalWinnerSelection(winnerSel) : null;
   const winnerConfig = (isApproval && !presetError)
     ? buildApprovalWinnerConfig(winnerSel)
@@ -91,7 +91,7 @@ function OpenElectionModal({ title, orgSlug, orgSettings, onClose }) {
 
   const numWinnersValid = !isMulti
     || (votingMethod !== 'ranked_choice' && !isExperimental)
-    || (Number.isInteger(Number(numWinners)) && Number(numWinners) >= 1);
+    || (Number.isInteger(Number(numWinners)) && Number(numWinners) >= 1 && Number(numWinners) <= Math.min(120, title.max_holders || 120));
   const windowsValid =
     deliberationDays !== '' && Number(deliberationDays) > 0
     && votingDays !== '' && Number(votingDays) > 0;
@@ -187,7 +187,7 @@ function OpenElectionModal({ title, orgSlug, orgSettings, onClose }) {
               {[...new Set([...experimentalMethods, ...(isExperimental ? [votingMethod] : [])])].map(method => <label key={method} className="flex items-center gap-2 cursor-pointer">
                 <input type="radio" name="electionVotingMethod" value={method} checked={votingMethod === method}
                   disabled={!experimentalMethods.includes(method)} onChange={() => setVotingMethod(method)} className="accent-[var(--brand-accent)]" />
-                <span className="text-sm text-gray-700">{votingMethodLabel(method)} (one officeholder)</span>
+                <span className="text-sm text-gray-700">{votingMethodLabel(method)} ({isMulti ? `up to ${numWinners} officeholders` : 'one officeholder'})</span>
               </label>)}
               {methodCompatibilityError && <p role="alert" className="text-sm text-red-700">{methodCompatibilityError}</p>}
             </div>
@@ -329,7 +329,7 @@ function OpenElectionModal({ title, orgSlug, orgSettings, onClose }) {
                 className={`w-24 ${inputCls}`}
               />
               <p className="text-xs text-gray-400 mt-1">
-                {isExperimental ? 'This method selects exactly one officeholder.' : '1 seat = ranked-choice voting (IRV). More than 1 seat = single transferable vote (STV).'}
+                {isExperimental ? `This method selects up to ${numWinners} officeholders. All selected candidates must pass installation checks; otherwise the entire set is not installed and existing seats and roles stay intact.` : '1 seat = ranked-choice voting (IRV). More than 1 seat = single transferable vote (STV).'}
               </p>
               {!numWinnersValid && (
                 <p className="text-xs text-red-500 mt-1">
@@ -613,7 +613,7 @@ export default function OrgTitlesPanel({ orgSlug }) {
         <OpenElectionModal
           title={electionTitle}
           orgSlug={orgSlug}
-          orgSettings={currentOrg?.settings}
+          orgSettings={{ ...currentOrg?.settings, ...currentOrg?.voting_capabilities }}
           onClose={() => setElectionTitle(null)}
         />
       )}

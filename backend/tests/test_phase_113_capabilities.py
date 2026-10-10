@@ -54,7 +54,8 @@ def test_parent_cannot_be_broadened_by_missing_setting_or_incompatible_override(
 
 
 @pytest.mark.parametrize("method", cap.MULTIWINNER_METHODS)
-def test_planned_registry_entries_cannot_enable_unreleased_features(method):
+def test_planned_registry_entries_cannot_enable_unreleased_features(method, monkeypatch):
+    monkeypatch.setattr(cap, "RELEASED_MULTIWINNER_METHODS", frozenset())
     scope = org({"allowed_voting_methods":[method], "allowed_multiwinner_methods":[method]})
     cap.require_new_method_choice(scope, method, 1)
     with pytest.raises(ValueError): cap.require_new_method_choice(scope, method, 2)

@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { VOTING_METHODS, changedMethodSettings } from '../utils/votingMethods';
+import { VOTING_METHODS, changedMethodSettings, MULTIWINNER_COPY } from '../utils/votingMethods';
 import { VOTING_METHOD_DESCRIPTIONS, METHOD_AVAILABILITY_FOOTER, SINGLE_WINNER_ELIGIBILITY } from '../utils/votingMethodDescriptions';
 
 export function MajorityJudgmentExplanation() {
@@ -13,27 +13,33 @@ export function MajorityJudgmentExplanation() {
   </details>;
 }
 
-export default function VotingMethodSettings({ allowed, editable = true, onChange }) {
+export default function VotingMethodSettings({ allowed, editable = true, onChange, multiwinner = [], permittedMultiwinner = Object.keys(MULTIWINNER_COPY), onMultiwinnerChange, multiOnly = false }) {
   const prefix = useId();
   return <div className="space-y-4">
-    {Object.entries(VOTING_METHOD_DESCRIPTIONS).filter(([method]) => VOTING_METHODS[method].available).map(([method, text]) => {
+    {Object.entries(VOTING_METHOD_DESCRIPTIONS).filter(([method]) => VOTING_METHODS[method].available && (!multiOnly || MULTIWINNER_COPY[method])).map(([method, text]) => {
       const inputId = `${prefix}-${method}`;
       const descriptionId = `${inputId}-description`;
       const locked = !editable || method === 'binary';
       return <div key={method} className="flex items-start gap-3">
-        <input id={inputId} type="checkbox" checked={method === 'binary' || (allowed || ['binary']).includes(method)}
+        {!multiOnly && <input id={inputId} type="checkbox" checked={method === 'binary' || (allowed || ['binary']).includes(method)}
           disabled={locked} aria-describedby={descriptionId}
           onChange={e => { if (!locked) onChange(changedMethodSettings(allowed, method, e.target.checked, editable)); }}
-          className="mt-1 shrink-0 accent-[var(--brand-accent)]" />
+          className="mt-1 shrink-0 accent-[var(--brand-accent)]" />}
         <div className="min-w-0 space-y-1">
-          <label htmlFor={inputId} className={`text-sm font-medium text-gray-800 ${locked ? '' : 'cursor-pointer'}`}>{text.name}</label>
-          <p id={descriptionId} className="text-sm text-gray-700 leading-relaxed">{text.description}</p>
+          {!multiOnly && <label htmlFor={inputId} className={`text-sm font-medium text-gray-800 ${locked ? '' : 'cursor-pointer'}`}>{text.name}</label>}
+          {!multiOnly && <p id={descriptionId} className="text-sm text-gray-700 leading-relaxed">{text.description}</p>}
           {method === 'majority_judgment' && <MajorityJudgmentExplanation />}
+          {onMultiwinnerChange && MULTIWINNER_COPY[method] && <div className="pl-2 pt-2 space-y-1">
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={multiwinner.includes(method)}
+              disabled={!editable || !(allowed || []).includes(method) || !permittedMultiwinner.includes(method)}
+              onChange={e => onMultiwinnerChange(e.target.checked ? [...new Set([...multiwinner, method])] : multiwinner.filter(id => id !== method))} />Allow multiple winners for {text.name}</label>
+            <p className="text-xs text-gray-600">{MULTIWINNER_COPY[method]}</p>
+          </div>}
         </div>
       </div>;
     })}
-    <p className="text-sm text-gray-700">{METHOD_AVAILABILITY_FOOTER}</p>
-    <p className="text-sm text-gray-700">{SINGLE_WINNER_ELIGIBILITY}</p>
+    {!multiOnly && <p className="text-sm text-gray-700">{METHOD_AVAILABILITY_FOOTER}</p>}
+    <p className="text-sm text-gray-700">{onMultiwinnerChange ? 'Multiple winners require a separate organization opt-in. Elections install a selected set together; if any selected candidate is ineligible or awaits verification, existing seats and roles stay intact.' : SINGLE_WINNER_ELIGIBILITY}</p>
     <a href="/help/voting-methods" target="_blank" rel="noreferrer" className="inline-block text-sm text-[var(--brand-accent)] underline">Learn about voting methods</a>
   </div>;
 }

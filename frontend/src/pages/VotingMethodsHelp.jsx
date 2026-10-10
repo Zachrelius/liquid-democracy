@@ -44,12 +44,12 @@ export default function VotingMethodsHelp() {
         <p className="text-sm">Ranked Pairs is off by default and requires organization opt-in. It applies to single-winner proposals and single-winner officeholder elections. It does not use first-choice totals or IRV elimination.</p>
       </section>
       <section id="score" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold">Score — optional, single winner</h2>
+        <h2 className="text-lg font-semibold">Score — optional, one or multiple winners</h2>
         <p className="text-sm">Rate each option from 0 to 5 points. Equal ratings are allowed. The option with the highest weighted total points wins. There is no runoff or five-star tiebreak.</p>
         <p className="text-sm">Unrated options receive zero, including later write-ins. Selecting a rating does not submit your ballot. Submit it explicitly; you may change or retract it while voting is permitted.</p>
         <p className="text-sm">A neutral all-zero ballot counts as participation and overrides delegation. Explicit abstention also overrides delegation but contributes no points. Retracting restores ordinary delegation fallback.</p>
         <p className="text-sm">Equal highest totals use the committed draw order, revealed at close. Live results relying on the draw cannot satisfy Stable Result Required. All-zero ballots produce no winner; quorum must also be met.</p>
-        <p className="text-sm">Total points are not approval percentages. Score is off by default and requires organization opt-in. It applies to single-winner proposals and single-winner officeholder elections.</p>
+        <p className="text-sm">Total points are not approval percentages. Score requires organization opt-in. Multiple winners require a separate permission: supported options with the highest total scores fill up to the requested places. Every ballot keeps its full influence for every selection; this does not provide proportional representation. Exact boundary ties use the committed priority, and zero total scores leave unfilled places. For elections, the entire selected set must pass installation checks before any office or bound-role access is granted.</p>
       </section>
       <section id="star" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
         <h2 className="text-lg font-semibold">STAR — optional, single winner</h2>

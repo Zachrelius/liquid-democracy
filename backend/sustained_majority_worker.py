@@ -188,7 +188,9 @@ def _snapshot_points_for(
                 from sustained_majority import ExperimentalSnapshotPoint
                 result = payload.get("method_result") or {}
                 from voting_methods import RULE_IDS
-                compatible = result.get("rule_id") == RULE_IDS[proposal.voting_method] and result.get("method") == proposal.voting_method
+                expected_rule = proposal.voting_rules.get("rule_id") if proposal.num_winners > 1 and proposal.voting_rules else RULE_IDS[proposal.voting_method]
+                compatible = (result.get("rule_id") == expected_rule and result.get("method") == proposal.voting_method
+                    and result.get("requested_count", 1) == proposal.num_winners)
                 points.append(ExperimentalSnapshotPoint(
                     simulated_time=r.simulated_time, winners=winners,
                     total_ballots_cast=total_cast,
@@ -197,6 +199,8 @@ def _snapshot_points_for(
                     quorum_met=payload.get("quorum_met") is True,
                     meaningful=payload.get("meaningful") is True,
                     priority_used=payload.get("priority_used") is not False,
+                    requested_count=proposal.num_winners if compatible else 1,
+                    unfilled_reason=result.get("unfilled_reason"),
                 ))
                 continue
             points.append(MultiOptionSnapshotPoint(

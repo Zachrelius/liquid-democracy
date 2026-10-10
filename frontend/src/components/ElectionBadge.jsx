@@ -72,7 +72,7 @@ export default function ElectionBadge({ proposal, orgSlug, onChanged, tally }) {
   } else if (inNominationWindow) {
     phaseCopy = 'Nominations are open. Members may self-declare during this window. When voting opens, the candidate set is locked.';
   } else if (!isClosedStatus) {
-    phaseCopy = 'Nominations are closed. Voting will determine the winner.';
+    phaseCopy = proposal.num_winners > 1 ? `Nominations are closed. Voting will select up to ${proposal.num_winners} officeholders.` : 'Nominations are closed. Voting will determine the winner.';
   } else if (winnerNames.length > 0) {
     phaseCopy = `Elected: ${winnerNames.join(', ')}`;
   } else if (proposal.status === 'withdrawn') {

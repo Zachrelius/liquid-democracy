@@ -42,10 +42,12 @@ def _encode(values: list[str]) -> bytes:
     return json.dumps(values, ensure_ascii=True, separators=(",", ":")).encode("ascii")
 
 
-def _metadata(method: str, proposal_id: str) -> dict:
+def _metadata(method: str, proposal_id: str, num_winners: int = 1) -> dict:
     if method not in RULE_IDS:
         raise ValueError("Method does not use experimental rules")
-    return {
+    from voting_capabilities import validate_winner_count, PLANNED_CAPABILITIES
+    validate_winner_count(num_winners)
+    metadata = {
         "method": method,
         "rule_id": RULE_IDS[method],
         "proposal_id": _canonical_id(proposal_id),
@@ -56,19 +58,27 @@ def _metadata(method: str, proposal_id: str) -> dict:
         "priority_rule": "sha256_tuple_v1",
     }
 
+    if num_winners > 1:
+        metadata.update(rule_id=PLANNED_CAPABILITIES[method].rule_id, num_winners=num_winners,
+            algorithm_version=1, selection_policy="supported_options_only", tie_policy="committed_candidate_priority")
+    return metadata
 
-def new_voting_rules(method: str, proposal_id: str) -> dict:
+
+def new_voting_rules(method: str, proposal_id: str, num_winners: int = 1) -> dict:
     """Only creation/draft transition calls this; reads/retries never redraw."""
-    rules = _metadata(method, proposal_id)
+    rules = _metadata(method, proposal_id, num_winners)
     seed = secrets.token_hex(32)
     rules.update(tie_seed=seed, tie_commitment=hashlib.sha256(bytes.fromhex(seed)).hexdigest())
     return rules
 
 
-def validate_voting_rules(rules: dict, method: str, proposal_id: str) -> None:
+def validate_voting_rules(rules: dict, method: str, proposal_id: str, num_winners: int | None = None) -> None:
     if not isinstance(rules, dict):
         raise ValueError("Missing experimental voting rules")
-    expected = _metadata(method, proposal_id)
+    frozen_count = rules.get("num_winners", 1)
+    if num_winners is not None and frozen_count != num_winners:
+        raise ValueError("Frozen winner count does not match proposal")
+    expected = _metadata(method, proposal_id, frozen_count)
     if any(rules.get(key) != value for key, value in expected.items()):
         raise ValueError("Incompatible experimental voting rules")
     seed = rules.get("tie_seed")
@@ -88,7 +98,7 @@ def public_voting_rules(rules: dict | None) -> dict | None:
     if rules is None:
         return None
     validate_voting_rules(rules, rules.get("method"), rules.get("proposal_id"))
-    keys = (*_metadata(rules["method"], rules["proposal_id"]), "tie_commitment")
+    keys = (*_metadata(rules["method"], rules["proposal_id"], rules.get("num_winners", 1)), "tie_commitment")
     return {key: deepcopy(rules[key]) for key in keys}
 
 

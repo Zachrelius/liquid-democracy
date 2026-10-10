@@ -696,8 +696,8 @@ def compute_tally_pure(
         return _compute_project_tally_pure(user_ids, ctx)
     if ctx.voting_method in ("star", "score", "ranked_pairs", "majority_judgment"):
         from experimental_tally import count_star, count_score, count_ranked_pairs, count_majority_judgment
-        if num_winners != 1:
-            raise ValueError("Experimental methods support exactly one winner")
+        from voting_methods import validate_voting_rules
+        validate_voting_rules(ctx.voting_rules, ctx.voting_method, ctx.proposal_id, num_winners)
         weighted_ballots = []
         missing = 0
         eligible_weight = 0
@@ -718,7 +718,11 @@ def compute_tally_pure(
             payload = {"abstain": True} if ballot.abstain else {field: getattr(ballot, field)}
             weighted_ballots.append((payload, weight))
         counter = {"star": count_star, "score": count_score, "ranked_pairs": count_ranked_pairs, "majority_judgment": count_majority_judgment}[ctx.voting_method]
-        tally = counter(option_ids, weighted_ballots, ctx.voting_rules, ctx.proposal_id)
+        if num_winners > 1:
+            from multiwinner_tally import count_multiwinner
+            tally = count_multiwinner(ctx.voting_method, option_ids, weighted_ballots, ctx.voting_rules, ctx.proposal_id, num_winners)
+        else:
+            tally = counter(option_ids, weighted_ballots, ctx.voting_rules, ctx.proposal_id)
         tally.total_eligible = eligible_weight
         tally.not_cast = missing
         tally.eligible_headcount = len(user_ids)
@@ -2076,7 +2080,7 @@ class DelegationService:
                                                 or proposal.status in ("passed", "failed", "unresolved")):
             from experimental_tally import ExperimentalTally
             tally = ExperimentalTally.from_record(proposal.final_method_result)
-            if tally.method_result["method"] != proposal.voting_method:
+            if tally.method_result["method"] != proposal.voting_method or tally.method_result.get("requested_count",1) != proposal.num_winners:
                 raise ValueError("Final tally method does not match proposal")
             return tally
         eligible_ids = eligible_voter_ids_for_proposal(db, proposal)

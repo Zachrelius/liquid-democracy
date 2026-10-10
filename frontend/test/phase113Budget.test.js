@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { budgetAggregationChoices, chosenBudgetAggregation, toggleBudgetAggregation } from '../src/utils/budgetAggregations.js';
 let server, Settings, Selector;
 before(async () => {
-  server = await createServer({ cacheDir: 'node_modules/.vite-phase113-tests', server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom' });
+  server = await createServer({ optimizeDeps: { noDiscovery: true, include: [] }, cacheDir: 'node_modules/.vite-phase113-tests', server: { middlewareMode: true, hmr: false, ws: false }, appType: 'custom' });
   const module = await server.ssrLoadModule('/src/components/BudgetAggregationSettings.jsx');
   Settings = module.default; Selector = module.BudgetAggregationSelector;
 });
