@@ -1,0 +1,13 @@
+{
+  "backend": {
+    "id": "1e40a7da-3466-4259-b1a0-4076f8650d0d",
+    "status": "SUCCESS",
+    "commit": "c7f196335a91b7490ca3710c00d1edc231903a4b"
+  },
+  "frontend": {
+    "id": "6e0b2171-b315-4252-b5a7-efb6a137d75e",
+    "status": "SUCCESS",
+    "commit": "c7f196335a91b7490ca3710c00d1edc231903a4b"
+  },
+  "bundle": "index-CpFpIu6F.js"
+}
