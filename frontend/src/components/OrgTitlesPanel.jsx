@@ -13,6 +13,8 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import api from '../api';
+import { useOrg } from '../OrgContext';
+import { VOTING_METHODS, selectableVotingMethods, votingMethodLabel } from '../utils/votingMethods';
 import { useToast } from './Toast';
 import { useHasPermission } from '../hooks/useHasPermission';
 // Phase 67 W2 — shared winner-selection helpers (same presets, live
@@ -37,7 +39,7 @@ import {
  * Visual conventions mirror DelegateModal (fixed overlay + white
  * rounded-xl card) and the ProposalManagement winner-selection block.
  */
-function OpenElectionModal({ title, orgSlug, onClose }) {
+function OpenElectionModal({ title, orgSlug, orgSettings, onClose }) {
   const toast = useToast();
   const isMulti = title.cardinality_mode === 'multi';
   const isSingleHolder = !isMulti;
@@ -66,6 +68,9 @@ function OpenElectionModal({ title, orgSlug, onClose }) {
 
   // -- Validation (mirrors the backend rules so submit never 400s) --
   const isApproval = votingMethod === 'approval';
+  const isExperimental = !!VOTING_METHODS[votingMethod]?.experimental;
+  const experimentalMethods = selectableVotingMethods(orgSettings, { hasOrg: true, election: true, numWinners: isMulti ? Number(numWinners) : 1 }).filter(method => VOTING_METHODS[method].experimental);
+  const methodCompatibilityError = isExperimental && isMulti && Number(numWinners) !== 1 ? 'Choose a compatible method for more than one seat, or set the election to one seat.' : null;
   const presetError = isApproval ? validateApprovalWinnerSelection(winnerSel) : null;
   const winnerConfig = (isApproval && !presetError)
     ? buildApprovalWinnerConfig(winnerSel)
@@ -85,7 +90,7 @@ function OpenElectionModal({ title, orgSlug, onClose }) {
     : null;
 
   const numWinnersValid = !isMulti
-    || votingMethod !== 'ranked_choice'
+    || (votingMethod !== 'ranked_choice' && !isExperimental)
     || (Number.isInteger(Number(numWinners)) && Number(numWinners) >= 1);
   const windowsValid =
     deliberationDays !== '' && Number(deliberationDays) > 0
@@ -94,6 +99,7 @@ function OpenElectionModal({ title, orgSlug, onClose }) {
     quorumPct === '' || (Number(quorumPct) >= 0 && Number(quorumPct) <= 100);
   const formValid =
     windowsValid
+    && !methodCompatibilityError
     && numWinnersValid
     && quorumValid
     && (!isApproval || !winnerSelectionError);
@@ -110,7 +116,7 @@ function OpenElectionModal({ title, orgSlug, onClose }) {
         deliberation_days: Number(deliberationDays),
         voting_days: Number(votingDays),
       };
-      if (votingMethod === 'ranked_choice' && isMulti) {
+      if ((votingMethod === 'ranked_choice' || isExperimental) && isMulti) {
         payload.num_winners = Number(numWinners);
       } else {
         // Approval elections keep num_winners at 1 — the winner config
@@ -178,6 +184,12 @@ function OpenElectionModal({ title, orgSlug, onClose }) {
                 />
                 <span className="text-sm text-gray-700">Approval</span>
               </label>
+              {[...new Set([...experimentalMethods, ...(isExperimental ? [votingMethod] : [])])].map(method => <label key={method} className="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="electionVotingMethod" value={method} checked={votingMethod === method}
+                  disabled={!experimentalMethods.includes(method)} onChange={() => setVotingMethod(method)} className="accent-[var(--brand-accent)]" />
+                <span className="text-sm text-gray-700">{votingMethodLabel(method)} (one officeholder)</span>
+              </label>)}
+              {methodCompatibilityError && <p role="alert" className="text-sm text-red-700">{methodCompatibilityError}</p>}
             </div>
           </div>
 
@@ -306,18 +318,18 @@ function OpenElectionModal({ title, orgSlug, onClose }) {
           )}
 
           {/* Seats up for election (ranked choice on multi-holder titles) */}
-          {votingMethod === 'ranked_choice' && isMulti && (
+          {(votingMethod === 'ranked_choice' || isExperimental) && isMulti && (
             <div>
-              <label className="block text-xs text-gray-500 mb-1">Seats up for election</label>
+              <label htmlFor="election-seat-count" className="block text-xs text-gray-500 mb-1">Seats up for election</label>
               <input
-                type="number"
+                id="election-seat-count" type="number"
                 min={1}
                 value={numWinners}
                 onChange={e => setNumWinners(numOrEmpty(e.target.value))}
                 className={`w-24 ${inputCls}`}
               />
               <p className="text-xs text-gray-400 mt-1">
-                1 seat = ranked-choice voting (IRV). More than 1 seat = single transferable vote (STV).
+                {isExperimental ? 'This method selects exactly one officeholder.' : '1 seat = ranked-choice voting (IRV). More than 1 seat = single transferable vote (STV).'}
               </p>
               {!numWinnersValid && (
                 <p className="text-xs text-red-500 mt-1">
@@ -329,7 +341,7 @@ function OpenElectionModal({ title, orgSlug, onClose }) {
 
           {/* Slate mode (multi-holder titles only — single-holder elections
               always replace the holder). */}
-          {isMulti && (
+          {(isMulti || isExperimental) && (
             <div>
               <label className="block text-xs text-gray-500 mb-1">Slate mode</label>
               <select
@@ -385,9 +397,9 @@ function OpenElectionModal({ title, orgSlug, onClose }) {
               className={`w-24 ${inputCls}`}
             />
             <p className="text-xs text-gray-400 mt-1">
-              0 = no minimum (default) — the most-supported candidates win
-              regardless of turnout. If you set a quorum and turnout misses
-              it, the election fails and no seats are changed.
+              {isExperimental
+                ? '0 = no minimum (default). Contested elections still need meaningful ballot preferences. An unmet quorum changes no seats.'
+                : '0 = no minimum (default) — the most-supported candidates win regardless of turnout. If you set a quorum and turnout misses it, the election fails and no seats are changed.'}
             </p>
             {!quorumValid && (
               <p className="text-xs text-red-500 mt-1">Quorum must be between 0 and 100 percent.</p>
@@ -424,6 +436,7 @@ function OpenElectionModal({ title, orgSlug, onClose }) {
 }
 
 export default function OrgTitlesPanel({ orgSlug }) {
+  const { currentOrg } = useOrg();
   const toast = useToast();
   const canManageTitles = useHasPermission('title.manage');
   const [titles, setTitles] = useState([]);
@@ -600,6 +613,7 @@ export default function OrgTitlesPanel({ orgSlug }) {
         <OpenElectionModal
           title={electionTitle}
           orgSlug={orgSlug}
+          orgSettings={currentOrg?.settings}
           onClose={() => setElectionTitle(null)}
         />
       )}

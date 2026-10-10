@@ -357,12 +357,18 @@ def emit_status_notifications(
             recipients &= {uid for (uid,) in db.query(models.User.id).filter(
                 models.User.id.in_(recipients), models.User.is_active.is_(True),
             ).all()}
+        election_payload = {}
+        if is_experimental(proposal) and proposal.is_election:
+            from experimental_elections import announcement
+            outcome = proposal.final_method_result['election']
+            election_payload = {'outcome_detail': announcement(outcome),
+                                'office_installation': outcome['installation']}
         for user_id in recipients:
             emit_notification(
                 db, background_tasks, event_type="proposal.closed", user_id=user_id,
                 org_id=proposal.org_id, actor_id=actor_id,
                 target_type="proposal", target_id=proposal.id,
-                payload={**payload, "outcome": new_status},
+                payload={**payload, "outcome": new_status, **election_payload},
             )
         if is_experimental(proposal):
             proposal.final_method_result = {

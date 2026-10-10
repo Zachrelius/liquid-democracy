@@ -1,0 +1,451 @@
+........................................................................ [  1%]
+........................................................................ [  3%]
+........................................................................ [  5%]
+........................................................................ [  7%]
+........................................................................ [  9%]
+........................................................................ [ 11%]
+........................................................................ [ 13%]
+........................................................................ [ 15%]
+........................................................................ [ 17%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+........................................................................ [ 22%]
+........................................................................ [ 24%]
+........................................................................ [ 26%]
+.......................................s................................ [ 28%]
+........................................................................ [ 30%]
+........................................................................ [ 32%]
+........................................................................ [ 34%]
+..................................................................s.s... [ 36%]
+...sssssssss.........s.....................sss.....ss................... [ 38%]
+........................................................................ [ 40%]
+............s........................................................... [ 41%]
+........................................................................ [ 43%]
+........................................................................ [ 45%]
+........................................................................ [ 47%]
+..................F..................................................... [ 49%]
+........................................................................ [ 51%]
+........................................................................ [ 53%]
+........................................................................ [ 55%]
+........................................................................ [ 57%]
+........................................................................ [ 59%]
+........................................................................ [ 60%]
+........................................................................ [ 62%]
+........................................................................ [ 64%]
+........................................................................ [ 66%]
+........................................................................ [ 68%]
+........................................................................ [ 70%]
+........................................................................ [ 72%]
+........................................................................ [ 74%]
+........................................................................ [ 76%]
+........................................................................ [ 78%]
+........................................................................ [ 80%]
+....F.F................................................................. [ 81%]
+........................................................................ [ 83%]
+........................................................................ [ 85%]
+....................F...................s..............s................ [ 87%]
+........................................................................ [ 89%]
+........................................................................ [ 91%]
+........................................................................ [ 93%]
+........................................................................ [ 95%]
+........................................................................ [ 97%]
+........................................................................ [ 99%]
+..................................                                       [100%]
+================================== FAILURES ===================================
+___________ test_b3_login_rate_limit_triggers_after_10_in_a_minute ____________
+
+client = <starlette.testclient.TestClient object at 0x0000026898F91550>
+test_db = <sqlalchemy.orm.session.Session object at 0x0000026898701B20>
+
+    def test_b3_login_rate_limit_triggers_after_10_in_a_minute(client, test_db):
+        """11th bad-credentials POST in <1 minute returns 429."""
+        _make_user(test_db, "rate_target")
+        test_db.commit()
+
+        for i in range(10):
+            resp = client.post(
+                "/api/auth/login",
+                data={"username": "rate_target", "password": "wrong"},
+            )
+            assert resp.status_code == 401, f"Attempt {i + 1}: {resp.text}"
+
+        resp = client.post(
+            "/api/auth/login",
+            data={"username": "rate_target", "password": "wrong"},
+        )
+>       assert resp.status_code == 429, resp.text
+E       AssertionError: {"detail":{"reason":"account_locked","locked_until":"2026-10-10T13:33:03.195880"}}
+E       assert 401 == 429
+E        +  where 401 = <Response [401 Unauthorized]>.status_code
+
+backend\tests\test_phase_38_authorization_audit.py:391: AssertionError
+---------------------------- Captured stdout setup ----------------------------
+09:18:01 INFO     [slowapi] Storage has been reset and all limits cleared
+09:18:01 INFO     [slowapi] Storage has been reset and all limits cleared
+09:18:01 INFO     [slowapi] Storage has been reset and all limits cleared
+----------------------------- Captured log setup ------------------------------
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+---------------------------- Captured stdout call -----------------------------
+09:18:01 DEBUG    [asyncio] Using proactor: IocpProactor\n09:18:01 INFO     [request] POST /api/auth/login \u2192 401 (287.2ms) [7551f529]\n09:18:01 INFO     [httpx] HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\n09:18:01 DEBUG    [asyncio] Using proactor: IocpProactor\n09:18:01 INFO     [request] POST /api/auth/login \u2192 401 (203.0ms) [0fee61fa]\n09:18:01 INFO     [httpx] HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\n09:18:01 DEBUG    [asyncio] Using proactor: IocpProactor\n09:18:01 INFO     [request] POST /api/auth/login \u2192 401 (203.5ms) [c542342c]\n09:18:01 INFO     [httpx] HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\n09:18:01 DEBUG    [asyncio] Using proactor: IocpProactor\n09:18:02 INFO     [request] POST /api/auth/login \u2192 401 (198.5ms) [8365a370]\n09:18:02 INFO     [httpx] HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\n09:18:02 DEBUG    [asyncio] Using proactor: IocpProactor\n09:18:02 INFO     [request] POST /api/auth/login \u2192 401 (199.6ms) [98875fdc]\n09:18:02 INFO     [httpx] HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\n09:18:02 DEBUG    [asyncio] Using proactor: IocpProactor\n09:18:02 INFO     [request] POST /api/auth/login \u2192 401 (198.3ms) [a48ecea3]\n09:18:02 INFO     [httpx] HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\n09:18:02 DEBUG    [asyncio] Using proactor: IocpProactor\n09:18:02 INFO     [request] POST /api/auth/login \u2192 401 (196.6ms) [7dc04962]\n09:18:02 INFO     [httpx] HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\n09:18:02 DEBUG    [asyncio] Using proactor: IocpProactor\n09:18:02 INFO     [request] POST /api/auth/login \u2192 401 (198.1ms) [6727d203]\n09:18:02 INFO     [httpx] HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\n09:18:02 DEBUG    [asyncio] Using proactor: IocpProactor\n09:18:03 INFO     [request] POST /api/auth/login \u2192 401 (197.8ms) [09ffc891]\n09:18:03 INFO     [httpx] HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\n09:18:03 DEBUG    [asyncio] Using proactor: IocpProactor\n09:18:03 INFO     [request] POST /api/auth/login \u2192 401 (199.1ms) [b23e0d34]\n09:18:03 INFO     [httpx] HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\n09:18:03 DEBUG    [asyncio] Using proactor: IocpProactor\n09:18:03 INFO     [request] POST /api/auth/login \u2192 401 (8.3ms) [a316ea71]\n09:18:03 INFO     [httpx] HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"
+------------------------------ Captured log call ------------------------------
+DEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/auth/login \u2192 401 (287.2ms) [7551f529]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/auth/login \u2192 401 (203.0ms) [0fee61fa]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/auth/login \u2192 401 (203.5ms) [c542342c]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/auth/login \u2192 401 (198.5ms) [8365a370]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/auth/login \u2192 401 (199.6ms) [98875fdc]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/auth/login \u2192 401 (198.3ms) [a48ecea3]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/auth/login \u2192 401 (196.6ms) [7dc04962]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/auth/login \u2192 401 (198.1ms) [6727d203]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/auth/login \u2192 401 (197.8ms) [09ffc891]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/auth/login \u2192 401 (199.1ms) [b23e0d34]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/auth/login \u2192 401 (8.3ms) [a316ea71]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/auth/login "HTTP/1.1 401 Unauthorized"
+-------------------------- Captured stdout teardown ---------------------------
+09:18:03 INFO     [slowapi] Storage has been reset and all limits cleared
+09:18:03 INFO     [slowapi] Storage has been reset and all limits cleared
+09:18:03 INFO     [slowapi] Storage has been reset and all limits cleared
+---------------------------- Captured log teardown ----------------------------
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+______________ TestRateLimits.test_user_or_remote_address_keying ______________
+
+self = <tests.test_phase_86_antiabuse.TestRateLimits object at 0x000002688EE76DE0>
+
+    def test_user_or_remote_address_keying(self):
+        """Unit: authenticated \u2192 user:{id}; token resolved without a DB hit."""
+        from starlette.requests import Request
+        u = "abc-123"
+        token = auth_utils.create_access_token(u)
+
+        class _FakeReq:
+            def __init__(self, headers):
+                self.headers = headers
+                self.client = type("C", (), {"host": "1.2.3.4"})()
+
+        key = rate_limit_utils.user_or_remote_address(
+            _FakeReq({"authorization": f"Bearer {token}"}))
+>       assert key == f"user:{u}"
+E       AssertionError: assert 'bypass-9a165...-b98e6a92a614' == 'user:abc-123'
+E
+E         - user:abc-123
+E         + bypass-9a165ea4-5acb-4dab-be25-b98e6a92a614
+
+backend\tests\test_phase_86_antiabuse.py:271: AssertionError
+---------------------------- Captured stdout setup ----------------------------
+09:30:10 INFO     [slowapi] Storage has been reset and all limits cleared
+09:30:10 INFO     [slowapi] Storage has been reset and all limits cleared
+09:30:10 INFO     [slowapi] Storage has been reset and all limits cleared
+----------------------------- Captured log setup ------------------------------
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+-------------------------- Captured stdout teardown ---------------------------
+09:30:10 INFO     [slowapi] Storage has been reset and all limits cleared
+09:30:10 INFO     [slowapi] Storage has been reset and all limits cleared
+09:30:10 INFO     [slowapi] Storage has been reset and all limits cleared
+---------------------------- Captured log teardown ----------------------------
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+__________ TestRateLimits.test_comment_rate_limit_429_writes_nothing __________
+
+self = <tests.test_phase_86_antiabuse.TestRateLimits object at 0x000002688EE76390>
+client = <starlette.testclient.TestClient object at 0x00000268B08D2E40>
+test_db = <sqlalchemy.orm.session.Session object at 0x00000268AC24EA80>
+
+    def test_comment_rate_limit_429_writes_nothing(self, client, test_db):
+        """30/hour comment limit: the 31st request is 429 and creates no row."""
+        # Isolate this user's bucket from any prior test state.
+        rate_limit_utils.content_limiter.reset()
+        org = _org(test_db)
+        u = _user(test_db, "spammer"); _member(test_db, org, u, role="member")
+        p = _proposal(test_db, u, org=org)
+        test_db.commit()
+
+        ok = 0
+        for i in range(30):
+            r = client.post(f"/api/proposals/{p.id}/comments",
+                            headers=_auth(u), json={"body": f"c{i}"})
+            assert r.status_code == 201, (i, r.text)
+            ok += 1
+        assert ok == 30
+        # 31st trips the limiter.
+        r = client.post(f"/api/proposals/{p.id}/comments",
+                        headers=_auth(u), json={"body": "over"})
+>       assert r.status_code == 429, r.text
+E       AssertionError: {"id":"0d86b547-6e21-478d-a309-3fdb8270d68a","proposal_id":"d32058de-3906-454a-b65c-facf96cb8b59","author_id":"9425b7e2-3118-45a0-b0d3-57f7c39ce4da","author":{"id":"9425b7e2-3118-45a0-b0d3-57f7c39ce4da","username":"spammer","display_name":"Spammer","avatar_url":null},"parent_comment_id":null,"body":"over","body_deleted":false,"moderator_removed":false,"created_at":"2026-10-10T13:30:10.366328","updated_at":"2026-10-10T13:30:10.366328","deleted_at":null}
+E       assert 201 == 429
+E        +  where 201 = <Response [201 Created]>.status_code
+
+backend\tests\test_phase_86_antiabuse.py:308: AssertionError
+---------------------------- Captured stdout setup ----------------------------
+09:30:10 INFO     [slowapi] Storage has been reset and all limits cleared
+09:30:10 INFO     [slowapi] Storage has been reset and all limits cleared
+09:30:10 INFO     [slowapi] Storage has been reset and all limits cleared
+----------------------------- Captured log setup ------------------------------
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+---------------------------- Captured stdout call -----------------------------
+09:30:10 INFO     [slowapi] Storage has been reset and all limits cleared\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (11.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [641a90e8]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.0ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [2584eaed]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [0b454ded]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.1ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [9c48d0f6]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.5ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [1aca4e95]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.1ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [4f390655]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.1ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [75752dc7]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (5.9ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [5a1e0613]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.3ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [72f53384]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (5.8ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [bf4a13f9]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [b633854e]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.6ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [7a4dbb03]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [d59d7ba5]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [6bdf89e4]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (5.8ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [11842992]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.7ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [7b1be049]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (5.9ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [59b5090c]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.8ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [01ecae1d]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (5.9ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [8e353901]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [14fa0f02]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.0ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [99740f8e]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.0ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [83e21364]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.0ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [8aa32192]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.5ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [3274bc09]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.4ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [226582a2]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (5.9ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [d4e444d6]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.1ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [c3bf8918]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [33fecd13]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.3ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [cf983a68]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.0ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [4893d02f]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\n09:30:10 DEBUG    [asyncio] Using proactor: IocpProactor\n09:30:10 INFO     [request] POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.6ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [df34eb91]\n09:30:10 INFO     [httpx] HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"
+------------------------------ Captured log call ------------------------------
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (11.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [641a90e8]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.0ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [2584eaed]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [0b454ded]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.1ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [9c48d0f6]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.5ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [1aca4e95]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.1ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [4f390655]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.1ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [75752dc7]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (5.9ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [5a1e0613]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.3ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [72f53384]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (5.8ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [bf4a13f9]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [b633854e]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.6ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [7a4dbb03]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [d59d7ba5]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [6bdf89e4]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (5.8ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [11842992]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.7ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [7b1be049]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (5.9ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [59b5090c]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.8ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [01ecae1d]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (5.9ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [8e353901]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [14fa0f02]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.0ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [99740f8e]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.0ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [83e21364]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.0ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [8aa32192]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.5ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [3274bc09]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.4ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [226582a2]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (5.9ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [d4e444d6]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.1ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [c3bf8918]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.2ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [33fecd13]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.3ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [cf983a68]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.0ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [4893d02f]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"\nDEBUG    asyncio:proactor_events.py:634 Using proactor: IocpProactor\nINFO     request:main.py:146 POST /api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments \u2192 201 (6.6ms) user=9425b7e2-3118-45a0-b0d3-57f7c39ce4da [df34eb91]\nINFO     httpx:_client.py:1025 HTTP Request: POST http://testserver/api/proposals/d32058de-3906-454a-b65c-facf96cb8b59/comments "HTTP/1.1 201 Created"
+-------------------------- Captured stdout teardown ---------------------------
+09:30:10 INFO     [slowapi] Storage has been reset and all limits cleared
+09:30:10 INFO     [slowapi] Storage has been reset and all limits cleared
+09:30:10 INFO     [slowapi] Storage has been reset and all limits cleared
+---------------------------- Captured log teardown ----------------------------
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+________ test_snapshot_flags_stale_workers_and_missing_alert_recipient ________
+
+db = <sqlalchemy.orm.session.Session object at 0x00000268AA6D4140>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002688EFBFE90>
+
+    def test_snapshot_flags_stale_workers_and_missing_alert_recipient(db, monkeypatch):
+        now = datetime.now(timezone.utc)
+        monkeypatch.setattr(monitor, "_STARTED_AT", now - timedelta(hours=3))
+        digest_scheduler._LAST_SUCCESSFUL_TICK_AT = now - timedelta(hours=3)
+        digest_scheduler._TICKS_SINCE_LAST_SUCCESS = 2
+        db.add(models.PlatformSetting(
+            key="sm_worker_heartbeat",
+            value={
+                "last_successful_tick_at": (now - timedelta(hours=1)).isoformat(),
+                "ticks_since_last_success": 3,
+            },
+        ))
+        db.flush()
+        snapshot = monitor.build_snapshot(db, now=now)
+        assert snapshot["status"] == "error"
+>       assert snapshot["components"]["digest_scheduler"]["status"] == "error"
+E       AssertionError: assert 'disabled' == 'error'
+E
+E         - error
+E         + disabled
+
+backend\tests\test_phase_97_production_monitoring.py:170: AssertionError
+---------------------------- Captured stdout setup ----------------------------
+09:31:31 INFO     [slowapi] Storage has been reset and all limits cleared
+09:31:31 INFO     [slowapi] Storage has been reset and all limits cleared
+09:31:31 INFO     [slowapi] Storage has been reset and all limits cleared
+----------------------------- Captured log setup ------------------------------
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+-------------------------- Captured stdout teardown ---------------------------
+09:31:31 INFO     [slowapi] Storage has been reset and all limits cleared
+09:31:31 INFO     [slowapi] Storage has been reset and all limits cleared
+09:31:31 INFO     [slowapi] Storage has been reset and all limits cleared
+---------------------------- Captured log teardown ----------------------------
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+INFO     slowapi:extension.py:360 Storage has been reset and all limits cleared
+============================== warnings summary ===============================
+.venv\Lib\site-packages\fastapi\testclient.py:1
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\.venv\Lib\site-packages\fastapi\testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+.venv\Lib\site-packages\starlette\testclient.py:53
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\.venv\Lib\site-packages\starlette\testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+backend\main.py:352
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\main.py:352: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+.venv\Lib\site-packages\fastapi\applications.py:4599
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\.venv\Lib\site-packages\fastapi\applications.py:4599: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    return self.router.on_event(event_type)
+
+backend/tests/test_avatars.py::test_upload_oversized_file_returns_413
+backend/tests/test_phase12_7_org_branding.py::test_upload_logo_oversized_rejected
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\.venv\Lib\site-packages\fastapi\routing.py:316: StarletteDeprecationWarning: 'HTTP_413_REQUEST_ENTITY_TOO_LARGE' is deprecated. Use 'HTTP_413_CONTENT_TOO_LARGE' instead.
+    return await dependant.call(**values)
+
+backend/tests/test_digest_aggregation.py: 1 warning
+backend/tests/test_phase_23_1_demo_polish.py: 1 warning
+backend/tests/test_phase_23_2_demo_metadata.py: 3 warnings
+backend/tests/test_phase_23_demo_reset.py: 28 warnings
+backend/tests/test_phase_29_1_persona_delegations.py: 4 warnings
+backend/tests/test_phase_30_1_delegate_approval.py: 1 warning
+backend/tests/test_phase_30_polish.py: 8 warnings
+backend/tests/test_phase_31_demo_polish.py: 1 warning
+backend/tests/test_phase_34_sub_org_seed.py: 1 warning
+backend/tests/test_phase_36_trajectory_alignment.py: 1 warning
+backend/tests/test_phase_49b_demo_showcase.py: 11 warnings
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\demo_content\seed_pipeline.py:1804: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+backend/tests/test_phase13_3_migration_cycle.py: 22 warnings
+backend/tests/test_phase13_migration_cycle.py: 2 warnings
+backend/tests/test_phase14_migration_cycle.py: 26 warnings
+backend/tests/test_phase15_migration_cycle.py: 64 warnings
+backend/tests/test_phase_12_5_migration_cycle.py: 14 warnings
+backend/tests/test_phase_12_migration_cycle.py: 45 warnings
+backend/tests/test_phase_12_stage2_migration_cycle.py: 14 warnings
+backend/tests/test_phase_18_delegation_org_scoping.py: 12 warnings
+backend/tests/test_phase_20_migration_cycle.py: 20 warnings
+backend/tests/test_phase_23_migration_cycle.py: 6 warnings
+backend/tests/test_phase_44_migration_cycle.py: 2 warnings
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\.venv\Lib\site-packages\sqlalchemy\engine\default.py:941: DeprecationWarning: The default datetime adapter is deprecated as of Python 3.12; see the sqlite3 documentation for suggested replacement recipes
+    cursor.execute(statement, parameters)
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_due_worker_advances_at_equality_and_skips_future
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:138: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_due_worker_ignores_null_and_cosign_schedules
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:157: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_due_budget_worker_closes_on_quorum_without_snapshots[6-passed-budget_allocation-allocation]
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_due_budget_worker_closes_on_quorum_without_snapshots[6-passed-budget_project-project]
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_due_budget_worker_closes_on_quorum_without_snapshots[1-failed-budget_allocation-allocation]
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_due_budget_worker_closes_on_quorum_without_snapshots[1-failed-budget_project-project]
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:178: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_monitor_disabled_is_public_safe_warning
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:213: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    payload = _proposal_lifecycle_component(db, datetime.utcnow())
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_monitor_errors_only_beyond_grace
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:222: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_monitor_null_legacy_schedule_is_informational
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:237: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    payload = _proposal_lifecycle_component(db, datetime.utcnow())
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_bulk_voting_endpoint_is_retry_safe_and_never_closes
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:265: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    deliberation_start=datetime.utcnow() - timedelta(days=2),
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_bulk_voting_endpoint_is_retry_safe_and_never_closes
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:266: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    deliberation_end=datetime.utcnow() - timedelta(minutes=1),
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_bulk_voting_endpoint_is_retry_safe_and_never_closes
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\routes\organizations.py:6483: SAWarning: nested transaction already deassociated from connection
+    db.commit()
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_bulk_schedule_updates_start_end_and_duration
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:304: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    start = datetime.utcnow() + timedelta(days=2)
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_bulk_schedule_updates_start_end_and_duration
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:308: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    deliberation_start=datetime.utcnow(), deliberation_end=None,
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_bulk_schedule_updates_start_end_and_duration
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\routes\organizations.py:6652: SAWarning: nested transaction already deassociated from connection
+    db.commit()
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_bulk_schedule_requires_reason_to_shorten_active_vote
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:335: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    start = datetime.utcnow() - timedelta(days=1)
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_bulk_schedule_requires_reason_to_shorten_active_vote
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:336: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    original_end = datetime.utcnow() + timedelta(days=5)
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_bulk_schedule_requires_reason_to_shorten_active_vote
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:348: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    "voting_ends_at": (datetime.utcnow() + timedelta(days=2)).isoformat() + "Z",
+
+backend/tests/test_phase_102_scheduled_lifecycle.py::test_reconciliation_is_scoped_audited_suppressed_and_idempotent
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_102_scheduled_lifecycle.py:366: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = datetime.utcnow()
+
+backend/tests/test_phase_40_ops_and_hygiene.py::test_b2_oversized_image_pre_load_check_returns_400
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\.venv\Lib\site-packages\PIL\Image.py:3578: DecompressionBombWarning: Image size (30000000 pixels) exceeds limit of 25000000 pixels, could be decompression bomb DOS attack.
+    warnings.warn(
+
+backend/tests/test_phase_52fg_legal_name_age_bands.py::TestUserMeetsAge::test_lazy_promotion_fires_after_promotes_at
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_52fg_legal_name_age_bands.py:223: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    promotes_at=datetime.utcnow() - timedelta(days=1),
+
+backend/tests/test_phase_52fg_legal_name_age_bands.py::TestUserMeetsAge::test_lazy_promotion_fires_after_promotes_at
+backend/tests/test_phase_52fg_legal_name_age_bands.py::TestUserMeetsAge::test_lazy_promotion_fires_after_promotes_at
+backend/tests/test_phase_52fg_legal_name_age_bands.py::TestUserMeetsAge::test_lazy_promotion_does_not_fire_before_promotes_at
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\verification.py:1085: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    now = _dt.utcnow()
+
+backend/tests/test_phase_52fg_legal_name_age_bands.py::TestUserMeetsAge::test_lazy_promotion_does_not_fire_before_promotes_at
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_52fg_legal_name_age_bands.py:234: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    promotes_at=datetime.utcnow() + timedelta(days=365),
+
+backend/tests/test_phase_52fg_legal_name_age_bands.py::TestVoteMinAgeGate::test_under_age_blocked_at_vote
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_52fg_legal_name_age_bands.py:283: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    voting_start=_dt.utcnow() - timedelta(days=1),
+
+backend/tests/test_phase_52fg_legal_name_age_bands.py::TestVoteMinAgeGate::test_under_age_blocked_at_vote
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_52fg_legal_name_age_bands.py:284: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    voting_end=_dt.utcnow() + timedelta(days=1),
+
+backend/tests/test_phase_57_access_axes.py::test_public_activity_anon_can_list_proposals
+backend/tests/test_phase_57_access_axes.py::test_public_activity_anon_can_read_proposal_detail
+backend/tests/test_phase_57_access_axes.py::test_members_only_default_404s_anon_proposal_list_and_detail
+backend/tests/test_phase_57_access_axes.py::test_anon_cannot_post_vote_or_comment_regardless_of_activity_visibility
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_57_access_axes.py:146: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    voting_start=datetime.utcnow() - timedelta(days=1),
+
+backend/tests/test_phase_57_access_axes.py::test_public_activity_anon_can_list_proposals
+backend/tests/test_phase_57_access_axes.py::test_public_activity_anon_can_read_proposal_detail
+backend/tests/test_phase_57_access_axes.py::test_members_only_default_404s_anon_proposal_list_and_detail
+backend/tests/test_phase_57_access_axes.py::test_anon_cannot_post_vote_or_comment_regardless_of_activity_visibility
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_57_access_axes.py:147: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    voting_end=datetime.utcnow() + timedelta(days=1),
+
+backend/tests/test_phase_59_draft_edit.py::test_type_change_rejected_on_non_draft
+backend/tests/test_phase_59_draft_edit.py::test_num_winners_change_rejected_on_non_draft
+backend/tests/test_phase_59_draft_edit.py::test_delete_proposal_rejected_on_non_draft_status
+backend/tests/test_phase_59_draft_edit.py::test_delete_proposal_rejected_on_non_draft_status
+backend/tests/test_phase_59_draft_edit.py::test_delete_proposal_rejected_on_non_draft_status
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_59_draft_edit.py:134: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    p.voting_start = datetime.utcnow() - timedelta(days=1)
+
+backend/tests/test_phase_59_draft_edit.py::test_type_change_rejected_on_non_draft
+backend/tests/test_phase_59_draft_edit.py::test_num_winners_change_rejected_on_non_draft
+backend/tests/test_phase_59_draft_edit.py::test_delete_proposal_rejected_on_non_draft_status
+backend/tests/test_phase_59_draft_edit.py::test_delete_proposal_rejected_on_non_draft_status
+backend/tests/test_phase_59_draft_edit.py::test_delete_proposal_rejected_on_non_draft_status
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_59_draft_edit.py:135: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    p.voting_end = datetime.utcnow() + timedelta(days=1)
+
+backend/tests/test_phase_62_draft_edit_complete.py::test_verification_floor_change_on_non_draft_rejected_400
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_62_draft_edit_complete.py:134: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    p.voting_start = datetime.utcnow() - timedelta(days=1)
+
+backend/tests/test_phase_62_draft_edit_complete.py::test_verification_floor_change_on_non_draft_rejected_400
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_62_draft_edit_complete.py:135: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    p.voting_end = datetime.utcnow() + timedelta(days=1)
+
+backend/tests/test_phase_62_draft_edit_complete.py::test_verification_floor_change_on_non_draft_rejected_400
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_62_draft_edit_complete.py:289: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    p.deliberation_start = datetime.utcnow() - timedelta(hours=1)
+
+backend/tests/test_phase_80_public_readonly_surfaces.py::TestNonMemberCannotWriteOnPublicOrg::test_non_member_cannot_vote
+backend/tests/test_phase_80_public_readonly_surfaces.py::TestNonMemberCannotWriteOnPublicOrg::test_non_member_cannot_comment
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_80_public_readonly_surfaces.py:105: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    voting_start=datetime.utcnow() - timedelta(days=1),
+
+backend/tests/test_phase_80_public_readonly_surfaces.py::TestNonMemberCannotWriteOnPublicOrg::test_non_member_cannot_vote
+backend/tests/test_phase_80_public_readonly_surfaces.py::TestNonMemberCannotWriteOnPublicOrg::test_non_member_cannot_comment
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_80_public_readonly_surfaces.py:106: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    voting_end=datetime.utcnow() + timedelta(days=1),
+
+backend/tests/test_phase_86_antiabuse.py::TestContentReports::test_report_already_removed_comment_400
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\tests\test_phase_86_antiabuse.py:186: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    comment.deleted_at = __import__("datetime").datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED backend/tests/test_phase_38_authorization_audit.py::test_b3_login_rate_limit_triggers_after_10_in_a_minute
+FAILED backend/tests/test_phase_86_antiabuse.py::TestRateLimits::test_user_or_remote_address_keying
+FAILED backend/tests/test_phase_86_antiabuse.py::TestRateLimits::test_comment_rate_limit_429_writes_nothing
+FAILED backend/tests/test_phase_97_production_monitoring.py::test_snapshot_flags_stale_workers_and_missing_alert_recipient
+4 failed, 3753 passed, 21 skipped, 346 warnings in 2991.27s (0:49:51)

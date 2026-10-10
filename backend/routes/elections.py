@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
 import auth as auth_utils
@@ -62,6 +62,15 @@ class _OpenElectionBody(BaseModel):
     # seats NOTHING (incumbents stay, vacancies stay vacant). None →
     # the route applies the 0.0 default; 0..1 enforced (422 outside).
     quorum_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_experimental_extra_fields(cls, value):
+        from voting_methods import EXPERIMENTAL_VOTING_METHODS
+        if isinstance(value, dict) and value.get('voting_method') in EXPERIMENTAL_VOTING_METHODS:
+            if set(value) - set(cls.model_fields):
+                raise ValueError('Experimental elections do not accept client rules, results, links or budget configuration')
+        return value
 
     @field_validator("approval_winner_config")
     @classmethod
@@ -240,10 +249,11 @@ def open_election(
             )
 
     # Validate Stage 2 inputs.
-    if body.voting_method not in ("binary", "approval", "ranked_choice"):
+    from voting_methods import EXPERIMENTAL_VOTING_METHODS
+    if body.voting_method not in ("binary", "approval", "ranked_choice", *EXPERIMENTAL_VOTING_METHODS):
         raise HTTPException(
             status_code=400,
-            detail="voting_method must be 'binary', 'approval', or 'ranked_choice'",
+            detail="Unsupported election voting method",
         )
     if body.num_winners < 1:
         raise HTTPException(
@@ -335,8 +345,13 @@ def open_election(
         approval_winner_config=body.approval_winner_config,
         verification_require_residency=False,
     )
+    if body.voting_method in EXPERIMENTAL_VOTING_METHODS:
+        from experimental_elections import validate_creation
+        validate_creation(proposal, db)
     db.add(proposal)
     db.flush()
+    from experimental_voting import initialize_rules
+    initialize_rules(proposal, db)
 
     # Phase 48 Stage 3 — cosign-trigger: stamp cosign markers + insert
     # the author's implicit first signature. Threshold-met advances
@@ -431,6 +446,8 @@ def declare_my_candidacy(
     — there is no draft-nomination of others. Must be in the
     nomination window (proposal.status in 'draft'/'deliberation')."""
     proposal = _proposal_or_404(db, proposal_id, org_id=membership.org_id)
+    from experimental_voting import lock_proposal
+    lock_proposal(db, proposal)
     _require_election(proposal)
     _require_nomination_window(proposal)
 
@@ -466,6 +483,8 @@ def withdraw_my_candidacy(
     membership: models.OrgMembership = Depends(require_org_membership),
 ):
     proposal = _proposal_or_404(db, proposal_id, org_id=membership.org_id)
+    from experimental_voting import lock_proposal
+    lock_proposal(db, proposal)
     _require_election(proposal)
     _require_nomination_window(proposal)
 

@@ -39,6 +39,9 @@ export function formatNotification(notif) {
     case 'proposal.entered_voting':
       return `Voting opened on ${quoted(p.proposal_title) || 'a proposal'}`;
     case 'proposal.closed':
+      if (p.office_installation && p.outcome_detail) {
+        return `${quoted(p.proposal_title) || 'An election'} has closed. ${p.outcome_detail}`;
+      }
       if (p.status) {
         return `${quoted(p.proposal_title) || 'A proposal'} has closed (${p.status})`;
       }

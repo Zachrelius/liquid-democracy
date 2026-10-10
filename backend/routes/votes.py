@@ -63,6 +63,9 @@ def _require_voting_open(
                 )
         return
     if proposal.status == "deliberation":
+        from experimental_voting import is_experimental
+        if proposal.is_election and is_experimental(proposal):
+            raise HTTPException(400, "Election voting begins after candidates are locked")
         from proposal_engagement_config import resolve_allow_pre_voting
         org = None
         if db is not None and proposal.org_id is not None:

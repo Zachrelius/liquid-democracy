@@ -19,6 +19,7 @@ import { useAuth } from '../AuthContext';
 // come from the option descriptions via the shared W3 helper.
 import { effectiveApprovalWinners } from '../utils/approvalWinnerConfig';
 import { optionLabelOf } from '../utils/optionDisplay';
+import { experimentalElectionSummary } from '../utils/electionOutcome';
 
 export default function ElectionBadge({ proposal, orgSlug, onChanged, tally }) {
   const toast = useToast();
@@ -65,7 +66,10 @@ export default function ElectionBadge({ proposal, orgSlug, onChanged, tally }) {
     : [];
   const winnerNames = winnerIds.map(optionLabelOf(proposal, tally?.option_labels));
   let phaseCopy;
-  if (inNominationWindow) {
+  const recordedElection = tally?.method_result?.election;
+  if (isClosedStatus && recordedElection) {
+    phaseCopy = experimentalElectionSummary(recordedElection);
+  } else if (inNominationWindow) {
     phaseCopy = 'Nominations are open. Members may self-declare during this window. When voting opens, the candidate set is locked.';
   } else if (!isClosedStatus) {
     phaseCopy = 'Nominations are closed. Voting will determine the winner.';

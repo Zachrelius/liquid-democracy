@@ -17,10 +17,13 @@ def is_experimental(proposal):
     return proposal.voting_method in EXPERIMENTAL_VOTING_METHODS
 
 
-def initialize_rules(proposal):
+def initialize_rules(proposal, db=None):
     if is_experimental(proposal):
-        if not proposal.org_id or proposal.is_election or proposal.num_winners != 1:
-            raise ValueError("Experimental methods require an ordinary single-winner organization proposal")
+        if not proposal.org_id or proposal.num_winners != 1:
+            raise ValueError("Experimental methods require a single-winner organization proposal")
+        if proposal.is_election:
+            from experimental_elections import validate_creation
+            validate_creation(proposal, db)
         proposal.voting_rules = new_voting_rules(proposal.voting_method, proposal.id)
         proposal.final_method_result = None
     else:
@@ -62,6 +65,11 @@ def finalize_result(proposal, tally, db):
     validate_voting_rules(proposal.voting_rules, proposal.voting_method, proposal.id)
     quorum = tally.quorum_met(proposal.quorum_threshold)
     status = "passed" if quorum and tally.winners else "failed"
+    election = None
+    if proposal.is_election:
+        from experimental_elections import freeze_election
+        election = freeze_election(proposal, tally, db)
+        status = "passed" if quorum and (tally.winners or election['policy'] == 'uncontested' or election['reason'] == 'no_candidates') else "failed"
     proposal.final_method_result = {
         "record_version": 1, "method": proposal.voting_method,
         "rules": public_voting_rules(proposal.voting_rules),
@@ -72,6 +80,10 @@ def finalize_result(proposal, tally, db):
         "closed_at": datetime.now(timezone.utc).isoformat(),
         **weighting_metadata(proposal, db),
     }
+    if election is not None:
+        from experimental_elections import display_labels
+        proposal.final_method_result = {**proposal.final_method_result,
+            'election': election, 'option_display_labels': display_labels(proposal)}
     return status
 
 
@@ -92,14 +104,16 @@ def result_response(proposal, tally, db):
     require_results_visible(proposal, db)
     import schemas
     record = proposal.final_method_result
-    labels = (record["option_labels"] if record is not None else
-              {opt.id: opt.label for opt in proposal.options})
+    from experimental_elections import display_labels
+    labels = (record.get('option_display_labels', record["option_labels"]) if record is not None else display_labels(proposal))
     quorum = record["quorum_met"] if record is not None else tally.quorum_met(proposal.quorum_threshold)
     aggregates = deepcopy(tally.method_result)
     for name in ("total_eligible", "total_ballots_cast", "total_abstain", "not_cast",
                  "participating_headcount", "eligible_headcount"):
         aggregates[name] = getattr(tally, name)
     aggregates.update(option_labels=labels, quorum_met=quorum, finalized=record is not None)
+    if record is not None and proposal.is_election:
+        aggregates["election"] = deepcopy(record["election"])
     aggregates = decimal_counts(aggregates)
     if record is not None:
         aggregates.update(tie_seed=record["tie_seed"], rules=record["rules"],

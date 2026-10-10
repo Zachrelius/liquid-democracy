@@ -33,12 +33,13 @@ export function votingMethodLabel(method) {
 }
 
 /** orgSettings must already be the server's effective (inherited) settings. */
-export function selectableVotingMethods(orgSettings, { hasOrg = false, election = false } = {}) {
+export function selectableVotingMethods(orgSettings, { hasOrg = false, election = false, numWinners = 1 } = {}) {
   const allowed = Array.isArray(orgSettings?.allowed_voting_methods)
     ? orgSettings.allowed_voting_methods : FALLBACK_ENABLED_METHODS;
   return Object.entries(VOTING_METHODS)
     .filter(([id, method]) => method.available && allowed.includes(id)
-      && (!method.experimental || (hasOrg && !election)))
+      && (!method.experimental || (hasOrg && (!election || numWinners === 1)))
+      && (!election || !['budget_allocation', 'budget_project'].includes(id)))
     .map(([id]) => id);
 }
 
@@ -65,7 +66,7 @@ export function unchangedOptionText(existing = [], edited = []) {
 
 export function experimentalOptionsLocked(proposal, methodResult) {
   return !!VOTING_METHODS[proposal.voting_method]?.experimental
-    && (methodResult?.finalized === true
+    && (proposal.is_election || methodResult?.finalized === true
       || ['passed', 'failed', 'closed', 'withdrawn', 'unresolved'].includes(proposal.status));
 }
 

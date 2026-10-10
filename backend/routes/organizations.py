@@ -6720,7 +6720,11 @@ def advance_org_proposal(
         from routes.proposals import _maybe_resolve_tie
         tally = delegation_engine.compute_tally(proposal, db)
         if is_experimental(proposal):
-            next_status = finalize_result(proposal, tally, db)
+            try:
+                next_status = finalize_result(proposal, tally, db)
+            except Exception:
+                db.rollback()
+                raise
         elif getattr(proposal, "is_election", False):
             # Phase 67 W1 — elections: quorum is the ONLY pass/fail
             # gate (mirrors routes/proposals.py). Winner determination

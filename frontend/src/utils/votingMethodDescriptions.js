@@ -11,5 +11,5 @@ export const VOTING_METHOD_DESCRIPTIONS = Object.freeze({
   majority_judgment: { name: 'Majority Judgment', description: 'Grade each option from Reject to Excellent. The option with the highest middle grade—the median—wins, rather than the highest average. If options share the same middle grade, the system compares their remaining grades to break the tie.' },
 });
 export const METHOD_AVAILABILITY_FOOTER = 'Enabling a method makes it available for new proposals. Disabling it does not affect existing proposals.';
-export const SINGLE_WINNER_ELIGIBILITY = 'STAR, Score, Ranked Pairs, and Majority Judgment currently support single-winner proposals, excluding officeholder elections.';
+export const SINGLE_WINNER_ELIGIBILITY = 'STAR, Score, Ranked Pairs, and Majority Judgment support single-winner proposals and single-winner officeholder elections.';
 export const VOTER_WEIGHT_EXPLANATION = 'These descriptions use equal voter weights for simplicity. When weighted voting applies, each ballot counts with its represented voting weight, including grade frequencies and head-to-head comparisons.';
