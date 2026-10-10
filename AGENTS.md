@@ -1,10 +1,10 @@
-# CLAUDE.md — Team Operating Conventions
+# AGENTS.md — Team Operating Conventions
 
-This file is loaded automatically by Claude Code at session start. Keep it under 200 lines. Project context lives in PROGRESS.md and the active spec; this file is for working-style conventions only. When a dispatch says something different from this file, the dispatch wins for that pass.
+This file is loaded automatically by Codex at session start. Keep it under 200 lines. Project context lives in PROGRESS.md and the active spec; this file is for working-style conventions only. When a dispatch says something different from this file, the dispatch wins for that pass.
 
 ## Operating mode
 
-This project runs Claude Code with `--dangerously-skip-permissions` enabled. There is no permission prompting; every bash command runs immediately. The safety net is git history + Railway rollback + the conventions in this file (one branch per phase, no-ff merges to master, no force-pushes, never `alembic downgrade base` in production, never destructive SQL against prod). Operate with appropriate care; treat the absence of prompts as trust to be earned, not as license. If you're about to run something genuinely irreversible (force-push, hard reset, schema drop), pause and surface it to the closeout for explicit Z review BEFORE running it.
+This project runs Codex with `--dangerously-skip-permissions` enabled. There is no permission prompting; every bash command runs immediately. The safety net is git history + Railway rollback + the conventions in this file (one branch per phase, no-ff merges to master, no force-pushes, never `alembic downgrade base` in production, never destructive SQL against prod). Operate with appropriate care; treat the absence of prompts as trust to be earned, not as license. If you're about to run something genuinely irreversible (force-push, hard reset, schema drop), pause and surface it to the closeout for explicit Z review BEFORE running it.
 
 ## Reading order at session start
 
@@ -80,7 +80,7 @@ When no migration is added in a pass, the PG smoke is not required. Mention this
 
 **Browser verification is required for load-bearing user-facing changes.** Routine surface (e.g., a renamed button, a copy tweak) can ship as PASS-by-source — the lead source-reviews and notes "PASS-by-source" in the closeout. Anything a user actually clicks through (registration flows, vote casting, delegation creation, admin actions) gets browser-verified by the QA teammate on prod after deploy.
 
-**Browser verification uses the Claude in Chrome MCP.** The QA teammate runs scenarios via the `mcp__claude-in-chrome__*` tools — DOM-aware navigation, page-text reads, form input, screenshots. Faster and more precise than computer-use pixel clicks, and the standard QA path for this project. Computer-use is the fallback only for native-desktop interactions outside the browser (not relevant for this codebase's surfaces). If the Chrome extension isn't connected at QA time, the lead flags this in the closeout rather than skipping verification or silently falling back to source review. Specs going forward can reference "QA per CLAUDE.md" rather than restating this convention.
+**Browser verification uses the Codex in Chrome MCP.** The QA teammate runs scenarios via the `mcp__claude-in-chrome__*` tools — DOM-aware navigation, page-text reads, form input, screenshots. Faster and more precise than computer-use pixel clicks, and the standard QA path for this project. Computer-use is the fallback only for native-desktop interactions outside the browser (not relevant for this codebase's surfaces). If the Chrome extension isn't connected at QA time, the lead flags this in the closeout rather than skipping verification or silently falling back to source review. Specs going forward can reference "QA per AGENTS.md" rather than restating this convention.
 
 **Use SQLite for unit tests, Postgres for migration smoke.** Unit tests run fast on SQLite; migrations need PG smoke before merge because some bugs only surface on Postgres (the Phase 4c JSON mutation bug is the canonical example).
 
@@ -151,25 +151,31 @@ The planning agent reviews the closeout and decides what (if anything) needs fol
 
 Z is the project owner. Non-developer by background but works fluently with the multi-agent workflow. Time is the constraint: anything the team can do without manual Z approval is preferred. The Q&A flow is: planning agent (chat) writes specs and dispatches → Z dispatches the team in Code → team executes and closes out → planning agent reviews. The team doesn't talk to Z directly except through the closeout report and any blocking questions surfaced via the Code interface.
 
+### Task-state clarity
+
+Never imply that work will continue invisibly after a final response. A final response means the current run has stopped unless an explicit automation/background task was actually created. Phrases such as “next,” “no action needed,” “I’ll start,” or “the next pass will” are permitted in a final response only when either (a) that work already started during the same run and its status is reported, or (b) a real scheduled/background mechanism was created and identified. Otherwise label the follow-up **NOT STARTED** and give Z the exact one-line dispatch needed to begin it.
+
+When Z has already said “start,” “go ahead,” “continue,” “work through them,” or equivalent, treat that as the dispatch: execute the in-scope work rather than ending with another plan or asking for a magic phrase. During a long active run, send concise progress updates; when the final response appears, clearly distinguish completed work, deferred work, and work that was not started.
+
 With permissions off, the lead's responsibility for safe operation goes up, not down. The bar shifts from "would Z approve this if asked?" to "would Z be glad I did this without asking?" When the answer might be no, surface the action in the closeout BEFORE running it (or pause and ask via the Code interface for genuinely irreversible operations) — the rules of thumb are: anything touching prod data destructively, anything that rewrites shared git history, anything that costs money beyond normal Railway/Resend usage, anything that changes deploy infrastructure (Railway env vars, DNS, secrets).
 
 ## MCP filesystem timeout recovery
 
-The Claude Desktop client has a known bug where it unilaterally cancels MCP tool calls at the 4-minute mark regardless of server state. Empirically observed in this project (2026-05-10): writes around 3-4KB and up can trigger it; the threshold is lower than the GitHub-issue docs suggest and isn't a clean cutoff. Once a timeout fires, the per-conversation MCP connection can wedge for subsequent calls. Sometimes the write succeeded on disk and only the ack was lost; sometimes the write never landed at all. Don't assume either.
+The Codex Desktop client has a known bug where it unilaterally cancels MCP tool calls at the 4-minute mark regardless of server state. Empirically observed in this project (2026-05-10): writes around 3-4KB and up can trigger it; the threshold is lower than the GitHub-issue docs suggest and isn't a clean cutoff. Once a timeout fires, the per-conversation MCP connection can wedge for subsequent calls. Sometimes the write succeeded on disk and only the ack was lost; sometimes the write never landed at all. Don't assume either.
 
-Applies to any agent in this project that uses the filesystem MCP (planning agent, content agent, future agents). Not relevant to Claude Code itself, which uses bash, not MCP. Reads of similar size are reliable; the bug is concentrated on writes.
+Applies to any agent in this project that uses the filesystem MCP (planning agent, content agent, future agents). Not relevant to Codex itself, which uses bash, not MCP. Reads of similar size are reliable; the bug is concentrated on writes.
 
-If a `filesystem:*` write returns "No result received from the Claude Desktop app after waiting 4 minutes" or similar:
+If a `filesystem:*` write returns "No result received from the Codex Desktop app after waiting 4 minutes" or similar:
 
 1. **Do not retry the same call immediately.** Retrying queues another 4-minute wait and often wedges further.
 2. **Verify on-disk state.** Wait ~30 seconds, then issue a small read like `filesystem:get_file_info` on the target. Two outcomes:
    - Metadata returns and matches what you intended to write → the write succeeded, only the ack was lost. Proceed.
    - Metadata returns showing the file is missing, empty, or smaller than expected → the write did not land. Switch to the fallback (step 4) rather than retrying.
 3. **If the verification read also times out**, the connection is wedged. Stop and surface to Z:
-   > "The filesystem MCP connection is wedged. To recover: Task Manager (Ctrl+Shift+Esc) → Processes → find 'Claude' → End task. Then reopen Claude Desktop from the Start menu. Closing the window alone is not enough."
-   The wedge is per-conversation, not per-app: other Claude Desktop conversations may keep working fine, but the wedged one needs a full app restart to recover.
+   > "The filesystem MCP connection is wedged. To recover: Task Manager (Ctrl+Shift+Esc) → Processes → find 'Codex' → End task. Then reopen Codex Desktop from the Start menu. Closing the window alone is not enough."
+   The wedge is per-conversation, not per-app: other Codex Desktop conversations may keep working fine, but the wedged one needs a full app restart to recover.
 4. **Fallback for unreliable writes — route through Google Drive.** For any new-file authoring above ~2KB, or after a wedge has fired, write to Google Drive instead of the local filesystem MCP. The Drive MCP uses a different transport (Google's API) and is not subject to the desktop client's 4-minute cap. Author the file in Drive, then surface it in chat as a downloadable link so Z can pull it into the repo at the appropriate path. This adds one human step at hand-off time but takes the write reliability out of the critical path.
-5. **For targeted edits to existing files**, local MCP `edit_file` with small deltas usually works fine — the bug is concentrated on `write_file` and on large new-file creation, especially in freshly-created directories. Keep using local MCP for spec updates, CLAUDE.md edits, and similar surgical changes.
+5. **For targeted edits to existing files**, local MCP `edit_file` with small deltas usually works fine — the bug is concentrated on `write_file` and on large new-file creation, especially in freshly-created directories. Keep using local MCP for spec updates, AGENTS.md edits, and similar surgical changes.
 6. **After any recovery, verify on-disk state before continuing.** Don't assume the pre-timeout state matches what you expect.
 
 ## Demo daily reset (Phase 23+)
@@ -206,6 +212,8 @@ When using Tailwind arbitrary values with multiple CSS values (commonly grid tem
 The comma form silently produces an invalid Tailwind class name; the framework generates no CSS for it and the layout falls back to default behavior (single-column auto for grid-cols, etc.). The bug is silent — `npm run build` passes without warning — and only surfaces visually. Phase 13.3 shipped with this exact bug; Phase 13.4 was a 3-minute single-line CSS fix once it was caught.
 
 The rule applies to any Tailwind arbitrary value carrying a multi-value CSS property: grid templates, transforms with multiple operations, multi-value transitions, etc. Same separator (`_`) in all cases.
+
+## Imported Claude Cowork project instructions
 
 ## Primary checkout synchronization
 

@@ -1,6 +1,6 @@
 # Pilot Public-Copy Accuracy Review
 
-**Status:** Copy approved by Z on August 22, 2026 for the Phase 99 preview implementation. Nothing in this document is live site copy yet. YouTube disclosures remain conditional and must not publish until a playable video ships.
+**Status:** Phase 99 copy shipped; updated August 23, 2026 with Z's permanent-free decision and authorization to promote `/pilot` from the homepage after the Phase 99a copy corrections. YouTube disclosures remain conditional and must not publish until a playable video ships.
 
 **Purpose:** Replace self-hosted-template language with accurate copy for the hosted service at `liquiddemocracy.us`, update pilot-stage claims, and give Z a side-by-side review before any frontend change ships.
 
@@ -296,9 +296,9 @@ Add near the existing institutional-privacy explanation:
 
 > The hosted service depends on specialized providers: Railway for application and database hosting, Resend for transactional email, Cloudflare R2 for encrypted offsite backups, optional Didit identity verification, and optional hosted pol.is deliberation. The Privacy Policy explains what each provider processes. Provider use is part of the trust boundary and is not hidden behind a claim that the service is entirely self-contained.
 
-### Hold the pilot call to action during preview
+### Pilot call to action after preview
 
-Ship the updated trust copy in Phase 99, but do not add a prominent `/pilot` button yet. Retain the existing `Try the demo`, `View on GitHub`, and direct-email paths. A later activation pass can add `Learn about a supported pilot` after Z reviews the built `/pilot` page.
+Phase 99a promotes `/pilot` from the homepage. Keep the Security & Trust page's existing `Try the demo`, `View on GitHub`, and direct-email paths without adding another pilot button in that same pass. Additional cross-site promotion can be evaluated later rather than bundled into the homepage decision.
 
 ## About page: targeted proposed changes
 
@@ -330,7 +330,7 @@ Append:
 
 > If you are part of an organization interested in trying liquid democracy, we're recruiting a small number of supported pilot groups. The strongest early fit is a known-membership organization with a committed steward, roughly 20–200 members, and one or more meaningful but correctable decisions to make. We'll help configure the organization, rehearse the member experience, and learn from what works and what does not.
 
-For the Phase 99 preview, update this prose but retain `Try the demo`, `View on GitHub`, and the direct email link without adding a `/pilot` button. A later activation pass can promote `/pilot` after Z reviews the built page.
+Retain `Try the demo`, `View on GitHub`, and the direct email link without adding a `/pilot` button to About in Phase 99a. The approved promotion surface for this pass is the homepage; additional cross-site links can be evaluated later.
 
 ## Legal-research boundary behind this draft
 
@@ -348,11 +348,12 @@ If a postal address later becomes advisable, use a business mailing address or p
 ## Decisions recorded from Z's review
 
 1. Use `support@liquiddemocracy.us` as the public privacy, terms, and pilot-support address. (`z@liquiddemocracy.us` reaches the same Gmail account but need not be published as a second contact.)
-2. Describe the supported pilot as free, with no preset end date. Concentrate support during setup and the first decisions, taper it as the organization becomes self-sufficient, and welcome continued use when the platform works for the organization.
+2. Describe Liquid Democracy as free to use during and after the pilot, with no subscription fee and no preset end date. Concentrate hands-on support during setup and the first decisions, taper it as the organization becomes self-sufficient, and welcome continued use when the platform works for the organization. Do not imply that a later charge is anticipated.
 3. Use “first supported external pilot(s).” Existing example organizations and participation by friends/family are not represented as established organizational adoption.
 4. Do not emphasize a general minimum age that the service cannot independently enforce. State only that the hosted service is not directed to children under 13 and that optional age thresholds depend on identity verification.
 5. Do not promise account/organization export, a portability package, or a self-hosting setup package for the initial pilot. Describe them as possible future capabilities that may be built if requested.
 6. Use the best-judgment Terms draft above for the initial low-risk pilot; legal review is a future gate for higher-risk, paid, regulated, child-directed, or deliberately EU-facing use.
 7. Publish the YouTube disclosure only when click-to-load training or demonstration video support ships.
+8. After the Phase 99a copy corrections, make `/pilot` the homepage's primary conversion path and remove the preview-only `noindex,nofollow`. Keep the shared footer, About, Security, and authenticated navigation unmodified in that pass.
 
-**Implementation decision:** Z approved this copy for Phase 99. Use the deployment date as the visible Privacy/Terms revision date. The preview phase does not build a permanent inquiry intake, so that separate pipeline decision does not block this pass.
+**Implementation decision:** Phase 99a combines the three approved copy corrections with homepage promotion. It does not build a permanent inquiry intake, so that separate pipeline decision does not block this pass.
