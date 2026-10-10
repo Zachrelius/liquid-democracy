@@ -44,7 +44,7 @@
 
 **PASS - JWT secret from environment:** The `settings.py` loads `secret_key` from environment variables via Pydantic `BaseSettings`. The default value `"change-me-in-production-use-a-long-random-string"` is clearly marked as development-only. In production, the `SECRET_KEY` environment variable is required.
 
-**PASS - JWT payload:** The access token payload contains only `{"sub": user_id, "exp": expire}`. No passwords, emails, or other sensitive data are included.
+**PASS - JWT payload:** The access token payload contains only `{"sub": user_id, "exp": expire, "typ": "access"}` (Phase 112 added `typ`; `auth.decode_access_token` rejects any other type). No passwords, emails, or other sensitive data are included.
 
 **PASS - Token generation:** Refresh tokens, email verification tokens, password reset tokens, and invitation tokens all use `secrets.token_urlsafe(48)` which provides cryptographically secure random generation (256+ bits of entropy).
 
@@ -126,7 +126,7 @@
 Unable to run `pip audit` or `npm audit` in this context. The following dependencies should be audited periodically:
 
 **Python (backend):**
-- FastAPI, uvicorn, SQLAlchemy, Alembic, python-jose, passlib[bcrypt], pydantic, slowapi, nh3, aiosmtplib, pydantic-settings
+- FastAPI, uvicorn, SQLAlchemy, Alembic, PyJWT (replaced python-jose in Phase 112), passlib[bcrypt], pydantic, slowapi, nh3, aiosmtplib, pydantic-settings
 
 **JavaScript (frontend):**
 - React, React Router, Vite, @hello-pangea/dnd, recharts, d3-force
@@ -192,7 +192,7 @@ Unable to run `pip audit` or `npm audit` in this context. The following dependen
 - `delegate_application.approved`, `delegate_application.denied`
 - `org.created`
 
-**PASS - No sensitive data in logs:** Audit log `details` fields contain action-specific metadata (user IDs, vote values, topic IDs) but never include passwords, tokens, or full email content. Request logging includes user_id and request metadata but not request bodies. The `RequestLoggingMiddleware` only extracts `sub` from JWT for logging (never the token itself).
+**PASS - No sensitive data in logs:** Audit log `details` fields contain action-specific metadata (user IDs, vote values, topic IDs) but never include passwords, tokens, or full email content. Request logging includes user_id and request metadata but not request bodies. The `RequestLoggingMiddleware` only extracts `sub` from JWT for logging (never the token itself), and since Phase 112 redacts token-length path segments (the unsubscribe token lives in its URL path) as `:token`.
 
 ### No issues found.
 
@@ -547,6 +547,8 @@ The risk class this exposes: a user who shares email access with another person 
 ### Unsubscribe token format
 
 Each notification email includes a "Unsubscribe from these" footer link encoding `(user_id, event_type)` in an HMAC-signed token using `settings.secret_key` and a 30-day expiry. The unsubscribe endpoint (`GET /api/notifications/unsubscribe/{token}`) verifies the signature, checks expiry, flips the `email` channel for that (user, event_type) pair to false, and returns a confirmation. The endpoint is unauthenticated — possession of a valid signed token is sufficient. The token does not encode any other capability; it cannot be replayed to flip in-app preferences, change digest cadence, or modify any other user-level state.
+
+**Phase 112 correction (2026-10-10):** before Phase 112 this was not true. The unsubscribe token shared the access token's key, algorithm and `sub` claim, and session authentication never checked token purpose, so an unsubscribe link authenticated its recipient (REST and WebSocket) for 30 days and survived password reset / logout-all. Phase 112 adds `typ: access` to access tokens and routes every access-token decode through `auth.decode_access_token`, which rejects all other types; unsubscribe tokens carry `typ: unsubscribe` (legacy links with only `purpose: unsubscribe` still unsubscribe, but never authenticate). Regression coverage: `backend/tests/test_phase112_jwt_token_hardening.py`.
 
 If the secret key were compromised, an attacker could generate unsubscribe tokens for arbitrary (user, event) pairs and silently disable email notifications. The blast radius is bounded to email-channel opt-out — no information disclosure, no other writes, no privilege escalation. Same posture as the existing JWT secret; key rotation is a future operational concern.
 

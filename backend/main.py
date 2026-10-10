@@ -72,6 +72,13 @@ log = logging.getLogger(__name__)
 request_log = logging.getLogger("request")
 
 
+def _loggable_path(path: str) -> str:
+    """Phase 112 — redact bearer-style path segments (e.g. the signed token in
+    ``/api/notifications/unsubscribe/{token}``) before they reach request logs.
+    UUIDs (36 chars) and slugs stay intact for debugging."""
+    return "/".join(":token" if len(part) > 48 else part for part in path.split("/"))
+
+
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Log method, path, user_id, status code, and response time.
 
@@ -103,7 +110,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             request_log.exception(
                 "Unhandled request exception method=%s path=%s request_id=%s",
                 request.method,
-                request.url.path,
+                _loggable_path(request.url.path),
                 request_id,
             )
             raise
@@ -129,12 +136,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             try:
-                from jose import jwt as _jwt
-                payload = _jwt.decode(
-                    auth_header[7:],
-                    settings.secret_key,
-                    algorithms=["HS256"],
-                    options={"verify_exp": False},
+                import auth as _auth
+                payload = _auth.decode_access_token(
+                    auth_header[7:], verify_exp=False,
                 )
                 user_id = payload.get("sub")
             except Exception:
@@ -144,7 +148,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             # Human-readable format for development
             user_str = f" user={user_id}" if user_id else ""
             request_log.info(
-                f"{request.method} {request.url.path} → {response.status_code} "
+                f"{request.method} {_loggable_path(request.url.path)} → {response.status_code} "
                 f"({elapsed_ms}ms){user_str} [{request_id[:8]}]"
             )
         else:
@@ -158,7 +162,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                         "request_id": request_id,
                         "user_id": user_id,
                         "method": request.method,
-                        "path": request.url.path,
+                        "path": _loggable_path(request.url.path),
                         "status_code": response.status_code,
                         "response_time_ms": elapsed_ms,
                     }
