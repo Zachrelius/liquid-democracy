@@ -783,7 +783,7 @@ def _collect_proposal_creation_errors(
     if body.voting_method in EXPERIMENTAL_VOTING_METHODS:
         if org is None:
             errors.append(("voting_method", 400, "Experimental methods require an organization opt-in"))
-        if body.num_winners > 1:
+        if body.num_winners > 1 or body.voting_method == "allocated_score":
             from voting_capabilities import require_new_method_choice
             try:
                 require_new_method_choice(org, body.voting_method, body.num_winners)
@@ -801,11 +801,8 @@ def _collect_proposal_creation_errors(
     # enable a voting method its parent doesn't, or vice-versa (Decision 9).
     if org is not None:
         from routes.organizations import LEGACY_UNCONFIGURED_VOTING_METHODS
-        allowed = get_org_config(
-            org,
-            "allowed_voting_methods",
-            LEGACY_UNCONFIGURED_VOTING_METHODS,
-        )
+        from voting_capabilities import resolve_allowed_voting_methods
+        allowed = resolve_allowed_voting_methods(org, LEGACY_UNCONFIGURED_VOTING_METHODS)
         if body.voting_method not in allowed:
             status_code = 403 if body.voting_method == "ranked_choice" else 400
             errors.append((
@@ -1818,10 +1815,8 @@ def update_proposal(
             if proposal.org_id else None
         )
         if org_for_method is not None:
-            allowed = get_org_config(org_for_method,
-                "allowed_voting_methods",
-                LEGACY_UNCONFIGURED_VOTING_METHODS,
-            )
+            from voting_capabilities import resolve_allowed_voting_methods
+            allowed = resolve_allowed_voting_methods(org_for_method, LEGACY_UNCONFIGURED_VOTING_METHODS)
             if new_method not in allowed:
                 raise HTTPException(
                     status_code=(
@@ -1844,7 +1839,7 @@ def update_proposal(
                                 details={"old_method": old_method, "new_method": new_method, "ballots_removed": removed})
             effective_num_winners = (body.num_winners if body.num_winners is not None else
                                      1 if old_method == "ranked_choice" else proposal.num_winners)
-            if new_method in EXPERIMENTAL_VOTING_METHODS and effective_num_winners > 1:
+            if new_method in EXPERIMENTAL_VOTING_METHODS and (effective_num_winners > 1 or new_method == "allocated_score"):
                 from voting_capabilities import require_new_method_choice
                 try:
                     require_new_method_choice(org_for_method, new_method, effective_num_winners)
@@ -1882,7 +1877,7 @@ def update_proposal(
                 ),
             )
         proposal.num_winners = body.num_winners
-        if count_changed and is_experimental(proposal) and proposal.num_winners > 1:
+        if count_changed and is_experimental(proposal) and (proposal.num_winners > 1 or proposal.voting_method == "allocated_score"):
             from voting_capabilities import require_new_method_choice
             try:
                 require_new_method_choice(db.get(models.Organization, proposal.sub_org_id or proposal.org_id), proposal.voting_method, proposal.num_winners)

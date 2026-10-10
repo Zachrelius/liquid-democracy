@@ -694,7 +694,7 @@ def compute_tally_pure(
         return _compute_allocation_tally_pure(user_ids, ctx)
     if ctx.voting_method == "budget_project":
         return _compute_project_tally_pure(user_ids, ctx)
-    if ctx.voting_method in ("star", "score", "ranked_pairs", "majority_judgment"):
+    if ctx.voting_method in ("star", "score", "ranked_pairs", "majority_judgment", "allocated_score"):
         from experimental_tally import count_star, count_score, count_ranked_pairs, count_majority_judgment
         from voting_methods import validate_voting_rules
         validate_voting_rules(ctx.voting_rules, ctx.voting_method, ctx.proposal_id, num_winners)
@@ -717,11 +717,12 @@ def compute_tally_pure(
                      "grades" if ctx.voting_method == "majority_judgment" else "scores")
             payload = {"abstain": True} if ballot.abstain else {field: getattr(ballot, field)}
             weighted_ballots.append((payload, weight))
-        counter = {"star": count_star, "score": count_score, "ranked_pairs": count_ranked_pairs, "majority_judgment": count_majority_judgment}[ctx.voting_method]
         if num_winners > 1:
             from multiwinner_tally import count_multiwinner
             tally = count_multiwinner(ctx.voting_method, option_ids, weighted_ballots, ctx.voting_rules, ctx.proposal_id, num_winners)
         else:
+            counter = {"star": count_star, "score": count_score, "ranked_pairs": count_ranked_pairs, "majority_judgment": count_majority_judgment}.get(ctx.voting_method)
+            if counter is None: raise ValueError("This method requires multiple winners")
             tally = counter(option_ids, weighted_ballots, ctx.voting_rules, ctx.proposal_id)
         tally.total_eligible = eligible_weight
         tally.not_cast = missing
@@ -1801,7 +1802,7 @@ class DelegationService:
         if eligible_ids is not None:
             vote_query = vote_query.filter(models.Vote.user_id.in_(eligible_ids))
         for row in vote_query.all():
-            if voting_method in ("star", "score", "ranked_pairs", "majority_judgment"):
+            if voting_method in ("star", "score", "ranked_pairs", "majority_judgment", "allocated_score"):
                 from experimental_ballots import validate_ballot
                 from voting_methods import validate_voting_rules
                 validate_voting_rules(proposal.voting_rules, voting_method, proposal.id)
@@ -2076,7 +2077,7 @@ class DelegationService:
         so a non-eligible user's pre-fix Vote row can't leak through delegation
         chain resolution either.
         """
-        if proposal.voting_method in ("star", "score", "ranked_pairs", "majority_judgment") and (proposal.final_method_result is not None
+        if proposal.voting_method in ("star", "score", "ranked_pairs", "majority_judgment", "allocated_score") and (proposal.final_method_result is not None
                                                 or proposal.status in ("passed", "failed", "unresolved")):
             from experimental_tally import ExperimentalTally
             tally = ExperimentalTally.from_record(proposal.final_method_result)
@@ -2091,7 +2092,7 @@ class DelegationService:
         user_ids = sorted(eligible_ids)
         option_ids: list[str] = []
         num_winners = getattr(proposal, "num_winners", 1) or 1
-        if ctx.voting_method in ("ranked_choice", "star", "score", "ranked_pairs", "majority_judgment"):
+        if ctx.voting_method in ("ranked_choice", "star", "score", "ranked_pairs", "majority_judgment", "allocated_score"):
             option_ids = [opt.id for opt in proposal.options]
         return compute_tally_pure(
             user_ids, ctx,

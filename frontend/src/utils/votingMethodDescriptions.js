@@ -1,5 +1,6 @@
 // Shared approved Phase 110 wording. Keep method defaults and capabilities separate.
 export const VOTING_METHOD_DESCRIPTIONS = Object.freeze({
+  allocated_score: { name: 'Allocated Score', description: 'Also known as Proportional STAR. Uses 0–5 ratings and proportional allocation, without an automatic runoff. Requires at least two winners. Representation follows expressed support and voting weight; member shares and delegation permissions stay unchanged.' },
   binary: { name: 'Binary (Yes / No / Abstain)', description: 'Vote for or against a proposal, or abstain. Always enabled.' },
   approval: { name: 'Approval Voting', description: 'Approve as many options as you find acceptable. Each approval counts equally, and the option with the most approvals wins. For multiple winners, options are selected by approval totals and the proposal’s selection rules.' },
   ranked_choice: { name: 'Ranked Choice (IRV / STV)', description: 'Rank options in preference order. For one winner, the lowest-supported option is eliminated each round, and those votes move to each voter’s next remaining choice. For multiple winners, votes transfer from eliminated options and surplus votes transfer from elected options to fill the available places proportionally.' },
@@ -11,5 +12,5 @@ export const VOTING_METHOD_DESCRIPTIONS = Object.freeze({
   majority_judgment: { name: 'Majority Judgment', description: 'Grade each option from Reject to Excellent. The option with the highest middle grade—the median—wins, rather than the highest average. If options share the same middle grade, the system compares their remaining grades to break the tie.' },
 });
 export const METHOD_AVAILABILITY_FOOTER = 'Enabling a method makes it available for new proposals. Disabling it does not affect existing proposals.';
-export const SINGLE_WINNER_ELIGIBILITY = 'STAR, Score, Ranked Pairs, and Majority Judgment support single-winner proposals and single-winner officeholder elections.';
+export const SINGLE_WINNER_ELIGIBILITY = 'STAR, Score, Ranked Pairs, and Majority Judgment support single-winner proposals and single-winner officeholder elections. Multiple-winner variants require separate permissions. Allocated Score requires its independent opt-in and at least two winners.';
 export const VOTER_WEIGHT_EXPLANATION = 'These descriptions use equal voter weights for simplicity. When weighted voting applies, each ballot counts with its represented voting weight, including grade frequencies and head-to-head comparisons.';

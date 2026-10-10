@@ -36,7 +36,7 @@ test('explicit legacy organization methods are retained without adding others', 
   assert.deepEqual(selectableVotingMethods({ allowed_voting_methods: [] }), []);
 });
 
-test('available experimental methods require organization context and one-winner elections', () => {
+test('experimental methods require organization context and their permitted winner count', () => {
   const settings = { allowed_voting_methods: Object.keys(VOTING_METHODS) };
   assert.deepEqual(selectableVotingMethods(settings, { hasOrg: true }),
     ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project', 'star', 'score', 'ranked_pairs', 'majority_judgment']);
@@ -45,7 +45,7 @@ test('available experimental methods require organization context and one-winner
   assert.deepEqual(selectableVotingMethods(settings, { hasOrg: true, election: true }),
     ['binary', 'approval', 'ranked_choice', 'star', 'score', 'ranked_pairs', 'majority_judgment']);
   assert.deepEqual(selectableVotingMethods(settings, { hasOrg: true, election: true, numWinners: 2 }),
-    ['binary', 'approval', 'ranked_choice']);
+    ['binary', 'approval', 'ranked_choice', 'allocated_score']);
   assert.deepEqual(toggleAllowedVotingMethod(['binary'], 'unavailable_future_method', true), ['binary']);
 });
 
@@ -96,7 +96,7 @@ test('Majority Judgment stays independently opted in and grade conversion needs 
 
 
 test('archived and finalized experimental options cannot expose write-in mutation controls', () => {
-  for (const voting_method of ['star', 'score', 'ranked_pairs', 'majority_judgment']) {
+  for (const voting_method of ['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score']) {
     for (const status of ['passed', 'failed', 'closed', 'withdrawn', 'unresolved']) {
       assert.equal(experimentalOptionsLocked({ voting_method, status }), true);
     }

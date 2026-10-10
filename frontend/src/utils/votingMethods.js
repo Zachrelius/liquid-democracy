@@ -14,6 +14,7 @@ export const VOTING_METHODS = Object.freeze({
   ranked_choice: legacy('Ranked choice', 'ranking'),
   budget_allocation: legacy('Budget allocation', 'allocations'),
   budget_project: legacy('Ranked projects', 'ranked'),
+  allocated_score: Object.freeze({ ...experimental('Allocated Score', 'scores', 'allocated_score_0_5_hare_v1', 'Unrated options receive 0 points.'), available: true, singleWinner: false, minimumWinners: 2 }),
   star: Object.freeze({ ...experimental('STAR', 'scores', 'star_0_5_v1', 'Unrated options receive 0 stars.'), available: true }),
   score: Object.freeze({ ...experimental('Score', 'scores', 'score_0_5_sum_v1', 'Unrated options receive 0 points.'), available: true }),
   ranked_pairs: Object.freeze({ ...experimental('Ranked Pairs', 'rank_groups', 'ranked_pairs_margins_v1',
@@ -37,8 +38,8 @@ export function selectableVotingMethods(orgSettings, { hasOrg = false, election 
   const allowed = Array.isArray(orgSettings?.allowed_voting_methods)
     ? orgSettings.allowed_voting_methods : FALLBACK_ENABLED_METHODS;
   return Object.entries(VOTING_METHODS)
-    .filter(([id, method]) => method.available && allowed.includes(id)
-      && (!method.experimental || (hasOrg && (numWinners === 1 || (orgSettings?.allowed_multiwinner_methods || []).includes(id))))
+    .filter(([id, method]) => method.available && allowed.includes(id) && numWinners >= (method.minimumWinners || 1)
+      && (!method.experimental || (hasOrg && (id === 'allocated_score' || numWinners === 1 || (orgSettings?.allowed_multiwinner_methods || []).includes(id))))
       && (!election || !['budget_allocation', 'budget_project'].includes(id)))
     .map(([id]) => id);
 }
@@ -82,7 +83,14 @@ export const MULTIWINNER_COPY = Object.freeze({
   score: 'Rate each option from 0 to 5. The options with the highest total scores win. Every ballot counts at full weight toward every selection; this does not provide proportional representation.',
 });
 
+export const ALLOCATED_SCORE_COPY = 'Rate options from 0 to 5. Winners are selected in rounds by score. After each selection, a share of voting influence is allocated to that winner, giving voters who are not yet represented more influence over the remaining places. No automatic runoff.';
+
+export function countingDescription(method) {
+  return method === 'allocated_score' ? ALLOCATED_SCORE_COPY : MULTIWINNER_COPY[method];
+}
+
 export function multiwinnerEnabled(capabilities, method) {
+  if (method === 'allocated_score') return VOTING_METHODS.allocated_score.available && (capabilities?.allowed_voting_methods || []).includes(method);
   return Object.hasOwn(MULTIWINNER_COPY, method) && (capabilities?.allowed_multiwinner_methods || []).includes(method);
 }
 

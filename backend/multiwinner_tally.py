@@ -217,7 +217,8 @@ def _validate_rp_top_n_record(result,record,rules,preference_weight):
 
 def count_multiwinner(method, option_ids, weighted_ballots, rules, proposal_id, num_winners):
     validate_voting_rules(rules, method, proposal_id, num_winners)
-    counters = {"score":count_score_top_n,"star":count_bloc_star,"majority_judgment":count_majority_judgment_top_n,"ranked_pairs":count_ranked_pairs_top_n}
+    from allocated_score import count_allocated_score
+    counters = {"allocated_score":count_allocated_score,"score":count_score_top_n,"star":count_bloc_star,"majority_judgment":count_majority_judgment_top_n,"ranked_pairs":count_ranked_pairs_top_n}
     if method not in counters: raise ValueError("No released multiwinner tally handler")
     return counters[method](option_ids,weighted_ballots,rules,proposal_id)
 
@@ -245,7 +246,7 @@ def validate_multiwinner_record(result, record, preference_weight):
         return
     scores = result.get("scores")
     histograms = result.get("score_histograms")
-    if (method not in ("score","star") or not isinstance(scores,dict) or len(scores)>120 or not isinstance(histograms,dict)
+    if (method not in ("score","star","allocated_score") or not isinstance(scores,dict) or len(scores)>120 or not isinstance(histograms,dict)
             or set(scores)!=set(histograms) or result.get("preference_weight")!=preference_weight
             or result.get("option_set_version")!=option_set_version(scores)
             or set(record.get("option_labels",{}))!=set(scores)):
@@ -256,6 +257,10 @@ def validate_multiwinner_record(result, record, preference_weight):
                 or any(type(n) is not int or n<0 for n in histogram) or sum(histogram)!=preference_weight
                 or sum(g*n for g,n in enumerate(histogram))!=score):
             raise ValueError("Invalid frozen rating histogram")
+    if method == "allocated_score":
+        from allocated_score import validate_allocated_record
+        validate_allocated_record(result,record,rules,preference_weight)
+        return
     if method == "star":
         _validate_bloc_star_record(result,record,rules,preference_weight)
         return

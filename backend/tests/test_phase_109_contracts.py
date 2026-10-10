@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 from experimental_ballots import validate_ballot
 from voting_methods import (
-    DEFAULT_ENABLED_VOTING_METHODS, EXPERIMENTAL_VOTING_METHODS,
+    DEFAULT_ENABLED_VOTING_METHODS, EXPERIMENTAL_VOTING_METHODS, SINGLE_WINNER_EXPERIMENTAL_METHODS,
     LEGACY_VOTING_METHODS, available_voting_methods, candidate_priority,
     new_voting_rules, option_set_version, public_voting_rules, validate_voting_rules,
 )
@@ -25,7 +25,7 @@ def test_default_and_release_lists_do_not_opt_in_experiments():
     assert not set(DEFAULT_ENABLED_VOTING_METHODS) & set(EXPERIMENTAL_VOTING_METHODS)
 
 
-@pytest.mark.parametrize("method", EXPERIMENTAL_VOTING_METHODS)
+@pytest.mark.parametrize("method", SINGLE_WINNER_EXPERIMENTAL_METHODS)
 def test_rules_commitment_privacy_and_fresh_draw(method):
     rules = new_voting_rules(method, "proposal")
     validate_voting_rules(rules, method, "proposal")

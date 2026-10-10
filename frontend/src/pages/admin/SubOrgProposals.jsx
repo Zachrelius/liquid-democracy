@@ -1,4 +1,4 @@
-import { VOTING_METHODS } from '../../utils/votingMethods';
+import { VOTING_METHODS, multiwinnerEnabled, countingDescription } from '../../utils/votingMethods';
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import api, { isAbortError } from '../../api';
@@ -335,13 +335,19 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
   const [error, setError] = useState('');
 
   const allowedMethods = orgSettings?.allowed_voting_methods || ['binary'];
+  const multiAllowed = multiwinnerEnabled(subOrg.voting_capabilities, votingMethod);
+  const allocatedScoreAllowed = VOTING_METHODS.allocated_score.available && (subOrg.voting_capabilities?.allowed_voting_methods || []).includes('allocated_score');
+  const experimental = VOTING_METHODS[votingMethod]?.experimental;
+  const optionCap = experimental ? numWinners > 1 ? 120 : 20 : Infinity;
+  const countValid = !experimental ? votingMethod !== 'ranked_choice' || (numWinners >= 1 && numWinners <= options.length) : Number.isInteger(numWinners) && numWinners >= (votingMethod === 'allocated_score' ? 2 : 1) && numWinners <= 120 && (numWinners === 1 || multiAllowed);
   const majorityJudgmentAllowed = VOTING_METHODS.majority_judgment.available && allowedMethods.includes('majority_judgment');
   const rankedPairsAllowed = VOTING_METHODS.ranked_pairs.available && allowedMethods.includes('ranked_pairs');
   const scoreAllowed = VOTING_METHODS.score.available && allowedMethods.includes('score');
   const starAllowed = VOTING_METHODS.star.available && allowedMethods.includes('star');
   const approvalAllowed = allowedMethods.includes('approval');
   const rcAllowed = allowedMethods.includes('ranked_choice');
-  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod);
+  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(votingMethod);
+  const optionsValid = !isMultiOption || (options.length <= optionCap && options.every(o => o.label.trim()));
 
   function toggleTopic(id) {
     setSelectedTopics(prev => {
@@ -380,7 +386,7 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
       if (isMultiOption) {
         payload.options = options.map(o => ({ label: o.label.trim(), description: o.description.trim() }));
       }
-      if (votingMethod === 'ranked_choice') {
+      if (votingMethod === 'ranked_choice' || experimental) {
         payload.num_winners = numWinners;
       }
       if ((linkedPolisIds || []).length > 0) {
@@ -419,6 +425,7 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
             <span className="text-sm text-gray-700">Ranked Choice</span>
             {!rcAllowed && <span className="text-xs text-amber-600">(not enabled)</span>}
           </label>
+          {allocatedScoreAllowed && <label className="flex items-center gap-2 cursor-pointer"><input type="radio" name="vm" value="allocated_score" checked={votingMethod === 'allocated_score'} onChange={() => setVotingMethod('allocated_score')} className="accent-[var(--brand-accent)]" /><span className="text-sm">Allocated Score (proportional allocation, no automatic runoff)</span></label>}
           {(majorityJudgmentAllowed) && <label className="flex items-center gap-2 cursor-pointer">
             <input type="radio" name="vm" value="majority_judgment" checked={votingMethod === 'majority_judgment'} onChange={() => setVotingMethod('majority_judgment')} className="accent-[var(--brand-accent)]" />
             <span className="text-sm text-gray-700">Majority Judgment (verbal grades, highest majority grade)</span>
@@ -465,20 +472,23 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
               )}
             </div>
           ))}
-          <button type="button" onClick={() => setOptions(prev => [...prev, { label: '', description: '' }])} className="text-xs text-[var(--brand-accent)] hover:underline">
+          <button type="button" disabled={options.length >= optionCap} onClick={() => setOptions(prev => [...prev, { label: '', description: '' }])} className="text-xs text-[var(--brand-accent)] hover:underline">
             + Add option
           </button>
-          {votingMethod === 'ranked_choice' && (
+          {(votingMethod === 'ranked_choice' || multiAllowed || (experimental && numWinners > 1)) && (
             <div className="mt-3">
-              <label className="block text-xs text-gray-500 mb-1">Number of winners</label>
+              <label htmlFor="sub-proposal-winners" className="block text-xs text-gray-500 mb-1">Number of winners</label>
               <input
                 type="number"
-                min={1}
-                max={options.length}
+                id="sub-proposal-winners"
+                min={votingMethod === 'allocated_score' ? 2 : 1}
+                max={experimental ? 120 : options.length}
                 value={numWinners}
-                onChange={e => setNumWinners(Math.max(1, Math.min(options.length, parseInt(e.target.value, 10) || 1)))}
+                onChange={e => setNumWinners(parseInt(e.target.value, 10) || 1)}
                 className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
               />
+              {experimental && <p className="text-xs mt-2">{countingDescription(votingMethod)} Choose a permitted count; it must fit the options before voting opens.</p>}
+              {!countValid && <p className="text-xs text-red-700">Choose a permitted whole-number winner count for this method and scope.</p>}
             </div>
           )}
         </div>
@@ -506,7 +516,7 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
       {/* Phase 12.5 F3 — threshold sliders gated on `proposal.set_thresholds`. */}
       {canSetThresholds ? (
         <div className="grid grid-cols-2 gap-4">
-          {!['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) && <div>
+          {!['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(votingMethod) && <div>
             <label className="block text-xs text-gray-500 mb-1">Pass Threshold: {Math.round(passThreshold * 100)}%</label>
             <input type="range" min={0} max={100} value={Math.round(passThreshold * 100)} onChange={e => setPassThreshold(parseInt(e.target.value, 10) / 100)} className="w-full accent-[var(--brand-accent)]" />
           </div>}
@@ -521,11 +531,11 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
         // walks the parent chain (per get_org_config), so the displayed
         // numbers are whatever applies to this sub-org's proposals.
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">{['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) ? 'Participation requirement' : 'Approval thresholds'}</p>
+          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">{['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(votingMethod) ? 'Participation requirement' : 'Approval thresholds'}</p>
           <p className="text-sm text-[#2C3E50]">
             This proposal will use the organization's defaults:{' '}
-            {!['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) && <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>}
-            {!['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) && ' / '}
+            {!['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(votingMethod) && <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>}
+            {!['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(votingMethod) && ' / '}
             <strong>{Math.round((orgSettings?.default_quorum_threshold ?? 0.40) * 100)}% quorum</strong>.
           </p>
         </div>
@@ -607,7 +617,7 @@ function CreateProposalForm({ parentSlug, subOrg, orgSettings, topics, onCreated
       {error && <p className="text-sm text-red-600">{error}</p>}
 
       <div className="flex gap-2">
-        <button type="submit" disabled={saving || !title.trim()} className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50">
+        <button type="submit" disabled={saving || !title.trim() || !countValid || !optionsValid} className="text-sm px-4 py-2 bg-[var(--brand-primary)] text-white rounded-lg hover:bg-[var(--brand-accent)] disabled:opacity-50">
           {saving ? 'Creating...' : 'Create Proposal'}
         </button>
         <button type="button" onClick={onCancel} className="text-sm px-4 py-2 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50">

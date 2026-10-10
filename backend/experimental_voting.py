@@ -29,7 +29,7 @@ def initialize_rules(proposal, db=None):
         validate_winner_count(proposal.num_winners)
         if not proposal.org_id:
             raise ValueError("Experimental methods require an organization proposal")
-        if proposal.num_winners > 1:
+        if proposal.num_winners > 1 or proposal.voting_method == "allocated_score":
             if db is None: raise ValueError("Multiwinner creation requires a database session")
             require_new_method_choice(db.get(models.Organization, proposal.sub_org_id or proposal.org_id), proposal.voting_method, proposal.num_winners)
             if proposal.approval_winner_config is not None or proposal.budget_config is not None:

@@ -17,7 +17,7 @@ BUDGET_AGGREGATIONS = ("median", "trimmed_mean")
 MAX_WINNERS = 120
 # Advance only after the corresponding complete lifecycle/rendered gate passes.
 RELEASED_MULTIWINNER_METHODS = frozenset({"score", "star", "majority_judgment", "ranked_pairs"})
-ALLOCATED_SCORE_RELEASED = False
+ALLOCATED_SCORE_RELEASED = True
 
 @dataclass(frozen=True)
 class MethodCapability:
@@ -68,6 +68,14 @@ def _source(org, key):
     return "legacy_default"
 
 
+def resolve_allowed_voting_methods(org, default=None):
+    """Method-specific null means reset-to-parent; retain legacy defaults."""
+    methods=_resolve(org,"allowed_voting_methods",["binary"] if default is None else default)
+    if not isinstance(methods,list) or any(type(v) is not str for v in methods):
+        raise ValueError("Invalid allowed_voting_methods")
+    return methods
+
+
 def effective_voting_capabilities(org):
     """Resolve effective preferences and provenance without mutating settings.
 
@@ -75,7 +83,7 @@ def effective_voting_capabilities(org):
     Existing single-winner override semantics remain intact for compatibility.
     Malformed new stored values fail loudly; absence has explicit legacy defaults.
     """
-    methods = _resolve(org, "allowed_voting_methods", ["binary"])
+    methods = resolve_allowed_voting_methods(org)
     if not isinstance(methods, list) or any(type(v) is not str for v in methods):
         raise ValueError("Invalid allowed_voting_methods")
     preferred = validate_choice_list(_resolve(org, "allowed_multiwinner_methods", []),
@@ -96,7 +104,7 @@ def effective_voting_capabilities(org):
         # Its new choices are bounded by the parent, while stored votes retain rules.
         aggregations = overlap or parent_choices
     return {
-        "allowed_voting_methods": list(methods),
+        "allowed_voting_methods": [v for v in methods if v != "allocated_score" or (ALLOCATED_SCORE_RELEASED and all(v in _resolve(current,"allowed_voting_methods",["binary"]) for current in _ancestors(org)))],
         "allowed_multiwinner_methods": [v for v in MULTIWINNER_METHODS if v in allowed_multi and v in RELEASED_MULTIWINNER_METHODS],
         "allowed_budget_aggregations": aggregations,
         "voting_capability_sources": {key: _source(org, key) for key in

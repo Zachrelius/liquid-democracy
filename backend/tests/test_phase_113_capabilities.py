@@ -61,9 +61,22 @@ def test_planned_registry_entries_cannot_enable_unreleased_features(method, monk
     with pytest.raises(ValueError): cap.require_new_method_choice(scope, method, 2)
 
 
-def test_allocated_score_is_independent_and_never_substitutes_at_one():
+def test_allocated_score_is_independent_and_never_substitutes_at_one(monkeypatch):
+    monkeypatch.setattr(cap,"ALLOCATED_SCORE_RELEASED",False)
     scope = org({"allowed_voting_methods":["allocated_score", "score", "star"]})
     for count in (1, 2):
         with pytest.raises(ValueError): cap.require_new_method_choice(scope, "allocated_score", count)
     assert cap.PLANNED_CAPABILITIES["allocated_score"].proportional is True
     assert all(not cap.PLANNED_CAPABILITIES[m].proportional for m in cap.MULTIWINNER_METHODS)
+
+
+def test_released_allocated_score_requires_independent_parent_bounded_opt_in():
+    parent=org({"allowed_voting_methods":["score","star"],"allowed_multiwinner_methods":["score","star"]})
+    child=org({"allowed_voting_methods":["allocated_score"]},parent)
+    assert "allocated_score" not in cap.effective_voting_capabilities(child)["allowed_voting_methods"]
+    with pytest.raises(ValueError):cap.require_new_method_choice(child,"allocated_score",2)
+    parent.settings["allowed_voting_methods"].append("allocated_score")
+    cap.require_new_method_choice(child,"allocated_score",2)
+    assert cap.effective_voting_capabilities(child)["allowed_multiwinner_methods"]==[]
+    with pytest.raises(ValueError):cap.require_new_method_choice(child,"allocated_score",1)
+    assert child.settings["allowed_voting_methods"]==["allocated_score"]

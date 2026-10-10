@@ -381,7 +381,7 @@ export default function SubOrgSettings() {
             </div>
           </label>
           <VotingMethodSettings allowed={vmOverride ? vmList : inheritedVotingMethods}
-            editable={vmOverride} onChange={setVmList} />
+            editable={vmOverride} permittedAllocatedScore={(parentSettings?.allowed_voting_methods || []).includes('allocated_score')} onChange={setVmList} />
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={multiOverride} onChange={e => setMultiOverride(e.target.checked)} />Override multiple-winner permissions</label>
           <VotingMethodSettings allowed={vmOverride ? vmList : inheritedVotingMethods}
             editable={multiOverride} multiOnly onChange={() => {}}

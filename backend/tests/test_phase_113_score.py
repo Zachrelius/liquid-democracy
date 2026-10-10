@@ -66,7 +66,7 @@ def test_frozen_aggregate_tampering_fails_loudly(key,value):
 @pytest.fixture
 def multi_org(test_db,election_org):
     org,owner,candidates,title=election_org
-    org.settings={**org.settings,"allowed_multiwinner_methods":["score","star","majority_judgment","ranked_pairs"]}
+    org.settings={**org.settings,"allowed_multiwinner_methods":["score","star","majority_judgment","ranked_pairs"],"allowed_voting_methods":[*org.settings["allowed_voting_methods"],"allocated_score"]}
     title.cardinality_mode="multi";title.max_holders=2
     test_db.commit()
     return election_org
@@ -92,7 +92,7 @@ def cast_set(client,fixture,pid,options,partial=False):
 
 
 @pytest.mark.parametrize("site",["generic","org","worker"])
-@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs"])
+@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs","allocated_score"])
 def test_complete_set_installed_frozen_and_retry_idempotent(client,test_db,multi_org,site,method):
     org,owner,candidates,title=multi_org
     pid=opened(client,multi_org,method,num_winners=2)
@@ -118,7 +118,7 @@ def test_complete_set_installed_frozen_and_retry_idempotent(client,test_db,multi
 
 
 @pytest.mark.parametrize("number",[0,1,2])
-@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs"])
+@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs","allocated_score"])
 def test_uncontested_set_policy_is_distinct(client,test_db,multi_org,number,method):
     org,owner,candidates,title=multi_org
     pid=opened(client,multi_org,method,num_winners=2)
@@ -131,7 +131,7 @@ def test_uncontested_set_policy_is_distinct(client,test_db,multi_org,number,meth
 
 
 @pytest.mark.parametrize("case",["verification","inactive","capacity","partial_refresh","partial_fill","quorum"])
-@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs"])
+@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs","allocated_score"])
 def test_whole_set_preflight_preserves_incumbents(client,test_db,multi_org,case,method):
     org,owner,candidates,title=multi_org
     partial_rp=method=="ranked_pairs" and case in ("partial_fill","partial_refresh")
@@ -163,7 +163,7 @@ def test_whole_set_preflight_preserves_incumbents(client,test_db,multi_org,case,
 
 
 @pytest.mark.parametrize("stage",["second_assignment","expected_second","audit"])
-@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs"])
+@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs","allocated_score"])
 def test_atomic_second_assignment_and_audit_failures(client,test_db,multi_org,stage,monkeypatch,method):
     import elections,audit_utils
     org,owner,candidates,title=multi_org
@@ -250,7 +250,7 @@ def test_ordinary_draft_count_reset_and_grandfathered_seed(client,test_db,multi_
 
 
 @pytest.mark.parametrize("site",["generic","org","worker"])
-@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs"])
+@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs","allocated_score"])
 def test_ordinary_weighted_delegation_neutral_override_quorum_and_frozen(client,test_db,multi_org,site,method):
     org,owner,candidates,title=multi_org
     org.settings={**org.settings,"weighted_voting":{"enabled":True,"unit_label":"shares"}}
@@ -292,7 +292,7 @@ def test_contested_ordinary_cannot_start_with_count_above_options(client,test_db
     assert test_db.get(models.Proposal,p["id"]).status=="deliberation"
 
 
-@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs"])
+@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs","allocated_score"])
 def test_draft_departure_from_budget_clears_incompatible_budget_config(client,test_db,multi_org,method):
     org,owner,*_=multi_org
     # Reopened synthetic draft with actual stored budget configuration.
@@ -304,3 +304,22 @@ def test_draft_departure_from_budget_clears_incompatible_budget_config(client,te
     assert changed.status_code==200,changed.text
     assert changed.json()["budget_config"] is None
     assert test_db.get(models.Proposal,pid).voting_rules["num_winners"]==2
+
+
+@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs","allocated_score"])
+def test_real_null_child_inherits_creation_count_and_parent_restrictions(client,test_db,multi_org,method):
+    org,owner,*_=multi_org
+    child=models.Organization(name="Fictional child",slug="phase113-null-child",parent_org=org,settings={"allowed_voting_methods":None,"allowed_multiwinner_methods":None,"allowed_budget_aggregations":None})
+    test_db.add(child);test_db.commit()
+    payload={"title":"Inherited multiple winners","sub_org_id":child.id,"voting_method":method,"num_winners":2,"options":[{"label":"A"},{"label":"B"},{"label":"C"}]}
+    response=client.post(f"/api/orgs/{org.slug}/proposals",headers=_auth_header(owner),json=payload)
+    assert response.status_code==201,response.text
+    pid=response.json()["id"]
+    assert response.json()["num_winners"]==2 and response.json()["voting_rules"]["num_winners"]==2
+    assert test_db.get(models.Proposal,pid).num_winners==2
+    org.settings={**org.settings,"allowed_voting_methods":["binary"]};test_db.commit()
+    blocked=client.post(f"/api/orgs/{org.slug}/proposals",headers=_auth_header(owner),json=payload)
+    assert blocked.status_code==400,blocked.text
+    unchanged=client.patch(f"/api/proposals/{pid}",headers=_auth_header(owner),json={"title":"Grandfathered inherited count","num_winners":2})
+    assert unchanged.status_code==200,unchanged.text
+    assert unchanged.json()["voting_rules"]==response.json()["voting_rules"]

@@ -12,7 +12,7 @@ from voting_methods import EXPERIMENTAL_VOTING_METHODS
 
 def validate_creation(proposal, db):
     from elections import elections_enabled, title_is_electable, trigger_source_enabled, allow_elected_revert
-    from org_config import get_org_config
+    from voting_capabilities import resolve_allowed_voting_methods
     from governance import mode_of, ADMIN_COUNCIL
     if db is None:
         raise ValueError('Election rules initialization requires a database session')
@@ -25,12 +25,12 @@ def validate_creation(proposal, db):
         raise HTTPException(400, 'Election title must be electable in this organization')
     if not elections_enabled(org) or not trigger_source_enabled(org, proposal.election_trigger):
         raise HTTPException(400, 'Election or trigger is disabled')
-    if proposal.voting_method not in EXPERIMENTAL_VOTING_METHODS or proposal.voting_method not in get_org_config(scope, 'allowed_voting_methods', ['binary']):
+    if proposal.voting_method not in EXPERIMENTAL_VOTING_METHODS or proposal.voting_method not in resolve_allowed_voting_methods(scope):
         raise HTTPException(400, 'Voting method is not enabled for this election scope')
     from voting_capabilities import validate_winner_count, require_new_method_choice
     try:
         validate_winner_count(proposal.num_winners)
-        if proposal.num_winners > 1:
+        if proposal.num_winners > 1 or proposal.voting_method == "allocated_score":
             require_new_method_choice(scope, proposal.voting_method, proposal.num_winners)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

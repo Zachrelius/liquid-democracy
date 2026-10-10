@@ -13,13 +13,13 @@ export function MajorityJudgmentExplanation() {
   </details>;
 }
 
-export default function VotingMethodSettings({ allowed, editable = true, onChange, multiwinner = [], permittedMultiwinner = Object.keys(MULTIWINNER_COPY), onMultiwinnerChange, multiOnly = false }) {
+export default function VotingMethodSettings({ allowed, editable = true, onChange, multiwinner = [], permittedMultiwinner = Object.keys(MULTIWINNER_COPY), onMultiwinnerChange, multiOnly = false, permittedAllocatedScore = true }) {
   const prefix = useId();
   return <div className="space-y-4">
     {Object.entries(VOTING_METHOD_DESCRIPTIONS).filter(([method]) => VOTING_METHODS[method].available && (!multiOnly || MULTIWINNER_COPY[method])).map(([method, text]) => {
       const inputId = `${prefix}-${method}`;
       const descriptionId = `${inputId}-description`;
-      const locked = !editable || method === 'binary';
+      const locked = !editable || method === 'binary' || (method === 'allocated_score' && !permittedAllocatedScore);
       return <div key={method} className="flex items-start gap-3">
         {!multiOnly && <input id={inputId} type="checkbox" checked={method === 'binary' || (allowed || ['binary']).includes(method)}
           disabled={locked} aria-describedby={descriptionId}
@@ -39,7 +39,7 @@ export default function VotingMethodSettings({ allowed, editable = true, onChang
       </div>;
     })}
     {!multiOnly && <p className="text-sm text-gray-700">{METHOD_AVAILABILITY_FOOTER}</p>}
-    <p className="text-sm text-gray-700">{onMultiwinnerChange ? 'Multiple winners require a separate organization opt-in. Elections install a selected set together; if any selected candidate is ineligible or awaits verification, existing seats and roles stay intact.' : SINGLE_WINNER_ELIGIBILITY}</p>
+    <p className="text-sm text-gray-700">{onMultiwinnerChange ? 'Score, Bloc STAR, Ranked Pairs and Majority Judgment need their separate multiple-winner opt-in. Allocated Score has its own opt-in and requires at least two winners. Elections install a selected set together; if any selected candidate is ineligible or awaits verification, existing seats and roles stay intact.' : SINGLE_WINNER_ELIGIBILITY}</p>
     <a href="/help/voting-methods" target="_blank" rel="noreferrer" className="inline-block text-sm text-[var(--brand-accent)] underline">Learn about voting methods</a>
   </div>;
 }
