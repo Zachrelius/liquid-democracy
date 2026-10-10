@@ -1,4 +1,4 @@
-import { VOTING_METHODS, toggleAllowedVotingMethod } from '../../utils/votingMethods';
+import VotingMethodSettings from '../../components/VotingMethodSettings';
 import { useState, useEffect, useRef } from 'react';
 import { useOrg } from '../../OrgContext';
 import api from '../../api';
@@ -2120,109 +2120,8 @@ export default function OrgSettings() {
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Voting Methods</h2>
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
-          <label className="flex items-center gap-3">
-            <input type="checkbox" checked disabled className="accent-[var(--brand-accent)]" />
-            <div>
-              <span className="text-sm text-gray-700">Binary (Yes/No/Abstain)</span>
-              <p className="text-xs text-gray-400">Always enabled. Standard yes/no voting.</p>
-            </div>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={(settings.allowed_voting_methods || ['binary']).includes('approval')}
-              onChange={e => {
-                const current = settings.allowed_voting_methods || ['binary'];
-                const updated = e.target.checked
-                  ? [...new Set([...current, 'approval'])]
-                  : current.filter(m => m !== 'approval');
-                updateSetting('allowed_voting_methods', updated);
-              }}
-              className="accent-[var(--brand-accent)]"
-            />
-            <div>
-              <span className="text-sm text-gray-700">Approval Voting</span>
-              <p className="text-xs text-gray-400">Voters approve any number of options. Best for multi-option decisions.</p>
-            </div>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={(settings.allowed_voting_methods || ['binary']).includes('ranked_choice')}
-              onChange={e => {
-                const current = settings.allowed_voting_methods || ['binary'];
-                const updated = e.target.checked
-                  ? [...new Set([...current, 'ranked_choice'])]
-                  : current.filter(m => m !== 'ranked_choice');
-                updateSetting('allowed_voting_methods', updated);
-              }}
-              className="accent-[var(--brand-accent)]"
-            />
-            <div>
-              <span className="text-sm text-gray-700">Ranked Choice (IRV / STV)</span>
-              <p className="text-xs text-gray-400">Voters rank options in preference order. 1 winner = IRV; multiple winners = STV.</p>
-            </div>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={(settings.allowed_voting_methods || ['binary']).includes('budget_allocation')}
-              onChange={e => {
-                const current = settings.allowed_voting_methods || ['binary'];
-                const updated = e.target.checked
-                  ? [...new Set([...current, 'budget_allocation'])]
-                  : current.filter(m => m !== 'budget_allocation');
-                updateSetting('allowed_voting_methods', updated);
-              }}
-              className="accent-[var(--brand-accent)]"
-            />
-            <div>
-              <span className="text-sm text-gray-700">Budget — Allocation (split a pool)</span>
-              <p className="text-xs text-gray-400">Voters split a fixed budget across continuous buckets. Every funded bucket gets a share proportional to support.</p>
-            </div>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={(settings.allowed_voting_methods || ['binary']).includes('budget_project')}
-              onChange={e => {
-                const current = settings.allowed_voting_methods || ['binary'];
-                const updated = e.target.checked
-                  ? [...new Set([...current, 'budget_project'])]
-                  : current.filter(m => m !== 'budget_project');
-                updateSetting('allowed_voting_methods', updated);
-              }}
-              className="accent-[var(--brand-accent)]"
-            />
-            <div>
-              <span className="text-sm text-gray-700">Budget — Projects (fund a ranked list)</span>
-              <p className="text-xs text-gray-400">Voters rank discrete projects under a fixed budget. Funds top priorities until the money runs out; supports fixed-cost, fund-or-skip, and tiered-variant items.</p>
-            </div>
-          </label>
-          {VOTING_METHODS.star.available && <div className="border-t pt-3 space-y-2">
-            <h4 className="text-sm font-medium">Optional voting methods</h4>
-            <label className="flex items-start gap-3 cursor-pointer">
-              <input type="checkbox" checked={(settings.allowed_voting_methods || ['binary']).includes('star')}
-                onChange={e => updateSetting('allowed_voting_methods', toggleAllowedVotingMethod(settings.allowed_voting_methods, 'star', e.target.checked))} className="mt-1 accent-[var(--brand-accent)]" />
-              <span className="text-sm">STAR — rate options 0–5; the top two enter an automatic runoff.</span>
-            </label>
-            {VOTING_METHODS.majority_judgment.available && <label className="flex items-start gap-3 cursor-pointer">
-              <input type="checkbox" checked={(settings.allowed_voting_methods || ['binary']).includes('majority_judgment')}
-                onChange={e => updateSetting('allowed_voting_methods', toggleAllowedVotingMethod(settings.allowed_voting_methods, 'majority_judgment', e.target.checked))} className="mt-1 accent-[var(--brand-accent)]" />
-              <span className="text-sm">Majority Judgment — use verbal grades from Reject to Excellent.</span>
-            </label>}
-            {VOTING_METHODS.ranked_pairs.available && <label className="flex items-start gap-3 cursor-pointer">
-              <input type="checkbox" checked={(settings.allowed_voting_methods || ['binary']).includes('ranked_pairs')}
-                onChange={e => updateSetting('allowed_voting_methods', toggleAllowedVotingMethod(settings.allowed_voting_methods, 'ranked_pairs', e.target.checked))} className="mt-1 accent-[var(--brand-accent)]" />
-              <span className="text-sm">Ranked Pairs — rank options with ties; compare head-to-head victories.</span>
-            </label>}
-            {VOTING_METHODS.score.available && <label className="flex items-start gap-3 cursor-pointer">
-              <input type="checkbox" checked={(settings.allowed_voting_methods || ['binary']).includes('score')}
-                onChange={e => updateSetting('allowed_voting_methods', toggleAllowedVotingMethod(settings.allowed_voting_methods, 'score', e.target.checked))} className="mt-1 accent-[var(--brand-accent)]" />
-              <span className="text-sm">Score — rate options 0–5 points; the highest total wins.</span>
-            </label>}
-            <p className="text-xs text-gray-500">Off by default. Disabling a method prevents new proposals using it; existing proposals remain usable. Single-winner proposals only, excluding officeholder elections.</p>
-          </div>}
+          <VotingMethodSettings allowed={settings.allowed_voting_methods}
+            onChange={methods => updateSetting('allowed_voting_methods', methods)} />
           {/* Phase 34 F1 — per-section save button. */}
           <button
             onClick={handleSaveVotingMethods}
