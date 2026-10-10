@@ -1,45 +1,31 @@
-# Phase 111 — Proposed licensing materials
+# Phase 111 — MIT licensing review
 
-**Proposal only, October 10, 2026.** No publication, public license grant, merge, or push is authorized by this preparation pass. The existing deployed Terms page still states MIT. This document is a bounded repository review, not comprehensive legal clearance.
+**MIT approved by the owner on October 10, 2026.** Z reviewed the prepared materials, selected MIT, supplied the copyright name **Zachary Petertam**, and authorized the README update and publication to GitHub. This replaces the earlier tentative AGPL proposal. The repository's deployed Terms already identify MIT; no app Terms change is needed.
 
-## Decision proposed
+## License selected
 
-Use **AGPL-3.0-only** for project material the owner has authority to license. The unmodified GNU text is prepared at [LICENSE](../LICENSE); the README labels it as a proposal. No copyright-holder identity, new exception, CLA, or contribution-rights policy has been invented.
+Liquid Democracy's original source code and associated documentation use the **MIT License**. [LICENSE](../LICENSE) contains the standard license text with **Copyright (c) 2026 Zachary Petertam**. The reviewed history begins in 2026.
 
-- **AGPL-3.0-only** fixes the grant to version 3.
-- **AGPL-3.0-or-later** lets recipients choose version 3 or a future AGPL version published by the FSF. The same version-3 text is used; the project's grant and identifier determine the choice.
+MIT permits commercial use, modification, redistribution, sublicensing and sale, including proprietary derivatives, subject to preserving the required copyright/license notices. It imposes no source-sharing or upstream-contribution requirement. The owner explicitly accepts these tradeoffs.
 
-Recommend `only` as the concrete starting point because the owner has not yet approved future license versions. This is a preference to decide, not an extra restriction added to AGPL.
+No custom restriction, new exception, CLA, or contribution-rights policy was added. This publication does not relicense third-party dependencies or claim ownership of externally sourced material. Hosted-service Terms continue to govern accounts and service use separately.
 
-## What the choices mean
-
-| Choice | Practical effect |
-| --- | --- |
-| MIT | Allows proprietary derivatives and commercial use, with the required copyright/license notice. No source-sharing requirement. |
-| Apache-2.0 | Also permissive, with explicit patent licensing and termination terms, notice preservation, and modification notices. |
-| AGPLv3 | Allows commercial use. Covered redistribution carries copyleft/source obligations; section 13 requires a modified network-interactive version to prominently offer its corresponding source to remote users at no charge. |
-
-AGPL does not require contributors to submit changes upstream. It does not require voter data, credentials, production databases, or private configuration values to be disclosed. Calling an API does not automatically put every independent client under AGPL; whether software forms one covered combined work requires a fact-specific assessment. Corresponding source includes the source and necessary build/install material for the covered version, not just an unrelated or older repository snapshot.
-
-Sources: [GNU AGPLv3, especially sections 1, 5–6, 9, 13–14](https://www.gnu.org/licenses/agpl-3.0.html), [GNU GPL FAQ](https://www.gnu.org/licenses/gpl-faq.html), [MIT text](https://opensource.org/license/mit), [Apache-2.0 text](https://www.apache.org/licenses/LICENSE-2.0.html).
+Sources: [OSI MIT text](https://opensource.org/license/mit), [SPDX MIT identifier](https://spdx.org/licenses/MIT.html).
 
 ## Canonical text integrity
 
-Downloaded directly over HTTPS from [GNU's text endpoint](https://www.gnu.org/licenses/agpl-3.0.txt) on October 10, 2026.
+The [SPDX license-list MIT text](https://github.com/spdx/license-list-data/blob/main/text/MIT.txt) was downloaded over HTTPS and checked against the OSI license text.
 
-- 34,523 bytes; SHA-256 `0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0`.
-- A second download matched the saved file byte for byte.
-- GNU HTML was also fetched. The [SPDX AGPL-3.0-only text](https://github.com/spdx/license-list-data/blob/main/text/AGPL-3.0-only.txt) agrees word for word after whitespace normalization and normalization of three GNU/FSF links from HTTP to HTTPS. These link differences are documented; the saved GNU text was not changed.
-- All 17 numbered sections, the end-of-terms marker, and GNU's application instructions are present.
-- The FSF copyright notice protects the license text; it is not a project copyright attribution.
+- Template: 1,078 bytes; SHA-256 `b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5`.
+- Only `<year>` and `<copyright holders>` were replaced with the approved year/name.
+- Final LICENSE SHA-256: `638b143b4689cc954fe096cf64379f468d3b5cf0bb6861a6bdced3c3d1d00b81`.
+- License body, notice condition and warranty/liability disclaimer are unchanged. README and LICENSE identify MIT consistently.
 
-## Ownership and existing grants
+## Ownership and existing statements
 
-Tracked author names on the reviewed origin/master history resolve to one name. This does not establish copyright ownership, employee/contractor rights, imported-code rights, or asset rights. No contributor assignment records were found in this scoped review.
+The owner identified himself as the creator, approved the permissive grant, and supplied the copyright identity. Tracked authorship and source-notice inspection found no separate contributor grant to replace. This scoped review does not prove originality or comprehensive legal clearance.
 
-No tracked LICENSE, COPYING, or NOTICE file exists on the baseline; no such path appeared in the locally available all-ref path history. However, `frontend/src/pages/Terms.jsx:83` states that the source is MIT-licensed, and the exact statement is present in the deployed bundle. `docs/pilot_public_copy_review_2026-08.md:245` repeats it. Earlier public open-source/MIT representations therefore need owner review. A new license must not be represented as retroactively withdrawing valid prior permissions.
-
-Confirm the owner or entity authorized to grant rights, authority over original code and documentation, any third-party contributions/copying, and the intended treatment of prior MIT releases. Existing author notices remain intact. No blanket claim that every file or image belongs solely to the project has been added.
+The baseline had no tracked LICENSE, COPYING or NOTICE file, but `frontend/src/pages/Terms.jsx:83` and `docs/pilot_public_copy_review_2026-08.md:245` already state MIT. The standard MIT LICENSE makes the existing policy explicit without attempting to withdraw any prior permissions. Existing notices remain intact.
 
 ## Third-party review
 
@@ -69,14 +55,14 @@ Version-specific PyPI metadata was read for all **28 pins** in `backend/requirem
 
 Metadata source pattern: `https://pypi.org/pypi/{package}/{pinned-version}/json`. Test/script pins share the requirements file; they are included above without asserting every pin executes in the server request path.
 
-No obvious AGPLv3 incompatibility was identified from these declarations. Metadata is not a substitute for notices in the actual distribution. In particular, preserve Apache notices, inspect psycopg2's LGPL exception and bundled native-library notices, and retain Pillow/native-code notices. Python transitive resolution, base-image/OS packages, binary contents, and final built-bundle attribution were not exhaustively inspected. Backend Dockerfile also fetches age; its v1.3.1 upstream LICENSE was fetched and reviewed as BSD-3-Clause. Its shipped binary notices belong in a final distribution inventory. Test-only reference libraries are not project-owned code.
+The npm declarations are permissive; Python components retain their respective licenses, including psycopg2's LGPL terms and exception. A project MIT grant does not replace those terms. Metadata is not a substitute for notices in the actual distribution. In particular, preserve Apache notices, inspect psycopg2's LGPL exception and bundled native-library notices, and retain Pillow/native-code notices. Python transitive resolution, base-image/OS packages, binary contents, and final built-bundle attribution were not exhaustively inspected. Backend Dockerfile also fetches age; its v1.3.1 upstream LICENSE was fetched and reviewed as BSD-3-Clause. Its shipped binary notices belong in a final distribution inventory. Test-only reference libraries are not project-owned code.
 
-There are **39 tracked public image/vector assets**. Demo portraits are described in code as AI illustrations supplied by the owner; no asset license/provenance ledger accompanies them. Confirm rights and generator/source terms for portraits, logos, PWA icons, and help screenshots before applying a repository-wide grant. No new screenshot or illustration was added. External Didit, Pol.is, Railway, Resend, and Cloudflare services remain separately operated; this proposal does not license those services.
+There are **39 tracked public image/vector assets**. Demo portraits are described in code as AI illustrations supplied by the owner; no asset license/provenance ledger accompanies them. Rights and generator/source terms for portraits, logos, PWA icons, and help screenshots are not established by this scoped source-code review; no blanket claim of sole project ownership is made. No new screenshot or illustration was added. External Didit, Pol.is, Railway, Resend, and Cloudflare services remain separately operated; the project license does not license those services.
 
-## Deployed source offer and follow-ups
+## Deployed source links and remaining review limits
 
-PublicLayout, About, Security, and Pilot link to the correct GitHub repository; that URL is present in live bundle `index-DOlyVHds.js`. Discoverability exists, but these generic repository-root links are not evidence of an exact corresponding-source offer for a future modified covered deployment.
+PublicLayout, About, Security and Pilot link to the correct GitHub repository. Phase 110 B's production release has been verified; publication is integrated on top of refreshed origin/master `0c591057da39e24e570dcab3bfbba6a777f266b1`. No application/source-link change is needed for this MIT publication.
 
-After license/rights approval, a separately authorized app pass should reconcile Terms/public copy with the chosen license, identify the deployed source revision, and ensure a prominent source offer gives users the corresponding source including required build/install material. Keep build artifacts' upstream notices. Phase 110 app files were not edited here.
+The earlier exact-corresponding-source offer discussion concerned the unadopted AGPL proposal. MIT does not impose that network-source-offer requirement. No AGPL grant or custom commercial restriction is part of the current release.
 
-**Remaining owner decision:** choose AGPL-3.0-only or AGPL-3.0-or-later (or retain a permissive choice), confirm rights/asset provenance and prior MIT treatment, and separately authorize any eventual integration/publication. Credential revocation and history remediation also remain separate decisions; see the [publication review](phase111_publication_review.md).
+The existing dependency and asset findings below remain useful notice/provenance limits rather than an assertion that all repository material is solely project-owned. Provider-side historical-key revocation, any shared-history cleanup, exhaustive distribution notices, asset provenance records and a refreshed clean-install guide remain separately scoped follow-ups. See the [redacted publication review](phase111_publication_review.md). No provider/infrastructure action or broad file migration is authorized by this publication.

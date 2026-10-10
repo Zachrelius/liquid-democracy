@@ -1,6 +1,6 @@
 # Liquid Democracy
 
-**A voting platform for groups that make decisions together.**
+**A free, open source voting platform for groups that make decisions together.**
 
 🌐 **Live site:** [liquiddemocracy.us](https://www.liquiddemocracy.us/) · [Try the demos](https://www.liquiddemocracy.us/demo)
 
@@ -63,12 +63,12 @@ For a local installation:
 3. Configure working email delivery for subsequent account verification and notifications. Compose forwards the listed SMTP settings; optional provider and worker configuration may need additional wiring.
 4. Review the resolved configuration locally, then start the services with `docker compose up --build -d`. The frontend uses port 80; the API uses port 8000.
 
-On an empty database, the first registered account is automatically verified and becomes a platform administrator. Secure that first registration before exposing an installation publicly. This pass reviewed the configuration and startup source; it did not run a fresh-install smoke test.
+On an empty database, the first registered account is automatically verified and becomes a platform administrator. Secure that first registration before exposing an installation publicly. See the deployment guide for configuration and operational details.
 
 ## Piloting
 
 I'm looking for real organizations to pilot the platform. If your group might be interested, email **[z@liquiddemocracy.us](mailto:z@liquiddemocracy.us)** or visit the [live site](https://www.liquiddemocracy.us/).
 
-## Proposed license — awaiting owner approval
+## License
 
-The prepared proposal is the **GNU Affero General Public License version 3 only** (`AGPL-3.0-only`); see [LICENSE](LICENSE) and [licensing review](docs/phase111_licensing_notes.md). It has not been approved or published by this preparation pass. Third-party components retain their own licenses and notices. Ownership, existing MIT statements, and asset provenance are recorded in the [publication review](docs/phase111_publication_review.md).
+Licensed under the [MIT License](LICENSE), copyright 2026 Zachary Petertam. You can use, modify, distribute, and sell the software, including modified versions, subject to preserving the required copyright and license notices. Third-party components and externally sourced assets retain their respective terms and notices.

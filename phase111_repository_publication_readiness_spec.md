@@ -1,6 +1,12 @@
 # Phase 111 — Repository publication readiness
 
-Status: APPROVED to prepare and review, October 10, 2026. License preference is tentative AGPL. Publishing a license grant is NOT yet authorized by this dispatch. Prepare concrete artifacts first, then request the owner's final license decision with a reviewable diff. Phase 110 continues independently.
+Status: MIT publication APPROVED by Z on October 10, 2026, after review of the prepared README, proposed license and redacted audit.
+
+## Owner-approved publication follow-up
+
+Z selected MIT, supplied the copyright name **Zachary Petertam**, and explicitly directed updating the README and deploying to GitHub. This supersedes the tentative AGPL proposal and the preparation-only push/merge prohibition below. Publish canonical MIT text with copyright 2026 Zachary Petertam, align README and current review notes, and integrate with a no-ff merge on top of refreshed origin/master. Push master normally, preserving the original dirty root and concurrent Phase 110 history. Verify the published files and any Railway deployment disposition plus production health. Do not change repository visibility, app behavior, infrastructure, secrets or shared history. Keep third-party notices and the audit's bounded limitations. A provider-revocation investigation, history cleanup and broad root-document migration remain outside scope.
+
+The remainder records the original preparation dispatch. Its AGPL recommendations and publication prohibitions applied to that earlier preparation stage, not this approved MIT follow-up.
 
 ## Goal and dispatch
 
