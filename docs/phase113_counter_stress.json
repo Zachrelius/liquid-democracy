@@ -1,0 +1,78 @@
+{
+  "python": "3.12.13",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "logical_processors": 8,
+  "timing": "untraced; input prebuilt; separate tracemalloc counter peak; pure counter has zero SQL",
+  "results": [
+    {
+      "method": "score",
+      "voters": 1000,
+      "options": 120,
+      "winners": 120,
+      "weight": 1000000000000,
+      "profile": "heterogeneous_weights",
+      "seconds": 0.0643,
+      "peak_counter_bytes": 3399026,
+      "serialized_bytes": 16753,
+      "gzip_bytes": 8030,
+      "max_denominator_bits": 0,
+      "queries": 0
+    },
+    {
+      "method": "star",
+      "voters": 1000,
+      "options": 120,
+      "winners": 120,
+      "weight": 1000000000000,
+      "profile": "heterogeneous_weights",
+      "seconds": 9.2987,
+      "peak_counter_bytes": 12301003,
+      "serialized_bytes": 1123468,
+      "gzip_bytes": 30403,
+      "max_denominator_bits": 0,
+      "queries": 0
+    },
+    {
+      "method": "majority_judgment",
+      "voters": 1000,
+      "options": 120,
+      "winners": 120,
+      "weight": 1000000000000,
+      "profile": "heterogeneous_weights",
+      "seconds": 0.0669,
+      "peak_counter_bytes": 876333,
+      "serialized_bytes": 242870,
+      "gzip_bytes": 27014,
+      "max_denominator_bits": 0,
+      "queries": 0
+    },
+    {
+      "method": "ranked_pairs",
+      "voters": 1000,
+      "options": 120,
+      "winners": 120,
+      "weight": 1000000000000,
+      "profile": "heterogeneous_weights",
+      "seconds": 0.9664,
+      "peak_counter_bytes": 9796025,
+      "serialized_bytes": 1575373,
+      "gzip_bytes": 419142,
+      "max_denominator_bits": 0,
+      "queries": 0
+    },
+    {
+      "method": "allocated_score",
+      "voters": 1000,
+      "options": 120,
+      "winners": 120,
+      "weight": 1000000000000,
+      "profile": "heterogeneous_weights",
+      "seconds": 4.8852,
+      "peak_counter_bytes": 18362325,
+      "serialized_bytes": 7522167,
+      "gzip_bytes": 3024338,
+      "max_denominator_bits": 3497,
+      "queries": 0
+    }
+  ]
+}

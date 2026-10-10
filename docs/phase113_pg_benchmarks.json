@@ -1,0 +1,443 @@
+{
+  "note": "Untraced route/snapshot load per method; separate traced Allocated Score load; disposable PG16; concurrently running test/counter workloads",
+  "results": [
+    {
+      "method": "score",
+      "python": "3.12.13",
+      "platform": "Windows-10-10.0.19045-SP0",
+      "logical_processors": 8,
+      "fixture": "1000 members/20 options/K5/900 direct ballots/100-node delegation graph; existing two-hop accept_sub policy",
+      "seconds": 5.13,
+      "tracemalloc_enabled": false,
+      "peak_load_bytes": null,
+      "pool_capacity": 5,
+      "peak_checked_out": 5,
+      "checked_out_after": 0,
+      "waiting_locks_after": 0,
+      "idle_in_transaction_over_5s_after": 0,
+      "statuses": {
+        "200": 40
+      },
+      "operations": {
+        "vote": {
+          "count": 16,
+          "p50_ms": 637.75,
+          "p95_ms": 731.76,
+          "max_queries": 23,
+          "min_queries": 23
+        },
+        "tally": {
+          "count": 16,
+          "p50_ms": 638.98,
+          "p95_ms": 734.85,
+          "max_queries": 13,
+          "min_queries": 13
+        },
+        "snapshot": {
+          "count": 8,
+          "p50_ms": 182.68,
+          "p95_ms": 313.23,
+          "max_queries": 12,
+          "min_queries": 12
+        }
+      },
+      "option_close_races": [
+        {
+          "method": "star",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "score",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "ranked_pairs",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "majority_judgment",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "allocated_score",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        }
+      ]
+    },
+    {
+      "method": "star",
+      "python": "3.12.13",
+      "platform": "Windows-10-10.0.19045-SP0",
+      "logical_processors": 8,
+      "fixture": "1000 members/20 options/K5/900 direct ballots/100-node delegation graph; existing two-hop accept_sub policy",
+      "seconds": 7.89,
+      "tracemalloc_enabled": false,
+      "peak_load_bytes": null,
+      "pool_capacity": 5,
+      "peak_checked_out": 5,
+      "checked_out_after": 0,
+      "waiting_locks_after": 0,
+      "idle_in_transaction_over_5s_after": 0,
+      "statuses": {
+        "200": 40
+      },
+      "operations": {
+        "vote": {
+          "count": 16,
+          "p50_ms": 1006.79,
+          "p95_ms": 1047.97,
+          "max_queries": 23,
+          "min_queries": 23
+        },
+        "tally": {
+          "count": 16,
+          "p50_ms": 1004.8,
+          "p95_ms": 1050.31,
+          "max_queries": 13,
+          "min_queries": 13
+        },
+        "snapshot": {
+          "count": 8,
+          "p50_ms": 524.3,
+          "p95_ms": 621.13,
+          "max_queries": 12,
+          "min_queries": 12
+        }
+      },
+      "option_close_races": [
+        {
+          "method": "star",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "score",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "ranked_pairs",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "majority_judgment",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "allocated_score",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        }
+      ]
+    },
+    {
+      "method": "majority_judgment",
+      "python": "3.12.13",
+      "platform": "Windows-10-10.0.19045-SP0",
+      "logical_processors": 8,
+      "fixture": "1000 members/20 options/K5/900 direct ballots/100-node delegation graph; existing two-hop accept_sub policy",
+      "seconds": 5.89,
+      "tracemalloc_enabled": false,
+      "peak_load_bytes": null,
+      "pool_capacity": 5,
+      "peak_checked_out": 5,
+      "checked_out_after": 0,
+      "waiting_locks_after": 0,
+      "idle_in_transaction_over_5s_after": 0,
+      "statuses": {
+        "200": 40
+      },
+      "operations": {
+        "vote": {
+          "count": 16,
+          "p50_ms": 734.49,
+          "p95_ms": 977.29,
+          "max_queries": 23,
+          "min_queries": 23
+        },
+        "tally": {
+          "count": 16,
+          "p50_ms": 736.33,
+          "p95_ms": 979.77,
+          "max_queries": 13,
+          "min_queries": 13
+        },
+        "snapshot": {
+          "count": 8,
+          "p50_ms": 264.45,
+          "p95_ms": 513.15,
+          "max_queries": 12,
+          "min_queries": 12
+        }
+      },
+      "option_close_races": [
+        {
+          "method": "star",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "score",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "ranked_pairs",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "majority_judgment",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "allocated_score",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        }
+      ]
+    },
+    {
+      "method": "ranked_pairs",
+      "python": "3.12.13",
+      "platform": "Windows-10-10.0.19045-SP0",
+      "logical_processors": 8,
+      "fixture": "1000 members/20 options/K5/900 direct ballots/100-node delegation graph; existing two-hop accept_sub policy",
+      "seconds": 7.34,
+      "tracemalloc_enabled": false,
+      "peak_load_bytes": null,
+      "pool_capacity": 5,
+      "peak_checked_out": 5,
+      "checked_out_after": 0,
+      "waiting_locks_after": 0,
+      "idle_in_transaction_over_5s_after": 0,
+      "statuses": {
+        "200": 40
+      },
+      "operations": {
+        "vote": {
+          "count": 16,
+          "p50_ms": 932.51,
+          "p95_ms": 1283.64,
+          "max_queries": 23,
+          "min_queries": 22
+        },
+        "tally": {
+          "count": 16,
+          "p50_ms": 931.64,
+          "p95_ms": 1283.32,
+          "max_queries": 13,
+          "min_queries": 13
+        },
+        "snapshot": {
+          "count": 8,
+          "p50_ms": 343.09,
+          "p95_ms": 486.72,
+          "max_queries": 12,
+          "min_queries": 12
+        }
+      },
+      "option_close_races": [
+        {
+          "method": "star",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "score",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "ranked_pairs",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "majority_judgment",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "allocated_score",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        }
+      ]
+    },
+    {
+      "method": "allocated_score",
+      "python": "3.12.13",
+      "platform": "Windows-10-10.0.19045-SP0",
+      "logical_processors": 8,
+      "fixture": "1000 members/20 options/K5/900 direct ballots/100-node delegation graph; existing two-hop accept_sub policy",
+      "seconds": 6.89,
+      "tracemalloc_enabled": false,
+      "peak_load_bytes": null,
+      "pool_capacity": 5,
+      "peak_checked_out": 5,
+      "checked_out_after": 0,
+      "waiting_locks_after": 0,
+      "idle_in_transaction_over_5s_after": 0,
+      "statuses": {
+        "200": 40
+      },
+      "operations": {
+        "vote": {
+          "count": 16,
+          "p50_ms": 866.75,
+          "p95_ms": 937.41,
+          "max_queries": 23,
+          "min_queries": 23
+        },
+        "tally": {
+          "count": 16,
+          "p50_ms": 868.78,
+          "p95_ms": 941.23,
+          "max_queries": 13,
+          "min_queries": 13
+        },
+        "snapshot": {
+          "count": 8,
+          "p50_ms": 365.33,
+          "p95_ms": 482.57,
+          "max_queries": 12,
+          "min_queries": 12
+        }
+      },
+      "option_close_races": [
+        {
+          "method": "star",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "score",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "ranked_pairs",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "majority_judgment",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "allocated_score",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        }
+      ]
+    },
+    {
+      "method": "allocated_score",
+      "python": "3.12.13",
+      "platform": "Windows-10-10.0.19045-SP0",
+      "logical_processors": 8,
+      "fixture": "1000 members/20 options/K5/900 direct ballots/100-node delegation graph; existing two-hop accept_sub policy",
+      "seconds": 20.62,
+      "tracemalloc_enabled": true,
+      "peak_load_bytes": 16885893,
+      "pool_capacity": 5,
+      "peak_checked_out": 5,
+      "checked_out_after": 0,
+      "waiting_locks_after": 0,
+      "idle_in_transaction_over_5s_after": 0,
+      "statuses": {
+        "200": 40
+      },
+      "operations": {
+        "vote": {
+          "count": 16,
+          "p50_ms": 2556.83,
+          "p95_ms": 3593.06,
+          "max_queries": 23,
+          "min_queries": 23
+        },
+        "tally": {
+          "count": 16,
+          "p50_ms": 2690.92,
+          "p95_ms": 3792.6,
+          "max_queries": 13,
+          "min_queries": 13
+        },
+        "snapshot": {
+          "count": 8,
+          "p50_ms": 939.25,
+          "p95_ms": 1381.28,
+          "max_queries": 12,
+          "min_queries": 12
+        }
+      },
+      "option_close_races": [
+        {
+          "method": "star",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "score",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "ranked_pairs",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "majority_judgment",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        },
+        {
+          "method": "allocated_score",
+          "option_status": 201,
+          "close_status": 200,
+          "consistent_frozen_options": true
+        }
+      ]
+    }
+  ]
+}

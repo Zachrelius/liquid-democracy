@@ -323,3 +323,32 @@ def test_real_null_child_inherits_creation_count_and_parent_restrictions(client,
     unchanged=client.patch(f"/api/proposals/{pid}",headers=_auth_header(owner),json={"title":"Grandfathered inherited count","num_winners":2})
     assert unchanged.status_code==200,unchanged.text
     assert unchanged.json()["voting_rules"]==response.json()["voting_rules"]
+
+
+@pytest.mark.parametrize("method",["score","star","majority_judgment","ranked_pairs","allocated_score"])
+def test_import_fresh_rules_global_rejection_and_early_privacy(client,test_db,multi_org,method):
+    org,owner,*_=multi_org
+    payload={"title":"Fresh independent import","voting_method":method,"num_winners":2,"options":[{"label":"A"},{"label":"B"},{"label":"C"}]}
+    preview=client.post(f"/api/orgs/{org.slug}/proposals/import-preview",headers=_auth_header(owner),files={"file":("choices.json",json.dumps(payload),"application/json")})
+    assert preview.status_code==200,preview.text
+    assert preview.json()["proposal"]["num_winners"]==2
+    first=client.post(f"/api/orgs/{org.slug}/proposals",headers=_auth_header(owner),json=payload)
+    second=client.post(f"/api/orgs/{org.slug}/proposals",headers=_auth_header(owner),json=payload)
+    assert first.status_code==second.status_code==201
+    one=test_db.get(models.Proposal,first.json()["id"]);two=test_db.get(models.Proposal,second.json()["id"])
+    assert one.voting_rules["tie_seed"]!=two.voting_rules["tie_seed"]
+    # Actual generic global create rejects this method even for platform admins.
+    owner.is_admin=True;test_db.commit()
+    global_create=client.post("/api/proposals",headers=_auth_header(owner),json=payload)
+    assert global_create.status_code==400,global_create.text
+    owner.is_admin=False;one.status="deliberation";one.allow_pre_voting=True;one.show_votes_during_deliberation=False;test_db.commit()
+    path=f"/api/proposals/{one.id}";oid=first.json()["options"][0]["id"]
+    vote=client.post(path+"/vote",headers=_auth_header(owner),json=method_payload(method,{oid:5}))
+    assert vote.status_code==200,vote.text
+    assert client.get(path+"/results",headers=_auth_header(owner)).status_code==404
+    assert client.get(path+"/vote-graph",headers=_auth_header(owner)).status_code==404
+    assert client.get(path+"/my-vote",headers=_auth_header(owner)).json()["is_direct"] is True
+    assert "tie_seed" not in client.get(path,headers=_auth_header(owner)).json()["voting_rules"]
+    org.settings={**org.settings,"allowed_voting_methods":["binary"]};test_db.commit()
+    rejected=client.post(f"/api/orgs/{org.slug}/proposals/import-preview",headers=_auth_header(owner),files={"file":("choices.json",json.dumps(payload),"application/json")})
+    assert rejected.status_code==422,rejected.text

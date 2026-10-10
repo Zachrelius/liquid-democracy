@@ -59,9 +59,12 @@ def install_frozen_set(db, proposal, *, actor_id=None, ip_address=None):
         outcome["installation"] = "not_installed"
     else:
         # Inspect the complete set before changing any seat or privilege.
+        # Users may belong to different organizations: lock the entire set in
+        # ID order, rather than election order, to avoid cross-org deadlocks.
+        selected_users={user.id:user for user in db.query(models.User).filter(models.User.id.in_(outcome["winner_user_ids"])).order_by(models.User.id).with_for_update().populate_existing().all()}
         for uid in outcome["winner_user_ids"]:
             candidate = {"user_id": uid, "status": "eligible", "reason": None}
-            user = db.query(models.User).filter_by(id=uid).with_for_update().populate_existing().one_or_none()
+            user = selected_users.get(uid)
             try:
                 if user is None or not user.is_active:
                     raise HTTPException(400, "winner_inactive")

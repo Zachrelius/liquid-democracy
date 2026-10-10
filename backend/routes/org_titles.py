@@ -124,7 +124,11 @@ def _require_title_manage(db: Session, user_id: str, org_id: str) -> None:
 def _resolve_title_or_404(
     db: Session, org_id: str, title_id: str,
 ) -> models.OrgTitle:
-    title = db.get(models.OrgTitle, title_id)
+    # All custom-title writers share election close's org -> title -> member
+    # order. An INSERT's FK wait happens after a stale capacity read, too late.
+    db.query(models.Organization).filter_by(id=org_id).with_for_update().populate_existing().one()
+    title = db.query(models.OrgTitle).filter_by(id=title_id,org_id=org_id).with_for_update().populate_existing().one_or_none()
+    db.query(models.OrgMembership).filter_by(org_id=org_id).order_by(models.OrgMembership.id).with_for_update().populate_existing().all()
     if title is None or title.org_id != org_id:
         raise HTTPException(status_code=404, detail="Title not found")
     return title
@@ -612,7 +616,7 @@ def assign_title(
         )
 
     # Target must be an active member of the org.
-    target_user = db.get(models.User, body.user_id)
+    target_user = db.query(models.User).filter_by(id=body.user_id).with_for_update().populate_existing().one_or_none()
     if target_user is None:
         raise HTTPException(status_code=404, detail="Target user not found")
     if not target_user.is_active:
