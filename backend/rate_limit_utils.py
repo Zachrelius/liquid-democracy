@@ -68,9 +68,7 @@ def user_or_remote_address(request: Request) -> str:
         token = auth[7:].strip()
         try:
             import auth as auth_utils
-            payload = auth_utils.jwt.decode(
-                token, settings.secret_key, algorithms=[auth_utils.ALGORITHM],
-            )
+            payload = auth_utils.decode_access_token(token)
             sub = payload.get("sub")
             if sub:
                 return f"user:{sub}"

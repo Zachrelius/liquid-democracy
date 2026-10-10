@@ -100,7 +100,9 @@ All 84 npm production nodes have metadata; version-specific PyPI metadata for al
 - [CI run 38058010706](https://github.com/Zachrelius/liquid-democracy/actions/runs/38058010706) completed with frontend and Didit-secret-check SUCCESS, backend FAILURE at dependency audit, and backend tests SKIPPED. The unchanged python-jose 3.5.0 pin is flagged for CVE-2026-85394. No full-backend-CI success is claimed. Publication and production smoke are verified independently.
 - This release touched only README, LICENSE, the Phase 111 spec/review/licensing notes and the narrowly anonymized historical diagnostic. No backfill, demo reset, provider request/authentication, credential rotation, repository-visibility change, real-user mutation or broad document migration.
 
-## Separate CI dependency finding — remediation NOT STARTED
+## Separate CI dependency finding — remediated in Phase 112
+
+> **Update 2026-10-10:** remediated by Phase 112 (`phase112_jwt_token_hardening_spec.md`): python-jose replaced by PyJWT 2.15.1, the `PYSEC-2026-1325` audit exception retired, and a related token-purpose authentication flaw fixed. The original Phase 111 text is preserved below.
 
 The backend audit failure is [CVE-2026-85394 / GHSA-3qf3-8w2g-rqmx](https://github.com/advisories/GHSA-3qf3-8w2g-rqmx), rated critical by GitHub. The official advisory lists python-jose <=3.5.0 and no patched version as of this read-only check. It describes algorithm confusion involving DER-encoded asymmetric public keys accepted as HMAC secrets. Dependencies and CI configuration are identical to the Phase 110 baseline; the MIT documentation release did not introduce this pin or change authentication.
 

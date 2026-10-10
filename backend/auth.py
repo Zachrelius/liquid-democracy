@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+import jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,10 @@ from settings import settings
 import models
 
 ALGORITHM = "HS256"
+# Phase 112 — every access token carries ``typ: access``. Other JWTs signed
+# with the same key (e.g. email unsubscribe links) carry a different ``typ``
+# and must never authenticate a session.
+ACCESS_TOKEN_TYPE = "access"
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -29,8 +33,26 @@ def create_access_token(user_id: str, expires_delta: Optional[timedelta] = None)
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.jwt_expiration_minutes)
     )
-    payload = {"sub": user_id, "exp": expire}
+    payload = {"sub": user_id, "exp": expire, "typ": ACCESS_TOKEN_TYPE}
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+
+
+def decode_access_token(token: str, *, verify_exp: bool = True) -> dict:
+    """Decode and validate a session access token.
+
+    The single decode path for access tokens (REST auth, WebSocket auth,
+    rate-limit keying, request logging). Raises ``jwt.PyJWTError`` when the
+    signature, expiry, required claims, or token type are wrong.
+    """
+    payload = jwt.decode(
+        token,
+        settings.secret_key,
+        algorithms=[ALGORITHM],
+        options={"require": ["exp", "sub"], "verify_exp": verify_exp},
+    )
+    if payload.get("typ") != ACCESS_TOKEN_TYPE:
+        raise jwt.InvalidTokenError("not an access token")
+    return payload
 
 
 def _get_user_from_token(token: str, db: Session) -> models.User:
@@ -40,11 +62,11 @@ def _get_user_from_token(token: str, db: Session) -> models.User:
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        payload = decode_access_token(token)
         user_id: Optional[str] = payload.get("sub")
         if user_id is None:
             raise credentials_exc
-    except JWTError:
+    except jwt.PyJWTError:
         raise credentials_exc
 
     # Phase 39 B1 D2 — re-check ``is_active`` on every token use.

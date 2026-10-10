@@ -714,17 +714,19 @@ UNSUBSCRIBE_TOKEN_TTL_DAYS: int = 30
 def generate_unsubscribe_token(user_id: str, event_type: str) -> str:
     """Mint a signed token encoding (user_id, event_type, exp).
 
-    Uses jose.jwt with ``settings.secret_key`` so we don't carry a
-    second crypto stack. ``GET /api/notifications/unsubscribe/{token}``
-    decodes + acts.
+    Uses PyJWT with ``settings.secret_key`` so we don't carry a
+    second crypto stack. Phase 112: ``typ: unsubscribe`` keeps this token
+    from ever passing ``auth.decode_access_token``.
+    ``GET /api/notifications/unsubscribe/{token}`` decodes + acts.
     """
     from datetime import datetime, timedelta, timezone
-    from jose import jwt
+    import jwt
 
     payload = {
         "sub": user_id,
         "event_type": event_type,
         "purpose": "unsubscribe",
+        "typ": "unsubscribe",
         "exp": datetime.now(timezone.utc) + timedelta(days=UNSUBSCRIBE_TOKEN_TTL_DAYS),
     }
     return jwt.encode(payload, settings.secret_key, algorithm="HS256")
@@ -733,11 +735,11 @@ def generate_unsubscribe_token(user_id: str, event_type: str) -> str:
 def decode_unsubscribe_token(token: str) -> Optional[tuple[str, str]]:
     """Verify the token and return ``(user_id, event_type)`` or None on
     invalid/expired/wrong-purpose tokens. Never raises."""
-    from jose import jwt, JWTError
+    import jwt
 
     try:
         decoded = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-    except JWTError:
+    except jwt.PyJWTError:
         return None
     if decoded.get("purpose") != "unsubscribe":
         return None

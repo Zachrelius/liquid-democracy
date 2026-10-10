@@ -1,20 +1,24 @@
 # Dependency security exceptions
 
-The automated Python dependency audit blocks all known advisories except the
-upstream, no-fix finding below. This exception must be removed if the
-application begins using the affected functionality or a fixed release becomes
-available.
+The automated Python dependency audit (`pip-audit -r requirements.txt` in CI)
+runs with **no** ignored advisories. Any new finding fails backend CI before
+tests run.
 
-## `PYSEC-2026-1325` — `ecdsa` signing timing side channel
+## Current exceptions
 
-No fix is planned upstream. `ecdsa` is a transitive dependency of
-`python-jose[cryptography]`; the advisory affects ECDSA signing and key
-operations. Liquid Democracy signs and verifies only symmetric HS256 JWTs and
-does not perform ECDSA signing, key generation, or ECDH. The affected operations
-are therefore unreachable in the application.
+None.
+
+## Retired exceptions
+
+- `PYSEC-2026-1325` (`ecdsa` signing timing side channel) — retired in
+  Phase 112. `ecdsa` was only a transitive dependency of `python-jose`, which
+  was replaced by PyJWT after `python-jose` received a no-fix advisory
+  (GHSA-3qf3-8w2g-rqmx / CVE-2026-85394). See
+  `phase112_jwt_token_hardening_spec.md`.
 
 ## Review process
 
-CI still reports the ignored ID in its command line so the exception remains
-visible. Review this file and the ignore whenever token algorithms or
-authentication cryptography changes.
+Adding an exception requires an entry here naming the advisory, why the
+affected code path is unreachable, and the condition for removing it, plus a
+visible `--ignore-vuln <ID>` on the CI command line. Review this file whenever
+token algorithms or authentication cryptography change.

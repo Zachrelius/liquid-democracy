@@ -155,8 +155,7 @@ def check_access(session_factory, proposal_id, token=None):
     import auth
     import models
     from eligibility import eligible_viewers_for_proposal
-    from jose import jwt, JWTError
-    from settings import settings
+    import jwt
 
     try:
         with session_factory() as db:
@@ -166,12 +165,12 @@ def check_access(session_factory, proposal_id, token=None):
             if token is None:
                 return 0, 0
             try:
-                payload = jwt.decode(token, settings.secret_key, algorithms=[auth.ALGORITHM])
+                payload = auth.decode_access_token(token)
                 expires = float(payload["exp"])
                 if not expires > time.time():
                     return 4401, 0
                 user = auth._get_user_from_token(token, db)
-            except (JWTError, HTTPException, KeyError, TypeError, ValueError, OverflowError):
+            except (jwt.PyJWTError, HTTPException, KeyError, TypeError, ValueError, OverflowError):
                 return 4401, 0
             if not user.is_admin and user.id not in eligible_viewers_for_proposal(
                 db, proposal, user_id=user.id,
