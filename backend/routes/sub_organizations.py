@@ -15,6 +15,7 @@ topics, proposals, and analytics. Adding 12+ sub-org endpoints in there would
 push it past 2000 lines and make the file hostile to navigate. Splitting keeps
 sub-org logic discoverable and isolates Decision-1/6/7 enforcement to one place.
 """
+from voting_capabilities import effective_voting_capabilities
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -267,6 +268,7 @@ def _sub_org_to_out(
         description=sub_org.description or "",
         parent_org_id=sub_org.parent_org_id,
         settings=sub_org.settings or {},
+        voting_capabilities=effective_voting_capabilities(sub_org),
         member_count=member_count,
         user_role=user_role,
         user_permissions=user_permissions,
@@ -375,6 +377,12 @@ def create_sub_org(
         settings=body.settings or {},
         parent_org_id=parent.id,
     )
+    from voting_capabilities import validate_settings_patch
+    sub_org.parent_org = parent
+    try:
+        sub_org.settings = validate_settings_patch(sub_org, body.settings or {})
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     db.add(sub_org)
     db.flush()
 
@@ -548,7 +556,11 @@ def update_sub_org(
 
     if body.settings is not None:
         old_settings = dict(sub_org.settings or {})
-        new_settings = {**old_settings, **body.settings}
+        from voting_capabilities import validate_settings_patch
+        try:
+            new_settings = validate_settings_patch(sub_org, body.settings)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
 
         # Detect setting-level changes for the audit trail.
         for key, new_val in body.settings.items():

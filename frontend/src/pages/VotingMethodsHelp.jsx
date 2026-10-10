@@ -19,7 +19,9 @@ export default function VotingMethodsHelp() {
         {Object.entries(VOTING_METHOD_DESCRIPTIONS).map(([method, text]) => <div key={method} className="space-y-2">
           <h2 className="text-lg font-semibold text-[var(--brand-primary)]">{text.name}</h2>
           <p className="text-sm text-gray-700 leading-relaxed">{text.description}</p>
-          {method === 'majority_judgment' && <MajorityJudgmentExplanation />}
+          {method === 'allocated_score' && <p className="text-sm">Rate options from 0 to 5. Select by remaining score, then allocate a fixed quota of influence by remaining fraction times rating. Equal contribution bands allocate equal fractions; zero-contribution bands can fill the quota. All-zero and abstaining ballots are excluded from the informative-weight quota. Counting stops without positive remaining support. No automatic runoff. Representation follows expressed support and voting weight; member shares and delegation rights stay unchanged. Exact fractions decide seats; display rounding does not.</p>}
+          {method === 'ranked_pairs' && <p className="text-sm">Multiple winners require a separate permission. One fixed locked graph yields the collective order: choose a source node, remove its outgoing edges and repeat. Equal source choices use committed priority. Wholly unranked options are excluded, and a strict preference among eligible options is required. Votes are not redistributed; this does not provide proportional representation.</p>}
+          {method === 'majority_judgment' && <><MajorityJudgmentExplanation /><p className="text-sm">Multiple winners require a separate permission. Select the highest options in the majority-grade ranking. Tied medians compare original distributions with temporary grade removal; voting influence stays unchanged between selections. Reject-only options leave vacancies. This does not provide proportional representation.</p></>}
         </div>)}
         <p className="text-sm text-gray-700">{VOTER_WEIGHT_EXPLANATION}</p>
         <p className="text-sm text-gray-700">{METHOD_AVAILABILITY_FOOTER}</p>
@@ -44,20 +46,20 @@ export default function VotingMethodsHelp() {
         <p className="text-sm">Ranked Pairs is off by default and requires organization opt-in. It applies to single-winner proposals and single-winner officeholder elections. It does not use first-choice totals or IRV elimination.</p>
       </section>
       <section id="score" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold">Score — optional, single winner</h2>
+        <h2 className="text-lg font-semibold">Score — optional, one or multiple winners</h2>
         <p className="text-sm">Rate each option from 0 to 5 points. Equal ratings are allowed. The option with the highest weighted total points wins. There is no runoff or five-star tiebreak.</p>
         <p className="text-sm">Unrated options receive zero, including later write-ins. Selecting a rating does not submit your ballot. Submit it explicitly; you may change or retract it while voting is permitted.</p>
         <p className="text-sm">A neutral all-zero ballot counts as participation and overrides delegation. Explicit abstention also overrides delegation but contributes no points. Retracting restores ordinary delegation fallback.</p>
         <p className="text-sm">Equal highest totals use the committed draw order, revealed at close. Live results relying on the draw cannot satisfy Stable Result Required. All-zero ballots produce no winner; quorum must also be met.</p>
-        <p className="text-sm">Total points are not approval percentages. Score is off by default and requires organization opt-in. It applies to single-winner proposals and single-winner officeholder elections.</p>
+        <p className="text-sm">Total points are not approval percentages. Score requires organization opt-in. Multiple winners require a separate permission: supported options with the highest total scores fill up to the requested places. Every ballot keeps its full influence for every selection; this does not provide proportional representation. Exact boundary ties use the committed priority, and zero total scores leave unfilled places. For elections, the entire selected set must pass installation checks before any office or bound-role access is granted.</p>
       </section>
       <section id="star" className="bg-white border border-gray-200 rounded-xl p-6 space-y-3">
-        <h2 className="text-lg font-semibold">STAR — optional, single winner</h2>
+        <h2 className="text-lg font-semibold">STAR — optional, single winner or Bloc STAR</h2>
         <p className="text-sm">Rate each option from 0 to 5 stars, allowing equal ratings. The two highest total scores reach an automatic runoff. Your ballot supports the finalist you rated higher; equal ratings support neither. A rating click is not a submitted vote.</p>
         <p className="text-sm">Unrated options receive zero, including write-ins added later. Organizations control early voting and write-ins. You can change a submitted ballot while voting is permitted. Delegation transfers one whole ballot, with each represented member’s own weight applied in both rounds.</p>
         <p className="text-sm">Abstention overrides delegation and counts for participation but contributes no ratings. An all-zero ballot is also participation; if every rating is zero, no winner is selected. Quorum applies, but the binary yes/no pass threshold does not.</p>
         <p className="text-sm">Score ties affecting finalists use preferences within the tied group, then five-star counts. Runoff ties use original total scores, then five-star counts. Remaining ties use a committed draw order, revealed with the final result. Live draw-dependent results cannot satisfy Stable Result Required.</p>
-        <p className="text-sm">STAR is off by default and must be enabled in organization settings. It selects one proposal option or one officeholder. Multiwinner STAR is outside this release.</p>
+        <p className="text-sm">STAR is off by default and must be enabled in organization settings. For multiple winners, a separate Bloc STAR permission enables repeated scoring and automatic runoffs. The selected winner is removed, and every ballot retains its original full weight for the next round. This does not provide proportional representation. A single remaining supported option is selected without a competitive runoff; zero-score options leave vacancies. Each round is preserved in results.</p>
       </section>
 
       {/* Binary */}

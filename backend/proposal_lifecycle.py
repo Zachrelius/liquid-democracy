@@ -251,11 +251,19 @@ def transition_deliberation_to_voting(
         voting_start=when, body_voting_end=body_voting_end,
         proposal=proposal, org=org,
     )
+    from experimental_voting import is_experimental
+    if is_experimental(proposal) and proposal.num_winners > 1 and not proposal.is_election:
+        if proposal.num_winners > len(proposal.options):
+            from fastapi import HTTPException
+            raise HTTPException(400, "Winner count exceeds the eligible options")
     old_status = proposal.status
     proposal.voting_start = when
     proposal.voting_end = end
     proposal.status = "voting"
     lock_election_candidate_options(db, proposal)
+    if is_experimental(proposal) and len(proposal.options) > 120:
+        from fastapi import HTTPException
+        raise HTTPException(400, "This method supports at most 120 eligible options")
     log_audit_event(
         db, action="proposal.status_changed", target_type="proposal",
         target_id=proposal.id, actor_id=actor_id,

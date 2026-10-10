@@ -12,7 +12,7 @@ from voting_methods import EXPERIMENTAL_VOTING_METHODS
 
 def validate_creation(proposal, db):
     from elections import elections_enabled, title_is_electable, trigger_source_enabled, allow_elected_revert
-    from org_config import get_org_config
+    from voting_capabilities import resolve_allowed_voting_methods
     from governance import mode_of, ADMIN_COUNCIL
     if db is None:
         raise ValueError('Election rules initialization requires a database session')
@@ -25,10 +25,21 @@ def validate_creation(proposal, db):
         raise HTTPException(400, 'Election title must be electable in this organization')
     if not elections_enabled(org) or not trigger_source_enabled(org, proposal.election_trigger):
         raise HTTPException(400, 'Election or trigger is disabled')
-    if proposal.voting_method not in EXPERIMENTAL_VOTING_METHODS or proposal.voting_method not in get_org_config(scope, 'allowed_voting_methods', ['binary']):
+    if proposal.voting_method not in EXPERIMENTAL_VOTING_METHODS or proposal.voting_method not in resolve_allowed_voting_methods(scope):
         raise HTTPException(400, 'Voting method is not enabled for this election scope')
-    if proposal.num_winners != 1 or proposal.approval_winner_config is not None or proposal.budget_config is not None:
-        raise HTTPException(400, 'This election method selects exactly one officeholder without approval or budget configuration')
+    from voting_capabilities import validate_winner_count, require_new_method_choice
+    try:
+        validate_winner_count(proposal.num_winners)
+        if proposal.num_winners > 1 or proposal.voting_method == "allocated_score":
+            require_new_method_choice(scope, proposal.voting_method, proposal.num_winners)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if proposal.approval_winner_config is not None or proposal.budget_config is not None:
+        raise HTTPException(400, 'This election method cannot use approval or budget configuration')
+    if proposal.num_winners > 1 and (title.cardinality_mode == 'single' or title.bound_role == 'steward'):
+        raise HTTPException(400, 'This title cannot have multiple elected occupants')
+    if title.max_holders is not None and proposal.num_winners > title.max_holders:
+        raise HTTPException(400, 'Winner count exceeds title capacity')
     if proposal.election_slate_mode not in ('fill_vacancies', 'refresh_slate'):
         raise HTTPException(400, 'Invalid election slate mode')
     if title.bound_role == 'steward' and mode_of(org) == ADMIN_COUNCIL and not allow_elected_revert(org):
@@ -49,6 +60,9 @@ def display_labels(proposal):
 
 
 def freeze_election(proposal, tally, db):
+    if proposal.num_winners > 1:
+        from multiwinner_elections import freeze_election_set
+        return freeze_election_set(proposal, tally, db)
     from elections import active_candidacies
     declared = {row.user_id for row in active_candidacies(db, proposal.id)}
     snapshot = {}
@@ -115,6 +129,9 @@ def _preflight_role(db, org, title, winner, member):
 
 
 def _install_frozen(db, proposal, *, actor_id=None, ip_address=None):
+    if proposal.num_winners > 1:
+        from multiwinner_elections import install_frozen_set
+        return install_frozen_set(db, proposal, actor_id=actor_id, ip_address=ip_address)
     from audit_utils import log_audit_event
     from elections import (_apply_election_winner, _cap_winners_to_title_capacity,
         _refresh_slate_for_title, _advance_schedule_for_title, _flip_mode_to_single_steward)
@@ -194,6 +211,9 @@ def install_frozen(db, proposal, *, actor_id=None, ip_address=None):
 
 def announcement(outcome):
     """Human-readable close intent, using only the frozen identity snapshot."""
+    if outcome.get('outcome_version') == 2:
+        from multiwinner_elections import announcement_set
+        return announcement_set(outcome)
     name = next((row['display_name'] for row in outcome['candidate_snapshot'].values()
                  if row['user_id'] == outcome['winner_user_id']), 'The recorded winner')
     if outcome['installation'] == 'installed':

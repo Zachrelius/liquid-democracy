@@ -18,13 +18,26 @@ def is_experimental(proposal):
 
 
 def initialize_rules(proposal, db=None):
+    if proposal.voting_method == "budget_allocation":
+        from voting_capabilities import resolve_budget_creation
+        if proposal.org_id and db is None:
+            raise ValueError("Budget creation requires a database session")
+        org = db.get(models.Organization, proposal.sub_org_id or proposal.org_id) if proposal.org_id else None
+        proposal.budget_config = resolve_budget_creation(proposal.budget_config, org)
     if is_experimental(proposal):
-        if not proposal.org_id or proposal.num_winners != 1:
-            raise ValueError("Experimental methods require a single-winner organization proposal")
+        from voting_capabilities import validate_winner_count, require_new_method_choice
+        validate_winner_count(proposal.num_winners)
+        if not proposal.org_id:
+            raise ValueError("Experimental methods require an organization proposal")
+        if proposal.num_winners > 1 or proposal.voting_method == "allocated_score":
+            if db is None: raise ValueError("Multiwinner creation requires a database session")
+            require_new_method_choice(db.get(models.Organization, proposal.sub_org_id or proposal.org_id), proposal.voting_method, proposal.num_winners)
+            if proposal.approval_winner_config is not None or proposal.budget_config is not None:
+                raise ValueError("Multiwinner methods cannot use approval or budget configuration")
         if proposal.is_election:
             from experimental_elections import validate_creation
             validate_creation(proposal, db)
-        proposal.voting_rules = new_voting_rules(proposal.voting_method, proposal.id)
+        proposal.voting_rules = new_voting_rules(proposal.voting_method, proposal.id, proposal.num_winners)
         proposal.final_method_result = None
     else:
         proposal.voting_rules = None
@@ -62,7 +75,7 @@ def weighting_metadata(proposal, db):
 def finalize_result(proposal, tally, db):
     if proposal.final_method_result is not None:
         return proposal.final_method_result["status"]
-    validate_voting_rules(proposal.voting_rules, proposal.voting_method, proposal.id)
+    validate_voting_rules(proposal.voting_rules, proposal.voting_method, proposal.id, proposal.num_winners)
     quorum = tally.quorum_met(proposal.quorum_threshold)
     status = "passed" if quorum and tally.winners else "failed"
     election = None
@@ -80,6 +93,9 @@ def finalize_result(proposal, tally, db):
         "closed_at": datetime.now(timezone.utc).isoformat(),
         **weighting_metadata(proposal, db),
     }
+    if proposal.num_winners > 1:
+        proposal.final_method_result.update(record_version=2, num_winners=proposal.num_winners,
+            official_winners=list(tally.winners) if quorum else [])
     if election is not None:
         from experimental_elections import display_labels
         proposal.final_method_result = {**proposal.final_method_result,
@@ -123,7 +139,7 @@ def result_response(proposal, tally, db):
     return schemas.ProposalResults(
         proposal_id=proposal.id, voting_method=proposal.voting_method,
         method_result=aggregates, option_labels=labels,
-        quorum_met=quorum, winners=tally.winners, tied=tally.method_result["priority_used"],
+        quorum_met=quorum, winners=record.get("official_winners", tally.winners) if record else tally.winners, tied=tally.method_result["priority_used"],
         total_eligible=str(tally.total_eligible), votes_cast=str(tally.total_ballots_cast),
         total_ballots_cast=str(tally.total_ballots_cast), total_abstain=str(tally.total_abstain),
         not_cast=str(tally.not_cast), **metadata,

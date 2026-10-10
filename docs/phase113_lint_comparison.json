@@ -1,0 +1,174 @@
+{
+  "baseline": "27e67accafd3367f66f66ff5a27fc462876159fa",
+  "files": [
+    {
+      "file": "frontend/src/components/AllocatedScoreResultsPanel.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/components/BudgetAggregationSettings.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/components/ElectionBadge.jsx",
+      "baseline_errors": 2,
+      "current_errors": 2,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/components/ExperimentalResultsPanel.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/components/MultiwinnerHistory.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/components/MultiwinnerResultsPanel.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/components/OrgTitlesPanel.jsx",
+      "baseline_errors": 2,
+      "current_errors": 2,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/components/RankGroupsBallot.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/components/RatedBallot.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/components/SupportTrajectoryChart.jsx",
+      "baseline_errors": 1,
+      "current_errors": 1,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/components/VoteFlowGraph.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/components/VotingMethodSettings.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/pages/ProposalDetail.jsx",
+      "baseline_errors": 6,
+      "current_errors": 6,
+      "current_warnings": 1,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/pages/UserProfile.jsx",
+      "baseline_errors": 1,
+      "current_errors": 1,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/pages/VotingMethodsHelp.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/pages/admin/OrgSettings.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/pages/admin/ProposalManagement.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/pages/admin/SubOrgProposals.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/pages/admin/SubOrgSettings.jsx",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/utils/budgetAggregations.js",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/utils/electionOutcome.js",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/utils/exactRational.js",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/utils/votingMethodDescriptions.js",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    },
+    {
+      "file": "frontend/src/utils/votingMethods.js",
+      "baseline_errors": 0,
+      "current_errors": 0,
+      "current_warnings": 0,
+      "new_findings": []
+    }
+  ],
+  "new_findings": 0
+}

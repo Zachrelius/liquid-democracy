@@ -1,0 +1,265 @@
+{
+  "postgres": "16",
+  "autoflush": false,
+  "checks": [
+    {
+      "method": "score",
+      "race": "manual_manual",
+      "responses": [
+        200,
+        400
+      ],
+      "single_whole_set": true
+    },
+    {
+      "method": "score",
+      "race": "manual_worker",
+      "responses": [
+        400,
+        "passed"
+      ],
+      "single_whole_set": true
+    },
+    {
+      "method": "score",
+      "failure_stage": "second_assignment",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "score",
+      "failure_stage": "audit",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "score",
+      "failure_stage": "expected_second_rejection",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "score",
+      "race": "vote_close",
+      "mutation_status": 200,
+      "coherent_frozen_snapshot": true
+    },
+    {
+      "method": "score",
+      "race": "option_close",
+      "mutation_status": 201,
+      "coherent_frozen_snapshot": true
+    },
+    {
+      "method": "score",
+      "race": "overlapping_title_elections",
+      "capacity_preserved": true
+    },
+    {
+      "method": "star",
+      "race": "manual_manual",
+      "responses": [
+        400,
+        200
+      ],
+      "single_whole_set": true
+    },
+    {
+      "method": "star",
+      "race": "manual_worker",
+      "responses": [
+        400,
+        "passed"
+      ],
+      "single_whole_set": true
+    },
+    {
+      "method": "star",
+      "failure_stage": "second_assignment",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "star",
+      "failure_stage": "audit",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "star",
+      "failure_stage": "expected_second_rejection",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "star",
+      "race": "vote_close",
+      "mutation_status": 200,
+      "coherent_frozen_snapshot": true
+    },
+    {
+      "method": "star",
+      "race": "option_close",
+      "mutation_status": 201,
+      "coherent_frozen_snapshot": true
+    },
+    {
+      "method": "star",
+      "race": "overlapping_title_elections",
+      "capacity_preserved": true
+    },
+    {
+      "method": "majority_judgment",
+      "race": "manual_manual",
+      "responses": [
+        400,
+        200
+      ],
+      "single_whole_set": true
+    },
+    {
+      "method": "majority_judgment",
+      "race": "manual_worker",
+      "responses": [
+        400,
+        "passed"
+      ],
+      "single_whole_set": true
+    },
+    {
+      "method": "majority_judgment",
+      "failure_stage": "second_assignment",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "majority_judgment",
+      "failure_stage": "audit",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "majority_judgment",
+      "failure_stage": "expected_second_rejection",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "majority_judgment",
+      "race": "vote_close",
+      "mutation_status": 200,
+      "coherent_frozen_snapshot": true
+    },
+    {
+      "method": "majority_judgment",
+      "race": "option_close",
+      "mutation_status": 201,
+      "coherent_frozen_snapshot": true
+    },
+    {
+      "method": "majority_judgment",
+      "race": "overlapping_title_elections",
+      "capacity_preserved": true
+    },
+    {
+      "method": "ranked_pairs",
+      "race": "manual_manual",
+      "responses": [
+        400,
+        200
+      ],
+      "single_whole_set": true
+    },
+    {
+      "method": "ranked_pairs",
+      "race": "manual_worker",
+      "responses": [
+        400,
+        "passed"
+      ],
+      "single_whole_set": true
+    },
+    {
+      "method": "ranked_pairs",
+      "failure_stage": "second_assignment",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "ranked_pairs",
+      "failure_stage": "audit",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "ranked_pairs",
+      "failure_stage": "expected_second_rejection",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "ranked_pairs",
+      "race": "vote_close",
+      "mutation_status": 200,
+      "coherent_frozen_snapshot": true
+    },
+    {
+      "method": "ranked_pairs",
+      "race": "option_close",
+      "mutation_status": 201,
+      "coherent_frozen_snapshot": true
+    },
+    {
+      "method": "ranked_pairs",
+      "race": "overlapping_title_elections",
+      "capacity_preserved": true
+    },
+    {
+      "method": "allocated_score",
+      "race": "manual_manual",
+      "responses": [
+        400,
+        200
+      ],
+      "single_whole_set": true
+    },
+    {
+      "method": "allocated_score",
+      "race": "manual_worker",
+      "responses": [
+        400,
+        "passed"
+      ],
+      "single_whole_set": true
+    },
+    {
+      "method": "allocated_score",
+      "failure_stage": "second_assignment",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "allocated_score",
+      "failure_stage": "audit",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "allocated_score",
+      "failure_stage": "expected_second_rejection",
+      "atomic_rollback_and_retry": true
+    },
+    {
+      "method": "allocated_score",
+      "race": "vote_close",
+      "mutation_status": 200,
+      "coherent_frozen_snapshot": true
+    },
+    {
+      "method": "allocated_score",
+      "race": "option_close",
+      "mutation_status": 201,
+      "coherent_frozen_snapshot": true
+    },
+    {
+      "method": "allocated_score",
+      "race": "overlapping_title_elections",
+      "capacity_preserved": true
+    },
+    {
+      "race": "manual_capacity_preflight_vs_close",
+      "no_stale_capacity_read_or_overgrant": true
+    },
+    {
+      "race": "manual_assignment_vs_close",
+      "same_lock_order_capacity_preserved": true
+    }
+  ],
+  "checked_out_after": 0
+}

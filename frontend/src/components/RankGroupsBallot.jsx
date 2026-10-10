@@ -5,6 +5,7 @@ import { useToast } from './Toast';
 import VerifyEmailInlineNote from './VerifyEmailInlineNote';
 import UserLink from './UserLink';
 import OptionCardDescription from './OptionCardDescription';
+import { MULTIWINNER_COPY } from '../utils/votingMethods';
 import { assignmentsFromGroups, hasRankGroupsBallot, rankGroupsPayload } from '../utils/rankGroups';
 
 export function RankGroupControls({ options, assignments, onChange, disabled, idPrefix }) {
@@ -69,6 +70,7 @@ export default function RankGroupsBallot({ proposal, proposalId, myVote, onVoteC
   }
   return <section className="space-y-3" aria-label="Your Ranked Pairs ballot">
     <h3 className="text-sm font-semibold">Your Ranked Pairs ballot</h3>
+    {Number(proposal.num_winners) > 1 && <p className="text-sm font-medium">Up to {proposal.num_winners} selections. {MULTIWINNER_COPY.ranked_pairs} Wholly unranked options are excluded, and a strict preference between eligible options is required.</p>}
     <p id={`${id}-instructions`} className="text-sm text-gray-600">Assign preferred options to rank groups, with group 1 best. Put equally preferred options in the same group. Unranked options tie below every ranked option and with one another.</p>
     <p className="text-xs text-gray-600">{proposal.is_election ? 'Unranked candidates tie below every ranked candidate.' : 'Later write-ins remain unranked on your saved ballot until you change it.'} You can use the group menus or Move up and Move down buttons; dragging is not required. Changing a group does not submit your vote.</p>
     {!emailVerified && <VerifyEmailInlineNote action="vote" />}

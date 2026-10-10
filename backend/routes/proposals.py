@@ -783,10 +783,15 @@ def _collect_proposal_creation_errors(
     if body.voting_method in EXPERIMENTAL_VOTING_METHODS:
         if org is None:
             errors.append(("voting_method", 400, "Experimental methods require an organization opt-in"))
-        if body.num_winners != 1:
-            errors.append(("num_winners", 400, "Experimental methods select exactly one winner"))
-        if not 2 <= len(body.options) <= 20:
-            errors.append(("options", 400, "Provide between 2 and 20 options"))
+        if body.num_winners > 1 or body.voting_method == "allocated_score":
+            from voting_capabilities import require_new_method_choice
+            try:
+                require_new_method_choice(org, body.voting_method, body.num_winners)
+            except ValueError as exc:
+                errors.append(("num_winners", 400, str(exc)))
+        limit = 120 if body.num_winners > 1 else 20
+        if not 2 <= len(body.options) <= limit:
+            errors.append(("options", 400, f"Provide between 2 and {limit} options"))
         if len({opt.label.strip().casefold() for opt in body.options}) != len(body.options):
             errors.append(("options", 400, "Option labels must be unique"))
     # Check org allowed_voting_methods. Ranked-choice in particular is
@@ -796,11 +801,8 @@ def _collect_proposal_creation_errors(
     # enable a voting method its parent doesn't, or vice-versa (Decision 9).
     if org is not None:
         from routes.organizations import LEGACY_UNCONFIGURED_VOTING_METHODS
-        allowed = get_org_config(
-            org,
-            "allowed_voting_methods",
-            LEGACY_UNCONFIGURED_VOTING_METHODS,
-        )
+        from voting_capabilities import resolve_allowed_voting_methods
+        allowed = resolve_allowed_voting_methods(org, LEGACY_UNCONFIGURED_VOTING_METHODS)
         if body.voting_method not in allowed:
             status_code = 403 if body.voting_method == "ranked_choice" else 400
             errors.append((
@@ -827,6 +829,13 @@ def _collect_proposal_creation_errors(
     # method (allocation↔budget_allocation, project↔budget_project).
     _budget_methods = {"budget_allocation", "budget_project"}
     _budget_cfg = getattr(body, "budget_config", None)
+    if body.voting_method == "budget_allocation" and _budget_cfg is not None:
+        from voting_capabilities import resolve_budget_creation
+        try:
+            body.budget_config = resolve_budget_creation(_budget_cfg, org)
+            _budget_cfg = body.budget_config
+        except ValueError as exc:
+            errors.append(("budget_config", 400, str(exc)))
     if _budget_cfg is not None and body.voting_method not in _budget_methods:
         errors.append((
             "budget_config", 400,
@@ -1190,8 +1199,9 @@ def _validate_and_update_options(
     }.get(proposal.voting_method, "Ranked-choice")
     if len(options) < 2:
         raise HTTPException(status_code=400, detail=f"{label_method} proposals require at least 2 options")
-    if len(options) > 20:
-        raise HTTPException(status_code=400, detail=f"{label_method} proposals may have at most 20 options")
+    option_limit = 120 if is_experimental(proposal) and proposal.num_winners > 1 else 20
+    if len(options) > option_limit:
+        raise HTTPException(status_code=400, detail=f"{label_method} proposals may have at most {option_limit} options")
     if proposal.voting_method == "ranked_choice":
         # num_winners is immutable after creation, but if options shrink below
         # num_winners, the proposal becomes inconsistent — reject.
@@ -1773,6 +1783,18 @@ def update_proposal(
         and body.voting_method is not None
         and body.voting_method != proposal.voting_method
     )
+    count_changed = (body.num_winners is not None and body.num_winners != proposal.num_winners)
+    if count_changed and (is_experimental(proposal) or body.voting_method in EXPERIMENTAL_VOTING_METHODS):
+        if proposal.status != "draft":
+            raise HTTPException(400, "Winner count can only be changed in draft")
+        if db.query(models.Vote.id).filter_by(proposal_id=proposal.id).first():
+            if not body.confirm_ballot_reset:
+                raise HTTPException(409, "Confirm discarding preliminary ballots before changing winner count")
+            removed = db.query(models.Vote).filter_by(proposal_id=proposal.id).delete(synchronize_session=False)
+            db.query(models.VoteSnapshot).filter_by(proposal_id=proposal.id).delete(synchronize_session=False)
+            log_audit_event(db, action="proposal.preliminary_ballots_reset", target_type="proposal",
+                target_id=proposal.id, actor_id=current_user.id,
+                details={"old_num_winners": proposal.num_winners, "new_num_winners": body.num_winners, "ballots_removed": removed})
     if method_changed:
         if proposal.status != "draft":
             raise HTTPException(
@@ -1793,10 +1815,8 @@ def update_proposal(
             if proposal.org_id else None
         )
         if org_for_method is not None:
-            allowed = get_org_config(org_for_method,
-                "allowed_voting_methods",
-                LEGACY_UNCONFIGURED_VOTING_METHODS,
-            )
+            from voting_capabilities import resolve_allowed_voting_methods
+            allowed = resolve_allowed_voting_methods(org_for_method, LEGACY_UNCONFIGURED_VOTING_METHODS)
             if new_method not in allowed:
                 raise HTTPException(
                     status_code=(
@@ -1819,8 +1839,12 @@ def update_proposal(
                                 details={"old_method": old_method, "new_method": new_method, "ballots_removed": removed})
             effective_num_winners = (body.num_winners if body.num_winners is not None else
                                      1 if old_method == "ranked_choice" else proposal.num_winners)
-            if new_method in EXPERIMENTAL_VOTING_METHODS and effective_num_winners != 1:
-                raise HTTPException(status_code=400, detail="Experimental methods select exactly one winner")
+            if new_method in EXPERIMENTAL_VOTING_METHODS and (effective_num_winners > 1 or new_method == "allocated_score"):
+                from voting_capabilities import require_new_method_choice
+                try:
+                    require_new_method_choice(org_for_method, new_method, effective_num_winners)
+                except ValueError as exc:
+                    raise HTTPException(400, str(exc)) from exc
         # When the new method is binary, drop any existing options.
         if new_method == "binary":
             for opt in list(proposal.options or []):
@@ -1838,6 +1862,8 @@ def update_proposal(
             and getattr(proposal, "approval_winner_config", None) is not None
         ):
             proposal.approval_winner_config = None
+        if old_method in ("budget_allocation", "budget_project") and new_method not in ("budget_allocation", "budget_project"):
+            proposal.budget_config = None
         proposal.voting_method = new_method
     # num_winners change (independent of method change — RCV proposals
     # can adjust num_winners while in draft).
@@ -1851,10 +1877,16 @@ def update_proposal(
                 ),
             )
         proposal.num_winners = body.num_winners
-        if is_experimental(proposal) and proposal.num_winners != 1:
-            raise HTTPException(status_code=400, detail="Experimental methods select exactly one winner")
+        if count_changed and is_experimental(proposal) and (proposal.num_winners > 1 or proposal.voting_method == "allocated_score"):
+            from voting_capabilities import require_new_method_choice
+            try:
+                require_new_method_choice(db.get(models.Organization, proposal.sub_org_id or proposal.org_id), proposal.voting_method, proposal.num_winners)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
 
-    if method_changed:
+    if (method_changed or count_changed) and proposal.voting_method in ("binary", "approval", "budget_allocation", "budget_project") and proposal.num_winners != 1:
+        raise HTTPException(400, "This method requires winner count 1; choose the count explicitly")
+    if method_changed or (count_changed and is_experimental(proposal)):
         # Initialize only after the new winner count is applied. A draft STV
         # vote can become STAR in one PATCH with num_winners=1.
         initialize_rules(proposal, db)
@@ -1980,7 +2012,12 @@ def update_proposal(
                     f"(voting_method is '{proposal.voting_method}')."
                 ),
             )
-        proposal.budget_config = body.budget_config
+        from voting_capabilities import resolve_budget_creation
+        scope_org = db.get(models.Organization, proposal.sub_org_id or proposal.org_id) if proposal.org_id else None
+        try:
+            proposal.budget_config = resolve_budget_creation(body.budget_config, scope_org, existing=proposal.budget_config)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
 
     if body.options is not None:
         if proposal.is_election and is_experimental(proposal):
@@ -2570,6 +2607,8 @@ def add_write_in_option(
             ),
         )
 
+    if is_experimental(proposal) and len(proposal.options) >= 120:
+        raise HTTPException(400, "This method supports at most 120 eligible options")
     # Cap check (W4) — count existing write-ins.
     write_in_count = (
         db.query(models.ProposalOption)

@@ -14,8 +14,8 @@ after(async () => { await server?.close(); });
 const render = props => renderToStaticMarkup(createElement(Settings, { onChange() {}, ...props }));
 test('inherited controls expose the parent selection and stay locked', () => {
   const inputs = render({ allowed: ['binary', 'score', 'budget_project'], editable: false }).match(/<input[^>]+>/g);
-  assert.equal(inputs.length, 9);
-  assert.equal(inputs.filter(i => i.includes('disabled')).length, 9);
+  assert.equal(inputs.length, 10);
+  assert.equal(inputs.filter(i => i.includes('disabled')).length, 10);
   assert.equal(inputs.filter(i => i.includes('checked')).length, 3);
   assert.deepEqual(changed(['binary', 'score', 'future'], 'star', true, false), ['binary', 'score', 'future']);
   assert.deepEqual(changed(['binary', 'score'], 'score', false, false), ['binary', 'score']);
@@ -32,7 +32,7 @@ test('override changes preserve unrelated/future methods and binary', () => {
 test('editable settings retain a locked binary with all other controls enabled', () => {
   const inputs = render({ allowed: ['score'] }).match(/<input[^>]+>/g);
   assert.equal(inputs.filter(i => i.includes('disabled')).length, 1);
-  assert.match(inputs[0], /checked/);
+  assert.match(inputs.find(input => input.includes('-binary\"')), /checked/);
   assert.equal(inputs.filter(i => i.includes('checked')).length, 2);
 });
 test('every input has its own label and linked descriptive text', () => {

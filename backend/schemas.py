@@ -545,7 +545,7 @@ def _validate_budget_config(v: Optional[dict]) -> Optional[dict]:
             raise ValueError("budget_config.currency must be a non-empty string")
         return {
             "mode": "allocation", "envelope": envelope,
-            "currency": currency, "aggregation": aggregation,
+            "currency": currency, **({"aggregation": aggregation} if "aggregation" in v else {}),
         }
     if mode == "project":
         # Phase 74 — discrete project budget. envelope is the hard ceiling;
@@ -590,7 +590,7 @@ class ProposalCreate(BaseModel):
     quorum_threshold: float = Field(default=0.40, ge=0.0, le=1.0)
     voting_method: str = "binary"
     options: list[OptionCreate] = Field(default=[])
-    num_winners: int = Field(default=1, ge=1)
+    num_winners: int = Field(default=1, ge=1, le=120, strict=True)
     # Phase 90c — per-proposal vote-counting mode (weighted orgs only):
     # 'weighted' | 'one_per_member' | None (org default). Ignored in unweighted
     # orgs. Locked once the proposal leaves draft.
@@ -698,7 +698,7 @@ class ProposalUpdate(BaseModel):
     # option-handling fork (binary↔approval/RCV reshape). Outside draft
     # status these fields are rejected (400).
     voting_method: Optional[str] = Field(default=None)
-    num_winners: Optional[int] = Field(default=None, ge=1)
+    num_winners: Optional[int] = Field(default=None, ge=1, le=120, strict=True)
     # Phase 90c — per-proposal count_mode, editable WHILE STATUS == 'draft'
     # ONLY (mirrors voting_method — it changes outcome semantics, so it's
     # frozen once the proposal has left draft). The route rejects a change
@@ -2432,6 +2432,7 @@ class OrgOut(BaseModel):
     discoverability: str = "listed"
     activity_visibility: str = "members_only"
     settings: dict = {}
+    voting_capabilities: dict = {}
     # Phase 34 — parent_org_id needs to surface so the FE can distinguish
     # sub-orgs from top-level orgs in the org switcher / Nav.jsx
     # parentOrgs filter. None for top-level orgs.
@@ -2743,6 +2744,7 @@ class SubOrgOut(BaseModel):
     description: str
     parent_org_id: str
     settings: dict = {}
+    voting_capabilities: dict = {}
     member_count: Optional[int] = None
     # Phase 15 Cluster S — sub-org effective role's system_key (the
     # highest-tier role applicable to the user via direct sub-org

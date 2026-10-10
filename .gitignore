@@ -35,3 +35,6 @@ backend/.reference-*/
 # Local research/data-preparation projects (not application source)
 local_projects/massachusetts_bills/
 local_projects/california_bills/
+
+# Phase 113 ephemeral fixture credentials
+.tmp_phase113_*credentials*.json

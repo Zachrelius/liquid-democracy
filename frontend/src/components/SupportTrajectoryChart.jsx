@@ -1,3 +1,4 @@
+import MultiwinnerHistory from './MultiwinnerHistory';
 import MajorityJudgmentHistory from './MajorityJudgmentHistory';
 import RankedPairsHistory from './RankedPairsHistory';
 import { formatExactCount } from '../utils/ratedBallot';
@@ -563,6 +564,8 @@ export default function SupportTrajectoryChart({ proposalId, expanded, optionLab
       </div>
     );
   }
+
+  if (snapshots.some(s => Number(s.method_result?.requested_count)>1)) return <MultiwinnerHistory snapshots={snapshots} optionsById={optionsById} method={data.voting_method} />;
 
   if (data.voting_method === 'majority_judgment') return <MajorityJudgmentHistory snapshots={snapshots} optionsById={optionsById} />;
 

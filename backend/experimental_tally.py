@@ -27,6 +27,8 @@ class ExperimentalTally:
 
     @property
     def winners(self):
+        if self.method_result.get("requested_count", 1) > 1:
+            return list(self.method_result["winners"])
         winner = self.method_result["winner"]
         return [winner] if winner is not None else []
 
@@ -57,11 +59,22 @@ class ExperimentalTally:
             if type(value[key]) is not int or value[key] < 0:
                 raise ValueError("Invalid persisted participation count")
         result = value["method_result"]
+        if record.get("record_version") == 2:
+            if not isinstance(result, dict): raise ValueError("Invalid multiwinner result")
+            from multiwinner_tally import validate_multiwinner_record
+            if value["total_ballots_cast"] + value["not_cast"] != value["total_eligible"] or value["total_abstain"] > value["total_ballots_cast"]:
+                raise ValueError("Inconsistent persisted participation count")
+            validate_multiwinner_record(result,record,value["total_ballots_cast"]-value["total_abstain"])
+            if record.get("method") != result.get("method"):
+                raise ValueError("Frozen method contradicts tally")
+            return cls(**value)
         if (not isinstance(result, dict) or result.get("method") not in RULE_IDS
                 or result.get("rule_id") != RULE_IDS[result["method"]]
                 or type(result.get("priority_used")) is not bool
                 or "winner" not in result or "no_result_reason" not in result):
             raise ValueError("Invalid persisted experimental method result")
+        if any(key in result for key in ("winners", "requested_count", "filled_count", "ranked_order")):
+            raise ValueError("Single-winner record contains multiwinner fields")
         if "method" in record and record["method"] != result["method"]:
             raise ValueError("Persisted record method contradicts tally")
         if "rules" in record:

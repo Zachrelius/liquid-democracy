@@ -1,4 +1,12 @@
 export function experimentalElectionSummary(outcome) {
+  if (Number(outcome.outcome_version) === 2) {
+    const selected = new Set(outcome.winner_user_ids || []);
+    const people = Object.values(outcome.candidate_snapshot || {}).filter(row => selected.has(row.user_id)).map(row => row.display_name).join(', ');
+    if (outcome.installation === 'installed') return `${outcome.policy === 'uncontested' ? 'Uncontested election' : 'Elected'}: ${people}. ${outcome.selected_count} of ${outcome.requested_count} places filled. Office installation completed.`;
+    if (outcome.installation === 'pending_verification') return `Selected: ${people}. The entire set awaits verification; no new office or bound-role access was granted.`;
+    if (outcome.installation === 'rejected') return `Selected: ${people}. The entire set could not be installed (${outcome.reason}); existing seats and roles were preserved.`;
+    return `No officeholders installed (${outcome.reason || 'pending'}); existing seats and roles were preserved.`;
+  }
   const names = Object.values(outcome.candidate_snapshot || {});
   const name = names.find(candidate => candidate.user_id === outcome.winner_user_id)?.display_name || 'The recorded winner';
   if (outcome.installation === 'installed') return `${outcome.policy === 'uncontested' ? 'Uncontested election: ' : 'Elected: '}${name}. Office installation completed.`;

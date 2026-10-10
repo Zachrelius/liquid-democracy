@@ -300,7 +300,7 @@ def capture_snapshot(
 
     when = _naive_utc(simulated_time) if simulated_time else _now_naive()
     tally = delegation_engine.compute_tally(proposal, db)
-    if proposal.voting_method in ("star", "score", "ranked_pairs", "majority_judgment"):
+    if proposal.voting_method in ("star", "score", "ranked_pairs", "majority_judgment", "allocated_score"):
         from copy import deepcopy
         from experimental_tally import ExperimentalTally
         if not isinstance(tally, ExperimentalTally):

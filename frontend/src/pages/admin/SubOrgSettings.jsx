@@ -1,3 +1,5 @@
+import BudgetAggregationSettings from '../../components/BudgetAggregationSettings';
+import { BUDGET_AGGREGATIONS, budgetAggregationChoices } from '../../utils/budgetAggregations';
 import VotingMethodSettings from '../../components/VotingMethodSettings';
 import { votingMethodLabel } from '../../utils/votingMethods';
 import { useEffect, useState } from 'react';
@@ -55,6 +57,8 @@ export default function SubOrgSettings() {
   // Voting methods override (null = inherit)
   const [vmOverride, setVmOverride] = useState(false);
   const [vmList, setVmList] = useState(['binary']);
+  const [multiOverride, setMultiOverride] = useState(false);
+  const [multiList, setMultiList] = useState([]);
 
   // Deliberation (Phase 9) — `require_polis_for_new_proposals` follows the
   // same per-key inherit/override pattern as the SM keys.
@@ -76,6 +80,8 @@ export default function SubOrgSettings() {
 
   // Parent settings (for "inherit" placeholder display)
   const [parentSettings, setParentSettings] = useState({});
+  const [budgetOverride, setBudgetOverride] = useState(false);
+  const [budgetChoices, setBudgetChoices] = useState(['median', 'trimmed_mean']);
   const subPerms = subOrg?.user_permissions || [];
   const canEditSubOrg = subPerms.includes('sub_org.edit_settings');
   const canDeleteSubOrg = subPerms.includes('sub_org.delete');
@@ -87,6 +93,10 @@ export default function SubOrgSettings() {
     setName(subOrg.name);
     setDescription(subOrg.description || '');
     const s = subOrg.settings || {};
+    setMultiOverride(Array.isArray(s.allowed_multiwinner_methods));
+    setMultiList(subOrg.voting_capabilities?.allowed_multiwinner_methods || []);
+    setBudgetOverride(Array.isArray(s.allowed_budget_aggregations));
+    setBudgetChoices(budgetAggregationChoices(subOrg.voting_capabilities, s));
     setPrivateFlag(!!s.private);
     setRejectNonMember(!!s.reject_non_member_delegations);
 
@@ -162,7 +172,7 @@ export default function SubOrgSettings() {
     (async () => {
       try {
         const data = await api.get(`/api/orgs/${parentSlug}`);
-        if (!cancelled) setParentSettings(data?.settings || {});
+        if (!cancelled) setParentSettings({ ...(data?.settings || {}), ...(data?.voting_capabilities || {}), allowed_budget_aggregations: budgetAggregationChoices(data?.voting_capabilities, data?.settings) });
       } catch { /* ignore — placeholders fall back to defaults */ }
     })();
     return () => { cancelled = true; };
@@ -191,6 +201,8 @@ export default function SubOrgSettings() {
       private: privateFlag,
       reject_non_member_delegations: rejectNonMember,
     };
+    payload.allowed_multiwinner_methods = multiOverride ? multiList : null;
+    payload.allowed_budget_aggregations = budgetOverride ? budgetChoices : null;
     // Voting methods
     if (vmOverride) {
       payload.allowed_voting_methods = vmList;
@@ -369,7 +381,16 @@ export default function SubOrgSettings() {
             </div>
           </label>
           <VotingMethodSettings allowed={vmOverride ? vmList : inheritedVotingMethods}
-            editable={vmOverride} onChange={setVmList} />
+            editable={vmOverride} permittedAllocatedScore={(parentSettings?.allowed_voting_methods || []).includes('allocated_score')} onChange={setVmList} />
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={multiOverride} onChange={e => setMultiOverride(e.target.checked)} />Override multiple-winner permissions</label>
+          <VotingMethodSettings allowed={vmOverride ? vmList : inheritedVotingMethods}
+            editable={multiOverride} multiOnly onChange={() => {}}
+            multiwinner={multiOverride ? multiList : parentSettings?.allowed_multiwinner_methods || []}
+            permittedMultiwinner={parentSettings?.allowed_multiwinner_methods || []} onMultiwinnerChange={setMultiList} />
+          <p className="text-xs text-gray-600">A child cannot broaden its parent's multiple-winner permissions.</p>
+          <label className="flex items-start gap-3 text-sm"><input type="checkbox" checked={budgetOverride} onChange={e => setBudgetOverride(e.target.checked)} />Override budget aggregation choices</label>
+          <p className="text-xs text-gray-600">Inherited choices: {budgetAggregationChoices(null, parentSettings).map(key => BUDGET_AGGREGATIONS[key].label).join(', ')}. Parent restrictions apply.</p>
+          <BudgetAggregationSettings choices={budgetOverride ? budgetChoices : budgetAggregationChoices(null, parentSettings)} editable={budgetOverride} permitted={budgetAggregationChoices(null, parentSettings)} onChange={setBudgetChoices} />
         </div>
       </section>
 
@@ -483,7 +504,7 @@ export default function SubOrgSettings() {
         <div className="flex items-center gap-3">
           <button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || (budgetOverride && !budgetChoices.length)}
             className="px-6 py-2 bg-[var(--brand-primary)] text-white text-sm rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
           >
             {saving ? 'Saving...' : 'Save Settings'}

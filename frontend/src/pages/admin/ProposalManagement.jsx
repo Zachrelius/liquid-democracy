@@ -1,4 +1,6 @@
-import { VOTING_METHODS, votingMethodLabel, draftMethodResetFields, unchangedOptionText } from '../../utils/votingMethods';
+import { BudgetAggregationSelector } from '../../components/BudgetAggregationSettings';
+import { budgetAggregationChoices, chosenBudgetAggregation } from '../../utils/budgetAggregations';
+import { VOTING_METHODS, votingMethodLabel, draftMethodResetFields, draftWinnerCountResetFields, multiwinnerEnabled, countingDescription, unchangedOptionText } from '../../utils/votingMethods';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useOrg } from '../../OrgContext';
@@ -69,14 +71,14 @@ function pluralizeDays(value) {
   return Number(value) === 1 ? 'day' : 'days';
 }
 
-function OptionsEditor({ options, onChange, budgetCeilings = false, unitSymbol = '$' }) {
+function OptionsEditor({ options, onChange, budgetCeilings = false, unitSymbol = '$', maxOptions = 20 }) {
   function updateOption(idx, field, value) {
     const updated = options.map((o, i) => i === idx ? { ...o, [field]: value } : o);
     onChange(updated);
   }
 
   function addOption() {
-    if (options.length >= 20) return;
+    if (options.length >= maxOptions) return;
     onChange([...options, { label: '', description: '', budgetMaxAmount: '' }]);
   }
 
@@ -103,13 +105,13 @@ function OptionsEditor({ options, onChange, budgetCeilings = false, unitSymbol =
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <label className="block text-xs text-gray-500">
-          {budgetCeilings ? 'Buckets' : 'Options'} ({options.length}/20)
+          {budgetCeilings ? 'Buckets' : 'Options'} ({options.length}/{maxOptions})
           {options.length < 2 && <span className="text-amber-600 ml-2">Minimum 2 required</span>}
         </label>
         <button
           type="button"
           onClick={addOption}
-          disabled={options.length >= 20}
+          disabled={options.length >= maxOptions}
           className="text-xs px-3 py-1 bg-[var(--brand-accent)] text-white rounded-lg hover:bg-[var(--brand-primary)] transition-colors disabled:opacity-50"
         >
           Add Option
@@ -547,7 +549,7 @@ function CreateProposalForm({
       ? String(editingProposal.budget_config.envelope) : ''
   ));
   const [budgetAggregation, setBudgetAggregation] = useState(() => (
-    isEditMode ? (editingProposal.budget_config?.aggregation ?? 'median') : 'median'
+    isEditMode ? (editingProposal.budget_config?.aggregation ?? 'median') : ''
   ));
   // Phase 76a — display unit for budget amounts (allocation + project). Stored
   // in budget_config.currency (any non-empty string). Blank → backend default
@@ -782,8 +784,14 @@ function CreateProposalForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const scopeCapabilities = subOrgs?.find(org => org.id === scope)?.voting_capabilities ?? currentOrg?.voting_capabilities;
+  const multiAllowed = multiwinnerEnabled(scopeCapabilities, votingMethod);
+  const unchangedCount = isEditMode && editingProposal.voting_method === votingMethod && editingProposal.num_winners === numWinners;
   const scopeSettings = subOrgs?.find(org => org.id === scope)?.settings;
+  const budgetChoices = budgetAggregationChoices(subOrgs?.find(org => org.id === scope)?.voting_capabilities ?? currentOrg?.voting_capabilities, scopeSettings ?? orgSettings);
+  const effectiveBudgetAggregation = chosenBudgetAggregation(budgetAggregation, budgetChoices);
   const allowedMethods = scopeSettings?.allowed_voting_methods ?? orgSettings?.allowed_voting_methods ?? ['binary'];
+  const allocatedScoreAllowed = VOTING_METHODS.allocated_score.available && !!slug && !editingProposal?.is_election && (scopeCapabilities?.allowed_voting_methods || []).includes('allocated_score');
   const majorityJudgmentAllowed = VOTING_METHODS.majority_judgment.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('majority_judgment');
   const rankedPairsAllowed = VOTING_METHODS.ranked_pairs.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('ranked_pairs');
   const scoreAllowed = VOTING_METHODS.score.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('score');
@@ -797,7 +805,7 @@ function CreateProposalForm({
   const isProjectBudget = votingMethod === 'budget_project';
   // Budget-allocation buckets are options too, so they share the multi-option
   // editor. Project budget uses its own ProjectItemsEditor (kind + tiers).
-  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) || isBudget;
+  const isMultiOption = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(votingMethod) || isBudget;
 
   // Phase 90c — the per-proposal count-mode toggle is offered only in weighted
   // orgs that allow the override (weighted_voting.allow_per_member_proposals,
@@ -830,14 +838,17 @@ function CreateProposalForm({
   })();
 
   const optionsValid = !isMultiOption || (
-    options.length >= 2 &&
+    options.length >= 2 && options.length <= (VOTING_METHODS[votingMethod]?.experimental && numWinners > 1 ? 120 : 20) &&
     options.every(o => o.label.trim()) &&
     !hasDuplicateLabels
   );
 
-  const numWinnersValid = votingMethod !== 'ranked_choice' || (
-    Number.isInteger(numWinners) && numWinners >= 1 && numWinners <= options.length
-  );
+  const allocatedCountValid = votingMethod !== 'allocated_score' || numWinners >= 2;
+  const numWinnersValid = allocatedCountValid && ((votingMethod !== 'ranked_choice' && !VOTING_METHODS[votingMethod]?.experimental) || (
+    Number.isInteger(numWinners) && numWinners >= 1 && numWinners <= 120
+    && (votingMethod !== 'ranked_choice' || numWinners <= options.length)
+    && (votingMethod === 'ranked_choice' || numWinners === 1 || multiAllowed || unchangedCount)
+  ));
 
   // Phase 73 — budget proposals need a positive envelope.
   const budgetValid = !isBudget || (Number(budgetEnvelope) > 0);
@@ -903,12 +914,13 @@ function CreateProposalForm({
     // explicit. Only fires when actually changing methods.
     if (
       isEditMode
-      && votingMethod !== (editingProposal.voting_method ?? 'binary')
+      && (votingMethod !== (editingProposal.voting_method ?? 'binary')
+        || (VOTING_METHODS[votingMethod]?.experimental && numWinners !== editingProposal.num_winners))
     ) {
       const ok = await confirm({
-        title: 'Change voting method?',
+        title: 'Change voting method or winner count?',
         message: (
-          'Changing the voting method on this draft will discard the '
+          'Changing the voting method or winner count on this draft will discard the '
           + 'existing options and any preliminary ballots. New options can be '
           + 'added for methods that use them. Continue?'
         ),
@@ -926,6 +938,7 @@ function CreateProposalForm({
         topics: selectedTopics,
         voting_method: votingMethod,
         ...draftMethodResetFields(editingProposal?.voting_method, votingMethod, confirmedBallotReset),
+        ...draftWinnerCountResetFields(editingProposal?.num_winners, numWinners, VOTING_METHODS[votingMethod]?.experimental, confirmedBallotReset),
       };
       // Phase 12.5 F3 — only include thresholds when the user has the
       // `proposal.set_thresholds` permission. Backend (B3) applies org
@@ -956,7 +969,7 @@ function CreateProposalForm({
       // the proposal's existing scope; the PATCH endpoint does not accept
       // a scope change.
       if (!isEditMode && scope) payload.sub_org_id = scope;
-      if (isMultiOption && !(isEditMode && ['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod)
+      if (isMultiOption && !(isEditMode && ['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(votingMethod)
           && editingProposal.voting_method === votingMethod && unchangedOptionText(editingProposal.options, options))) {
         payload.options = options.map(o => ({
           label: o.label.trim(),
@@ -970,8 +983,8 @@ function CreateProposalForm({
       }
       if (votingMethod === 'ranked_choice') {
         payload.num_winners = numWinners;
-      } else if (['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod)) {
-        payload.num_winners = 1;
+      } else if (['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(votingMethod)) {
+        payload.num_winners = numWinners;
       }
       // Phase 90c — per-proposal count mode (weighted orgs that allow it). Send
       // 'one_per_member' when chosen; otherwise omit so the org default (weighted)
@@ -987,7 +1000,7 @@ function CreateProposalForm({
         payload.budget_config = {
           mode: 'allocation',
           envelope: Number(budgetEnvelope),
-          aggregation: budgetAggregation,
+          aggregation: effectiveBudgetAggregation,
           currency: budgetUnit.trim() || 'USD',
         };
       }
@@ -1057,7 +1070,7 @@ function CreateProposalForm({
       // diverged from the mode default. For `always_*` modes the
       // toggle isn't rendered, so we keep the field null to inherit
       // (the backend resolver will return the always-locked value).
-      const isMultiOptionM = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod);
+      const isMultiOptionM = votingMethod === 'approval' || votingMethod === 'ranked_choice' || ['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(votingMethod);
       if (isMultiOptionM && writeInsOverridable && allowWriteIns !== orgWriteInsAllowed) {
         payload.allow_write_in_options = allowWriteIns;
       }
@@ -1626,6 +1639,10 @@ function CreateProposalForm({
               <span className="text-sm text-gray-700">Score (0–5 points, highest total wins)</span>
             </label>
           )}
+          {(allocatedScoreAllowed || (isEditMode && editingProposal.voting_method === 'allocated_score')) && <label className="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="votingMethod" value="allocated_score" checked={votingMethod === 'allocated_score'} onChange={() => setVotingMethod('allocated_score')} className="accent-[var(--brand-accent)]" />
+            <span>Allocated Score (proportional allocation, no automatic runoff)</span>
+          </label>}
           {(rankedPairsAllowed || (isEditMode && editingProposal.voting_method === 'ranked_pairs')) && <label className="flex items-center gap-2 cursor-pointer">
             <input type="radio" name="votingMethod" value="ranked_pairs" checked={votingMethod === 'ranked_pairs'} onChange={() => setVotingMethod('ranked_pairs')} className="accent-[var(--brand-accent)]" />
             <span className="text-sm text-gray-700">Ranked Pairs (equal rank groups, head-to-head victories)</span>
@@ -1697,20 +1714,8 @@ function CreateProposalForm({
             )}
           </div>
           <BudgetUnitField value={budgetUnit} onChange={setBudgetUnit} />
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Aggregation</label>
-            <select
-              value={budgetAggregation}
-              onChange={e => setBudgetAggregation(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
-            >
-              <option value="median">Median (recommended — strategyproof)</option>
-              <option value="trimmed_mean">Trimmed mean (leans toward minority intensity)</option>
-            </select>
-            <p className="text-xs text-gray-400 mt-1">
-              Every bucket with support gets a proportional share; the result always sums to the budget.
-            </p>
-          </div>
+          <BudgetAggregationSelector choices={budgetChoices} value={effectiveBudgetAggregation} onChange={setBudgetAggregation}
+            grandfathered={isEditMode && effectiveBudgetAggregation === (editingProposal.budget_config?.aggregation ?? 'median')} />
         </div>
       )}
 
@@ -1778,7 +1783,7 @@ function CreateProposalForm({
 
       {/* Options Editor (approval, ranked-choice, and budget buckets) */}
       {isMultiOption && (
-        <OptionsEditor options={options} onChange={setOptions} budgetCeilings={isBudget} unitSymbol={unitInputSymbol(budgetUnit)} />
+        <OptionsEditor maxOptions={VOTING_METHODS[votingMethod]?.experimental && numWinners > 1 ? 120 : 20} options={options} onChange={setOptions} budgetCeilings={isBudget} unitSymbol={unitInputSymbol(budgetUnit)} />
       )}
 
       {/* Winner selection (approval only). Four presets writing one
@@ -1910,28 +1915,29 @@ function CreateProposalForm({
       )}
 
       {/* num_winners input (ranked-choice only) */}
-      {votingMethod === 'ranked_choice' && (
+      {(votingMethod === 'ranked_choice' || multiAllowed || (VOTING_METHODS[votingMethod]?.experimental && numWinners > 1)) && (
         <div>
           <label htmlFor="proposal-number-of-winners" className="block text-xs text-gray-500 mb-1">Number of Winners</label>
           <input
             id="proposal-number-of-winners"
             type="number"
-            min={1}
-            max={options.length || 1}
+            min={votingMethod === 'allocated_score' ? 2 : 1}
+            max={votingMethod === 'ranked_choice' ? options.length || 1 : 120}
             value={numWinners}
             onChange={e => {
               const v = parseInt(e.target.value, 10);
               if (Number.isNaN(v)) return;
-              setNumWinners(Math.max(1, Math.min(options.length || 1, v)));
+              setNumWinners(v);
             }}
             className="w-32 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
           />
           <p className="text-xs text-gray-500 mt-1">
-            1 winner = ranked-choice voting (IRV). More than 1 winner = single transferable vote (STV).
+            {votingMethod === 'ranked_choice' ? '1 winner = ranked-choice voting (IRV). More than 1 winner = single transferable vote (STV).' : <>{votingMethod === 'star' && 'Bloc STAR. '}{countingDescription(votingMethod)}</>}
+            {votingMethod !== 'ranked_choice' && ' Up to the requested number can be selected. Unsupported options leave unfilled places. The count must fit the options before voting begins.'}
           </p>
           {!numWinnersValid && (
             <p className="text-xs text-red-500 mt-1">
-              Number of winners must be between 1 and the number of options ({options.length}).
+              Choose a permitted whole-number winner count that fits this method and organization.
             </p>
           )}
         </div>
@@ -2000,7 +2006,7 @@ function CreateProposalForm({
           notice in lieu of the inputs; backend uses the org defaults. */}
       {canSetThresholds ? (
         <div className="grid grid-cols-2 gap-4">
-          {!['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) && <div>
+          {!['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(votingMethod) && <div>
             <label htmlFor="proposal-pass-threshold" className="block text-xs text-gray-500 mb-1">
               Pass Threshold: {Math.round(passThreshold * 100)}%
             </label>
@@ -2034,11 +2040,11 @@ function CreateProposalForm({
         // of the prior "ask an Admin" copy. Numbers from the orgSettings
         // prop (= currentOrg.settings, 12.5 B2) with fallback to 0.50/0.40.
         <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">{['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) ? 'Participation requirement' : 'Approval thresholds'}</p>
+          <p className="text-sm font-medium text-[var(--brand-primary)] mb-1">{['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(votingMethod) ? 'Participation requirement' : 'Approval thresholds'}</p>
           <p className="text-sm text-[#2C3E50]">
             This proposal will use the organization's defaults:{' '}
-            {!['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) && <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>}
-            {!['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(votingMethod) && ' / '}
+            {!['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(votingMethod) && <strong>{Math.round((orgSettings?.default_pass_threshold ?? 0.50) * 100)}% pass</strong>}
+            {!['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(votingMethod) && ' / '}
             <strong>{Math.round((orgSettings?.default_quorum_threshold ?? 0.40) * 100)}% quorum</strong>.
           </p>
         </div>

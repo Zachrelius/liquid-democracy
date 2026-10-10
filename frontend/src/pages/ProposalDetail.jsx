@@ -760,6 +760,7 @@ function VoteGraphLegend({ proposal, voteGraph }) {
     (n) => n.ballot === null && n.type !== 'non_voter' && n.vote_source !== 'delegation'
   );
 
+  if (method === 'allocated_score') return 'Allocated Score uses proportional allocation without an automatic runoff. See remaining-weight totals and allocation rounds in the results.';
   if (method === 'majority_judgment') return <p className="text-xs text-gray-500">Majority Judgment uses verbal grades. See majority grades and distributions in the results.</p>;
   if (method === 'ranked_pairs') return <p className="text-xs text-gray-500">Ranked Pairs compares head-to-head preferences and locks victories without creating cycles. See the pairwise results.</p>;
   if (method === 'score') return <p className="text-xs text-gray-500">Score ballots use 0–5 points. The highest total points wins.</p>;
@@ -2233,7 +2234,7 @@ export default function ProposalDetail() {
               <StatusBadge status={proposal.status} />
               {/* Phase 90c — headcount-counted proposal marker (weighted orgs). */}
               <CountModeBadge countMode={proposal.count_mode} />
-              {['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) && <span className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-800">{votingMethodLabel(proposal.voting_method)} · single winner</span>}
+              {['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(proposal.voting_method) && <span className="text-xs px-2 py-1 rounded bg-blue-50 text-blue-800">{proposal.voting_method === 'star' && proposal.num_winners > 1 ? 'Bloc STAR' : votingMethodLabel(proposal.voting_method)} · {proposal.num_winners > 1 ? `up to ${proposal.num_winners} winners` : 'single winner'}</span>}
               {proposal.voting_method === 'approval' && (
                 <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium">Approval Vote</span>
               )}
@@ -2520,7 +2521,7 @@ export default function ProposalDetail() {
           )}
 
           {/* Options list for multi-option proposals (visible when not actively voting) */}
-          {(['approval', 'ranked_choice', 'star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method)) && proposal.options?.length > 0 && (!isVoting || ['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method)) && (
+          {(['approval', 'ranked_choice', 'star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(proposal.voting_method)) && proposal.options?.length > 0 && (!isVoting || ['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(proposal.voting_method)) && (
             <div className="bg-white border border-gray-200 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">Options</h3>
               <div className="space-y-2">
@@ -2573,13 +2574,13 @@ export default function ProposalDetail() {
               so this returns null if write-ins-during-voting is off. */}
           {!readOnly
             && !experimentalOptionsLocked(proposal, tally?.method_result)
-            && (['approval', 'ranked_choice', 'star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method))
+            && (['approval', 'ranked_choice', 'star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(proposal.voting_method))
             && isVoting
             && proposal.effective_allow_write_in_options
             && proposal.effective_allow_write_ins_during_voting && (
             <div className="bg-white border border-gray-200 rounded-xl p-5">
               <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-1">Add a write-in option</h3>
-              <p className="text-xs text-gray-500 mb-2">Write-in options added during voting become available immediately on the ballot.{['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) && (proposal.voting_method === 'majority_judgment' ? ' Existing ballots give them Reject until voters change their ballots.' : proposal.voting_method === 'ranked_pairs' ? ' Existing ballots leave them unranked, tied below every ranked option, until voters change their ballots.' : ` Existing ballots give them zero ${proposal.voting_method === 'score' ? 'points' : 'stars'} until voters change their ballots.`)}</p>
+              <p className="text-xs text-gray-500 mb-2">Write-in options added during voting become available immediately on the ballot.{['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(proposal.voting_method) && (proposal.voting_method === 'majority_judgment' ? ' Existing ballots give them Reject until voters change their ballots.' : proposal.voting_method === 'ranked_pairs' ? ' Existing ballots leave them unranked, tied below every ranked option, until voters change their ballots.' : ` Existing ballots give them zero ${proposal.voting_method === 'score' ? 'points' : 'stars'} until voters change their ballots.`)}</p>
               <WriteInOptionAdder
                 proposal={proposal}
                 onAdded={fetchData}
@@ -2588,9 +2589,9 @@ export default function ProposalDetail() {
           )}
 
           {/* Results (desktop: shown inline; mobile: shown below vote panel) */}
-          {(isVoting || isClosed || (['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) && isDeliberation && proposal.effective_show_votes_during_deliberation === true)) && tally && (
+          {(isVoting || isClosed || (['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(proposal.voting_method) && isDeliberation && proposal.effective_show_votes_during_deliberation === true)) && tally && (
             <div className="lg:hidden bg-white border border-gray-200 rounded-xl p-5">
-              {['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) ? (
+              {['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(proposal.voting_method) ? (
                 <ExperimentalResultsPanel tally={tally} proposal={proposal} />
               ) : proposal.voting_method === 'approval' ? (
                 <ApprovalResultsPanel tally={tally} proposal={proposal} />
@@ -2787,7 +2788,7 @@ export default function ProposalDetail() {
                   Your vote carries {myVote.my_voting_weight} {currentOrg?.weighted_voting?.unit_label || 'shares'}
                 </div>
               )}
-              {['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) ? (
+              {['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(proposal.voting_method) ? (
                 proposal.voting_method === 'ranked_pairs' ? <RankGroupsBallot proposal={proposal} myVote={myVote} proposalId={id} onVoteChange={refreshVote} emailVerified={user?.email_verified} /> : <RatedBallot proposal={proposal} myVote={myVote} proposalId={id} onVoteChange={refreshVote} emailVerified={user?.email_verified} />
               ) : proposal.voting_method === 'approval' ? (
                 <ApprovalBallot
@@ -2856,9 +2857,9 @@ export default function ProposalDetail() {
           )}
 
           {/* Results (desktop sidebar) */}
-          {(isVoting || isClosed || (['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) && isDeliberation && proposal.effective_show_votes_during_deliberation === true)) && tally && (
+          {(isVoting || isClosed || (['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(proposal.voting_method) && isDeliberation && proposal.effective_show_votes_during_deliberation === true)) && tally && (
             <div className="hidden lg:block bg-white border border-gray-200 rounded-xl p-5">
-              {['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method) ? (
+              {['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(proposal.voting_method) ? (
                 <ExperimentalResultsPanel tally={tally} proposal={proposal} />
               ) : proposal.voting_method === 'approval' ? (
                 <ApprovalResultsPanel tally={tally} proposal={proposal} />
@@ -2913,7 +2914,7 @@ export default function ProposalDetail() {
           )}
 
           {isClosed && (() => {
-            if (['star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method)) return <p className="rounded-xl border p-4 text-center font-semibold">{proposal.status === 'withdrawn' ? tally?.method_result?.finalized ? 'Archived — final result preserved' : 'Archived without a finalized decision' : proposal.status === 'passed' ? `${votingMethodLabel(proposal.voting_method)} decision finalized` : 'Closed without a finalized winner'}</p>;
+            if (['star', 'score', 'ranked_pairs', 'majority_judgment', 'allocated_score'].includes(proposal.voting_method)) return <p className="rounded-xl border p-4 text-center font-semibold">{proposal.status === 'withdrawn' ? tally?.method_result?.finalized ? 'Archived — final result preserved' : 'Archived without a finalized decision' : proposal.status === 'passed' ? `${votingMethodLabel(proposal.voting_method)} decision finalized` : 'Closed without a finalized winner'}</p>;
             // Phase 67 W1 — election close banners. Quorum gates seat
             // installation: a passed election seated its winners
             // (announce them by display name); a failed election under
