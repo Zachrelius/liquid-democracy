@@ -1,0 +1,22 @@
+.                                                                        [100%]
+============================== warnings summary ===============================
+backend/tests/test_phase_109_star_reference.py::test_star_matches_pinned_reference_on_2000_synthetic_profiles
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\backend\main.py:352: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+backend/tests/test_phase_109_star_reference.py::test_star_matches_pinned_reference_on_2000_synthetic_profiles
+  C:\Users\zachk\.codex\worktrees\phase-110-voting-method-clarity-and-elections\Liquid-Democracy\.venv\Lib\site-packages\fastapi\applications.py:4599: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    return self.router.on_event(event_type)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+1 passed, 2 warnings in 2.30s
