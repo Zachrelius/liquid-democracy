@@ -855,6 +855,7 @@ function WriteInOptionAdder({ proposal, onAdded }) {
   // mode disabled write-ins entirely — every click would 403. Resolver-
   // backed effective values close that gap.
   const status = proposal.status;
+  if (experimentalOptionsLocked(proposal)) return null;
   if (status !== 'deliberation' && status !== 'voting') return null;
   if (!proposal.effective_allow_write_in_options) return null;
   if (
@@ -2571,6 +2572,7 @@ export default function ProposalDetail() {
               is true. The component self-gates on the resolver flags,
               so this returns null if write-ins-during-voting is off. */}
           {!readOnly
+            && !experimentalOptionsLocked(proposal, tally?.method_result)
             && (['approval', 'ranked_choice', 'star', 'score', 'ranked_pairs', 'majority_judgment'].includes(proposal.voting_method))
             && isVoting
             && proposal.effective_allow_write_in_options

@@ -1429,7 +1429,7 @@ def create_proposal(
     )
     db.add(proposal)
     db.flush()
-    initialize_rules(proposal)
+    initialize_rules(proposal, db)
 
     if skip_deliberation:
         log_audit_event(
@@ -1783,8 +1783,8 @@ def update_proposal(
                 ),
             )
         new_method = body.voting_method
-        if new_method in EXPERIMENTAL_VOTING_METHODS and (not proposal.org_id or proposal.is_election):
-            raise HTTPException(status_code=400, detail="Experimental methods require an ordinary organization proposal")
+        if new_method in EXPERIMENTAL_VOTING_METHODS and not proposal.org_id:
+            raise HTTPException(status_code=400, detail="Experimental methods require an organization proposal")
         # Validate against org's allowed_voting_methods (mirrors the
         # _validate_voting_method check on create).
         from routes.organizations import LEGACY_UNCONFIGURED_VOTING_METHODS
@@ -1857,7 +1857,7 @@ def update_proposal(
     if method_changed:
         # Initialize only after the new winner count is applied. A draft STV
         # vote can become STAR in one PATCH with num_winners=1.
-        initialize_rules(proposal)
+        initialize_rules(proposal, db)
 
     # Phase 90c — count_mode change (draft-only; changing it after draft is
     # rejected because it flips outcome semantics on a proposal that already
@@ -1983,6 +1983,8 @@ def update_proposal(
         proposal.budget_config = body.budget_config
 
     if body.options is not None:
+        if proposal.is_election and is_experimental(proposal):
+            raise HTTPException(400, "Election candidates must use the authorized candidacy workflow")
         if proposal.voting_method not in ("approval", "ranked_choice", "budget_allocation", "budget_project", *EXPERIMENTAL_VOTING_METHODS):
             raise HTTPException(
                 status_code=400,
@@ -2513,6 +2515,8 @@ def add_write_in_option(
 
     # Org membership gate (org-scoped proposals only — globals are
     # platform-wide and write-ins aren't supported on them).
+    if proposal.is_election and is_experimental(proposal):
+        raise HTTPException(400, 'Election candidates must use the candidacy workflow')
     if proposal.org_id is None:
         raise HTTPException(
             status_code=400,
@@ -3287,7 +3291,11 @@ def advance_proposal(
     elif next_status == "passed":
         tally = delegation_engine.compute_tally(proposal, db)
         if is_experimental(proposal):
-            next_status = finalize_result(proposal, tally, db)
+            try:
+                next_status = finalize_result(proposal, tally, db)
+            except Exception:
+                db.rollback()
+                raise
         elif getattr(proposal, "is_election", False):
             # Phase 67 W1 — elections: quorum is the ONLY pass/fail
             # gate. Winner determination (tally winners, uncontested

@@ -162,6 +162,16 @@ def declare_candidacy(
     who already has an active candidacy gets a clean 400. A user who
     previously withdrew can re-declare by flipping the same row's
     status back to 'declared'."""
+    from experimental_voting import is_experimental, lock_proposal
+    if is_experimental(proposal):
+        lock_proposal(db, proposal)
+        if proposal.status not in ('draft', 'deliberation'):
+            raise HTTPException(400, 'Candidacy is closed after the nomination window')
+        from experimental_elections import _active_member
+        _active_member(db, proposal, user_id)
+        user = db.get(models.User, user_id)
+        if user is None or not user.is_active:
+            raise HTTPException(400, 'Candidate must be active')
     existing = (
         db.query(models.ElectionCandidacy)
         .filter(
@@ -197,6 +207,16 @@ def withdraw_candidacy(
 ) -> bool:
     """Withdraw a candidacy. Returns True iff a row was found and
     transitioned to 'withdrawn'."""
+    from experimental_voting import is_experimental, lock_proposal
+    if is_experimental(proposal):
+        lock_proposal(db, proposal)
+        if proposal.status not in ('draft', 'deliberation'):
+            raise HTTPException(400, 'Candidacy is closed after the nomination window')
+        from experimental_elections import _active_member
+        _active_member(db, proposal, user_id)
+        user = db.get(models.User, user_id)
+        if user is None or not user.is_active:
+            raise HTTPException(400, 'Candidate must be active')
     existing = (
         db.query(models.ElectionCandidacy)
         .filter(
@@ -261,6 +281,14 @@ def finalize_election(
 
     if not proposal.is_election or proposal.election_title_id is None:
         return {"resolved": "not_an_election"}
+
+    from experimental_voting import is_experimental, lock_proposal
+    if is_experimental(proposal):
+        lock_proposal(db, proposal)
+        from experimental_elections import install_frozen
+        install_frozen(db, proposal, actor_id=actor_id, ip_address=ip_address)
+        from copy import deepcopy
+        return deepcopy(proposal.final_method_result['election'])
 
     title = db.get(models.OrgTitle, proposal.election_title_id)
     if title is None:
@@ -565,6 +593,10 @@ def run_election_close_hook(
     """
     if not getattr(proposal, "is_election", False):
         return closed_status
+    from experimental_voting import is_experimental
+    if is_experimental(proposal):
+        from experimental_elections import install_frozen
+        return install_frozen(db, proposal, actor_id=actor_id, ip_address=ip_address)
     if closed_status == "passed":
         try:
             finalize_election(

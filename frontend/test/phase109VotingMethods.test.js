@@ -36,14 +36,16 @@ test('explicit legacy organization methods are retained without adding others', 
   assert.deepEqual(selectableVotingMethods({ allowed_voting_methods: [] }), []);
 });
 
-test('available experimental methods still require organization context and exclude elections', () => {
+test('available experimental methods require organization context and one-winner elections', () => {
   const settings = { allowed_voting_methods: Object.keys(VOTING_METHODS) };
   assert.deepEqual(selectableVotingMethods(settings, { hasOrg: true }),
     ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project', 'star', 'score', 'ranked_pairs', 'majority_judgment']);
-  for (const context of [{ hasOrg: false }, { hasOrg: true, election: true }]) {
-    assert.deepEqual(selectableVotingMethods(settings, context),
-      ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project']);
-  }
+  assert.deepEqual(selectableVotingMethods(settings, { hasOrg: false }),
+    ['binary', 'approval', 'ranked_choice', 'budget_allocation', 'budget_project']);
+  assert.deepEqual(selectableVotingMethods(settings, { hasOrg: true, election: true }),
+    ['binary', 'approval', 'ranked_choice', 'star', 'score', 'ranked_pairs', 'majority_judgment']);
+  assert.deepEqual(selectableVotingMethods(settings, { hasOrg: true, election: true, numWinners: 2 }),
+    ['binary', 'approval', 'ranked_choice']);
   assert.deepEqual(toggleAllowedVotingMethod(['binary'], 'unavailable_future_method', true), ['binary']);
 });
 
@@ -78,7 +80,7 @@ test('Ranked Pairs is independently opted in and has no legacy/global/election f
   const enabled = { allowed_voting_methods: ['binary', 'ranked_pairs'] };
   assert.deepEqual(selectableVotingMethods(enabled, { hasOrg: true }), ['binary', 'ranked_pairs']);
   assert.deepEqual(selectableVotingMethods(enabled, { hasOrg: false }), ['binary']);
-  assert.deepEqual(selectableVotingMethods(enabled, { hasOrg: true, election: true }), ['binary']);
+  assert.deepEqual(selectableVotingMethods(enabled, { hasOrg: true, election: true, numWinners: 2 }), ['binary']);
   assert.deepEqual(toggleAllowedVotingMethod(['binary', 'star', 'score'], 'ranked_pairs', true), ['binary', 'star', 'score', 'ranked_pairs']);
   assert.throws(() => draftMethodResetFields('score', 'ranked_pairs', false), /Confirm/);
 });

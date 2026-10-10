@@ -33,7 +33,7 @@ export function optionLabelMap(proposal, fallbackLabels = null) {
   }
   (proposal?.options || []).forEach((o) => {
     const lbl = optionDisplayLabel(proposal, o);
-    if (lbl && (proposal?.is_election || !m[o.id])) m[o.id] = lbl;
+    if (lbl && (!m[o.id] || (proposal?.is_election && m[o.id] === o.label))) m[o.id] = lbl;
   });
   return m;
 }

@@ -462,6 +462,12 @@ def _stage_experimental_closed(db, proposal, *, old_status, new_status, trigger)
         models.User.id.in_(recipients), models.User.is_active.is_(True),
     ).all()}
     background_tasks = BackgroundTasks()
+    election_payload = {}
+    if proposal.is_election:
+        from experimental_elections import announcement
+        outcome = proposal.final_method_result['election']
+        election_payload = {'outcome_detail': announcement(outcome),
+                            'office_installation': outcome['installation']}
     for uid in sorted(recipients):
         emit_notification(
             db, background_tasks, event_type="proposal.closed", user_id=uid,
@@ -470,7 +476,7 @@ def _stage_experimental_closed(db, proposal, *, old_status, new_status, trigger)
             payload={"proposal_id": proposal.id, "proposal_title": proposal.title,
                      "org_id": proposal.org_id, "old_status": old_status,
                      "new_status": new_status, "outcome": new_status,
-                     "trigger": trigger},
+                     "trigger": trigger, **election_payload},
         )
 
 
@@ -509,8 +515,6 @@ def _close_proposal_now(
         lock_proposal(db, proposal)
         if proposal.status != "voting":
             return proposal.status
-        if proposal.is_election:
-            raise ValueError("Experimental officeholder elections are not supported")
 
     if update_voting_end:
         proposal.voting_end = _now_naive()
@@ -519,7 +523,11 @@ def _close_proposal_now(
     tally = delegation_engine.compute_tally(proposal, db)
 
     if is_experimental(proposal):
-        new_status = finalize_result(proposal, tally, db)
+        try:
+            new_status = finalize_result(proposal, tally, db)
+        except Exception:
+            db.rollback()
+            raise
     elif getattr(proposal, "is_election", False):
         # Phase 67 W1 — elections: quorum is the ONLY pass/fail gate
         # (mirrors the route-layer close branches). Winner

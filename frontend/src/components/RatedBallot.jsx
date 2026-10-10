@@ -1,5 +1,6 @@
 import { useId, useRef, useState } from 'react';
 import api from '../api';
+import { optionDisplayLabel } from '../utils/optionDisplay';
 import { useToast } from './Toast';
 import VerifyEmailInlineNote from './VerifyEmailInlineNote';
 import UserLink from './UserLink';
@@ -28,7 +29,8 @@ export default function RatedBallot({ proposal, proposalId, myVote, onVoteChange
   const formRef = useRef(null);
   const changeRef = useRef(null);
   const toast = useToast();
-  const options = proposal.options || [];
+  const options = (proposal.options || []).map(option => proposal.is_election
+    ? { ...option, label: optionDisplayLabel(proposal, option), description: null } : option);
   const isGrade = proposal.voting_method === 'majority_judgment';
   const isScore = proposal.voting_method === 'score';
   const methodName = isGrade ? 'Majority Judgment' : isScore ? 'Score' : 'STAR';
@@ -72,7 +74,7 @@ export default function RatedBallot({ proposal, proposalId, myVote, onVoteChange
   return <section className="space-y-3" aria-label={`Your ${methodName} ballot`}>
     <h3 className="text-sm font-semibold">Your {methodName} ballot</h3>
     <p id={`${id}-instructions`} className="text-sm text-gray-600">{isGrade ? 'Grade each option from Reject to Excellent. Grades are ordered descriptions, not points. The highest majority grade leads; tied grades use repeated median comparison.' : <>Rate each option from 0 to 5 {ratingUnit}. Equal ratings are allowed. {isScore ? 'The option with the highest total points wins. Equal highest totals use the committed draw order.' : 'The two highest total scores reach a runoff; your ballot supports whichever finalist you rated higher.'}</>}</p>
-    <p className="text-xs text-gray-600">{isGrade ? 'Ungraded options receive Reject, including write-ins added after you vote.' : <>Unrated options receive 0 {ratingUnit}, including write-ins added after you vote.</>} You may change your ballot while voting is permitted. Selecting {isGrade ? 'a grade' : 'a rating'} does not submit your vote.</p>
+    <p className="text-xs text-gray-600">{proposal.is_election ? (isGrade ? 'Ungraded candidates receive Reject.' : `Unrated candidates receive 0 ${ratingUnit}.`) : isGrade ? 'Ungraded options receive Reject, including write-ins added after you vote.' : <>Unrated options receive 0 {ratingUnit}, including write-ins added after you vote.</>} You may change your ballot while voting is permitted. Selecting {isGrade ? 'a grade' : 'a rating'} does not submit your vote.</p>
     {!emailVerified && <VerifyEmailInlineNote action="vote" />}
     {!editing && <>
       {hasVote ? <div className="text-sm">

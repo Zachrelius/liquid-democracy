@@ -1,5 +1,6 @@
 import { useId, useRef, useState } from 'react';
 import api from '../api';
+import { optionDisplayLabel } from '../utils/optionDisplay';
 import { useToast } from './Toast';
 import VerifyEmailInlineNote from './VerifyEmailInlineNote';
 import UserLink from './UserLink';
@@ -34,7 +35,8 @@ export default function RankGroupsBallot({ proposal, proposalId, myVote, onVoteC
   const formRef = useRef(null);
   const changeRef = useRef(null);
   const toast = useToast();
-  const options = proposal.options || [];
+  const options = (proposal.options || []).map(option => proposal.is_election
+    ? { ...option, label: optionDisplayLabel(proposal, option), description: null } : option);
   const hasVote = hasRankGroupsBallot(myVote);
   const disabled = busy || !emailVerified;
   const optionLabel = optionId => options.find(option => option.id === optionId)?.label || optionId;
@@ -68,7 +70,7 @@ export default function RankGroupsBallot({ proposal, proposalId, myVote, onVoteC
   return <section className="space-y-3" aria-label="Your Ranked Pairs ballot">
     <h3 className="text-sm font-semibold">Your Ranked Pairs ballot</h3>
     <p id={`${id}-instructions`} className="text-sm text-gray-600">Assign preferred options to rank groups, with group 1 best. Put equally preferred options in the same group. Unranked options tie below every ranked option and with one another.</p>
-    <p className="text-xs text-gray-600">Later write-ins remain unranked on your saved ballot until you change it. You can use the group menus or Move up and Move down buttons; dragging is not required. Changing a group does not submit your vote.</p>
+    <p className="text-xs text-gray-600">{proposal.is_election ? 'Unranked candidates tie below every ranked candidate.' : 'Later write-ins remain unranked on your saved ballot until you change it.'} You can use the group menus or Move up and Move down buttons; dragging is not required. Changing a group does not submit your vote.</p>
     {!emailVerified && <VerifyEmailInlineNote action="vote" />}
     {!editing && <>
       {hasVote ? <div className="text-sm">

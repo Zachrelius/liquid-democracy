@@ -305,6 +305,7 @@ def capture_snapshot(
         from experimental_tally import ExperimentalTally
         if not isinstance(tally, ExperimentalTally):
             raise ValueError("Missing experimental snapshot tally handler")
+        from experimental_elections import display_labels
         # Legacy scalar columns are PostgreSQL int32; exact experimental
         # counts live in JSON and never pass through these compatibility fields.
         snap = models.VoteSnapshot(
@@ -318,7 +319,8 @@ def capture_snapshot(
                 "not_cast": tally.not_cast,
                 "total_eligible": tally.total_eligible,
                 "option_totals": deepcopy(tally.method_result.get("scores", {})),
-                "method_result": deepcopy(tally.method_result),
+                "method_result": {**deepcopy(tally.method_result),
+                    "option_labels": display_labels(proposal)},
                 "option_set_version": tally.method_result["option_set_version"],
                 "quorum_met": tally.quorum_met(proposal.quorum_threshold),
                 "meaningful": bool(tally.winners) and tally.method_result["no_result_reason"] is None,
