@@ -827,6 +827,13 @@ def _collect_proposal_creation_errors(
     # method (allocation↔budget_allocation, project↔budget_project).
     _budget_methods = {"budget_allocation", "budget_project"}
     _budget_cfg = getattr(body, "budget_config", None)
+    if body.voting_method == "budget_allocation" and _budget_cfg is not None:
+        from voting_capabilities import resolve_budget_creation
+        try:
+            body.budget_config = resolve_budget_creation(_budget_cfg, org)
+            _budget_cfg = body.budget_config
+        except ValueError as exc:
+            errors.append(("budget_config", 400, str(exc)))
     if _budget_cfg is not None and body.voting_method not in _budget_methods:
         errors.append((
             "budget_config", 400,
@@ -1980,7 +1987,12 @@ def update_proposal(
                     f"(voting_method is '{proposal.voting_method}')."
                 ),
             )
-        proposal.budget_config = body.budget_config
+        from voting_capabilities import resolve_budget_creation
+        scope_org = db.get(models.Organization, proposal.sub_org_id or proposal.org_id) if proposal.org_id else None
+        try:
+            proposal.budget_config = resolve_budget_creation(body.budget_config, scope_org, existing=proposal.budget_config)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
 
     if body.options is not None:
         if proposal.is_election and is_experimental(proposal):

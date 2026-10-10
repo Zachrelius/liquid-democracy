@@ -18,6 +18,12 @@ def is_experimental(proposal):
 
 
 def initialize_rules(proposal, db=None):
+    if proposal.voting_method == "budget_allocation":
+        from voting_capabilities import resolve_budget_creation
+        if proposal.org_id and db is None:
+            raise ValueError("Budget creation requires a database session")
+        org = db.get(models.Organization, proposal.sub_org_id or proposal.org_id) if proposal.org_id else None
+        proposal.budget_config = resolve_budget_creation(proposal.budget_config, org)
     if is_experimental(proposal):
         if not proposal.org_id or proposal.num_winners != 1:
             raise ValueError("Experimental methods require a single-winner organization proposal")

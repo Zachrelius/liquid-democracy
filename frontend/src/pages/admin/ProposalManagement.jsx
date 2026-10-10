@@ -1,3 +1,5 @@
+import { BudgetAggregationSelector } from '../../components/BudgetAggregationSettings';
+import { budgetAggregationChoices, chosenBudgetAggregation } from '../../utils/budgetAggregations';
 import { VOTING_METHODS, votingMethodLabel, draftMethodResetFields, unchangedOptionText } from '../../utils/votingMethods';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -547,7 +549,7 @@ function CreateProposalForm({
       ? String(editingProposal.budget_config.envelope) : ''
   ));
   const [budgetAggregation, setBudgetAggregation] = useState(() => (
-    isEditMode ? (editingProposal.budget_config?.aggregation ?? 'median') : 'median'
+    isEditMode ? (editingProposal.budget_config?.aggregation ?? 'median') : ''
   ));
   // Phase 76a — display unit for budget amounts (allocation + project). Stored
   // in budget_config.currency (any non-empty string). Blank → backend default
@@ -783,6 +785,8 @@ function CreateProposalForm({
   const [error, setError] = useState('');
 
   const scopeSettings = subOrgs?.find(org => org.id === scope)?.settings;
+  const budgetChoices = budgetAggregationChoices(subOrgs?.find(org => org.id === scope)?.voting_capabilities ?? currentOrg?.voting_capabilities, scopeSettings ?? orgSettings);
+  const effectiveBudgetAggregation = chosenBudgetAggregation(budgetAggregation, budgetChoices);
   const allowedMethods = scopeSettings?.allowed_voting_methods ?? orgSettings?.allowed_voting_methods ?? ['binary'];
   const majorityJudgmentAllowed = VOTING_METHODS.majority_judgment.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('majority_judgment');
   const rankedPairsAllowed = VOTING_METHODS.ranked_pairs.available && !!slug && !editingProposal?.is_election && allowedMethods.includes('ranked_pairs');
@@ -987,7 +991,7 @@ function CreateProposalForm({
         payload.budget_config = {
           mode: 'allocation',
           envelope: Number(budgetEnvelope),
-          aggregation: budgetAggregation,
+          aggregation: effectiveBudgetAggregation,
           currency: budgetUnit.trim() || 'USD',
         };
       }
@@ -1697,20 +1701,8 @@ function CreateProposalForm({
             )}
           </div>
           <BudgetUnitField value={budgetUnit} onChange={setBudgetUnit} />
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">Aggregation</label>
-            <select
-              value={budgetAggregation}
-              onChange={e => setBudgetAggregation(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--brand-accent)]"
-            >
-              <option value="median">Median (recommended — strategyproof)</option>
-              <option value="trimmed_mean">Trimmed mean (leans toward minority intensity)</option>
-            </select>
-            <p className="text-xs text-gray-400 mt-1">
-              Every bucket with support gets a proportional share; the result always sums to the budget.
-            </p>
-          </div>
+          <BudgetAggregationSelector choices={budgetChoices} value={effectiveBudgetAggregation} onChange={setBudgetAggregation}
+            grandfathered={isEditMode && effectiveBudgetAggregation === (editingProposal.budget_config?.aggregation ?? 'median')} />
         </div>
       )}
 

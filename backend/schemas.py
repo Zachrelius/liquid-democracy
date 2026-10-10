@@ -545,7 +545,7 @@ def _validate_budget_config(v: Optional[dict]) -> Optional[dict]:
             raise ValueError("budget_config.currency must be a non-empty string")
         return {
             "mode": "allocation", "envelope": envelope,
-            "currency": currency, "aggregation": aggregation,
+            "currency": currency, **({"aggregation": aggregation} if "aggregation" in v else {}),
         }
     if mode == "project":
         # Phase 74 — discrete project budget. envelope is the hard ceiling;
@@ -2432,6 +2432,7 @@ class OrgOut(BaseModel):
     discoverability: str = "listed"
     activity_visibility: str = "members_only"
     settings: dict = {}
+    voting_capabilities: dict = {}
     # Phase 34 — parent_org_id needs to surface so the FE can distinguish
     # sub-orgs from top-level orgs in the org switcher / Nav.jsx
     # parentOrgs filter. None for top-level orgs.
@@ -2743,6 +2744,7 @@ class SubOrgOut(BaseModel):
     description: str
     parent_org_id: str
     settings: dict = {}
+    voting_capabilities: dict = {}
     member_count: Optional[int] = None
     # Phase 15 Cluster S — sub-org effective role's system_key (the
     # highest-tier role applicable to the user via direct sub-org

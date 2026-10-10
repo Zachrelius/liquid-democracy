@@ -1,3 +1,5 @@
+import BudgetAggregationSettings from '../../components/BudgetAggregationSettings';
+import { budgetAggregationChoices } from '../../utils/budgetAggregations';
 import VotingMethodSettings from '../../components/VotingMethodSettings';
 import { useState, useEffect, useRef } from 'react';
 import { useOrg } from '../../OrgContext';
@@ -1153,6 +1155,7 @@ export default function OrgSettings() {
     try {
       const payload = {
         allowed_voting_methods: settings.allowed_voting_methods || ['binary'],
+        allowed_budget_aggregations: budgetAggregationChoices(null, settings.allowed_budget_aggregations ? settings : currentOrg?.voting_capabilities),
       };
       await api.patch(`/api/orgs/${currentOrg.slug}`, { settings: payload });
       await refreshOrgs();
@@ -2122,10 +2125,11 @@ export default function OrgSettings() {
         <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-3">
           <VotingMethodSettings allowed={settings.allowed_voting_methods}
             onChange={methods => updateSetting('allowed_voting_methods', methods)} />
+          <BudgetAggregationSettings choices={budgetAggregationChoices(null, settings.allowed_budget_aggregations ? settings : currentOrg?.voting_capabilities)} onChange={choices => updateSetting('allowed_budget_aggregations', choices)} />
           {/* Phase 34 F1 — per-section save button. */}
           <button
             onClick={handleSaveVotingMethods}
-            disabled={savingVotingMethods}
+            disabled={savingVotingMethods || !budgetAggregationChoices(null, settings.allowed_budget_aggregations ? settings : currentOrg?.voting_capabilities).length}
             className="px-4 py-1.5 bg-[var(--brand-primary)] text-white text-xs rounded-lg hover:bg-[var(--brand-accent)] transition-colors disabled:opacity-50"
           >
             {savingVotingMethods ? 'Saving…' : 'Save voting methods'}

@@ -4,7 +4,13 @@ Stored proposals retain their frozen rules. This module authorizes NEW choices;
 read/count paths must not retroactively apply an organization restriction.
 """
 from dataclasses import dataclass
-from org_config import get_org_config
+
+def _resolve(org, key, default):
+    for current in _ancestors(org):
+        value = (current.settings or {}).get(key)
+        if value is not None:
+            return value
+    return default
 
 MULTIWINNER_METHODS = ("score", "star", "majority_judgment", "ranked_pairs")
 BUDGET_AGGREGATIONS = ("median", "trimmed_mean")
@@ -57,7 +63,7 @@ def _ancestors(org):
 
 def _source(org, key):
     for depth, current in enumerate(_ancestors(org)):
-        if key in (current.settings or {}):
+        if (current.settings or {}).get(key) is not None:
             return "self" if depth == 0 else "parent"
     return "legacy_default"
 
@@ -69,25 +75,26 @@ def effective_voting_capabilities(org):
     Existing single-winner override semantics remain intact for compatibility.
     Malformed new stored values fail loudly; absence has explicit legacy defaults.
     """
-    methods = get_org_config(org, "allowed_voting_methods", ["binary"])
+    methods = _resolve(org, "allowed_voting_methods", ["binary"])
     if not isinstance(methods, list) or any(type(v) is not str for v in methods):
         raise ValueError("Invalid allowed_voting_methods")
-    preferred = validate_choice_list(get_org_config(org, "allowed_multiwinner_methods", []),
+    preferred = validate_choice_list(_resolve(org, "allowed_multiwinner_methods", []),
         MULTIWINNER_METHODS, "allowed_multiwinner_methods")
     allowed_multi = set(preferred) & set(methods)
     for current in _ancestors(org):
-        allowed_multi.intersection_update(get_org_config(current, "allowed_voting_methods", ["binary"]))
+        allowed_multi.intersection_update(_resolve(current, "allowed_voting_methods", ["binary"]))
         allowed_multi.intersection_update(validate_choice_list(
-            get_org_config(current, "allowed_multiwinner_methods", []),
+            _resolve(current, "allowed_multiwinner_methods", []),
             MULTIWINNER_METHODS, "allowed_multiwinner_methods"))
-    aggregations = validate_choice_list(get_org_config(org, "allowed_budget_aggregations", list(BUDGET_AGGREGATIONS)),
+    aggregations = validate_choice_list(_resolve(org, "allowed_budget_aggregations", list(BUDGET_AGGREGATIONS)),
         BUDGET_AGGREGATIONS, "allowed_budget_aggregations", nonempty=True)
     for current in _ancestors(org):
-        parent_choices = validate_choice_list(get_org_config(current, "allowed_budget_aggregations", list(BUDGET_AGGREGATIONS)),
+        parent_choices = validate_choice_list(_resolve(current, "allowed_budget_aggregations", list(BUDGET_AGGREGATIONS)),
             BUDGET_AGGREGATIONS, "allowed_budget_aggregations", nonempty=True)
-        aggregations = [v for v in aggregations if v in parent_choices]
-    if not aggregations:
-        raise ValueError("Budget aggregation choices conflict with the parent restriction")
+        overlap = [v for v in aggregations if v in parent_choices]
+        # A later parent narrowing must not make the child unreadable.
+        # Its new choices are bounded by the parent, while stored votes retain rules.
+        aggregations = overlap or parent_choices
     return {
         "allowed_voting_methods": list(methods),
         "allowed_multiwinner_methods": [v for v in MULTIWINNER_METHODS if v in allowed_multi and v in RELEASED_MULTIWINNER_METHODS],
@@ -105,7 +112,7 @@ def require_new_method_choice(org, method, winner_count):
     if method == "allocated_score":
         if not ALLOCATED_SCORE_RELEASED or winner_count < 2:
             raise ValueError("Allocated Score is available only for multiple winners after its release gate")
-        if any(method not in get_org_config(current, "allowed_voting_methods", ["binary"]) for current in _ancestors(org)):
+        if any(method not in _resolve(current, "allowed_voting_methods", ["binary"]) for current in _ancestors(org)):
             raise ValueError("Allocated Score is restricted by a parent organization")
     elif method in MULTIWINNER_METHODS and winner_count > 1:
         if method not in effective["allowed_multiwinner_methods"]:
@@ -113,3 +120,44 @@ def require_new_method_choice(org, method, winner_count):
     elif method not in MULTIWINNER_METHODS:
         raise ValueError("No experimental capability for this voting method")
     return effective
+
+
+def validate_settings_patch(org, patch):
+    """Validate touched preferences only, preserving absent legacy defaults."""
+    from types import SimpleNamespace
+    merged = {**(org.settings or {}), **patch}
+    for key, supported in (("allowed_budget_aggregations", BUDGET_AGGREGATIONS),
+                           ("allowed_multiwinner_methods", tuple(RELEASED_MULTIWINNER_METHODS))):
+        if key not in patch:
+            continue
+        if patch[key] is None and getattr(org, "parent_org_id", None):
+            merged.pop(key, None)
+        else:
+            merged[key] = validate_choice_list(patch[key], supported, key, nonempty=key == "allowed_budget_aggregations")
+    if getattr(org, "parent_org_id", None) and patch.get("allowed_voting_methods", "absent") is None:
+        merged.pop("allowed_voting_methods", None)
+    if getattr(org, "parent_org_id", None) and patch.get("allowed_budget_aggregations") is not None:
+        parent_choices = effective_voting_capabilities(org.parent_org)["allowed_budget_aggregations"]
+        if not any(v in parent_choices for v in merged["allowed_budget_aggregations"]):
+            raise ValueError("Budget aggregation choices conflict with the parent restriction")
+    projected = SimpleNamespace(settings=merged, parent_org=getattr(org, "parent_org", None),
+        parent_org_id=getattr(org, "parent_org_id", None))
+    effective_voting_capabilities(projected)
+    return merged
+
+
+def resolve_budget_creation(config, org, *, existing=None):
+    """Resolve NEW allocation choice, or grandfather the same stored choice.
+
+    An omitted aggregation chooses the permitted first value. Trusted historical
+    reads never call this helper. Clones/imports do not receive existing config.
+    """
+    if config is None or config.get("mode") != "allocation":
+        return config
+    choices = effective_voting_capabilities(org)["allowed_budget_aggregations"]
+    explicit = config.get("aggregation")
+    choice = explicit if explicit is not None else choices[0]
+    unchanged = existing is not None and choice == existing.get("aggregation", "median")
+    if choice not in BUDGET_AGGREGATIONS or (choice not in choices and not unchanged):
+        raise ValueError("Budget aggregation is not permitted by this organization scope")
+    return {**config, "aggregation": choice}

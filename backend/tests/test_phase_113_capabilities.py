@@ -45,8 +45,10 @@ def test_parent_restrictions_and_inheritance(monkeypatch):
 def test_parent_cannot_be_broadened_by_missing_setting_or_incompatible_override():
     parent = org({"allowed_budget_aggregations":["median"]})
     assert cap.effective_voting_capabilities(org(parent=parent))["allowed_budget_aggregations"] == ["median"]
+    child = org({"allowed_budget_aggregations":["trimmed_mean"]}, parent)
+    assert cap.effective_voting_capabilities(child)["allowed_budget_aggregations"] == ["median"]
     with pytest.raises(ValueError):
-        cap.effective_voting_capabilities(org({"allowed_budget_aggregations":["trimmed_mean"]}, parent))
+        cap.validate_settings_patch(child, {"allowed_budget_aggregations":["trimmed_mean"]})
     with pytest.raises(ValueError):
         cap.effective_voting_capabilities(SimpleNamespace(settings={}, parent_org_id="missing", parent_org=None))
 

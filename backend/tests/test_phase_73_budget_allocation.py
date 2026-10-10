@@ -210,7 +210,7 @@ def test_schema_accepts_budget_voting_method():
         options=[schemas.OptionCreate(label="a"), schemas.OptionCreate(label="b")],
     )
     assert p.voting_method == "budget_allocation"
-    assert p.budget_config["aggregation"] == "median"  # default applied
+    assert "aggregation" not in p.budget_config  # org-aware default resolves at creation
     assert p.budget_config["currency"] == "USD"
 
 

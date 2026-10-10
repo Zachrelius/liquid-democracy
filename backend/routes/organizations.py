@@ -5,6 +5,7 @@ delegate applications, topics, proposals, and analytics.
 import logging
 import secrets
 import uuid
+from voting_capabilities import effective_voting_capabilities
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -144,6 +145,8 @@ DEFAULT_ORG_SETTINGS = {
     "require_email_verification": True,
     # Experimental methods are available only by explicit organization opt-in.
     "allowed_voting_methods": list(DEFAULT_ENABLED_VOTING_METHODS),
+    "allowed_budget_aggregations": ["median"],
+    "allowed_multiwinner_methods": [],
     # Phase 95 — do not let an individual proposal author unexpectedly add
     # identity verification to an organization that has not adopted it.
     # Legacy orgs without this key retain the `author` read-time fallback in
@@ -292,6 +295,7 @@ def _org_to_out(
         discoverability=org.discoverability or "listed",
         activity_visibility=org.activity_visibility or "members_only",
         settings=org.settings or {},
+        voting_capabilities=effective_voting_capabilities(org),
         parent_org_id=org.parent_org_id,
         created_at=org.created_at,
         member_count=member_count,
@@ -1077,7 +1081,11 @@ def update_organization(
         from org_config import get_weighted_voting_config as _get_wv_cfg
         _wv_before = _get_wv_cfg(org)
 
-        org.settings = {**(org.settings or {}), **body.settings}
+        from voting_capabilities import validate_settings_patch
+        try:
+            org.settings = validate_settings_patch(org, body.settings)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
 
         _wv_after = _get_wv_cfg(org)
         if _wv_before != _wv_after:
@@ -5420,7 +5428,7 @@ def create_org_proposal(
     db.add(proposal)
     db.flush()
 
-    initialize_rules(proposal)
+    initialize_rules(proposal, db)
     # Phase 46 B3 — stamp cosign markers + insert author's implicit first
     # signature (D3) when the proposal entered gathering state.
     if cosign_decision == "cosign_gated":

@@ -56,6 +56,7 @@ _MUST_SURFACE_FIELDS: list[str] = [
     "description",
     "join_policy",
     "settings",
+    "voting_capabilities",
     "user_role",
     "user_permissions",
     "member_count",
