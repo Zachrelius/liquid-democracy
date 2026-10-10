@@ -49,7 +49,7 @@ Per CLAUDE.md. Append the result to `PROGRESS.md`.
 
 ## Status
 
-Shipped — see closeout section in PROGRESS.md.
+Deployed 2026-10-10 (merges `d45d501` + `4219e04`). See the Phase 112 closeout in PROGRESS.md. W2 (uvicorn access-log redaction) was added after prod QA found the raw token in uvicorn's own access log.
 
 ## What IS in scope
 
