@@ -1,5 +1,7 @@
 # Delegation Cross-Org Scoping — Diagnostic Findings (2026-05-10)
 
+**Publication note (Phase 111):** Historical production participants and the non-demo organization are anonymized below. The technical findings and row counts are preserved. This is a historical diagnostic; Phase 18 closed the relationship-table scoping gap.
+
 **Branch:** `diagnostic/delegation-org-scoping`
 **Mode:** read-only investigation. No code changes, no migrations drafted, no destructive prod queries.
 **Investigation queries:** all SELECT-only, retained at `.tmp_diag/prod_select*.py` for re-run.
@@ -8,7 +10,7 @@
 
 ## 1. Executive summary
 
-The `delegations` table has **no `org_id` column at the schema level**. Phase 4c (multi-tenancy retrofit) added `org_id` to `topics`, `proposals`, `delegate_profiles`, `invitations`, `roles`, `org_memberships`, and `audit_log`, but **skipped the relationship tables**: `delegations`, `delegation_intents`, `follow_relationships`, `follow_requests`. As a consequence, every `db.query(models.Delegation)` call site in the codebase (15+ sites; full inventory in §3) is structurally unable to filter by org — the column doesn't exist. The visualization bugs (Cases 1–2) are direct: `GET /api/delegations/network` and the per-proposal vote-graph endpoint return all rows for the caller without org filter. The tally bug (Case 3) is the same root cause surfaced through `DelegationService._build_context` (`backend/delegation_engine.py:831`), which loads every delegation row platform-wide and indexes them by `(delegator_id, topic_id)` only. Case 4 is "right by coincidence" — `compute_tally` only iterates `eligible_voter_ids_for_proposal` (line 961), so non-member delegators get dropped at iteration time; this is an incidental side-effect filter, not a deliberate cross-org delegation safeguard. **The fix requires a migration** (add `Delegation.org_id` + likely `sub_org_id`, backfill, change unique constraint), is multi-workstream in shape (read-side filtering + write-side org plumbing + frontend org context + graph_store partitioning + tests), and has one load-bearing data decision: a single prod row (`claireandzachary` → `Zachary`, both members of demo and gamenights) cannot be backfilled deterministically and needs Z to choose one of {pick-one-org, drop, duplicate, ask-user}.
+The `delegations` table has **no `org_id` column at the schema level**. Phase 4c (multi-tenancy retrofit) added `org_id` to `topics`, `proposals`, `delegate_profiles`, `invitations`, `roles`, `org_memberships`, and `audit_log`, but **skipped the relationship tables**: `delegations`, `delegation_intents`, `follow_relationships`, `follow_requests`. As a consequence, every `db.query(models.Delegation)` call site in the codebase (15+ sites; full inventory in §3) is structurally unable to filter by org — the column doesn't exist. The visualization bugs (Cases 1–2) are direct: `GET /api/delegations/network` and the per-proposal vote-graph endpoint return all rows for the caller without org filter. The tally bug (Case 3) is the same root cause surfaced through `DelegationService._build_context` (`backend/delegation_engine.py:831`), which loads every delegation row platform-wide and indexes them by `(delegator_id, topic_id)` only. Case 4 is "right by coincidence" — `compute_tally` only iterates `eligible_voter_ids_for_proposal` (line 961), so non-member delegators get dropped at iteration time; this is an incidental side-effect filter, not a deliberate cross-org delegation safeguard. **The fix requires a migration** (add `Delegation.org_id` + likely `sub_org_id`, backfill, change unique constraint), is multi-workstream in shape (read-side filtering + write-side org plumbing + frontend org context + graph_store partitioning + tests), and has one load-bearing data decision: a single prod row (`claireandzachary` → `Participant`, both members of demo and example-org-b) cannot be backfilled deterministically and needs Z to choose one of {pick-one-org, drop, duplicate, ask-user}.
 
 ---
 
@@ -108,7 +110,7 @@ Walk from `cast_vote` to where membership filtering applies:
 6. `resolve_vote_pure` calls `find_delegate_pure(uid, ...)` with `user_delegations = ctx.all_delegations.get(user_id, {})`. **No org filter applied here either.**
 
 **The filter at line 961 (`user_ids = sorted(eligible_ids)`) is what catches Case 4.** It's a side-effect filter, not deliberate org-scoping for delegations:
-- **Case 4 (Friend A, gamenights-only, demo proposal):** A is not in demo's `eligible_ids`, so the tally never iterates A → A's gamenights global delegation is loaded into `ctx` but never consulted.
+- **Case 4 (Friend A, example-org-b-only, demo proposal):** A is not in demo's `eligible_ids`, so the tally never iterates A → A's example-org-b global delegation is loaded into `ctx` but never consulted.
 - **Case 3 (Test user C, member of both, demo proposal):** C IS in demo's `eligible_ids`. The tally iterates C → calls `resolve_vote_pure(C, ctx)` → no direct ballot in demo → looks up `ctx.all_delegations[C]` which contains the global → Z delegation (created with no org context) → `find_delegate_pure` returns Z → Z's direct demo ballot is found → **C's vote is counted as Z's choice in demo.** Bug confirmed by code reading; matches Z's observation.
 
 The Phase 8.5 sub-org test (`backend/tests/test_delegation_scope.py:263`) even celebrates the absence of org-aware code: *"no special path. No new pure-layer code is required."* That comment now reads as the documentation of the bug — it's correct only because the test scenario placed the non-member on the *delegate* side, not the *delegator* side.
@@ -164,15 +166,15 @@ No local repro needed; prod data is the existence proof. SELECT-only query (`.tm
 
 | delegator | delegator_orgs | delegate | delegate_orgs | spec case |
 |---|---|---|---|---|
-| `dave` (Dave the Delegator) | demo | `alice` (Alice Voter) | demo | Within-org global, fine |
-| `Imperatoricus` (Senator Ric) | gamenights | `ZacharyPetertam` | demo, gamenights | **Case 1**: gamenights-only delegator, A→Z global appears in demo's graph; tally accidentally OK because A not in demo eligible_ids |
-| `claireandzachary@gmail.com` (C&ZTest) | demo, gamenights | `ZacharyPetertam` | demo, gamenights | **Case 3**: delegator in both orgs, global delegation made in gamenights, vote IS tallied in demo |
+| `Participant A` (Participant A) | demo | `Participant B` (Participant B) | demo | Within-org global, fine |
+| `Participant C` (Participant C) | example-org-b | `Participant D` | demo, example-org-b | **Case 1**: example-org-b-only delegator, A→Z global appears in demo's graph; tally accidentally OK because A not in demo eligible_ids |
+| `Participant E` (Participant E) | demo, example-org-b | `Participant D` | demo, example-org-b | **Case 3**: delegator in both orgs, global delegation made in example-org-b, vote IS tallied in demo |
 
 Topic-scoped:
 
 | delegator | delegate | topic | topic.org | spec case |
 |---|---|---|---|---|
-| `Claire` | `ZacharyPetertam` | Games | gamenights | **Case 2**: Claire in both orgs; Games topic delegation appears in demo graph (visualization), but doesn't tally-leak because demo proposals don't have a Games topic |
+| `Participant F` | `Participant D` | Games | example-org-b | **Case 2**: Participant F in both orgs; Games topic delegation appears in demo graph (visualization), but doesn't tally-leak because demo proposals don't have a Games topic |
 
 All four cases match the dispatch description. **Case 4** is the topology-not-data case: Friend A is not a member of demo, so demo's `eligible_voter_ids_for_proposal` excludes them, so the tally iteration at `delegation_engine.py:961` never visits A — the filter responsible is the eligibility iteration in `compute_tally`, which is **accidental** (Phase 10.1's cross-scope vote leak fix protects the iteration set; cross-org delegation safety wasn't in its scope).
 
@@ -239,7 +241,7 @@ coorgs AS (
 SELECT COUNT(*) AS total_global, COUNT(coorgs.id) AS with_shared_org
 FROM g LEFT JOIN coorgs ON coorgs.id = g.id;
 -- → total=3, with_shared_org=3, with_no_shared_org=0
--- → distribution: shared_orgs=1: 2 rows, shared_orgs=2: 1 row (the C&ZTest case)
+-- → distribution: shared_orgs=1: 2 rows, shared_orgs=2: 1 row (the Participant E case)
 ```
 
 **Prod state:**
@@ -247,10 +249,10 @@ FROM g LEFT JOIN coorgs ON coorgs.id = g.id;
 - 60 delegation rows total.
 - 57 topic-scoped: all naturally org-coherent because topics carry `org_id` and prod has no orphaned cross-org topic delegations.
 - 3 global (`topic_id IS NULL`):
-  - 1 within-demo (`dave` → `alice`) — fine, both single-org users.
-  - 1 cross-org-displayable (`Imperatoricus` → `Zachary`) — visualization-leaks; tally accidentally fine (Case 1).
-  - 1 cross-org-tallying (`claireandzachary` → `Zachary`) — both members of demo+gamenights; **tally leak.**
-- 1 topic-scoped delegation that visualization-leaks (Claire → Zachary on gamenights/Games topic; Claire is in both orgs).
+  - 1 within-demo (`Participant A` → `Participant B`) — fine, both single-org users.
+  - 1 cross-org-displayable (`Participant C` → `Participant`) — visualization-leaks; tally accidentally fine (Case 1).
+  - 1 cross-org-tallying (`claireandzachary` → `Participant`) — both members of demo+example-org-b; **tally leak.**
+- 1 topic-scoped delegation that visualization-leaks (Participant F → Participant on example-org-b/Games topic; Participant F is in both orgs).
 
 **Affected: ~3 visualization-leaking rows, exactly 1 tally-leaking row.** Small absolute numbers, but the schema gap means every future delegation has the same shape.
 
@@ -273,9 +275,9 @@ This is **not a query-filter-only fix** — the schema doesn't carry the informa
 
 Each global row needs a backfill choice:
 
-- **Row 1:** `dave` (demo only) → `alice` (demo only). Trivial: `org_id = demo.id`.
-- **Row 2:** `Imperatoricus` (gamenights only) → `Zachary` (demo + gamenights). Trivial: `org_id = gamenights.id` (delegator only has one org).
-- **Row 3:** `claireandzachary` (demo + gamenights) → `Zachary` (demo + gamenights). **Two shared orgs.** No principled deterministic backfill. Z must choose:
+- **Row 1:** `Participant A` (demo only) → `Participant B` (demo only). Trivial: `org_id = demo.id`.
+- **Row 2:** `Participant C` (example-org-b only) → `Participant` (demo + example-org-b). Trivial: `org_id = example-org-b.id` (delegator only has one org).
+- **Row 3:** `claireandzachary` (demo + example-org-b) → `Participant` (demo + example-org-b). **Two shared orgs.** No principled deterministic backfill. Z must choose:
   - **Option A:** pick the more-recently-active org (e.g., by `updated_at` of the delegation, or by recent vote activity).
   - **Option B:** drop the row (force user to re-create per-org).
   - **Option C:** duplicate into both orgs.
@@ -293,7 +295,7 @@ Recommend including this section verbatim in the eventual fix-spec dispatch so Z
 
 **`FollowRelationship` / `FollowRequest`.** Currently account-level by intent (`routes/follows.py` comments). Two arguments:
 
-- *Keep account-level*: a "follow" expresses interest in a person across all contexts. If you follow someone in gamenights, you might reasonably expect to see their activity in shared demo too. The "social media" semantic.
+- *Keep account-level*: a "follow" expresses interest in a person across all contexts. If you follow someone in example-org-b, you might reasonably expect to see their activity in shared demo too. The "social media" semantic.
 - *Make org-scoped*: parallel with delegations — if delegations are org-scoped, the follow that gates a `delegation_allowed` follow should be org-scoped too, otherwise approving a follow in any org silently grants delegation rights in any other co-org.
 
 **The latter argument is structurally stronger** because of `delegation_allowed`: `_revoke_dependent_delegations` (`routes/follows.py:30-75`) revokes delegations based on follow state, and `activate_intents_for_follow` (`routes/delegations.py:431`) activates pending intents into Delegation rows when a follow is approved. If delegations become org-scoped but follows stay account-level, you get an asymmetry where approving one follow in any org auto-creates per-org delegations — that's worse than the current bug.
@@ -323,7 +325,7 @@ For the eventual spec, the lead's recommendation:
   3. **Cluster T (tests):** the 6 missing scenarios listed in §6 R2.
   4. **Cluster D (docs):** update the misleading "no special path" comment in `test_delegation_scope.py:263`; help-page section on what "global" means; SECURITY_REVIEW addendum on the prior leak + the closure.
   5. **Cluster G (cleanup):** F2 incidental items listed above; re-evaluate `routes/admin.py` system graph; rename or repurpose `"global"` URL token.
-- **Migration:** YES, mandatory. Two-phase recommended (add nullable column → run backfill script → ALTER NOT NULL) for safety on the C&ZTest ambiguous row.
+- **Migration:** YES, mandatory. Two-phase recommended (add nullable column → run backfill script → ALTER NOT NULL) for safety on the Participant E ambiguous row.
 - **Sub-org delegation:** **include in the same pass.** No prod data affected today, but the migration is free once `org_id` is being added; deferring would require a second migration later.
 - **`FollowRelationship` org-scoping:** depends on F1 decision (Q2 below). If yes, add to the same migration; if no, document the intentional asymmetry in SECURITY_REVIEW.
 - **Test infrastructure:** no new harness needed. Backend tests use `pytest` with the existing `test_db` fixture pattern. The 6 new tests are straightforward additions to existing `test_delegation_*.py` files. **Frontend test framework is still absent** (Phase 17 audit Item 42); browser verification covers the network-graph UI changes.
@@ -334,7 +336,7 @@ For the eventual spec, the lead's recommendation:
 
 ## 10. Open questions for Z (decide before fix-spec writing)
 
-1. **Cascade for the C&ZTest global row** (I3 row 3): pick A/B/C/D from §7 I3.
+1. **Cascade for the Participant E global row** (I3 row 3): pick A/B/C/D from §7 I3.
 2. **Follow-relationship scope:** stay account-level or get retrofitted with `org_id`? If the latter, that's a parallel migration with similar shape (and probably belongs in the same pass for atomic behaviour).
 3. **API surface change:** keep `/api/delegations/*` flat (with `?org=` or body field) or move to `/api/orgs/{slug}/delegations/*`? The latter is cleaner but a bigger frontend lift.
 4. **Sub-org scoping for delegations:** include in this fix or defer? Recommendation: **include** (migration is free once org_id is being added; no prod data affected today).
@@ -342,7 +344,7 @@ For the eventual spec, the lead's recommendation:
 6. **Backfill timing:** single-pass migration with backfill in `upgrade()`, or two-phase (add nullable → backfill script → ALTER NOT NULL)? Recommendation: two-phase for safety on the ambiguous row.
 7. **Cycle detection:** should cycles be detected per-org or platform-wide? Currently `graph_store` does global + per-topic. **Per-org is the natural answer post-fix.**
 8. **Audit log retro:** backfill `org_id` on existing `delegation.created` audit entries (forensic completeness), or only add it going forward?
-9. **Communication:** any in-app or email notification to the C&ZTest user (or all global-delegation users) explaining the change? Or treat as silent infrastructure?
+9. **Communication:** any in-app or email notification to the Participant E user (or all global-delegation users) explaining the change? Or treat as silent infrastructure?
 
 ---
 
