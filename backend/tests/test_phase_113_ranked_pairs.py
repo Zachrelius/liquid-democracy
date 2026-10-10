@@ -124,3 +124,15 @@ def test_graph_is_locked_once_and_retains_all_edges_after_selections(monkeypatch
     assert len(calls)==1 and len(r["locked_edges"])==6
     assert r["winners"]==["a","b","c"]
     assert any(e["winner"]=="a" and e["loser"]=="d" for e in r["locked_edges"])
+
+
+def test_fixed_graph_prefix_differs_from_recounting_a_singleton_election():
+    # All three nodes are eligible and ordered by the original strict graph.
+    # Re-running a fresh single-winner election for the last seat instead
+    # drops that seat under the existing fewer-than-two-options rule.
+    rows=[({"rank_groups":[["a"],["b"],["c"]]},3)]
+    result=count_ranked_pairs_top_n("abc",rows,rules(3),"p")
+    assert result.winners==["a","b","c"]
+    singleton=count_ranked_pairs(["c"],[({"rank_groups":[["c"]]},3)],rules(1),"p")
+    assert singleton.winners==[]
+    assert singleton.method_result["no_result_reason"]=="fewer_than_two_options"
