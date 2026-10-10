@@ -1,0 +1,22 @@
+{
+  "Phase113 median-only budget QA": {
+    "proposal_id": "6bb75869-51c2-48f3-b295-ac70bae80816",
+    "aggregation": "median",
+    "unchanged_draft_grandfathering": "PASS"
+  },
+  "Phase113 trimmed-only budget QA": {
+    "proposal_id": "496aeef2-224f-4ce5-b094-4b8ccbe2975f",
+    "aggregation": "trimmed_mean",
+    "unchanged_draft_grandfathering": "PASS"
+  },
+  "disallowed_new_trimmed_mean": {
+    "status": 400,
+    "no_proposal_created": true
+  },
+  "child": {
+    "proposal_id": "58ebd71a-c1e7-40ef-b2c7-88ac20ade08c",
+    "num_winners": 2,
+    "rule_id": "allocated_score_0_5_hare_v1",
+    "org_scoped_serializer": "PASS"
+  }
+}

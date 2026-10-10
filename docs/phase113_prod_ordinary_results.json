@@ -1,0 +1,32 @@
+{
+  "score": {
+    "proposal_id": "45b3cd72-4e30-4dac-afa1-c47ec9518b25",
+    "frozen": true,
+    "filled_count": 2,
+    "office_installed": false
+  },
+  "star": {
+    "proposal_id": "b374e61b-5348-410a-b698-25c8451313e0",
+    "frozen": true,
+    "filled_count": 2,
+    "office_installed": false
+  },
+  "majority_judgment": {
+    "proposal_id": "489fcb54-3f0f-4f2b-88d6-4f20f4ece6d3",
+    "frozen": true,
+    "filled_count": 2,
+    "office_installed": false
+  },
+  "ranked_pairs": {
+    "proposal_id": "71a84723-9d10-4191-9c23-a8aa06138786",
+    "frozen": true,
+    "filled_count": 2,
+    "office_installed": false
+  },
+  "allocated_score": {
+    "proposal_id": "ff723c4a-b87c-4972-9b6c-bf4e3e30357b",
+    "frozen": true,
+    "filled_count": 2,
+    "office_installed": false
+  }
+}

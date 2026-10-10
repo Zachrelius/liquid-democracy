@@ -1,0 +1,14 @@
+{
+  "status": "BLOCKED_SAFE_FAST_FORWARD",
+  "primary_head": "27e67accafd3367f66f66ff5a27fc462876159fa",
+  "verified_original_files": 312,
+  "changed_original_files": 0,
+  "unreadable_original_files": 0,
+  "recovery_stash": "2965358a22b8ee359cc59a81d3e93f50a800191a",
+  "stash_preserved": true,
+  "blocking_path": "phase113_multiwinner_methods_and_budget_choices_spec.md",
+  "attempt": "git fetch origin; git merge --ff-only origin/master",
+  "result": "Git refused to overwrite the untracked original approved spec. No reset, clean, move, stage or overwrite used. Primary unchanged.",
+  "release_code_head": "6843a6f9e212896abc0b3f381a5f640c7c1e6740",
+  "primary_commits_behind_code_release": 13
+}
