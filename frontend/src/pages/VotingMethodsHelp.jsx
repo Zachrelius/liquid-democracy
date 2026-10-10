@@ -19,6 +19,7 @@ export default function VotingMethodsHelp() {
         {Object.entries(VOTING_METHOD_DESCRIPTIONS).map(([method, text]) => <div key={method} className="space-y-2">
           <h2 className="text-lg font-semibold text-[var(--brand-primary)]">{text.name}</h2>
           <p className="text-sm text-gray-700 leading-relaxed">{text.description}</p>
+          {method === 'ranked_pairs' && <p className="text-sm">Multiple winners require a separate permission. One fixed locked graph yields the collective order: choose a source node, remove its outgoing edges and repeat. Equal source choices use committed priority. Wholly unranked options are excluded, and a strict preference among eligible options is required. Votes are not redistributed; this does not provide proportional representation.</p>}
           {method === 'majority_judgment' && <><MajorityJudgmentExplanation /><p className="text-sm">Multiple winners require a separate permission. Select the highest options in the majority-grade ranking. Tied medians compare original distributions with temporary grade removal; voting influence stays unchanged between selections. Reject-only options leave vacancies. This does not provide proportional representation.</p></>}
         </div>)}
         <p className="text-sm text-gray-700">{VOTER_WEIGHT_EXPLANATION}</p>

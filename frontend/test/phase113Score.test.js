@@ -69,3 +69,12 @@ test('Majority Judgment top-N explains grade order and preserves original distri
   assert.match(html,/Temporary grades removed per candidate: 3/);assert.match(html,/Bea Poor; Cara Reject/);assert.match(html,/Unsupported/);
   assert.doesNotMatch(html,/Ranked total points|<th[^>]*>Points/);
 });
+
+
+test('Ranked Pairs top-N preserves a collective graph order with inspectable locks and sources',()=>{
+  const r={requested_count:'2',filled_count:'2',unfilled_count:'0',winners:['a','b'],ranked_order:['a','b','c'],supported_options:['a','b','c'],ranked_weights:{a:'5',b:'5',c:'5',d:'0'},pairwise:{a:{a:'0',b:'5',c:'5'},b:{a:'0',b:'0',c:'5'},c:{a:'0',b:'0',c:'0'}},option_labels:{a:'Ada',b:'Bea',c:'Cara',d:'Dee'},quorum_met:true,finalized:true,selection_boundary_tie:true,priority_used:true,ordered_victories:[{winner:'a',loser:'b',margin:'5',support:'5'}],locked_edges:[{winner:'a',loser:'b'}],skipped_edges:[],source_ties:[{position:'2',pool:['b','c'],selected:'b'}],tie_trace:[]};
+  const html=render(Results,{proposal:{voting_method:'ranked_pairs'},tally:{method_result:r}});
+  assert.match(html,/Selected: Ada, Bea/);assert.match(html,/Collective order from one locked graph/);assert.match(html,/never recomputed/);
+  assert.match(html,/Ada over Bea: margin 5, support 5. Locked/);assert.match(html,/Position 2: source options Bea, Cara/);
+  assert.match(html,/Unsupported/);assert.doesNotMatch(html,/Ranked total points|<th[^>]*>Points/);
+});
