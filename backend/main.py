@@ -79,6 +79,20 @@ def _loggable_path(path: str) -> str:
     return "/".join(":token" if len(part) > 48 else part for part in path.split("/"))
 
 
+class _AccessLogTokenFilter(logging.Filter):
+    """Phase 112 — apply ``_loggable_path`` to uvicorn's own access log, whose
+    record args are ``(client_addr, method, full_path, http_version, status)``."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3 and isinstance(args[2], str):
+            record.args = args[:2] + (_loggable_path(args[2]),) + args[3:]
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_AccessLogTokenFilter())
+
+
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Log method, path, user_id, status code, and response time.
 

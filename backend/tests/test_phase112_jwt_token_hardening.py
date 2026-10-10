@@ -274,3 +274,23 @@ def test_request_log_redacts_unsubscribe_token(client, test_db, caplog):
     # UUID path params stay readable for debugging.
     uuid_path = f"/api/proposals/{user.id}"
     assert _loggable_path(uuid_path) == uuid_path
+
+
+def test_uvicorn_access_log_redacts_token_path():
+    """Uvicorn logs the raw path through its own handler; the filter installed
+    by main.py must redact it (found on prod during Phase 112 deploy QA)."""
+    import logging
+    import main  # noqa: F401 — installs the filter
+
+    token = generate_unsubscribe_token("u1", "comment.replied")
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 0,
+        '%s - "%s %s HTTP/%s" %d',
+        ("1.2.3.4:0", "GET", f"/api/notifications/unsubscribe/{token}", "1.1", 200),
+        None,
+    )
+    for f in logging.getLogger("uvicorn.access").filters:
+        f.filter(record)
+    rendered = record.getMessage()
+    assert token not in rendered
+    assert "/api/notifications/unsubscribe/:token" in rendered
